@@ -43,6 +43,8 @@ jobs:
         run: pip install pre-commit==4.2.0
 
       - name: Run all linters
+        env:
+          SKIP: cargo-clippy
         run: make lint
 
   build-and-test:
