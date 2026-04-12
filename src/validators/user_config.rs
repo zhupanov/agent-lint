@@ -6,7 +6,10 @@ use walkdir::WalkDir;
 /// Helper: get the userConfig object if it exists and is valid.
 /// Returns None if plugin.json is missing/invalid, userConfig is absent,
 /// or userConfig is not an object.
-fn get_user_config<'a>(ctx: &'a LintContext, diag: &mut DiagnosticCollector) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+fn get_user_config<'a>(
+    ctx: &'a LintContext,
+    diag: &mut DiagnosticCollector,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
         ManifestState::Parsed(v) => v,

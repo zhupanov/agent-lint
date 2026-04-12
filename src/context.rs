@@ -22,7 +22,6 @@ impl ManifestState {
             },
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

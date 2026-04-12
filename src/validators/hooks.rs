@@ -33,12 +33,8 @@ fn collect_strings(value: &Value, out: &mut Vec<String>) {
 /// Extracts script paths matching ${CLAUDE_PLUGIN_ROOT}/...sh or $PWD/...sh
 /// from all string values, then verifies each resolved path exists and is executable.
 fn validate_hook_command_paths(val: &Value, label: &str, diag: &mut DiagnosticCollector) {
-    let re_plugin = Regex::new(
-        r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh"
-    ).unwrap();
-    let re_pwd = Regex::new(
-        r"\$PWD/[a-zA-Z0-9._/-]+\.sh"
-    ).unwrap();
+    let re_plugin = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh").unwrap();
+    let re_pwd = Regex::new(r"\$PWD/[a-zA-Z0-9._/-]+\.sh").unwrap();
 
     let strings = extract_all_strings(val);
     for raw in &strings {
@@ -59,7 +55,9 @@ fn validate_hook_command_paths(val: &Value, label: &str, diag: &mut DiagnosticCo
 fn check_hook_path(rel: &str, reference: &str, label: &str, diag: &mut DiagnosticCollector) {
     let path = Path::new(rel);
     if !path.is_file() {
-        diag.fail(&format!("{label}: hook command missing on disk: {reference}"));
+        diag.fail(&format!(
+            "{label}: hook command missing on disk: {reference}"
+        ));
         return;
     }
 
@@ -68,7 +66,9 @@ fn check_hook_path(rel: &str, reference: &str, label: &str, diag: &mut Diagnosti
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = path.metadata() {
             if meta.permissions().mode() & 0o111 == 0 {
-                diag.fail(&format!("{label}: hook command not executable: {reference}"));
+                diag.fail(&format!(
+                    "{label}: hook command not executable: {reference}"
+                ));
             }
         }
     }

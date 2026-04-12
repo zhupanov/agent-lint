@@ -182,11 +182,7 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector) {
 /// script is intentionally NOT ported (it's larch-specific).
 pub fn validate_executability(diag: &mut DiagnosticCollector) {
     check_executability_in_dirs(
-        &[
-            "scripts",
-            "skills/*/scripts",
-            ".claude/skills/*/scripts",
-        ],
+        &["scripts", "skills/*/scripts", ".claude/skills/*/scripts"],
         diag,
     );
 }
@@ -371,8 +367,7 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
     // Pattern D: bare scripts/<name>.sh in workflow run: blocks and JSON command fields.
     // Uses boundary guard to avoid matching subpath references.
     let re_d = Regex::new(r"(^|[^a-zA-Z0-9._/-])scripts/[a-zA-Z0-9._-]+\.sh").unwrap();
-    let re_extract =
-        Regex::new(r"scripts/[a-zA-Z0-9._-]+\.sh").unwrap();
+    let re_extract = Regex::new(r"scripts/[a-zA-Z0-9._-]+\.sh").unwrap();
 
     // Workflow files (strip YAML comments first)
     for dir in &[".github/workflows"] {
@@ -386,10 +381,7 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
                 if !path.is_file() {
                     continue;
                 }
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if !name.ends_with(".yaml") && !name.ends_with(".yml") {
                     continue;
                 }
@@ -431,10 +423,7 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
             if !path.is_file() {
                 continue;
             }
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.ends_with(".md") {
                 continue;
             }

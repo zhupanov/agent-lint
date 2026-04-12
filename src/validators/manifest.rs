@@ -110,9 +110,14 @@ pub fn validate_marketplace_enriched(ctx: &LintContext, diag: &mut DiagnosticCol
 
     if let Some(plugins) = val.get("plugins").and_then(|v| v.as_array()) {
         for (i, plugin) in plugins.iter().enumerate() {
-            let cat = plugin.get("category").and_then(|v| v.as_str()).unwrap_or("");
+            let cat = plugin
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if cat.is_empty() {
-                diag.fail(&format!("{f} plugins[{i}] missing required field: category"));
+                diag.fail(&format!(
+                    "{f} plugins[{i}] missing required field: category"
+                ));
             }
         }
     }

@@ -13,8 +13,14 @@ pub fn validate_slack_fallback_consistency(diag: &mut DiagnosticCollector) {
     }
 
     let vars = [
-        ("LARCH_SLACK_BOT_TOKEN", "CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"),
-        ("LARCH_SLACK_CHANNEL_ID", "CLAUDE_PLUGIN_OPTION_SLACK_CHANNEL_ID"),
+        (
+            "LARCH_SLACK_BOT_TOKEN",
+            "CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN",
+        ),
+        (
+            "LARCH_SLACK_CHANNEL_ID",
+            "CLAUDE_PLUGIN_OPTION_SLACK_CHANNEL_ID",
+        ),
         ("LARCH_SLACK_USER_ID", "CLAUDE_PLUGIN_OPTION_SLACK_USER_ID"),
     ];
 

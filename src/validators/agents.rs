@@ -102,12 +102,10 @@ pub fn validate_agent_template_alignment(diag: &mut DiagnosticCollector) {
             Err(_) => continue,
         };
 
-        let has_marker = content
-            .lines()
-            .any(|line| {
-                let lower = line.to_lowercase();
-                lower.contains("derived from") && lower.contains("reviewer-templates.md")
-            });
+        let has_marker = content.lines().any(|line| {
+            let lower = line.to_lowercase();
+            lower.contains("derived from") && lower.contains("reviewer-templates.md")
+        });
 
         if !has_marker {
             diag.fail(&format!(

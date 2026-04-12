@@ -151,8 +151,7 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector) {
         return;
     }
 
-    let re =
-        Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._-]+\.md").unwrap();
+    let re = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._-]+\.md").unwrap();
 
     let entries = match fs::read_dir(skills_dir) {
         Ok(e) => e,
