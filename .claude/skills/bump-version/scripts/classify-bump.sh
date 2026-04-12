@@ -21,7 +21,7 @@
 #   BUMP_TYPE=MAJOR|MINOR|PATCH|NONE
 #   REASONING_FILE=<path>
 #
-# Reasoning log: ${IMPLEMENT_TMPDIR:-$PWD/.git}/bump-version-reasoning.md
+# Reasoning log: ${IMPLEMENT_TMPDIR:-$(git rev-parse --git-dir)}/bump-version-reasoning.md
 #
 # Exit codes: 0 success, 1 validation failure
 
@@ -57,7 +57,7 @@ fi
 [[ -n "$BASE" ]] || err "could not resolve merge-base against main or origin/main"
 
 # Reasoning log path.
-REASONING_DIR="${IMPLEMENT_TMPDIR:-$PWD/.git}"
+REASONING_DIR="${IMPLEMENT_TMPDIR:-$(git rev-parse --git-dir)}"
 mkdir -p "$REASONING_DIR" 2>/dev/null || true
 REASONING_FILE="$REASONING_DIR/bump-version-reasoning.md"
 

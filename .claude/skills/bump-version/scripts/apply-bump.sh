@@ -4,7 +4,7 @@
 # Contract:
 #   - FIRST: verify working tree is clean (fails on any staged or unstaged changes).
 #   - Validate package.json with jq.
-#   - Back up package.json (to .git/ to avoid triggering dirty-tree guard on retry).
+#   - Back up package.json (to git directory to avoid triggering dirty-tree guard on retry).
 #   - Rewrite .version field atomically via jq + mv.
 #   - git add + commit with message "Bump version to <new-version>".
 #   - Roll back from backup if git commit fails.
@@ -52,7 +52,8 @@ if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 VERSION_FILE="$PWD/package.json"
-BACKUP="$PWD/.git/package.json.bump-backup"
+GIT_DIR="$(git rev-parse --git-dir)"
+BACKUP="$GIT_DIR/package.json.bump-backup"
 
 # Step 1 (FIRST): Verify clean working tree.
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
@@ -63,7 +64,7 @@ fi
 [[ -f "$VERSION_FILE" ]] || fail "$VERSION_FILE not found"
 jq empty "$VERSION_FILE" 2>/dev/null || fail "$VERSION_FILE is not valid JSON"
 
-# Step 3: Backup before mutation (stored in .git/ to avoid triggering dirty-tree guard).
+# Step 3: Backup before mutation (stored in git directory to avoid triggering dirty-tree guard).
 cp "$VERSION_FILE" "$BACKUP"
 
 # Step 4: Atomic rewrite via jq + mv.
