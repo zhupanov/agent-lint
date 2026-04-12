@@ -1,0 +1,6 @@
+[package]
+name = "claude-lint"
+version = "0.1.4"
+edition = "2024"
+license = "MIT"
+description = "Configuration linter for Claude Code"

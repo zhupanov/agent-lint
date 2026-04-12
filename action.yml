@@ -1,0 +1,33 @@
+name: "Claude Lint"
+description: "Run Claude Code configuration linter"
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  version:
+    description: "Version of claude-lint to use (e.g., '0.2.0'). Defaults to latest release."
+    required: false
+    default: ""
+  args:
+    description: "Arguments to pass to claude-lint"
+    required: false
+    default: ""
+  github-token:
+    description: "GitHub token for API requests (avoids rate limits when resolving latest version)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install claude-lint
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ inputs.github-token || github.token }}
+      run: bash "${{ github.action_path }}/scripts/install.sh"
+
+    - name: Run claude-lint
+      shell: bash
+      run: claude-lint ${{ inputs.args }}
