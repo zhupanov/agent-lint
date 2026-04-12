@@ -101,7 +101,7 @@ jobs:
           CHECKSUMS="claude-lint-v${VERSION}-checksums.txt"
 
           cd artifacts
-          find . -name '*.tar.gz' -exec mv {} . \;
+          find . -mindepth 2 -name '*.tar.gz' -exec mv {} . \;
           sha256sum claude-lint-*.tar.gz > "${CHECKSUMS}"
           echo "CHECKSUMS=${CHECKSUMS}" >> "$GITHUB_ENV"
 

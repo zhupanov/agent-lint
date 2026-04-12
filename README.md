@@ -7,7 +7,7 @@ Claude Lint is a configuration linter for Claude Code.
 Add to your GitHub Actions workflow:
 
 ```yaml
-- uses: zhupanov/claude-lint@v0
+- uses: zhupanov/claude-lint@v0.1.4
   with:
     args: "."
 ```

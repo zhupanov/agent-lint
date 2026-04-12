@@ -43,6 +43,15 @@ TARGET="${TARGET_ARCH}-${TARGET_OS}"
 # Strip optional leading 'v' to prevent vv-doubling in URLs
 VERSION="${VERSION#v}"
 
+# If no explicit version, try to derive from the action ref (e.g., uses: ...@v0.1.4)
+if [ -z "$VERSION" ]; then
+  ACTION_REF="${ACTION_REF:-}"
+  if [[ "$ACTION_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    VERSION="${ACTION_REF#v}"
+    echo "Derived version from action ref: ${VERSION}"
+  fi
+fi
+
 if [ -z "$VERSION" ]; then
   echo "Resolving latest release..."
   VERSION="$(
