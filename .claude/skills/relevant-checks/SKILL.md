@@ -23,6 +23,8 @@ The following linters are configured in `.pre-commit-config.yaml`:
 - **GitHub Actions workflows (`.yml`, `.yaml`)**: actionlint
 - **Rust files (`.rs`, `Cargo.toml`, `Cargo.lock`)**: cargo fmt (format check), cargo clippy (lint)
 
+When Rust source files (`.rs`, `Cargo.toml`, `Cargo.lock`) are among the changes and `cargo` is available, the script also runs `cargo test` and `cargo clippy -- -D warnings` after pre-commit.
+
 If all changed files are deletions (no existing files to lint), the script exits 0 with a message — there are no files to run checks against.
 
 ## Usage

@@ -70,3 +70,23 @@ fi
 # ---------------------------------------------------------------------------
 echo "=== Running pre-commit on ${#files[@]} changed file(s) ==="
 pre-commit run --files "${files[@]}"
+PC_EXIT=$?
+
+# ---------------------------------------------------------------------------
+# Run Rust checks when .rs or Cargo.toml files are among the changes.
+# ---------------------------------------------------------------------------
+RUST_CHANGED=false
+for f in "${files[@]}"; do
+    case "$f" in
+        *.rs|Cargo.toml|Cargo.lock) RUST_CHANGED=true; break ;;
+    esac
+done
+
+if [ "$RUST_CHANGED" = true ] && command -v cargo >/dev/null 2>&1; then
+    echo "=== Running cargo test ==="
+    cargo test || PC_EXIT=1
+    echo "=== Running cargo clippy ==="
+    cargo clippy -- -D warnings || PC_EXIT=1
+fi
+
+exit "$PC_EXIT"

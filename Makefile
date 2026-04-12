@@ -1,4 +1,4 @@
-.PHONY: lint shellcheck markdownlint jsonlint actionlint clippy fmt setup
+.PHONY: lint shellcheck markdownlint jsonlint actionlint clippy fmt setup cargo-test cargo-clippy
 
 lint:
 	pre-commit run --all-files
@@ -14,6 +14,12 @@ jsonlint:
 
 actionlint:
 	pre-commit run actionlint --all-files
+
+cargo-test:
+	cargo test
+
+cargo-clippy:
+	cargo clippy -- -D warnings
 
 clippy:
 	cargo clippy --all-targets -- -D warnings

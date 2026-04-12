@@ -2,5 +2,12 @@
 name = "claude-lint"
 version = "0.2.1"
 edition = "2024"
+rust-version = "1.85.0"
 license = "MIT"
 description = "Configuration linter for Claude Code"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+walkdir = "2"

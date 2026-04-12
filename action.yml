@@ -9,10 +9,10 @@ inputs:
     description: "Version of claude-lint to use (e.g., '0.2.0'). Defaults to latest release."
     required: false
     default: ""
-  args:
-    description: "Arguments to pass to claude-lint"
+  path:
+    description: "Path to the repository to lint. Defaults to current directory."
     required: false
-    default: ""
+    default: "."
   github-token:
     description: "GitHub token for API requests (avoids rate limits when resolving latest version)"
     required: false
@@ -31,8 +31,4 @@ runs:
 
     - name: Run claude-lint
       shell: bash
-      env:
-        CLAUDE_LINT_ARGS: ${{ inputs.args }}
-      run: |
-        set -f
-        claude-lint $CLAUDE_LINT_ARGS
+      run: claude-lint "${{ inputs.path }}"
