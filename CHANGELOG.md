@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- GitHub Actions CI workflow running third-party linters via pre-commit on PRs to main
+- GitHub Actions CI workflow running third-party linters via pre-commit on PRs to main and manual dispatch
 - Makefile with `lint` target for local and CI linter execution
 
 ## [0.1.2] - 2026-04-12
