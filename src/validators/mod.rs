@@ -35,6 +35,8 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector) {
 fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag);
+    hygiene::validate_private_script_references(diag);
+    hygiene::validate_private_executability(diag);
 
     // V1: plugin.json
     manifest::validate_plugin_json(ctx, diag);
@@ -99,7 +101,7 @@ mod tests {
     #[serial_test::serial]
     fn test_run_all_basic_mode() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         // Create minimal .claude/ structure for Basic mode
@@ -123,7 +125,6 @@ mod tests {
         // Basic mode with valid .claude/ structure should pass
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // Integration test: Plugin mode dispatches all 25 validators
@@ -131,7 +132,7 @@ mod tests {
     #[serial_test::serial]
     fn test_run_all_plugin_mode() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         // Create minimal plugin structure
@@ -185,7 +186,6 @@ mod tests {
             "Expected V16 error for missing reviewer-templates.md, got: {errors:?}"
         );
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // Integration test: Basic mode does NOT run plugin-only validators
@@ -193,7 +193,7 @@ mod tests {
     #[serial_test::serial]
     fn test_basic_mode_skips_plugin_validators() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         // No .claude/ structure at all
@@ -222,6 +222,5 @@ mod tests {
             "Basic mode should not validate agents/"
         );
 
-        std::env::set_current_dir(saved).unwrap();
     }
 }

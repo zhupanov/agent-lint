@@ -540,7 +540,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v8_clean_skill() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -554,14 +554,13 @@ mod tests {
         validate_pwd_hygiene(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v8_pwd_violation() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -576,14 +575,13 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("$PWD"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v8_hardcoded_path_violation() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -598,7 +596,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("hardcoded path"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V10: validate_executability
@@ -607,7 +604,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v10_executable_script() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -620,7 +617,6 @@ mod tests {
         validate_executability(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[cfg(unix)]
@@ -628,7 +624,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v10_non_executable_script() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -642,7 +638,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V10-adapted: validate_private_executability (Basic mode)
@@ -651,7 +646,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v10a_private_executable() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
@@ -664,7 +659,6 @@ mod tests {
         validate_private_executability(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[cfg(unix)]
@@ -672,7 +666,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v10a_private_non_executable() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
@@ -686,7 +680,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V14: validate_security_md
@@ -694,7 +687,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v14_security_md_present() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::write("SECURITY.md", "# Security Policy\n").unwrap();
@@ -703,14 +696,13 @@ mod tests {
         validate_security_md(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v14_security_md_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut diag = DiagnosticCollector::new();
@@ -718,7 +710,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("SECURITY.md"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V9: validate_script_references
@@ -726,7 +717,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v9_valid_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -742,14 +733,13 @@ mod tests {
         validate_script_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v9_missing_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -764,7 +754,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V9-adapted: validate_private_script_references (Basic mode)
@@ -772,7 +761,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v9a_valid_private_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
@@ -787,14 +776,13 @@ mod tests {
         validate_private_script_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v9a_missing_private_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
@@ -809,7 +797,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V11: validate_dead_scripts
@@ -817,7 +804,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v11_referenced_script_not_dead() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -833,14 +820,13 @@ mod tests {
         validate_dead_scripts(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v11_unreferenced_dead_script() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -851,6 +837,5 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("dead script"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 }

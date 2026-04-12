@@ -66,21 +66,20 @@ mod tests {
     #[serial_test::serial]
     fn test_v19_no_scripts_dir_silent() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut diag = DiagnosticCollector::new();
         validate_slack_fallback_consistency(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v19_fallback_without_plugin_var() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -95,14 +94,13 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v19_fallback_with_plugin_var_pass() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -116,14 +114,13 @@ mod tests {
         validate_slack_fallback_consistency(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v19_multiple_vars_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -137,6 +134,5 @@ mod tests {
         validate_slack_fallback_consistency(&mut diag);
         assert_eq!(diag.error_count(), 2);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 }

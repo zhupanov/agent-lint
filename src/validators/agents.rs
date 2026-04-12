@@ -169,7 +169,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v7_valid_agents() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("agents").unwrap();
@@ -183,14 +183,13 @@ mod tests {
         validate_agents(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v7_missing_agents_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut diag = DiagnosticCollector::new();
@@ -198,14 +197,13 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("agents/ directory is missing"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v7_empty_agents_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("agents").unwrap();
@@ -215,14 +213,13 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("no .md files"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v7_missing_frontmatter_name() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("agents").unwrap();
@@ -237,7 +234,6 @@ mod tests {
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("name")));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V16: validate_agent_template_alignment
@@ -245,7 +241,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v16_valid_alignment() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("agents").unwrap();
@@ -261,14 +257,13 @@ mod tests {
         validate_agent_template_alignment(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v16_missing_marker() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("agents").unwrap();
@@ -285,7 +280,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V21: validate_agent_template_count
@@ -293,7 +287,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v21_matching_count() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("agents").unwrap();
@@ -310,14 +304,13 @@ mod tests {
         validate_agent_template_count(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v21_mismatched_count() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("agents").unwrap();
@@ -335,6 +328,5 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("mismatch"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 }

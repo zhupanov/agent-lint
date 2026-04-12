@@ -1,6 +1,8 @@
 mod context;
 mod diagnostic;
 mod frontmatter;
+#[cfg(test)]
+mod test_helpers;
 mod validators;
 
 use context::{LintContext, LintMode};

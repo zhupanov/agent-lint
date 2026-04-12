@@ -98,7 +98,7 @@ Should not be here\n\
     #[serial_test::serial]
     fn test_v22_valid_docs_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("docs").unwrap();
@@ -113,14 +113,13 @@ Should not be here\n\
         validate_docs_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v22_missing_docs_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::write(
@@ -134,20 +133,18 @@ Should not be here\n\
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not found on disk"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v22_no_claude_md_silent() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut diag = DiagnosticCollector::new();
         validate_docs_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 }

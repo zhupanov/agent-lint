@@ -203,7 +203,7 @@ mod tests {
     #[serial_test::serial]
     fn test_hook_command_path_missing_script() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let val = json!({
@@ -214,14 +214,13 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_hook_command_path_existing_script() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -240,7 +239,6 @@ mod tests {
         validate_hook_command_paths(&val, "test", &mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[cfg(unix)]
@@ -248,7 +246,7 @@ mod tests {
     #[serial_test::serial]
     fn test_hook_command_path_not_executable() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -266,6 +264,5 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 }

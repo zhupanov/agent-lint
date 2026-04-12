@@ -205,7 +205,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v5_valid_skills_layout() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -215,14 +215,13 @@ mod tests {
         validate_skills_layout(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v5_missing_skills_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut diag = DiagnosticCollector::new();
@@ -230,14 +229,13 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("skills/ directory is missing"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v5_missing_skill_md() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -249,14 +247,13 @@ mod tests {
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("missing SKILL.md")));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v5_shared_dir_skipped() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/shared").unwrap();
@@ -267,7 +264,6 @@ mod tests {
         validate_skills_layout(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V6: validate_skill_frontmatter (public skills)
@@ -275,7 +271,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v6_valid_frontmatter() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -289,14 +285,13 @@ mod tests {
         validate_skill_frontmatter(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v6_missing_name() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -311,14 +306,13 @@ mod tests {
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("name")));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v6_name_mismatch() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -333,14 +327,13 @@ mod tests {
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("does not match")));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v6_malformed_frontmatter() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -351,7 +344,6 @@ mod tests {
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("malformed")));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V6-adapted: validate_private_skill_frontmatter (Basic mode)
@@ -359,7 +351,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v6a_valid_private_skill() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
@@ -373,14 +365,13 @@ mod tests {
         validate_private_skill_frontmatter(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v6a_missing_description() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
@@ -395,21 +386,19 @@ mod tests {
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("description")));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v6a_no_private_skills_dir_silent() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut diag = DiagnosticCollector::new();
         validate_private_skill_frontmatter(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V15: validate_shared_md_references
@@ -417,7 +406,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v15_valid_shared_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/shared").unwrap();
@@ -433,14 +422,13 @@ mod tests {
         validate_shared_md_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v15_missing_shared_reference() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("skills/my-skill").unwrap();
@@ -455,6 +443,5 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 }

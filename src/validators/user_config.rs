@@ -100,17 +100,20 @@ pub fn validate_userconfig_env_mapping(ctx: &LintContext, diag: &mut DiagnosticC
 /// - Uppercase everything
 fn to_upper_snake_case(key: &str) -> String {
     let mut result = String::new();
-    for (i, c) in key.chars().enumerate() {
+    let mut prev = '_';
+    for c in key.chars() {
         if c == '-' || c == '.' {
             result.push('_');
-        } else if c.is_uppercase() && i > 0 {
-            let prev = key.chars().nth(i - 1).unwrap_or('_');
+            prev = '_';
+        } else if c.is_uppercase() {
             if prev.is_lowercase() {
                 result.push('_');
             }
             result.push(c);
+            prev = c;
         } else {
             result.push(c);
+            prev = c;
         }
     }
     result.to_uppercase()
@@ -260,7 +263,7 @@ mod tests {
     #[serial_test::serial]
     fn test_v20_valid_env_mapping() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -280,14 +283,13 @@ mod tests {
         validate_userconfig_env_mapping(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     #[test]
     #[serial_test::serial]
     fn test_v20_missing_env_mapping() {
         let tmp = tempfile::tempdir().unwrap();
-        let saved = std::env::current_dir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir_all("scripts").unwrap();
@@ -304,7 +306,6 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
 
-        std::env::set_current_dir(saved).unwrap();
     }
 
     // V23: validate_userconfig_sensitive_type
