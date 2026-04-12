@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-04-12
+
+### Added
+
+- Rust implementation of all 25 structural validators from larch's `validate-plugin-structure.sh`
+- Two lint modes: basic (`.claude/` contents) and plugin (full 25-validator suite when `.claude-plugin/` exists)
+- CI jobs for Rust build/test/clippy and musl cross-compilation
+- `cargo-test` and `cargo-clippy` Makefile targets
+
+### Changed
+
+- `action.yml`: replaced free-form `args` input with typed `path` input
+- `/relevant-checks` now runs `cargo test` and `cargo clippy` when Rust files are modified
+
+### Fixed
+
+- V22 docs reference extraction: stop at any `## ` heading (bash original had `[^C]` bug)
+
 ## [0.2.1] - 2026-04-12
 
 ### Added
