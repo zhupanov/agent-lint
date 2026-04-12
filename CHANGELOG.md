@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- V22 docs reference extraction: stop at any `## ` heading (bash original had `[^C]` bug)
+- V22 docs reference extraction: stop at any `##` heading (bash original had `[^C]` bug)
 
 ## [0.2.1] - 2026-04-12
 
