@@ -92,4 +92,62 @@ Should not be here\n\
         assert!(section.contains("docs/foo.md"));
         assert!(!section.contains("Configuration"));
     }
+
+    // V22: validate_docs_references (filesystem)
+    #[test]
+    #[serial_test::serial]
+    fn test_v22_valid_docs_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("docs").unwrap();
+        std::fs::write("docs/architecture.md", "# Arch\n").unwrap();
+        std::fs::write(
+            "CLAUDE.md",
+            "# Claude\n## Canonical sources\n- docs/architecture.md\n## Other\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_docs_references(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v22_missing_docs_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::write(
+            "CLAUDE.md",
+            "# Claude\n## Canonical sources\n- docs/nonexistent.md\n## Other\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_docs_references(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("not found on disk"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v22_no_claude_md_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_docs_references(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
 }

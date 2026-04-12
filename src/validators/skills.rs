@@ -143,8 +143,8 @@ fn validate_skill_frontmatter_in_dir(
 }
 
 /// V15: Validate shared markdown reference integrity.
-/// Every ${CLAUDE_PLUGIN_ROOT}/skills/shared/*.md path referenced from
-/// skills/*/SKILL.md must exist on disk.
+/// Every `${CLAUDE_PLUGIN_ROOT}/skills/shared/*.md` path referenced from
+/// `skills/*/SKILL.md` must exist on disk.
 pub fn validate_shared_md_references(diag: &mut DiagnosticCollector) {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
@@ -192,5 +192,269 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector) {
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::DiagnosticCollector;
+
+    // V5: validate_skills_layout
+    #[test]
+    #[serial_test::serial]
+    fn test_v5_valid_skills_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("skills/my-skill/SKILL.md", "---\nname: my-skill\n---\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skills_layout(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v5_missing_skills_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skills_layout(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("skills/ directory is missing"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v5_missing_skill_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // No SKILL.md file
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skills_layout(&mut diag);
+        // Missing SKILL.md + no skills found = 2 errors
+        assert!(diag.error_count() >= 1);
+        assert!(diag.errors().iter().any(|e| e.contains("missing SKILL.md")));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v5_shared_dir_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("skills/my-skill/SKILL.md", "---\nname: my-skill\n---\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skills_layout(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V6: validate_skill_frontmatter (public skills)
+    #[test]
+    #[serial_test::serial]
+    fn test_v6_valid_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_frontmatter(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v6_missing_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\ndescription: A skill\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_frontmatter(&mut diag);
+        assert!(diag.error_count() >= 1);
+        assert!(diag.errors().iter().any(|e| e.contains("name")));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v6_name_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: wrong-name\ndescription: A skill\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_frontmatter(&mut diag);
+        assert!(diag.error_count() >= 1);
+        assert!(diag.errors().iter().any(|e| e.contains("does not match")));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v6_malformed_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("skills/my-skill/SKILL.md", "no frontmatter\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_frontmatter(&mut diag);
+        assert!(diag.error_count() >= 1);
+        assert!(diag.errors().iter().any(|e| e.contains("malformed")));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V6-adapted: validate_private_skill_frontmatter (Basic mode)
+    #[test]
+    #[serial_test::serial]
+    fn test_v6a_valid_private_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Private skill\n---\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_frontmatter(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v6a_missing_description() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_frontmatter(&mut diag);
+        assert!(diag.error_count() >= 1);
+        assert!(diag.errors().iter().any(|e| e.contains("description")));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v6a_no_private_skills_dir_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_frontmatter(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V15: validate_shared_md_references
+    #[test]
+    #[serial_test::serial]
+    fn test_v15_valid_shared_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("skills/shared/helpers.md", "# Helpers\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: s\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_shared_md_references(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v15_missing_shared_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: s\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/nonexistent.md\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_shared_md_references(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing on disk"));
+
+        std::env::set_current_dir(saved).unwrap();
     }
 }

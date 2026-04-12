@@ -31,7 +31,7 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     hygiene::validate_private_executability(diag);
 }
 
-/// Plugin mode: run all 25 validators plus .claude/ checks.
+/// Plugin mode: run all 25 validators plus `.claude/` checks.
 fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag);
@@ -86,4 +86,142 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     user_config::validate_userconfig_title(ctx, diag);
     // V25: userConfig type field
     user_config::validate_userconfig_type(ctx, diag);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::ManifestState;
+    use serde_json::json;
+
+    // Integration test: Basic mode dispatches correct validators
+    #[test]
+    #[serial_test::serial]
+    fn test_run_all_basic_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Create minimal .claude/ structure for Basic mode
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\n",
+        )
+        .unwrap();
+
+        let ctx = LintContext {
+            repo_root: tmp.path().to_string_lossy().to_string(),
+            mode: LintMode::Basic,
+            plugin_json: ManifestState::Missing,
+            marketplace_json: ManifestState::Missing,
+            hooks_json: ManifestState::Missing,
+            settings_json: ManifestState::Missing,
+        };
+        let mut diag = DiagnosticCollector::new();
+        run_all(&ctx, &mut diag);
+        // Basic mode with valid .claude/ structure should pass
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // Integration test: Plugin mode dispatches all 25 validators
+    #[test]
+    #[serial_test::serial]
+    fn test_run_all_plugin_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Create minimal plugin structure
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: General reviewer\n---\nDerived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
+        std::fs::write("SECURITY.md", "# Security\n").unwrap();
+
+        let plugin_val = json!({
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "description": "Test",
+            "author": {"email": "a@b.com"},
+            "keywords": ["test"]
+        });
+        let marketplace_val = json!({
+            "name": "test-mp",
+            "owner": {"name": "owner", "email": "a@b.com"},
+            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+        });
+        let hooks_val = json!({"hooks": []});
+
+        let ctx = LintContext {
+            repo_root: tmp.path().to_string_lossy().to_string(),
+            mode: LintMode::Plugin,
+            plugin_json: ManifestState::Parsed(plugin_val),
+            marketplace_json: ManifestState::Parsed(marketplace_val),
+            hooks_json: ManifestState::Parsed(hooks_val),
+            settings_json: ManifestState::Missing,
+        };
+        let mut diag = DiagnosticCollector::new();
+        run_all(&ctx, &mut diag);
+
+        // There may be some errors (e.g., V16 template file missing, V21 count mismatch)
+        // but the key test is that run_all completes without panic and dispatches validators.
+        // Verify that plugin-mode-specific validators ran by checking for expected errors.
+        let errors = diag.errors();
+        // V16 should fire because reviewer-templates.md doesn't exist
+        assert!(
+            errors.iter().any(|e| e.contains("reviewer-templates.md")),
+            "Expected V16 error for missing reviewer-templates.md, got: {errors:?}"
+        );
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // Integration test: Basic mode does NOT run plugin-only validators
+    #[test]
+    #[serial_test::serial]
+    fn test_basic_mode_skips_plugin_validators() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // No .claude/ structure at all
+        let ctx = LintContext {
+            repo_root: tmp.path().to_string_lossy().to_string(),
+            mode: LintMode::Basic,
+            plugin_json: ManifestState::Missing,
+            marketplace_json: ManifestState::Missing,
+            hooks_json: ManifestState::Missing,
+            settings_json: ManifestState::Missing,
+        };
+        let mut diag = DiagnosticCollector::new();
+        run_all(&ctx, &mut diag);
+        // Basic mode should not report errors about plugin.json, marketplace.json, etc.
+        let errors = diag.errors();
+        assert!(
+            !errors.iter().any(|e| e.contains("plugin.json")),
+            "Basic mode should not validate plugin.json"
+        );
+        assert!(
+            !errors.iter().any(|e| e.contains("marketplace.json")),
+            "Basic mode should not validate marketplace.json"
+        );
+        assert!(
+            !errors.iter().any(|e| e.contains("agents/")),
+            "Basic mode should not validate agents/"
+        );
+
+        std::env::set_current_dir(saved).unwrap();
+    }
 }

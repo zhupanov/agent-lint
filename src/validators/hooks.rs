@@ -109,3 +109,163 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
 
     validate_hook_command_paths(val, ".claude/settings.json", diag);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::LintMode;
+    use serde_json::json;
+
+    fn make_ctx(hooks: ManifestState, settings: ManifestState) -> LintContext {
+        LintContext {
+            repo_root: String::new(),
+            mode: LintMode::Plugin,
+            plugin_json: ManifestState::Missing,
+            marketplace_json: ManifestState::Missing,
+            hooks_json: hooks,
+            settings_json: settings,
+        }
+    }
+
+    // V3: validate_hooks_json
+    #[test]
+    fn test_v3_valid_hooks_json() {
+        let val = json!({"hooks": [{"command": "echo test"}]});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_v3_missing_hooks_json() {
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("is missing"));
+    }
+
+    #[test]
+    fn test_v3_invalid_hooks_json() {
+        let ctx = make_ctx(
+            ManifestState::Invalid("bad json".to_string()),
+            ManifestState::Missing,
+        );
+        let mut diag = DiagnosticCollector::new();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("bad json"));
+    }
+
+    #[test]
+    fn test_v3_missing_hooks_key() {
+        let val = json!({"other": "stuff"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("hooks"));
+    }
+
+    // V4: validate_settings_hooks
+    #[test]
+    fn test_v4_missing_settings_silent_pass() {
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new();
+        validate_settings_hooks(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_v4_invalid_settings() {
+        let ctx = make_ctx(
+            ManifestState::Missing,
+            ManifestState::Invalid("bad settings".to_string()),
+        );
+        let mut diag = DiagnosticCollector::new();
+        validate_settings_hooks(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("bad settings"));
+    }
+
+    #[test]
+    fn test_v4_valid_settings_no_hooks() {
+        let val = json!({"permissions": {}});
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new();
+        validate_settings_hooks(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // Hook command path validation with fixtures
+    #[test]
+    #[serial_test::serial]
+    fn test_hook_command_path_missing_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let val = json!({
+            "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/nonexistent.sh"}]
+        });
+        let mut diag = DiagnosticCollector::new();
+        validate_hook_command_paths(&val, "test", &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing on disk"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_hook_command_path_existing_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        let script = tmp.path().join("scripts/test.sh");
+        std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let val = json!({
+            "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/test.sh arg1"}]
+        });
+        let mut diag = DiagnosticCollector::new();
+        validate_hook_command_paths(&val, "test", &mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_hook_command_path_not_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        let script = tmp.path().join("scripts/noexec.sh");
+        std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        // Explicitly set non-executable
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let val = json!({
+            "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/noexec.sh"}]
+        });
+        let mut diag = DiagnosticCollector::new();
+        validate_hook_command_paths(&val, "test", &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("not executable"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+}

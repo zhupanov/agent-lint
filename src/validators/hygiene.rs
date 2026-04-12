@@ -534,4 +534,323 @@ mod tests {
         let result = extract_code_fences(input);
         assert!(result.contains("print('hello')"));
     }
+
+    // V8: validate_pwd_hygiene
+    #[test]
+    #[serial_test::serial]
+    fn test_v8_clean_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: s\n---\nUses ${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_pwd_hygiene(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v8_pwd_violation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nRun $PWD/scripts/foo.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_pwd_hygiene(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("$PWD"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v8_hardcoded_path_violation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nPath /Users/somebody/code\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_pwd_hygiene(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("hardcoded path"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V10: validate_executability
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_v10_executable_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        let script = tmp.path().join("scripts/test.sh");
+        std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_executability(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_v10_non_executable_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        let script = tmp.path().join("scripts/test.sh");
+        std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_executability(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("not executable"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V10-adapted: validate_private_executability (Basic mode)
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_v10a_private_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
+        let script = tmp.path().join(".claude/skills/my-skill/scripts/helper.sh");
+        std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_executability(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_v10a_private_non_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
+        let script = tmp.path().join(".claude/skills/my-skill/scripts/helper.sh");
+        std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_executability(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("not executable"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V14: validate_security_md
+    #[test]
+    #[serial_test::serial]
+    fn test_v14_security_md_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::write("SECURITY.md", "# Security Policy\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_security_md(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v14_security_md_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_security_md(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("SECURITY.md"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V9: validate_script_references
+    #[test]
+    #[serial_test::serial]
+    fn test_v9_valid_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("scripts/helper.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/helper.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_script_references(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v9_missing_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/nonexistent.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_script_references(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing on disk"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V9-adapted: validate_private_script_references (Basic mode)
+    #[test]
+    #[serial_test::serial]
+    fn test_v9a_valid_private_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
+        std::fs::write(".claude/skills/my-skill/scripts/run.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nRun $PWD/.claude/skills/my-skill/scripts/run.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_script_references(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v9a_missing_private_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nRun $PWD/.claude/skills/my-skill/scripts/missing.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_script_references(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing on disk"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V11: validate_dead_scripts
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_referenced_script_not_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("scripts/used.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/used.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_dead_scripts(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_unreferenced_dead_script() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/orphan.sh", "#!/bin/bash\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_dead_scripts(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("dead script"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
 }

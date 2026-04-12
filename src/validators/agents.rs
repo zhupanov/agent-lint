@@ -158,3 +158,183 @@ pub fn validate_agent_template_count(diag: &mut DiagnosticCollector) {
         ));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::DiagnosticCollector;
+
+    // V7: validate_agents
+    #[test]
+    #[serial_test::serial]
+    fn test_v7_valid_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: General reviewer\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v7_missing_agents_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("agents/ directory is missing"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v7_empty_agents_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("no .md files"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v7_missing_frontmatter_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\ndescription: General reviewer\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert!(diag.error_count() >= 1);
+        assert!(diag.errors().iter().any(|e| e.contains("name")));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V16: validate_agent_template_alignment
+    #[test]
+    #[serial_test::serial]
+    fn test_v16_valid_alignment() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write("skills/shared/reviewer-templates.md", "# Templates\n").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\nDerived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_template_alignment(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v16_missing_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write("skills/shared/reviewer-templates.md", "# Templates\n").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\nNo marker here\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_template_alignment(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    // V21: validate_agent_template_count
+    #[test]
+    #[serial_test::serial]
+    fn test_v21_matching_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write(
+            "skills/shared/reviewer-templates.md",
+            "## Reviewer 1\nContent\n## Reviewer 2\nContent\n",
+        )
+        .unwrap();
+        std::fs::write("agents/one.md", "---\nname: one\n---\n").unwrap();
+        std::fs::write("agents/two.md", "---\nname: two\n---\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_template_count(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v21_mismatched_count() {
+        let tmp = tempfile::tempdir().unwrap();
+        let saved = std::env::current_dir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write(
+            "skills/shared/reviewer-templates.md",
+            "## Reviewer 1\nContent\n## Reviewer 2\nContent\n",
+        )
+        .unwrap();
+        std::fs::write("agents/one.md", "---\nname: one\n---\n").unwrap();
+        // Only 1 agent but 2 templates
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_template_count(&mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("mismatch"));
+
+        std::env::set_current_dir(saved).unwrap();
+    }
+}
