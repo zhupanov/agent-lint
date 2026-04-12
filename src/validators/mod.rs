@@ -33,6 +33,9 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector) {
 
 /// Plugin mode: run all 25 validators plus .claude/ checks.
 fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    // Private .claude/ validators (also run in basic mode)
+    skills::validate_private_skill_frontmatter(diag);
+
     // V1: plugin.json
     manifest::validate_plugin_json(ctx, diag);
     // V2: marketplace.json

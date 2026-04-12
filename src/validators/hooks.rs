@@ -1,5 +1,6 @@
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
+use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
 
@@ -29,40 +30,45 @@ fn collect_strings(value: &Value, out: &mut Vec<String>) {
 }
 
 /// Validate hook command paths in a parsed JSON value.
-/// Filters for strings containing ${CLAUDE_PLUGIN_ROOT}/ or $PWD/ ending in .sh,
-/// then verifies each resolved path exists on disk and is executable.
+/// Extracts script paths matching ${CLAUDE_PLUGIN_ROOT}/...sh or $PWD/...sh
+/// from all string values, then verifies each resolved path exists and is executable.
 fn validate_hook_command_paths(val: &Value, label: &str, diag: &mut DiagnosticCollector) {
+    let re_plugin = Regex::new(
+        r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh"
+    ).unwrap();
+    let re_pwd = Regex::new(
+        r"\$PWD/[a-zA-Z0-9._/-]+\.sh"
+    ).unwrap();
+
     let strings = extract_all_strings(val);
     for raw in &strings {
-        let is_plugin_root = raw.contains("${CLAUDE_PLUGIN_ROOT}/");
-        let is_pwd = raw.contains("$PWD/");
-        if (!is_plugin_root && !is_pwd) || !raw.ends_with(".sh") {
-            continue;
+        // Extract script paths from the string using regex (handles commands with arguments)
+        for cap in re_plugin.find_iter(raw) {
+            let reference = cap.as_str();
+            let rel = reference.replacen("${CLAUDE_PLUGIN_ROOT}/", "", 1);
+            check_hook_path(&rel, reference, label, diag);
         }
-
-        let rel = if is_plugin_root {
-            raw.replace("${CLAUDE_PLUGIN_ROOT}/", "")
-        } else {
-            raw.replace("$PWD/", "")
-        };
-
-        if rel == *raw {
-            continue; // defensive: no prefix stripped
+        for cap in re_pwd.find_iter(raw) {
+            let reference = cap.as_str();
+            let rel = reference.replacen("$PWD/", "", 1);
+            check_hook_path(&rel, reference, label, diag);
         }
+    }
+}
 
-        let path = Path::new(&rel);
-        if !path.is_file() {
-            diag.fail(&format!("{label}: hook command missing on disk: {raw}"));
-            continue;
-        }
+fn check_hook_path(rel: &str, reference: &str, label: &str, diag: &mut DiagnosticCollector) {
+    let path = Path::new(rel);
+    if !path.is_file() {
+        diag.fail(&format!("{label}: hook command missing on disk: {reference}"));
+        return;
+    }
 
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            if let Ok(meta) = path.metadata() {
-                if meta.permissions().mode() & 0o111 == 0 {
-                    diag.fail(&format!("{label}: hook command not executable: {raw}"));
-                }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = path.metadata() {
+            if meta.permissions().mode() & 0o111 == 0 {
+                diag.fail(&format!("{label}: hook command not executable: {reference}"));
             }
         }
     }

@@ -272,6 +272,12 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
     )
     .unwrap();
 
+    // Legacy placeholder: ${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/...
+    let re_placeholder = Regex::new(
+        r"\$\{CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-\$PWD\}/\.claude/skills/[a-zA-Z0-9._/-]+\.sh",
+    )
+    .unwrap();
+
     for dir in &[
         "skills",
         ".claude/skills",
@@ -301,6 +307,12 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
                 } else {
                     continue;
                 };
+                references.insert(rel);
+            }
+            // Legacy placeholder pattern
+            for cap in re_placeholder.find_iter(&content) {
+                let s = cap.as_str();
+                let rel = s.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
                 references.insert(rel);
             }
         }
