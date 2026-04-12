@@ -21,6 +21,7 @@ The following linters are configured in `.pre-commit-config.yaml`:
 - **Markdown files (`.md`)**: markdownlint (using `.markdownlint.json` config)
 - **JSON files (`.json`)**: jq validation
 - **GitHub Actions workflows (`.yml`, `.yaml`)**: actionlint
+- **Rust files (`.rs`, `Cargo.toml`, `Cargo.lock`)**: cargo fmt (format check), cargo clippy (lint)
 
 If all changed files are deletions (no existing files to lint), the script exits 0 with a message — there are no files to run checks against.
 

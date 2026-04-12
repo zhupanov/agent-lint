@@ -1,12 +1,12 @@
 ---
 name: bump-version
-description: Classify and apply a semantic version bump based on the current branch diff. Updates package.json and commits exactly one version-only commit.
+description: Classify and apply a semantic version bump based on the current branch diff. Updates package.json and Cargo.toml, and commits exactly one version-only commit.
 allowed-tools: Bash, Read
 ---
 
 # Bump Version
 
-Classify and apply a semantic version bump for this PR. Produces exactly ONE commit: a version-only edit of `package.json`.
+Classify and apply a semantic version bump for this PR. Produces exactly ONE commit: a version-only edit of `package.json` and `Cargo.toml`.
 
 ## Classification rules
 
@@ -51,10 +51,11 @@ If you escalate, append a paragraph to the reasoning log file explaining why.
 3. You (main agent) parse the output, read the reasoning log, review the diff, and apply the **escalation-only** caveat review. If you escalate, update `NEW_VERSION` accordingly and append reasoning to the log.
 4. You invoke `apply-bump.sh --new-version <NEW_VERSION>`, which:
    - First verifies the working tree is clean (fails on any staged or unstaged changes)
-   - Backs up `package.json`
-   - Rewrites the `version` field via `jq` (atomic via tmp + mv)
+   - Backs up `package.json` and `Cargo.toml`
+   - Rewrites `package.json` `.version` field via `jq` (atomic via tmp + mv)
+   - Rewrites `Cargo.toml` `[package]` version via `awk` (atomic via tmp + mv)
    - `git add` + `git commit -m "Bump version to <NEW_VERSION>"`
-   - Rolls back from backup on commit failure
+   - Rolls back both files from backup on commit failure
 5. If `BUMP_TYPE=NONE`, skip the apply step and report "already bumped".
 
 ## Usage

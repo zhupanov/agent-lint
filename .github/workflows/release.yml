@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -13,7 +15,63 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  auto-tag:
+    if: github.event_name == 'push' && github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should-release: ${{ steps.tag.outputs.created }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read and validate versions
+        id: version
+        run: |
+          PKG_VERSION=$(jq -r '.version' package.json)
+          CARGO_VERSION=$(awk '/^\[package\]/{found=1} found && /^version/{gsub(/.*= *"/,""); gsub(/".*/,""); print; exit}' Cargo.toml)
+
+          if [ -z "$PKG_VERSION" ] || [ -z "$CARGO_VERSION" ]; then
+            echo "::error::Could not read version from package.json ($PKG_VERSION) or Cargo.toml ($CARGO_VERSION)"
+            exit 1
+          fi
+
+          if ! echo "$PKG_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version in package.json: $PKG_VERSION"
+            exit 1
+          fi
+
+          if [ "$PKG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Version mismatch: package.json=$PKG_VERSION, Cargo.toml=$CARGO_VERSION"
+            exit 1
+          fi
+
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check and create tag
+        id: tag
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if git tag -l "v${VERSION}" | grep -q .; then
+            echo "Tag v${VERSION} already exists, skipping"
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "v${VERSION}"
+            git push origin "v${VERSION}"
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: [auto-tag]
+    if: >-
+      github.ref_type == 'tag' ||
+      needs.auto-tag.outputs.should-release == 'true' ||
+      github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +116,8 @@ jobs:
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
+          elif [ -n "${{ needs.auto-tag.outputs.version }}" ]; then
+            VERSION="${{ needs.auto-tag.outputs.version }}"
           else
             VERSION="dev-$(git rev-parse --short HEAD)"
           fi
@@ -80,9 +140,12 @@ jobs:
           path: ${{ env.ARCHIVE }}
 
   release:
-    needs: build
+    needs: [build, auto-tag]
     runs-on: ubuntu-latest
-    if: github.ref_type == 'tag'
+    if: >-
+      github.ref_type == 'tag' ||
+      needs.auto-tag.outputs.should-release == 'true' ||
+      github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
 
     steps:
@@ -93,7 +156,12 @@ jobs:
 
       - name: Determine version
         id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ needs.auto-tag.outputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Generate checksums
         run: |

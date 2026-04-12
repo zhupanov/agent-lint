@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-04-12
+
+### Added
+
+- Rust linters (cargo fmt, cargo clippy) to CI via pre-commit hooks in `.pre-commit-config.yaml`
+- Rust toolchain setup and Cargo cache in CI workflow (`.github/workflows/ci.yaml`)
+- Release-on-merge CD pipeline: auto-tag job in `release.yml` triggered on push to main
+- Version sync between `package.json` and `Cargo.toml` in `/bump-version` skill
+- `make clippy` and `make fmt` Makefile targets for local Rust linting
+
+### Changed
+
+- `apply-bump.sh` now updates both `package.json` and `Cargo.toml` atomically with rollback support
+- `release.yml` supports push-to-main trigger (auto-tag + build + release) alongside existing tag-push trigger
+- Aligned `Cargo.toml` version to match `package.json` (0.2.0)
+
 ## [0.2.0] - 2026-04-12
 
 ### Added

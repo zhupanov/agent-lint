@@ -12,19 +12,35 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-lint-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            cargo-lint-
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-4.2.0-${{ hashFiles('.pre-commit-config.yaml') }}
           restore-keys: |
             pre-commit-
+
       - name: Install pre-commit
         run: pip install pre-commit==4.2.0
+
       - name: Run all linters
         run: make lint
