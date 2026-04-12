@@ -14,10 +14,7 @@ fn get_user_config<'a>(ctx: &'a LintContext, diag: &mut DiagnosticCollector) -> 
     };
 
     // Check if userConfig exists (distinguish absent from null)
-    let uc = match val.get("userConfig") {
-        Some(v) => v,
-        None => return None,
-    };
+    let uc = val.get("userConfig")?;
 
     match uc {
         serde_json::Value::Object(map) => Some(map),
