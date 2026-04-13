@@ -148,7 +148,7 @@ repository root.
 ```toml
 [lint]
 ignore = ["M001", "G005"]                  # suppress entirely (by code)
-warn   = ["security-md-missing"]           # downgrade to warning (by name)
+warn   = ["plugin-json-invalid"]           # downgrade to warning (by name)
 ```
 
 ### Options
