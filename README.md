@@ -43,7 +43,7 @@ mode automatically based on the presence of `.claude-plugin/`.
 |-------|-------------|---------|
 | `version` | Version of claude-lint (e.g., `1.0.0`) | Latest release |
 | `path` | Path to the repository to lint | `"."` |
-| `github-token` | GitHub token for API requests | `${{ github.token }}` |
+| `github-token` | GitHub token for API requests | `""` (falls back to `github.token` at runtime) |
 
 > **Note:** Windows runners are not supported.
 
@@ -211,6 +211,8 @@ Runs on pull requests to `main`:
   fmt/clippy)
 - **build-and-test** -- `cargo build`, `cargo test`, `cargo clippy`
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
+- **self-lint** -- runs claude-lint against its own repo and validates
+  `--list-scripts` output
 
 ### Release (`.github/workflows/release.yml`)
 

@@ -32,8 +32,8 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | H001 | `hooks-json-missing` | `hooks/hooks.json` is missing | Plugin |
 | H002 | `hooks-json-invalid` | `hooks/hooks.json` is not valid JSON | Plugin |
 | H003 | `hooks-key-missing` | `hooks.json` missing top-level `hooks` key | Plugin |
-| H004 | `hook-command-missing` | Hook command script missing on disk | Plugin |
-| H005 | `hook-not-executable` | Hook command script not executable | Plugin |
+| H004 | `hook-command-missing` | Hook command script missing on disk | Both |
+| H005 | `hook-not-executable` | Hook command script not executable | Both |
 | H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Both |
 
 ## Skills Rules (S)
@@ -47,9 +47,9 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin |
 | S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Both |
 | S005 | `frontmatter-field-missing` | `SKILL.md` missing required field (`name` or `description`) | Both |
-| S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Both |
+| S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Plugin |
 | S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Both |
-| S008 | `shared-md-missing` | Shared markdown reference missing on disk | Both |
+| S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin |
 
 ### Name Validation (S009--S013, S033)
 
@@ -132,7 +132,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
-| G001 | `pwd-in-skill` | `SKILL.md` uses `$PWD/` or hardcoded path instead of `${CLAUDE_PLUGIN_ROOT}/` | Both |
+| G001 | `pwd-in-skill` | `SKILL.md` uses `$PWD/` or hardcoded path instead of `${CLAUDE_PLUGIN_ROOT}/` | Plugin |
 | G002 | `script-ref-missing` | Script reference missing on disk | Both |
 | G003 | `script-not-executable` | Script file not executable | Both |
 | G004 | `dead-script` | Dead script with no structured invocation reference | Plugin |

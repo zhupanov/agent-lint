@@ -6,7 +6,7 @@ branding:
 
 inputs:
   version:
-    description: "Version of claude-lint to use (e.g., '0.2.0'). Defaults to latest release."
+    description: "Version of claude-lint to use (e.g., '1.0.0'). Defaults to latest release."
     required: false
     default: ""
   path:
