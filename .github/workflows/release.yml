@@ -151,6 +151,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -199,3 +201,12 @@ jobs:
               claude-lint-*.tar.gz \
               "claude-lint-v${VERSION}-checksums.txt"
           fi
+
+      - name: Update major version tag
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          MAJOR=$(echo "$VERSION" | cut -d. -f1)
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -fa "v${MAJOR}" -m "Update v${MAJOR} to v${VERSION}"
+          git push origin "v${MAJOR}" --force
