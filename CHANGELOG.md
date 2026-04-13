@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.10] - 2026-04-12
+
+### Added
+
+- 26 new skill content lint rules (S009-S034) based on Anthropic's skill spec and best practices
+- Name validation: length, charset, hyphens, reserved words, XML tags, vague names
+- Description quality: length limits, person check, trigger context, XML tags
+- Body content: line count, empty body, consecutive bash blocks, backslash paths
+- Frontmatter field types: boolean validation, context/effort/shell enums, unreachable skills
+- Cross-field checks: $ARGUMENTS without argument-hint
+- Structural: nested shared-md references, orphaned script files
+- Security: non-HTTPS URLs, hardcoded secret detection
+- New `SkillInfo` struct and `collect_skills()` shared iterator
+- `FieldState` enum and `get_field_state()` for three-state frontmatter extraction
+- `field_exists()` and `extract_body()` frontmatter helpers
+- New `skill_content.rs` validator module with mode-aware dispatch
+
 ## [0.2.9] - 2026-04-12
 
 ### Fixed
