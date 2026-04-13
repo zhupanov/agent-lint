@@ -35,7 +35,6 @@ curl -fsSL "$(curl -fsSL https://api.github.com/repos/zhupanov/claude-lint/relea
   | grep -o 'https://[^"]*aarch64-apple-darwin.tar.gz')" -o /tmp/claude-lint.tar.gz
 tar -xzf /tmp/claude-lint.tar.gz -C /tmp
 sudo mv /tmp/claude-lint /usr/local/bin/claude-lint
-rm -f /tmp/claude-lint.tar.gz
 ```
 
 ### CLI
