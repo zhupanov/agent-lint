@@ -977,6 +977,68 @@ mod tests {
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s011_leading_hyphen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: -my-skill\ndescription: Use when testing hyphen rules\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("starts/ends with hyphen"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s011_trailing_hyphen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill-\ndescription: Use when testing hyphen rules\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("starts/ends with hyphen"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s011_valid_hyphens_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-good-skill\ndescription: Use when testing hyphen rules\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag
+            .errors()
+            .iter()
+            .any(|e| e.contains("starts/ends with hyphen") || e.contains("consecutive hyphens")));
+    }
+
     // ── S012: name-reserved-word ─────────────────────────────────────
 
     #[test]
@@ -994,6 +1056,50 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag);
         assert!(diag.errors().iter().any(|e| e.contains("reserved word")));
+    }
+
+    // ── S013: name-has-xml ──────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s013_name_with_xml_tag() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-<tag>skill\ndescription: A valid skill description here\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("name") && e.contains("XML/HTML tags"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s013_name_without_xml_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nBody content\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("XML/HTML tags") && e.contains("name"))
+        );
     }
 
     // ── S014: desc-too-long ──────────────────────────────────────────
@@ -1014,6 +1120,165 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag);
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 1024")));
+    }
+
+    // ── S015: desc-truncated ─────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s015_desc_truncated_in_plugin_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let long_desc = format!("Use when you need {}", "x".repeat(240));
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: {long_desc}\n---\nBody content\n"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("truncated")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s015_desc_250_chars_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // "Use when the task needs " = 24 chars + 226 x's = exactly 250 chars
+        let desc = format!("Use when the task needs {}", "x".repeat(226));
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: {desc}\n---\nBody content\n"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("truncated")));
+    }
+
+    // ── S016: desc-uses-person ───────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s016_desc_uses_you() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need to analyze code\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("first/second person"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s016_desc_third_person_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when the project needs code analysis and review\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("first/second person"))
+        );
+    }
+
+    // ── S017: desc-no-trigger ────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s017_desc_no_trigger_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill that does things with code\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("trigger")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s017_desc_with_trigger_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when the project needs analysis\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("trigger")));
+    }
+
+    // ── S018: desc-has-xml ───────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s018_desc_with_xml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when <b>important</b> tasks need doing\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("description") && e.contains("XML"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s018_desc_without_xml_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when important tasks need doing well\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("description") && e.contains("XML"))
+        );
     }
 
     // ── S019: body-too-long ──────────────────────────────────────────
@@ -1099,6 +1364,56 @@ mod tests {
         assert!(!diag.errors().iter().any(|e| e.contains("consecutive bash")));
     }
 
+    // ── S022: backslash-path ────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s022_windows_path_in_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need path validation\n---\nUse the file at C:\\Users\\admin\\file.txt\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("backslash")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s022_forward_slash_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need path validation\n---\nUse the file at /Users/admin/file.txt\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("backslash")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s022_regex_escape_not_flagged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need regex validation\n---\nUse regex like \\s and \\n to match patterns\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("backslash")));
+    }
+
     // ── S023: bool-field-invalid ─────────────────────────────────────
 
     #[test]
@@ -1142,6 +1457,130 @@ mod tests {
         );
     }
 
+    // ── S024: context-field-invalid ─────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s024_invalid_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need context testing\ncontext: invalid\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("context") && e.contains("fork"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s024_valid_context_fork() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need context testing\ncontext: fork\n---\nRun the analysis.\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("context") && e.contains("must be"))
+        );
+    }
+
+    // ── S025: effort-field-invalid ───────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s025_invalid_effort() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: extreme\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("effort") && e.contains("low/medium/high/max"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s025_valid_effort() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: high\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("effort")));
+    }
+
+    // ── S026: shell-field-invalid ────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s026_invalid_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need shell testing\nshell: zsh\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("shell") && e.contains("bash/powershell"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s026_valid_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need shell testing\nshell: bash\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("shell") && e.contains("must be"))
+        );
+    }
+
     // ── S027: skill-unreachable ──────────────────────────────────────
 
     #[test]
@@ -1158,6 +1597,22 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag);
         assert!(diag.errors().iter().any(|e| e.contains("unreachable")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s027_reachable_skill_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing reachability\ndisable-model-invocation: true\nuser-invocable: true\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("unreachable")));
     }
 
     // ── S028: args-no-hint ───────────────────────────────────────────
@@ -1232,6 +1687,63 @@ mod tests {
         assert!(!diag.errors().iter().any(|e| e.contains("non-HTTPS")));
     }
 
+    // ── S029: nested-ref-deep ───────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s029_nested_reference_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // Create a shared .md that itself references another shared .md
+        std::fs::write(
+            "skills/shared/level1.md",
+            "# Level 1\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/level2.md for details\n",
+        )
+        .unwrap();
+        std::fs::write("skills/shared/level2.md", "# Level 2\nContent\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing\n---\nRefer to ${CLAUDE_PLUGIN_ROOT}/skills/shared/level1.md\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("itself references"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s029_flat_reference_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/shared/flat.md",
+            "# Flat\nNo nested references here\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing\n---\nRefer to ${CLAUDE_PLUGIN_ROOT}/skills/shared/flat.md\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("itself references"))
+        );
+    }
+
     // ── S030: orphaned-skill-files ───────────────────────────────────
 
     #[test]
@@ -1266,6 +1778,108 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag);
         assert!(!diag.errors().iter().any(|e| e.contains("not referenced")));
+    }
+
+    // ── S032: hardcoded-secret ──────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s032_openai_key_pattern() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need secret detection testing\n---\nSet key to sk-aBcDeFgHiJkLmNoPqRsT1234\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("hardcoded secret")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s032_github_token_pattern() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need secret detection testing\n---\nToken is ghp_abcdefghijklmnopqrstuvwxyz1234567890\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("hardcoded secret")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s032_no_secrets_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need secret detection testing\n---\nUse the $API_KEY environment variable for authentication\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("hardcoded secret")));
+    }
+
+    // ── S033: name-vague ─────────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s033_vague_name_helper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/helper").unwrap();
+        std::fs::write(
+            "skills/helper/SKILL.md",
+            "---\nname: helper\ndescription: Use when you need help with various tasks\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("vague")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s033_specific_name_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/code-review").unwrap();
+        std::fs::write(
+            "skills/code-review/SKILL.md",
+            "---\nname: code-review\ndescription: Use when code changes need thorough review\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("vague")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s033_private_mode_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/helper").unwrap();
+        std::fs::write(
+            ".claude/skills/helper/SKILL.md",
+            "---\nname: helper\ndescription: A valid skill description here\n---\nBody content\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag);
+        // S033 is plugin-only, should not fire in private mode
+        assert!(!diag.errors().iter().any(|e| e.contains("vague")));
     }
 
     // ── S034: desc-too-short ─────────────────────────────────────────
@@ -1349,7 +1963,7 @@ mod tests {
     #[test]
     fn test_new_rules_lookup_by_code_and_name() {
         use crate::rules::LintRule;
-        // Verify all 35 new rules can be looked up by code and name
+        // Verify S009–S043 rules round-trip via code and name lookups
         let new_rules = [
             ("S009", "name-too-long"),
             ("S010", "name-invalid-chars"),
@@ -1421,6 +2035,28 @@ mod tests {
         validate_skill_content(&mut diag);
         assert!(
             diag.errors()
+                .iter()
+                .any(|e| e.contains("compatibility") && e.contains("500"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s035_compat_within_limit_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let compat = "x".repeat(500);
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when testing compat limits\ncompatibility: {compat}\n---\nBody content\n"),
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
                 .iter()
                 .any(|e| e.contains("compatibility") && e.contains("500"))
         );
@@ -1588,6 +2224,47 @@ mod tests {
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s039_metadata_inline_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing metadata validation\nmetadata: true\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("metadata") && e.contains("non-string"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s039_metadata_quoted_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing metadata validation\nmetadata:\n  version: \"1.0\"\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("metadata") && e.contains("non-string"))
+        );
+    }
+
     // ── S040: tools-unknown ──────────────────────────────────────────
 
     #[test]
@@ -1692,6 +2369,27 @@ mod tests {
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s042_dmi_with_desc_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when the skill should be user-only\ndisable-model-invocation: true\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("disable-model-invocation") && e.contains("empty"))
+        );
+    }
+
     // ── S043: frontmatter-backslash ──────────────────────────────────
 
     #[test]
@@ -1709,6 +2407,27 @@ mod tests {
         validate_skill_content(&mut diag);
         assert!(
             diag.errors()
+                .iter()
+                .any(|e| e.contains("backslash") && e.contains("frontmatter"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s043_forward_slash_frontmatter_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing frontmatter paths\nargument-hint: /usr/local/bin/tool\n---\nBody content\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
                 .iter()
                 .any(|e| e.contains("backslash") && e.contains("frontmatter"))
         );

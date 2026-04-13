@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [0.2.12] - 2026-04-12
 
+### Added
+
+- Comprehensive unit tests for all 35 skill content lint rules (S009-S043)
+- 36 new tests covering 12 previously untested rules plus boundary and edge cases
+- S011 leading/trailing hyphen tests, S013 XML assertion tightening
+- S029 nested reference pass/fail tests, S032 secret detection pattern tests
+- S033 vague name with private-mode-exclusion test
+- S039 inline metadata value test, boundary tests for S015/S035
+
 ### Fixed
 
 - bump-version now regenerates Cargo.lock after updating Cargo.toml version, preventing stale lockfile drift
