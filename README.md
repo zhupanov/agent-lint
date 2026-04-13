@@ -90,12 +90,11 @@ GitHub App token with restricted permissions, and the default
 Give this prompt to Claude running in your repository:
 
 > **Add a GitHub Actions CI job called `claude-lint` that runs on pull requests
-> to `main`. Model it on the e2e-test job from
-> <https://github.com/marketplace/actions/claude-lint>. The job should use
-> `ubuntu-latest`, have a 5-minute timeout, check out the repo with
-> `actions/checkout@v4`, and then run `zhupanov/claude-lint@v1` with
-> `path: "."`. Add it to the existing CI workflow if one exists, otherwise
-> create `.github/workflows/ci.yaml` with `permissions: contents: read`.**
+> to `main`. The job should use `ubuntu-latest`, have a 5-minute timeout,
+> check out the repo with `actions/checkout@v4`, and then run
+> `zhupanov/claude-lint@v1` with `path: "."`. Add it to the existing CI
+> workflow if one exists, otherwise create `.github/workflows/ci.yaml` with
+> `permissions: contents: read`.**
 
 The resulting job should look like:
 
