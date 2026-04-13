@@ -1,4 +1,5 @@
 use crate::diagnostic::DiagnosticCollector;
+use crate::rules::LintRule;
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
@@ -44,17 +45,17 @@ pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector) {
         };
 
         if re.is_match(&content) {
-            diag.fail(&format!(
-                "skills/{name}/SKILL.md uses $PWD/ or hardcoded path; use ${{CLAUDE_PLUGIN_ROOT}}/ instead"
-            ));
+            diag.report(
+                LintRule::PwdInSkill,
+                &format!(
+                    "skills/{name}/SKILL.md uses $PWD/ or hardcoded path; use ${{CLAUDE_PLUGIN_ROOT}}/ instead"
+                ),
+            );
         }
     }
 }
 
 /// V9: Script reference integrity.
-/// Every ${CLAUDE_PLUGIN_ROOT}/(scripts|skills|.claude/skills)/...sh
-/// and $PWD/.claude/skills/...sh referenced from any SKILL.md or
-/// skills/shared/*.md must exist on disk.
 pub fn validate_script_references(diag: &mut DiagnosticCollector) {
     let re_pub = Regex::new(
         r"\$\{CLAUDE_PLUGIN_ROOT\}/(scripts|skills|\.claude/skills)/[a-zA-Z0-9._/-]+\.sh",
@@ -68,7 +69,6 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector) {
 
     let mut seen = HashSet::new();
 
-    // Collect references from skills/ and .claude/skills/
     for dir in &["skills", ".claude/skills"] {
         let base = Path::new(dir);
         if !base.is_dir() {
@@ -84,41 +84,47 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector) {
                 Err(_) => continue,
             };
 
-            // Public references
             for cap in re_pub.find_iter(&content) {
                 let reference = cap.as_str().to_string();
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
                     if !Path::new(&rel).is_file() {
-                        diag.fail(&format!(
-                            "script reference missing on disk: {reference} (expected {rel})"
-                        ));
+                        diag.report(
+                            LintRule::ScriptRefMissing,
+                            &format!(
+                                "script reference missing on disk: {reference} (expected {rel})"
+                            ),
+                        );
                     }
                 }
             }
 
-            // Private references
             for cap in re_priv.find_iter(&content) {
                 let reference = cap.as_str().to_string();
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("$PWD/", "");
                     if !Path::new(&rel).is_file() {
-                        diag.fail(&format!(
-                            "script reference missing on disk: {reference} (expected {rel})"
-                        ));
+                        diag.report(
+                            LintRule::ScriptRefMissing,
+                            &format!(
+                                "script reference missing on disk: {reference} (expected {rel})"
+                            ),
+                        );
                     }
                 }
             }
 
-            // Legacy placeholder references
             for cap in re_placeholder.find_iter(&content) {
                 let reference = cap.as_str().to_string();
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
                     if !Path::new(&rel).is_file() {
-                        diag.fail(&format!(
-                            "script reference missing on disk: {reference} (expected {rel})"
-                        ));
+                        diag.report(
+                            LintRule::ScriptRefMissing,
+                            &format!(
+                                "script reference missing on disk: {reference} (expected {rel})"
+                            ),
+                        );
                     }
                 }
             }
@@ -155,9 +161,10 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector) {
             if seen.insert(reference.clone()) {
                 let rel = reference.replace("$PWD/", "");
                 if !Path::new(&rel).is_file() {
-                    diag.fail(&format!(
-                        "script reference missing on disk: {reference} (expected {rel})"
-                    ));
+                    diag.report(
+                        LintRule::ScriptRefMissing,
+                        &format!("script reference missing on disk: {reference} (expected {rel})"),
+                    );
                 }
             }
         }
@@ -167,9 +174,10 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector) {
             if seen.insert(reference.clone()) {
                 let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
                 if !Path::new(&rel).is_file() {
-                    diag.fail(&format!(
-                        "script reference missing on disk: {reference} (expected {rel})"
-                    ));
+                    diag.report(
+                        LintRule::ScriptRefMissing,
+                        &format!("script reference missing on disk: {reference} (expected {rel})"),
+                    );
                 }
             }
         }
@@ -178,8 +186,6 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector) {
 
 /// V10: Executability — every .sh file under scripts/, skills/*/scripts/,
 /// and .claude/skills/*/scripts/ must be chmod +x.
-/// NOTE: The hardcoded scripts/block-submodule-edit.sh check from the bash
-/// script is intentionally NOT ported (it's larch-specific).
 pub fn validate_executability(diag: &mut DiagnosticCollector) {
     check_executability_in_dirs(
         &["scripts", "skills/*/scripts", ".claude/skills/*/scripts"],
@@ -194,7 +200,6 @@ pub fn validate_private_executability(diag: &mut DiagnosticCollector) {
 
 fn check_executability_in_dirs(patterns: &[&str], diag: &mut DiagnosticCollector) {
     for pattern in patterns {
-        // Expand glob-like patterns manually
         if pattern.contains('*') {
             let parts: Vec<&str> = pattern.split('*').collect();
             if parts.len() == 2 {
@@ -243,7 +248,10 @@ fn check_sh_executability(dir: &Path, diag: &mut DiagnosticCollector) {
             use std::os::unix::fs::PermissionsExt;
             if let Ok(meta) = path.metadata() {
                 if meta.permissions().mode() & 0o111 == 0 {
-                    diag.fail(&format!("script not executable: {}", path.display()));
+                    diag.report(
+                        LintRule::ScriptNotExecutable,
+                        &format!("script not executable: {}", path.display()),
+                    );
                     let _ = name; // suppress unused warning
                 }
             }
@@ -251,9 +259,7 @@ fn check_sh_executability(dir: &Path, diag: &mut DiagnosticCollector) {
     }
 }
 
-/// V11: Dead-script detection — every scripts/*.sh must have a STRUCTURED
-/// invocation reference somewhere in the codebase.
-/// Implements all 5 reference patterns (A through E).
+/// V11: Dead-script detection
 pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
     let scripts_dir = Path::new("scripts");
     if !scripts_dir.is_dir() {
@@ -262,13 +268,11 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
 
     let mut references: HashSet<String> = HashSet::new();
 
-    // Pattern A & B: ${CLAUDE_PLUGIN_ROOT}/... and $PWD/... path-shaped references
     let re_ab = Regex::new(
         r"\$(\{CLAUDE_PLUGIN_ROOT\}|PWD)/(scripts|\.claude/skills/[^/]+/scripts)/[a-zA-Z0-9._-]+\.sh",
     )
     .unwrap();
 
-    // Legacy placeholder: ${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/...
     let re_placeholder = Regex::new(
         r"\$\{CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-\$PWD\}/\.claude/skills/[a-zA-Z0-9._/-]+\.sh",
     )
@@ -295,7 +299,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
             };
             for cap in re_ab.find_iter(&content) {
                 let s = cap.as_str();
-                // Strip prefix to get relative path
                 let rel = if s.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
                     s.replace("${CLAUDE_PLUGIN_ROOT}/", "")
                 } else if s.starts_with("$PWD/") {
@@ -305,7 +308,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
                 };
                 references.insert(rel);
             }
-            // Legacy placeholder pattern
             for cap in re_placeholder.find_iter(&content) {
                 let s = cap.as_str();
                 let rel = s.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
@@ -314,7 +316,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
         }
     }
 
-    // Also check .claude/settings.json for Pattern A/B
     if Path::new(".claude/settings.json").is_file() {
         if let Ok(content) = fs::read_to_string(".claude/settings.json") {
             for cap in re_ab.find_iter(&content) {
@@ -330,7 +331,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
             }
         }
     }
-    // Also check hooks/hooks.json
     if Path::new("hooks/hooks.json").is_file() {
         if let Ok(content) = fs::read_to_string("hooks/hooks.json") {
             for cap in re_ab.find_iter(&content) {
@@ -347,7 +347,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
         }
     }
 
-    // Pattern C: $SCRIPT_DIR/<name>.sh inside scripts/
     let re_c = Regex::new(r"\$SCRIPT_DIR/[a-zA-Z0-9._-]+\.sh").unwrap();
     for entry in WalkDir::new(scripts_dir).into_iter().flatten() {
         if !entry.path().is_file() {
@@ -364,12 +363,9 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
         }
     }
 
-    // Pattern D: bare scripts/<name>.sh in workflow run: blocks and JSON command fields.
-    // Uses boundary guard to avoid matching subpath references.
     let re_d = Regex::new(r"(^|[^a-zA-Z0-9._/-])scripts/[a-zA-Z0-9._-]+\.sh").unwrap();
     let re_extract = Regex::new(r"scripts/[a-zA-Z0-9._-]+\.sh").unwrap();
 
-    // Workflow files (strip YAML comments first)
     for dir in &[".github/workflows"] {
         let base = Path::new(dir);
         if !base.is_dir() {
@@ -399,7 +395,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
         }
     }
 
-    // JSON files
     for json_path in &[".claude/settings.json", "hooks/hooks.json"] {
         if !Path::new(json_path).is_file() {
             continue;
@@ -415,7 +410,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
         }
     }
 
-    // Pattern E: bare scripts/<name>.sh in shared markdown code fences ONLY.
     let shared_dir = Path::new("skills/shared");
     if shared_dir.is_dir() {
         for entry in WalkDir::new(shared_dir).into_iter().flatten() {
@@ -440,7 +434,6 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
         }
     }
 
-    // Check each scripts/*.sh against collected references
     if let Ok(entries) = fs::read_dir(scripts_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -453,9 +446,12 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
             };
             let key = format!("scripts/{name}");
             if !references.contains(&key) {
-                diag.fail(&format!(
-                    "dead script (no structured invocation reference found): scripts/{name}"
-                ));
+                diag.report(
+                    LintRule::DeadScript,
+                    &format!(
+                        "dead script (no structured invocation reference found): scripts/{name}"
+                    ),
+                );
             }
         }
     }
@@ -464,15 +460,13 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector) {
 /// V14: SECURITY.md presence
 pub fn validate_security_md(diag: &mut DiagnosticCollector) {
     if !Path::new("SECURITY.md").is_file() {
-        diag.fail("SECURITY.md is missing from repo root");
+        diag.report(
+            LintRule::SecurityMdMissing,
+            "SECURITY.md is missing from repo root",
+        );
     }
 }
 
-/// Strip full-line and trailing # comments from YAML/shell content.
-/// Lines starting with optional whitespace then `#` are dropped;
-/// ` # ...` trailing comments are stripped from the rest.
-/// NOTE: This is intentionally naive and does not respect YAML quoting.
-/// This matches the bash script's behavior exactly.
 fn strip_yaml_comments(content: &str) -> String {
     let re_full = Regex::new(r"^[[:space:]]*#").unwrap();
     let re_trailing = Regex::new(r"[[:space:]]+#.*$").unwrap();
@@ -485,8 +479,6 @@ fn strip_yaml_comments(content: &str) -> String {
         .join("\n")
 }
 
-/// Extract content inside fenced code blocks (``` or ~~~).
-/// Toggles state on each fence line (prefix match, including language tags).
 fn extract_code_fences(content: &str) -> String {
     let mut in_code = false;
     let mut result = Vec::new();
@@ -635,7 +627,6 @@ mod tests {
         assert!(diag.errors()[0].contains("not executable"));
     }
 
-    // V10-adapted: validate_private_executability (Basic mode)
     #[cfg(unix)]
     #[test]
     #[serial_test::serial]
@@ -745,7 +736,6 @@ mod tests {
         assert!(diag.errors()[0].contains("missing on disk"));
     }
 
-    // V9-adapted: validate_private_script_references (Basic mode)
     #[test]
     #[serial_test::serial]
     fn test_v9a_valid_private_reference() {

@@ -1,15 +1,10 @@
 use crate::diagnostic::DiagnosticCollector;
+use crate::rules::LintRule;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
 
 /// V22: Docs file references from CLAUDE.md.
-/// Every docs/*.md path referenced in the "Canonical sources" section of
-/// CLAUDE.md must exist on disk.
-///
-/// NOTE: The bash script used `awk '/^## Canonical sources/,/^## [^C]/'`
-/// which is buggy — it wouldn't stop at sections starting with 'C' (like
-/// "## Contributing"). We fix this by stopping at any `## ` heading.
 pub fn validate_docs_references(diag: &mut DiagnosticCollector) {
     let claude_md = Path::new("CLAUDE.md");
     if !claude_md.is_file() {
@@ -21,8 +16,6 @@ pub fn validate_docs_references(diag: &mut DiagnosticCollector) {
         Err(_) => return,
     };
 
-    // Extract the "Canonical sources" section: start at "## Canonical sources",
-    // stop at the next "## " heading (any heading, not just non-C).
     let section = extract_canonical_sources_section(&content);
 
     let re = Regex::new(r"docs/[a-zA-Z0-9._-]+\.md").unwrap();
@@ -31,9 +24,12 @@ pub fn validate_docs_references(diag: &mut DiagnosticCollector) {
     for cap in re.find_iter(&section) {
         let doc_path = cap.as_str();
         if seen.insert(doc_path.to_string()) && !Path::new(doc_path).is_file() {
-            diag.fail(&format!(
-                "docs reference in CLAUDE.md canonical sources not found on disk: {doc_path}"
-            ));
+            diag.report(
+                LintRule::DocsRefMissing,
+                &format!(
+                    "docs reference in CLAUDE.md canonical sources not found on disk: {doc_path}"
+                ),
+            );
         }
     }
 }
@@ -49,7 +45,6 @@ fn extract_canonical_sources_section(content: &str) -> String {
             continue;
         }
         if in_section {
-            // Stop at any ## heading
             if line.starts_with("## ") {
                 break;
             }
@@ -81,7 +76,6 @@ This should not be included\n\
 
     #[test]
     fn test_extract_section_stops_at_c_heading() {
-        // The bash version had a bug here — it would NOT stop at ## Configuration
         let content = "\
 ## Canonical sources\n\
 - docs/foo.md\n\
@@ -93,7 +87,6 @@ Should not be here\n\
         assert!(!section.contains("Configuration"));
     }
 
-    // V22: validate_docs_references (filesystem)
     #[test]
     #[serial_test::serial]
     fn test_v22_valid_docs_reference() {

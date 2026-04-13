@@ -1,10 +1,13 @@
+mod config;
 mod context;
 mod diagnostic;
 mod frontmatter;
+mod rules;
 #[cfg(test)]
 mod test_helpers;
 mod validators;
 
+use config::LintConfig;
 use context::{LintContext, LintMode};
 use diagnostic::DiagnosticCollector;
 
@@ -42,21 +45,47 @@ fn main() {
         std::process::exit(0);
     };
 
+    // Load configuration AFTER mode detection (so "Nothing to lint" repos
+    // are not affected by malformed config files).
+    let lint_config = match LintConfig::load(&repo_root) {
+        Ok(cfg) => cfg,
+        Err(msg) => {
+            eprintln!("ERROR: {msg}");
+            std::process::exit(2);
+        }
+    };
+
     let ctx = LintContext::new(repo_root.clone(), mode);
-    let mut diag = DiagnosticCollector::new();
+    let mut diag = DiagnosticCollector::with_config(lint_config);
 
     validators::run_all(&ctx, &mut diag);
 
-    let count = diag.error_count();
-    if count == 0 {
+    let errors = diag.error_count();
+    let warnings = diag.warning_count();
+    let suppressed = diag.suppressed_count();
+
+    if errors == 0 && warnings == 0 {
         if matches!(ctx.mode, LintMode::Plugin) {
             println!("Plugin structure OK");
         } else {
             println!("Claude config OK");
         }
+        if suppressed > 0 {
+            eprintln!("({suppressed} suppressed)");
+        }
+        std::process::exit(0);
+    } else if errors == 0 {
+        // Only warnings — exit 0
+        eprintln!("Lint: {warnings} warning(s)");
+        if suppressed > 0 {
+            eprintln!("({suppressed} suppressed)");
+        }
         std::process::exit(0);
     } else {
-        eprintln!("Lint: {count} error(s)");
+        eprintln!("Lint: {errors} error(s), {warnings} warning(s)");
+        if suppressed > 0 {
+            eprintln!("({suppressed} suppressed)");
+        }
         std::process::exit(1);
     }
 }

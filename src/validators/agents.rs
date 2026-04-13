@@ -1,5 +1,6 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
+use crate::rules::LintRule;
 use std::fs;
 use std::path::Path;
 
@@ -7,7 +8,7 @@ use std::path::Path;
 pub fn validate_agents(diag: &mut DiagnosticCollector) {
     let agents_dir = Path::new("agents");
     if !agents_dir.is_dir() {
-        diag.fail("agents/ directory is missing");
+        diag.report(LintRule::AgentsDirMissing, "agents/ directory is missing");
         return;
     }
 
@@ -37,9 +38,12 @@ pub fn validate_agents(diag: &mut DiagnosticCollector) {
         let fm_lines = match frontmatter::extract_frontmatter(&content) {
             Some(lines) => lines,
             None => {
-                diag.fail(&format!(
-                    "{agent_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
-                ));
+                diag.report(
+                    LintRule::AgentFrontmatterMalformed,
+                    &format!(
+                        "{agent_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
+                    ),
+                );
                 continue;
             }
         };
@@ -48,19 +52,21 @@ pub fn validate_agents(diag: &mut DiagnosticCollector) {
         let fm_desc = frontmatter::get_field(&fm_lines, "description");
 
         if fm_name.is_none() {
-            diag.fail(&format!(
-                "{agent_path}: missing required frontmatter field 'name'"
-            ));
+            diag.report(
+                LintRule::AgentFieldMissing,
+                &format!("{agent_path}: missing required frontmatter field 'name'"),
+            );
         }
         if fm_desc.is_none() {
-            diag.fail(&format!(
-                "{agent_path}: missing required frontmatter field 'description'"
-            ));
+            diag.report(
+                LintRule::AgentFieldMissing,
+                &format!("{agent_path}: missing required frontmatter field 'description'"),
+            );
         }
     }
 
     if found == 0 {
-        diag.fail("agents/ has no .md files");
+        diag.report(LintRule::NoAgentFiles, "agents/ has no .md files");
     }
 }
 
@@ -75,10 +81,10 @@ pub fn validate_agent_template_alignment(diag: &mut DiagnosticCollector) {
         return;
     }
     if !templates.is_file() {
-        diag.fail(&format!(
-            "reviewer-templates.md missing: {}",
-            templates.display()
-        ));
+        diag.report(
+            LintRule::TemplateFileMissing,
+            &format!("reviewer-templates.md missing: {}", templates.display()),
+        );
         return;
     }
 
@@ -108,9 +114,12 @@ pub fn validate_agent_template_alignment(diag: &mut DiagnosticCollector) {
         });
 
         if !has_marker {
-            diag.fail(&format!(
-                "agents/{name} missing 'Derived from skills/shared/reviewer-templates.md' marker"
-            ));
+            diag.report(
+                LintRule::TemplateMarkerMissing,
+                &format!(
+                    "agents/{name} missing 'Derived from skills/shared/reviewer-templates.md' marker"
+                ),
+            );
         }
     }
 }
@@ -152,10 +161,13 @@ pub fn validate_agent_template_count(diag: &mut DiagnosticCollector) {
     }
 
     if template_count != agent_count {
-        diag.fail(&format!(
-            "agent-template count mismatch: {agent_count} agent file(s) but {template_count} '## Reviewer' section(s) in {}",
-            templates.display()
-        ));
+        diag.report(
+            LintRule::TemplateCountMismatch,
+            &format!(
+                "agent-template count mismatch: {agent_count} agent file(s) but {template_count} '## Reviewer' section(s) in {}",
+                templates.display()
+            ),
+        );
     }
 }
 

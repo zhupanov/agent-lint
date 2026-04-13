@@ -1,5 +1,6 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
+use crate::rules::LintRule;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
@@ -8,7 +9,7 @@ use std::path::Path;
 pub fn validate_skills_layout(diag: &mut DiagnosticCollector) {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
-        diag.fail("skills/ directory is missing");
+        diag.report(LintRule::SkillsDirMissing, "skills/ directory is missing");
         return;
     }
 
@@ -32,14 +33,20 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector) {
         }
         let skill_md = path.join("SKILL.md");
         if !skill_md.is_file() {
-            diag.fail(&format!("skills/{name}/ missing SKILL.md"));
+            diag.report(
+                LintRule::SkillMdMissing,
+                &format!("skills/{name}/ missing SKILL.md"),
+            );
             continue;
         }
         skill_count += 1;
     }
 
     if skill_count == 0 {
-        diag.fail("no plugin-exported skills found under skills/");
+        diag.report(
+            LintRule::NoExportedSkills,
+            "no plugin-exported skills found under skills/",
+        );
     }
 }
 
@@ -95,9 +102,12 @@ fn validate_skill_frontmatter_in_dir(
         let fm_lines = match frontmatter::extract_frontmatter(&content) {
             Some(lines) => lines,
             None => {
-                diag.fail(&format!(
-                    "{skill_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
-                ));
+                diag.report(
+                    LintRule::FrontmatterMalformed,
+                    &format!(
+                        "{skill_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
+                    ),
+                );
                 continue;
             }
         };
@@ -106,22 +116,27 @@ fn validate_skill_frontmatter_in_dir(
         let desc = frontmatter::get_field(&fm_lines, "description");
 
         if name.is_none() {
-            diag.fail(&format!(
-                "{skill_path}: missing required frontmatter field 'name'"
-            ));
+            diag.report(
+                LintRule::FrontmatterFieldMissing,
+                &format!("{skill_path}: missing required frontmatter field 'name'"),
+            );
         }
         if desc.is_none() {
-            diag.fail(&format!(
-                "{skill_path}: missing required frontmatter field 'description'"
-            ));
+            diag.report(
+                LintRule::FrontmatterFieldMissing,
+                &format!("{skill_path}: missing required frontmatter field 'description'"),
+            );
         }
 
         if check_name_match {
             if let Some(ref n) = name {
                 if n != &dir_name {
-                    diag.fail(&format!(
-                        "{skill_path}: frontmatter name '{n}' does not match directory '{dir_name}'"
-                    ));
+                    diag.report(
+                        LintRule::FrontmatterNameMismatch,
+                        &format!(
+                            "{skill_path}: frontmatter name '{n}' does not match directory '{dir_name}'"
+                        ),
+                    );
                 }
             }
         }
@@ -133,9 +148,10 @@ fn validate_skill_frontmatter_in_dir(
             if field_present {
                 let val = frontmatter::get_field(&fm_lines, field);
                 if val.is_none() {
-                    diag.fail(&format!(
-                        "{skill_path}: optional field '{field}' is present but empty"
-                    ));
+                    diag.report(
+                        LintRule::FrontmatterFieldEmpty,
+                        &format!("{skill_path}: optional field '{field}' is present but empty"),
+                    );
                 }
             }
         }
@@ -187,9 +203,12 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector) {
             let reference = cap.as_str();
             let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
             if !Path::new(&rel).is_file() {
-                diag.fail(&format!(
-                    "shared markdown reference missing on disk: {reference} (in {skill_path}, expected {rel})"
-                ));
+                diag.report(
+                    LintRule::SharedMdMissing,
+                    &format!(
+                        "shared markdown reference missing on disk: {reference} (in {skill_path}, expected {rel})"
+                    ),
+                );
             }
         }
     }

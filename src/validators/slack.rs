@@ -1,11 +1,9 @@
 use crate::diagnostic::DiagnosticCollector;
+use crate::rules::LintRule;
 use std::fs;
 use std::path::Path;
 
 /// V19: Slack fallback consistency (larch-specific convention check).
-/// For each scripts/*.sh that does a bash fallback read of LARCH_SLACK_BOT_TOKEN,
-/// LARCH_SLACK_CHANNEL_ID, or LARCH_SLACK_USER_ID, verify it also references
-/// the corresponding CLAUDE_PLUGIN_OPTION_* variable.
 pub fn validate_slack_fallback_consistency(diag: &mut DiagnosticCollector) {
     let scripts_dir = Path::new("scripts");
     if !scripts_dir.is_dir() {
@@ -45,12 +43,14 @@ pub fn validate_slack_fallback_consistency(diag: &mut DiagnosticCollector) {
         };
 
         for (larch_var, plugin_var) in &vars {
-            // Check for ${VAR:- pattern (bash fallback read)
             let fallback_pattern = format!("${{{larch_var}:-");
             if content.contains(&fallback_pattern) && !content.contains(plugin_var) {
-                diag.fail(&format!(
-                    "scripts/{name} reads ${{{larch_var}:-...}} but does not reference {plugin_var}"
-                ));
+                diag.report(
+                    LintRule::SlackFallbackMismatch,
+                    &format!(
+                        "scripts/{name} reads ${{{larch_var}:-...}} but does not reference {plugin_var}"
+                    ),
+                );
             }
         }
     }
@@ -61,7 +61,6 @@ mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCollector;
 
-    // V19: validate_slack_fallback_consistency
     #[test]
     #[serial_test::serial]
     fn test_v19_no_scripts_dir_silent() {

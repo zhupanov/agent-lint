@@ -1,0 +1,370 @@
+/// Central rule registry for claude-lint.
+///
+/// Every lint diagnostic has a unique code (e.g., "M001") and human-readable
+/// name (e.g., "plugin-json-missing"). Rules are grouped by category prefix.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LintRule {
+    // ── Manifest (M) ──────────────────────────────────────────────
+    /// M001: .claude-plugin/plugin.json is missing
+    PluginJsonMissing,
+    /// M002: .claude-plugin/plugin.json is not valid JSON
+    PluginJsonInvalid,
+    /// M003: plugin.json missing required field (name or version)
+    PluginFieldMissing,
+    /// M004: plugin.json version is not strict semver
+    PluginVersionFormat,
+    /// M005: .claude-plugin/marketplace.json is missing
+    MarketplaceJsonMissing,
+    /// M006: .claude-plugin/marketplace.json is not valid JSON
+    MarketplaceJsonInvalid,
+    /// M007: marketplace.json missing required field (name or owner.name)
+    MarketplaceFieldMissing,
+    /// M008: marketplace.json plugins array is empty
+    MarketplacePluginsEmpty,
+    /// M009: marketplace.json plugin entry has invalid name or source
+    MarketplacePluginInvalid,
+    /// M010: marketplace.json enriched metadata missing (owner.email or plugin category)
+    MarketplaceEnrichedMissing,
+    /// M011: plugin.json enriched metadata missing (description, author.email, or keywords)
+    PluginEnrichedMissing,
+
+    // ── Hooks (H) ─────────────────────────────────────────────────
+    /// H001: hooks/hooks.json is missing
+    HooksJsonMissing,
+    /// H002: hooks/hooks.json is not valid JSON
+    HooksJsonInvalid,
+    /// H003: hooks.json missing top-level 'hooks' key
+    HooksKeyMissing,
+    /// H004: hook command script missing on disk
+    HookCommandMissing,
+    /// H005: hook command script not executable
+    HookNotExecutable,
+    /// H006: .claude/settings.json is not valid JSON
+    SettingsJsonInvalid,
+
+    // ── Skills (S) ────────────────────────────────────────────────
+    /// S001: skills/ directory is missing
+    SkillsDirMissing,
+    /// S002: skills/{name}/ missing SKILL.md
+    SkillMdMissing,
+    /// S003: no plugin-exported skills found under skills/
+    NoExportedSkills,
+    /// S004: SKILL.md has malformed frontmatter
+    FrontmatterMalformed,
+    /// S005: SKILL.md missing required frontmatter field (name or description)
+    FrontmatterFieldMissing,
+    /// S006: SKILL.md frontmatter name does not match directory name
+    FrontmatterNameMismatch,
+    /// S007: SKILL.md optional frontmatter field is present but empty
+    FrontmatterFieldEmpty,
+    /// S008: shared markdown reference missing on disk
+    SharedMdMissing,
+
+    // ── Agents (A) ────────────────────────────────────────────────
+    /// A001: agents/ directory is missing
+    AgentsDirMissing,
+    /// A002: agent .md has malformed frontmatter
+    AgentFrontmatterMalformed,
+    /// A003: agent .md missing required frontmatter field (name or description)
+    AgentFieldMissing,
+    /// A004: agents/ has no .md files
+    NoAgentFiles,
+    /// A005: reviewer-templates.md is missing
+    TemplateFileMissing,
+    /// A006: agent .md missing 'Derived from' marker
+    TemplateMarkerMissing,
+    /// A007: agent-template count mismatch
+    TemplateCountMismatch,
+
+    // ── Hygiene / Scripts (G) ─────────────────────────────────────
+    /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
+    PwdInSkill,
+    /// G002: script reference missing on disk
+    ScriptRefMissing,
+    /// G003: script file not executable
+    ScriptNotExecutable,
+    /// G004: dead script with no structured invocation reference
+    DeadScript,
+    /// G005: SECURITY.md is missing from repo root
+    SecurityMdMissing,
+
+    // ── Email (E) ─────────────────────────────────────────────────
+    /// E001: email address is not a valid format
+    InvalidEmailFormat,
+
+    // ── User Config (U) ───────────────────────────────────────────
+    /// U001: userConfig must be an object
+    UserconfigNotObject,
+    /// U002: userConfig entry missing or invalid description
+    UserconfigDescMissing,
+    /// U003: userConfig key has no corresponding env var reference in scripts/
+    UserconfigEnvMissing,
+    /// U004: userConfig sensitive field must be a boolean
+    UserconfigSensitiveType,
+    /// U005: userConfig entry missing or invalid title
+    UserconfigTitleMissing,
+    /// U006: userConfig entry missing or invalid type
+    UserconfigTypeMissing,
+
+    // ── Slack (K) ─────────────────────────────────────────────────
+    /// K001: Slack fallback variable without corresponding CLAUDE_PLUGIN_OPTION_ reference
+    SlackFallbackMismatch,
+
+    // ── Docs (D) ──────────────────────────────────────────────────
+    /// D001: docs reference in CLAUDE.md canonical sources not found on disk
+    DocsRefMissing,
+}
+
+impl LintRule {
+    /// The short code, e.g. `"M001"`.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::PluginJsonMissing => "M001",
+            Self::PluginJsonInvalid => "M002",
+            Self::PluginFieldMissing => "M003",
+            Self::PluginVersionFormat => "M004",
+            Self::MarketplaceJsonMissing => "M005",
+            Self::MarketplaceJsonInvalid => "M006",
+            Self::MarketplaceFieldMissing => "M007",
+            Self::MarketplacePluginsEmpty => "M008",
+            Self::MarketplacePluginInvalid => "M009",
+            Self::MarketplaceEnrichedMissing => "M010",
+            Self::PluginEnrichedMissing => "M011",
+
+            Self::HooksJsonMissing => "H001",
+            Self::HooksJsonInvalid => "H002",
+            Self::HooksKeyMissing => "H003",
+            Self::HookCommandMissing => "H004",
+            Self::HookNotExecutable => "H005",
+            Self::SettingsJsonInvalid => "H006",
+
+            Self::SkillsDirMissing => "S001",
+            Self::SkillMdMissing => "S002",
+            Self::NoExportedSkills => "S003",
+            Self::FrontmatterMalformed => "S004",
+            Self::FrontmatterFieldMissing => "S005",
+            Self::FrontmatterNameMismatch => "S006",
+            Self::FrontmatterFieldEmpty => "S007",
+            Self::SharedMdMissing => "S008",
+
+            Self::AgentsDirMissing => "A001",
+            Self::AgentFrontmatterMalformed => "A002",
+            Self::AgentFieldMissing => "A003",
+            Self::NoAgentFiles => "A004",
+            Self::TemplateFileMissing => "A005",
+            Self::TemplateMarkerMissing => "A006",
+            Self::TemplateCountMismatch => "A007",
+
+            Self::PwdInSkill => "G001",
+            Self::ScriptRefMissing => "G002",
+            Self::ScriptNotExecutable => "G003",
+            Self::DeadScript => "G004",
+            Self::SecurityMdMissing => "G005",
+
+            Self::InvalidEmailFormat => "E001",
+
+            Self::UserconfigNotObject => "U001",
+            Self::UserconfigDescMissing => "U002",
+            Self::UserconfigEnvMissing => "U003",
+            Self::UserconfigSensitiveType => "U004",
+            Self::UserconfigTitleMissing => "U005",
+            Self::UserconfigTypeMissing => "U006",
+
+            Self::SlackFallbackMismatch => "K001",
+
+            Self::DocsRefMissing => "D001",
+        }
+    }
+
+    /// The human-readable name, e.g. `"plugin-json-missing"`.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PluginJsonMissing => "plugin-json-missing",
+            Self::PluginJsonInvalid => "plugin-json-invalid",
+            Self::PluginFieldMissing => "plugin-field-missing",
+            Self::PluginVersionFormat => "plugin-version-format",
+            Self::MarketplaceJsonMissing => "marketplace-json-missing",
+            Self::MarketplaceJsonInvalid => "marketplace-json-invalid",
+            Self::MarketplaceFieldMissing => "marketplace-field-missing",
+            Self::MarketplacePluginsEmpty => "marketplace-plugins-empty",
+            Self::MarketplacePluginInvalid => "marketplace-plugin-invalid",
+            Self::MarketplaceEnrichedMissing => "marketplace-enriched-missing",
+            Self::PluginEnrichedMissing => "plugin-enriched-missing",
+
+            Self::HooksJsonMissing => "hooks-json-missing",
+            Self::HooksJsonInvalid => "hooks-json-invalid",
+            Self::HooksKeyMissing => "hooks-key-missing",
+            Self::HookCommandMissing => "hook-command-missing",
+            Self::HookNotExecutable => "hook-not-executable",
+            Self::SettingsJsonInvalid => "settings-json-invalid",
+
+            Self::SkillsDirMissing => "skills-dir-missing",
+            Self::SkillMdMissing => "skill-md-missing",
+            Self::NoExportedSkills => "no-exported-skills",
+            Self::FrontmatterMalformed => "frontmatter-malformed",
+            Self::FrontmatterFieldMissing => "frontmatter-field-missing",
+            Self::FrontmatterNameMismatch => "frontmatter-name-mismatch",
+            Self::FrontmatterFieldEmpty => "frontmatter-field-empty",
+            Self::SharedMdMissing => "shared-md-missing",
+
+            Self::AgentsDirMissing => "agents-dir-missing",
+            Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
+            Self::AgentFieldMissing => "agent-field-missing",
+            Self::NoAgentFiles => "no-agent-files",
+            Self::TemplateFileMissing => "template-file-missing",
+            Self::TemplateMarkerMissing => "template-marker-missing",
+            Self::TemplateCountMismatch => "template-count-mismatch",
+
+            Self::PwdInSkill => "pwd-in-skill",
+            Self::ScriptRefMissing => "script-ref-missing",
+            Self::ScriptNotExecutable => "script-not-executable",
+            Self::DeadScript => "dead-script",
+            Self::SecurityMdMissing => "security-md-missing",
+
+            Self::InvalidEmailFormat => "invalid-email-format",
+
+            Self::UserconfigNotObject => "userconfig-not-object",
+            Self::UserconfigDescMissing => "userconfig-desc-missing",
+            Self::UserconfigEnvMissing => "userconfig-env-missing",
+            Self::UserconfigSensitiveType => "userconfig-sensitive-type",
+            Self::UserconfigTitleMissing => "userconfig-title-missing",
+            Self::UserconfigTypeMissing => "userconfig-type-missing",
+
+            Self::SlackFallbackMismatch => "slack-fallback-mismatch",
+
+            Self::DocsRefMissing => "docs-ref-missing",
+        }
+    }
+
+    /// Look up a rule by its code (e.g. `"M001"`) or human-readable name
+    /// (e.g. `"plugin-json-missing"`).
+    pub fn from_code_or_name(s: &str) -> Option<Self> {
+        ALL_RULES
+            .iter()
+            .find(|r| r.code() == s || r.name() == s)
+            .copied()
+    }
+}
+
+/// Every variant of [`LintRule`], for iteration and exhaustiveness checks.
+pub const ALL_RULES: &[LintRule] = &[
+    LintRule::PluginJsonMissing,
+    LintRule::PluginJsonInvalid,
+    LintRule::PluginFieldMissing,
+    LintRule::PluginVersionFormat,
+    LintRule::MarketplaceJsonMissing,
+    LintRule::MarketplaceJsonInvalid,
+    LintRule::MarketplaceFieldMissing,
+    LintRule::MarketplacePluginsEmpty,
+    LintRule::MarketplacePluginInvalid,
+    LintRule::MarketplaceEnrichedMissing,
+    LintRule::PluginEnrichedMissing,
+    LintRule::HooksJsonMissing,
+    LintRule::HooksJsonInvalid,
+    LintRule::HooksKeyMissing,
+    LintRule::HookCommandMissing,
+    LintRule::HookNotExecutable,
+    LintRule::SettingsJsonInvalid,
+    LintRule::SkillsDirMissing,
+    LintRule::SkillMdMissing,
+    LintRule::NoExportedSkills,
+    LintRule::FrontmatterMalformed,
+    LintRule::FrontmatterFieldMissing,
+    LintRule::FrontmatterNameMismatch,
+    LintRule::FrontmatterFieldEmpty,
+    LintRule::SharedMdMissing,
+    LintRule::AgentsDirMissing,
+    LintRule::AgentFrontmatterMalformed,
+    LintRule::AgentFieldMissing,
+    LintRule::NoAgentFiles,
+    LintRule::TemplateFileMissing,
+    LintRule::TemplateMarkerMissing,
+    LintRule::TemplateCountMismatch,
+    LintRule::PwdInSkill,
+    LintRule::ScriptRefMissing,
+    LintRule::ScriptNotExecutable,
+    LintRule::DeadScript,
+    LintRule::SecurityMdMissing,
+    LintRule::InvalidEmailFormat,
+    LintRule::UserconfigNotObject,
+    LintRule::UserconfigDescMissing,
+    LintRule::UserconfigEnvMissing,
+    LintRule::UserconfigSensitiveType,
+    LintRule::UserconfigTitleMissing,
+    LintRule::UserconfigTypeMissing,
+    LintRule::SlackFallbackMismatch,
+    LintRule::DocsRefMissing,
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn all_rules_count_matches_enum() {
+        // If a variant is added to LintRule but not to ALL_RULES, code()/name()
+        // will still compile (match is exhaustive), but this test will catch it.
+        assert_eq!(
+            ALL_RULES.len(),
+            46,
+            "ALL_RULES length must match enum variant count"
+        );
+    }
+
+    #[test]
+    fn no_duplicate_codes() {
+        let mut seen = HashSet::new();
+        for rule in ALL_RULES {
+            assert!(seen.insert(rule.code()), "Duplicate code: {}", rule.code());
+        }
+    }
+
+    #[test]
+    fn no_duplicate_names() {
+        let mut seen = HashSet::new();
+        for rule in ALL_RULES {
+            assert!(seen.insert(rule.name()), "Duplicate name: {}", rule.name());
+        }
+    }
+
+    #[test]
+    fn names_are_max_three_words() {
+        for rule in ALL_RULES {
+            let word_count = rule.name().split('-').count();
+            assert!(
+                word_count <= 3,
+                "Rule {} name '{}' has {} words (max 3)",
+                rule.code(),
+                rule.name(),
+                word_count
+            );
+        }
+    }
+
+    #[test]
+    fn from_code_or_name_lookup() {
+        // By code
+        assert_eq!(
+            LintRule::from_code_or_name("M001"),
+            Some(LintRule::PluginJsonMissing)
+        );
+        // By name
+        assert_eq!(
+            LintRule::from_code_or_name("plugin-json-missing"),
+            Some(LintRule::PluginJsonMissing)
+        );
+        // Unknown
+        assert_eq!(LintRule::from_code_or_name("X999"), None);
+        assert_eq!(LintRule::from_code_or_name("nonexistent"), None);
+    }
+
+    #[test]
+    fn every_rule_round_trips() {
+        for rule in ALL_RULES {
+            assert_eq!(LintRule::from_code_or_name(rule.code()), Some(*rule));
+            assert_eq!(LintRule::from_code_or_name(rule.name()), Some(*rule));
+        }
+    }
+}
