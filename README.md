@@ -147,8 +147,8 @@ repository root.
 
 ```toml
 [lint]
-ignore = ["M001", "plugin-json-missing"]   # suppress entirely
-warn   = ["G005", "security-md-missing"]   # downgrade to warning
+ignore = ["M001", "G005"]                  # suppress entirely (by code)
+warn   = ["security-md-missing"]           # downgrade to warning (by name)
 ```
 
 ### Options
