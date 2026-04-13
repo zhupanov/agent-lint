@@ -1,0 +1,4 @@
+# Require admin (owner) approval for all changes.
+# Used by the "Code review" ruleset to ensure non-admin approvals
+# don't count toward merge eligibility.
+* @zhupanov
