@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-/// Validate skill content for public skills (skills/). Runs all 35 rules.
+/// Validate skill content for public skills (skills/). Runs all S009–S043 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector) {
     let skills = collect_skills("skills");
     for info in &skills {
@@ -20,7 +20,7 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector) {
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033).
+/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector) {
     let skills = collect_skills(".claude/skills");
     for info in &skills {
@@ -506,6 +506,23 @@ fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) 
     let mut in_metadata = false;
     for line in &info.fm_lines {
         if line == "metadata:" || line.starts_with("metadata:") {
+            // Check for inline scalar value on the metadata: line itself
+            let inline_val = line["metadata:".len()..].trim();
+            if !inline_val.is_empty()
+                && !inline_val.starts_with('"')
+                && !inline_val.starts_with('\'')
+                && (inline_val == "true"
+                    || inline_val == "false"
+                    || inline_val.parse::<f64>().is_ok())
+            {
+                diag.report(
+                    LintRule::MetadataNotString,
+                    &format!(
+                        "{}: metadata has non-string inline value '{}' (wrap in quotes)",
+                        info.path, inline_val
+                    ),
+                );
+            }
             in_metadata = true;
             continue;
         }
@@ -573,7 +590,7 @@ fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) 
                 diag.report(
                     LintRule::ToolsUnknown,
                     &format!(
-                        "{}: allowed-tools lists unrecognized tool '{}' (may be an MCP tool — verify spelling)",
+                        "{}: allowed-tools lists unrecognized tool '{}' (tool names are case-sensitive PascalCase; may be an MCP tool — verify spelling)",
                         info.path, base_name
                     ),
                 );
@@ -1332,7 +1349,7 @@ mod tests {
     #[test]
     fn test_new_rules_lookup_by_code_and_name() {
         use crate::rules::LintRule;
-        // Verify all 26 new rules can be looked up by code and name
+        // Verify all 35 new rules can be looked up by code and name
         let new_rules = [
             ("S009", "name-too-long"),
             ("S010", "name-invalid-chars"),
@@ -1407,6 +1424,146 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("compatibility") && e.contains("500"))
         );
+    }
+
+    // ── S036: ref-no-toc ───────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s036_ref_no_toc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // Create a shared .md > 100 lines with no ## headings
+        let long_content = "line\n".repeat(101);
+        std::fs::write("skills/shared/big-ref.md", &long_content).unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/big-ref.md\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("no ## headings")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s036_ref_with_headings_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut content = String::from("## Section 1\n");
+        for _ in 0..100 {
+            content.push_str("line\n");
+        }
+        std::fs::write("skills/shared/big-ref.md", &content).unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/big-ref.md\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("no ## headings")));
+    }
+
+    // ── S037: body-no-refs ───────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s037_body_no_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let body = "Some text without any file references\n".repeat(301);
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("300 lines") && e.contains("file references"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s037_body_with_refs_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut body = "Some text\n".repeat(300);
+        body.push_str("Run scripts/helper.sh to do something\n");
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("300 lines") && e.contains("file references"))
+        );
+    }
+
+    // ── S038: time-sensitive ─────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s038_time_sensitive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nThis expires after 2030 so plan accordingly.\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("date/year")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s038_year_in_code_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n\n```bash\necho 2030\n```\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("date/year")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s038_private_mode_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nThis expires after 2030.\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("date/year")));
     }
 
     // ── S039: metadata-not-string ────────────────────────────────────
