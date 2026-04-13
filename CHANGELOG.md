@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.5] - 2026-04-13
+
+### Fixed
+
+- Updated README.md and docs/rules.md rule counts from 81 to 88 to match actual code
+- Added missing A008-A010, D002-D003, G006-G007 entries to docs/rules.md reference table
+- Updated category counts (Agents 7→10, Hygiene 5→7, Docs 1→3) and project structure comments
+
 ## [1.0.4] - 2026-04-13
 
 ### Added
