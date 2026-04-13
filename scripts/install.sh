@@ -60,9 +60,13 @@ fi
 
 if [ -z "$VERSION" ]; then
   echo "Resolving latest release..."
+  CURL_AUTH=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    CURL_AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  fi
   VERSION="$(
     curl -fsSL \
-      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      "${CURL_AUTH[@]}" \
       -H "Accept: application/vnd.github+json" \
       "https://api.github.com/repos/${REPO}/releases/latest" \
     | grep '"tag_name"' \

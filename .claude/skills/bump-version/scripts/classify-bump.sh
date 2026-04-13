@@ -21,7 +21,7 @@
 #   BUMP_TYPE=MAJOR|MINOR|PATCH|NONE
 #   REASONING_FILE=<path>
 #
-# Reasoning log: ${IMPLEMENT_TMPDIR:-$(git rev-parse --git-dir)}/bump-version-reasoning.md
+# Reasoning log: ${IMPLEMENT_TMPDIR:-$(mktemp -d)}/bump-version-reasoning.md
 #
 # Exit codes: 0 success, 1 validation failure
 
@@ -57,8 +57,16 @@ fi
 [[ -n "$BASE" ]] || err "could not resolve merge-base against main or origin/main"
 
 # Reasoning log path.
-REASONING_DIR="${IMPLEMENT_TMPDIR:-$(git rev-parse --git-dir)}"
-mkdir -p "$REASONING_DIR" 2>/dev/null || true
+# Prefer IMPLEMENT_TMPDIR (set by /implement workflow), fall back to a fresh
+# temp directory. Avoids writing into .git/ which triggers permission prompts.
+if [[ -n "${IMPLEMENT_TMPDIR:-}" ]]; then
+  REASONING_DIR="$IMPLEMENT_TMPDIR"
+  [[ -d "$REASONING_DIR" ]] || err "IMPLEMENT_TMPDIR is set but does not exist: $REASONING_DIR"
+else
+  REASONING_DIR="$(mktemp -d)"
+  # Clean up on failure; caller owns cleanup on success (needs to read REASONING_FILE).
+  trap 'rm -rf "$REASONING_DIR"' ERR
+fi
 REASONING_FILE="$REASONING_DIR/bump-version-reasoning.md"
 
 # Helper: append to reasoning log.

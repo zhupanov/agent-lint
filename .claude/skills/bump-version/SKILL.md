@@ -46,7 +46,7 @@ If you escalate, append a paragraph to the reasoning log file explaining why.
    - Validates `package.json` via `jq`
    - Detects an **already-bumped branch** by checking whether HEAD itself is a commit with subject `^Bump version to [0-9]+\.[0-9]+\.[0-9]+$`. If HEAD is such a commit, emits `BUMP_TYPE=NONE` and exits 0 (no-op).
    - Computes `git diff -M --name-status $BASE HEAD -- skills agents` for file-level classification
-   - Writes evidence to `${IMPLEMENT_TMPDIR:-$(git rev-parse --git-dir)}/bump-version-reasoning.md`
+   - Writes evidence to `${IMPLEMENT_TMPDIR:-$(mktemp -d)}/bump-version-reasoning.md`
    - Emits `KEY=VALUE` lines on stdout: `CURRENT_VERSION`, `NEW_VERSION`, `BUMP_TYPE`, `REASONING_FILE`
 3. You (main agent) parse the output, read the reasoning log, review the diff, and apply the **escalation-only** caveat review. If you escalate, update `NEW_VERSION` accordingly and append reasoning to the log.
 4. You invoke `apply-bump.sh --new-version <NEW_VERSION>`, which:
@@ -79,7 +79,7 @@ $PWD/.claude/skills/bump-version/scripts/apply-bump.sh --new-version <NEW_VERSIO
 
 ## Output contract
 
-The reasoning log at `${IMPLEMENT_TMPDIR:-$(git rev-parse --git-dir)}/bump-version-reasoning.md` may be embedded into the PR body for documentation purposes.
+The reasoning log at `${IMPLEMENT_TMPDIR:-$(mktemp -d)}/bump-version-reasoning.md` may be embedded into the PR body for documentation purposes.
 
 ## Exit codes
 - `classify-bump.sh` — 0 on success (including `BUMP_TYPE=NONE`), non-zero on parse/validation failure

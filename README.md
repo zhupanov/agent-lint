@@ -1,8 +1,9 @@
 # Claude Lint
 
-A configuration linter for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
-Validates `.claude/` and `.claude-plugin/` directory structures, catching
-misconfigurations before they reach production.
+A linter for [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+configuration and plugins. Validates `.claude/` and `.claude-plugin/`
+directory structures, catching misconfigurations before they reach
+production.
 
 ## Features
 
@@ -43,9 +44,40 @@ mode automatically based on the presence of `.claude-plugin/`.
 |-------|-------------|---------|
 | `version` | Version of claude-lint (e.g., `1.0.0`) | Latest release |
 | `path` | Path to the repository to lint | `"."` |
-| `github-token` | GitHub token for API requests | `""` (falls back to `github.token` at runtime) |
+| `github-token` | GitHub token for resolving latest version | `""` (see below) |
 
 > **Note:** Windows runners are not supported.
+
+### About `github-token`
+
+The `github-token` input is **optional** and has a narrow purpose: it is
+used solely to call the GitHub API to resolve the latest release version
+when no explicit `version` is provided. If you pin `version` (e.g.,
+`version: "1.0.0"`), no API call is made and the token is never used.
+
+**When omitted**, the action automatically falls back to the built-in
+`github.token` that GitHub provides to every workflow run. You do not need
+to configure or pass anything -- it just works.
+
+**What the token can access**: the token is sent in a single read-only API
+request to `api.github.com/repos/zhupanov/claude-lint/releases/latest` to
+fetch the latest tag name. It is never passed to the `claude-lint` binary.
+The linter itself only reads local files on disk -- it makes no network
+requests and has no access to your repository's GitHub API.
+
+**When you might set it explicitly**: if you use a fine-grained PAT or a
+GitHub App token with restricted permissions, and the default
+`github.token` cannot reach the public releases endpoint (uncommon).
+
+```yaml
+# Minimal -- token handled automatically:
+- uses: zhupanov/claude-lint@v1
+
+# Explicit version -- no token needed at all:
+- uses: zhupanov/claude-lint@v1
+  with:
+    version: "1.0.0"
+```
 
 ## CLI Reference
 

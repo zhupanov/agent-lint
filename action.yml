@@ -14,7 +14,7 @@ inputs:
     required: false
     default: "."
   github-token:
-    description: "GitHub token for API requests (avoids rate limits when resolving latest version)"
+    description: "GitHub token for resolving the latest release version. Optional — falls back to github.token automatically."
     required: false
     default: ""
 

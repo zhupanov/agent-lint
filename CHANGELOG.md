@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-04-13
+
+### Changed
+
+- Refactored bump-version reasoning file to use temp directory instead of `.git/`, eliminating permission prompts
+- Updated README summary and expanded github-token documentation with security and usage details
+- Guarded empty token in install.sh to avoid sending malformed Authorization header
+
 ## [1.0.1] - 2026-04-12
 
 ### Added
