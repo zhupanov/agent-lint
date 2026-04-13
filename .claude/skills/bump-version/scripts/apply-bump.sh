@@ -81,7 +81,7 @@ fi
 # Step 4a: Atomic rewrite of package.json via jq + mv.
 TMP_JSON="$VERSION_FILE.tmp.$$"
 if ! jq --arg v "$NEW_VERSION" '.version = $v' "$VERSION_FILE" > "$TMP_JSON"; then
-  rm -f "$TMP_JSON" "$BACKUP" "$CARGO_BACKUP"
+  rm -f "$TMP_JSON" "$BACKUP" "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
   fail "jq rewrite failed"
 fi
 mv "$TMP_JSON" "$VERSION_FILE"
@@ -125,7 +125,7 @@ if [[ -f "$CARGO_TOML" ]]; then
     fi
     fail "cargo not found in PATH; cannot regenerate Cargo.lock"
   fi
-  if ! cargo generate-lockfile --quiet 2>/dev/null; then
+  if ! cargo generate-lockfile --quiet; then
     mv "$BACKUP" "$VERSION_FILE"
     mv "$CARGO_BACKUP" "$CARGO_TOML"
     if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
