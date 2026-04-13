@@ -95,6 +95,14 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     skill_content::validate_skill_content(diag);
     // Private skill content checks (both-mode subset)
     skill_content::validate_private_skill_content(diag);
+    // D002: CLAUDE.md size
+    docs::validate_claudemd_size(diag);
+    // D003: TODO/FIXME in CLAUDE.md
+    docs::validate_claudemd_todos(diag);
+    // G006: TODO/FIXME in published skills
+    hygiene::validate_todo_in_skills(diag);
+    // G007: TODO/FIXME in agents
+    hygiene::validate_todo_in_agents(diag);
 }
 
 #[cfg(test)]
@@ -152,7 +160,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             "agents/general.md",
-            "---\nname: general\ndescription: General reviewer\n---\nDerived from skills/shared/reviewer-templates.md\n",
+            "---\nname: general\ndescription: General reviewer for code quality analysis\n---\nDerived from skills/shared/reviewer-templates.md\n",
         )
         .unwrap();
         std::fs::write("SECURITY.md", "# Security\n").unwrap();

@@ -513,6 +513,125 @@ pub fn validate_security_md(diag: &mut DiagnosticCollector) {
     }
 }
 
+/// G006: TODO/FIXME/HACK/XXX markers in published skill content.
+/// Scans skills/*/SKILL.md body text outside code fences.
+pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector) {
+    let skills_dir = Path::new("skills");
+    if !skills_dir.is_dir() {
+        return;
+    }
+
+    let re_todo = Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap();
+
+    let entries = match fs::read_dir(skills_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if dir_name == "shared" {
+            continue;
+        }
+
+        let skill_md = path.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+
+        let content = match fs::read_to_string(&skill_md) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Extract body after frontmatter
+        let body = crate::frontmatter::extract_body(&content);
+        let mut in_fence = false;
+
+        for line in body.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                in_fence = !in_fence;
+                continue;
+            }
+            if !in_fence {
+                if let Some(m) = re_todo.find(line) {
+                    diag.report(
+                        LintRule::TodoInSkill,
+                        &format!(
+                            "skills/{dir_name}/SKILL.md contains {} marker; remove before publishing",
+                            m.as_str()
+                        ),
+                    );
+                    break; // Report once per file
+                }
+            }
+        }
+    }
+}
+
+/// G007: TODO/FIXME/HACK/XXX markers in agent .md files.
+/// Scans agents/*.md body text outside code fences.
+pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector) {
+    let agents_dir = Path::new("agents");
+    if !agents_dir.is_dir() {
+        return;
+    }
+
+    let re_todo = Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap();
+
+    let entries = match fs::read_dir(agents_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.ends_with(".md") => n.to_string(),
+            _ => continue,
+        };
+
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let body = crate::frontmatter::extract_body(&content);
+        let mut in_fence = false;
+
+        for line in body.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+                in_fence = !in_fence;
+                continue;
+            }
+            if !in_fence {
+                if let Some(m) = re_todo.find(line) {
+                    diag.report(
+                        LintRule::TodoInAgent,
+                        &format!(
+                            "agents/{name} contains {} marker; remove before publishing",
+                            m.as_str()
+                        ),
+                    );
+                    break; // Report once per file
+                }
+            }
+        }
+    }
+}
+
 fn strip_yaml_comments(content: &str) -> String {
     let re_full = Regex::new(r"^[[:space:]]*#").unwrap();
     let re_trailing = Regex::new(r"[[:space:]]+#.*$").unwrap();
@@ -964,5 +1083,75 @@ mod tests {
         // Basic mode should NOT include scripts/ (only .claude/skills/*/scripts/)
         let paths = collect_script_paths(LintMode::Basic);
         assert!(paths.is_empty());
+    }
+
+    // G006: todo-in-skill
+    #[test]
+    #[serial_test::serial]
+    fn test_g006_todo_in_skill_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: desc\n---\nTODO: implement this\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_todo_in_skills(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("TODO")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g006_todo_in_code_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: desc\n---\n\n```bash\n# TODO: this is fine\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_todo_in_skills(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("TODO")));
+    }
+
+    // G007: todo-in-agent
+    #[test]
+    #[serial_test::serial]
+    fn test_g007_todo_in_agent_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\nFIXME: this needs work\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_todo_in_agents(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("FIXME")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g007_todo_in_code_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\n\n```\n# FIXME: inside fence\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_todo_in_agents(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("FIXME")));
     }
 }

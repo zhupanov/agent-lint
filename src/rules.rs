@@ -146,6 +146,12 @@ pub enum LintRule {
     TemplateMarkerMissing,
     /// A007: agent-template count mismatch
     TemplateCountMismatch,
+    /// A008: agent description exceeds 1024 characters
+    AgentDescLong,
+    /// A009: agent description under 20 characters
+    AgentDescShort,
+    /// A010: agent name contains characters outside [a-z0-9-]
+    AgentNameInvalid,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
@@ -158,6 +164,10 @@ pub enum LintRule {
     DeadScript,
     /// G005: SECURITY.md is missing from repo root
     SecurityMdMissing,
+    /// G006: TODO/FIXME/HACK/XXX marker in published skill content
+    TodoInSkill,
+    /// G007: TODO/FIXME/HACK/XXX marker in agent .md body
+    TodoInAgent,
 
     // ── Email (E) ─────────────────────────────────────────────────
     /// E001: email address is not a valid format
@@ -184,6 +194,10 @@ pub enum LintRule {
     // ── Docs (D) ──────────────────────────────────────────────────
     /// D001: docs reference in CLAUDE.md canonical sources not found on disk
     DocsRefMissing,
+    /// D002: CLAUDE.md exceeds 500 lines
+    ClaudemdTooLarge,
+    /// D003: TODO/FIXME/HACK/XXX marker in CLAUDE.md
+    TodoInDocs,
 }
 
 impl LintRule {
@@ -260,12 +274,17 @@ impl LintRule {
             Self::TemplateFileMissing => "A005",
             Self::TemplateMarkerMissing => "A006",
             Self::TemplateCountMismatch => "A007",
+            Self::AgentDescLong => "A008",
+            Self::AgentDescShort => "A009",
+            Self::AgentNameInvalid => "A010",
 
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
             Self::ScriptNotExecutable => "G003",
             Self::DeadScript => "G004",
             Self::SecurityMdMissing => "G005",
+            Self::TodoInSkill => "G006",
+            Self::TodoInAgent => "G007",
 
             Self::InvalidEmailFormat => "E001",
 
@@ -279,6 +298,8 @@ impl LintRule {
             Self::SlackFallbackMismatch => "K001",
 
             Self::DocsRefMissing => "D001",
+            Self::ClaudemdTooLarge => "D002",
+            Self::TodoInDocs => "D003",
         }
     }
 
@@ -355,12 +376,17 @@ impl LintRule {
             Self::TemplateFileMissing => "template-file-missing",
             Self::TemplateMarkerMissing => "template-marker-missing",
             Self::TemplateCountMismatch => "template-count-mismatch",
+            Self::AgentDescLong => "agent-desc-long",
+            Self::AgentDescShort => "agent-desc-short",
+            Self::AgentNameInvalid => "agent-name-invalid",
 
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
             Self::ScriptNotExecutable => "script-not-executable",
             Self::DeadScript => "dead-script",
             Self::SecurityMdMissing => "security-md-missing",
+            Self::TodoInSkill => "todo-in-skill",
+            Self::TodoInAgent => "todo-in-agent",
 
             Self::InvalidEmailFormat => "invalid-email-format",
 
@@ -374,6 +400,8 @@ impl LintRule {
             Self::SlackFallbackMismatch => "slack-fallback-mismatch",
 
             Self::DocsRefMissing => "docs-ref-missing",
+            Self::ClaudemdTooLarge => "claudemd-too-large",
+            Self::TodoInDocs => "todo-in-docs",
         }
     }
 
@@ -456,11 +484,16 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::TemplateFileMissing,
     LintRule::TemplateMarkerMissing,
     LintRule::TemplateCountMismatch,
+    LintRule::AgentDescLong,
+    LintRule::AgentDescShort,
+    LintRule::AgentNameInvalid,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
     LintRule::DeadScript,
     LintRule::SecurityMdMissing,
+    LintRule::TodoInSkill,
+    LintRule::TodoInAgent,
     LintRule::InvalidEmailFormat,
     LintRule::UserconfigNotObject,
     LintRule::UserconfigDescMissing,
@@ -470,6 +503,8 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::UserconfigTypeMissing,
     LintRule::SlackFallbackMismatch,
     LintRule::DocsRefMissing,
+    LintRule::ClaudemdTooLarge,
+    LintRule::TodoInDocs,
 ];
 
 #[cfg(test)]
@@ -483,7 +518,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            81,
+            88,
             "ALL_RULES length must match enum variant count"
         );
     }

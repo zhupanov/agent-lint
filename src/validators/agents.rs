@@ -13,6 +13,7 @@ pub fn validate_agents(diag: &mut DiagnosticCollector) {
     }
 
     let mut found = 0;
+    let re_name_invalid = regex::Regex::new(r"[^a-z0-9-]").unwrap();
     let entries = match fs::read_dir(agents_dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -62,6 +63,45 @@ pub fn validate_agents(diag: &mut DiagnosticCollector) {
                 LintRule::AgentFieldMissing,
                 &format!("{agent_path}: missing required frontmatter field 'description'"),
             );
+        }
+
+        // A008: agent description too long
+        if let Some(ref desc) = fm_desc {
+            if desc.len() > 1024 {
+                diag.report(
+                    LintRule::AgentDescLong,
+                    &format!(
+                        "{agent_path}: description exceeds 1024 characters ({})",
+                        desc.len()
+                    ),
+                );
+            }
+        }
+
+        // A009: agent description too short
+        if let Some(ref desc) = fm_desc {
+            if desc.len() < 20 {
+                diag.report(
+                    LintRule::AgentDescShort,
+                    &format!(
+                        "{agent_path}: description is under 20 characters ({})",
+                        desc.len()
+                    ),
+                );
+            }
+        }
+
+        // A010: agent name invalid characters
+        if let Some(ref n) = fm_name {
+            if re_name_invalid.is_match(n) {
+                diag.report(
+                    LintRule::AgentNameInvalid,
+                    &format!(
+                        "{agent_path}: name '{}' contains characters outside [a-z0-9-]",
+                        n
+                    ),
+                );
+            }
         }
     }
 
@@ -187,7 +227,7 @@ mod tests {
         std::fs::create_dir_all("agents").unwrap();
         std::fs::write(
             "agents/general.md",
-            "---\nname: general\ndescription: General reviewer\n---\nBody\n",
+            "---\nname: general\ndescription: General reviewer for code quality analysis\n---\nBody\n",
         )
         .unwrap();
 
@@ -234,7 +274,7 @@ mod tests {
         std::fs::create_dir_all("agents").unwrap();
         std::fs::write(
             "agents/general.md",
-            "---\ndescription: General reviewer\n---\nBody\n",
+            "---\ndescription: General reviewer for code quality analysis\n---\nBody\n",
         )
         .unwrap();
 
@@ -332,5 +372,86 @@ mod tests {
         validate_agent_template_count(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("mismatch"));
+    }
+
+    // A008: agent-desc-long
+    #[test]
+    #[serial_test::serial]
+    fn test_a008_desc_too_long() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        let long_desc = "x".repeat(1025);
+        std::fs::write(
+            "agents/general.md",
+            format!("---\nname: general\ndescription: {long_desc}\n---\nBody\n"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("exceeds 1024")));
+    }
+
+    // A009: agent-desc-short
+    #[test]
+    #[serial_test::serial]
+    fn test_a009_desc_too_short() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: Short\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("under 20")));
+    }
+
+    // A010: agent-name-invalid
+    #[test]
+    #[serial_test::serial]
+    fn test_a010_name_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: My_Agent\ndescription: A valid agent description here\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("outside [a-z0-9-]"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a010_valid_name_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general-reviewer\ndescription: A valid agent description here\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("outside [a-z0-9-]"))
+        );
     }
 }

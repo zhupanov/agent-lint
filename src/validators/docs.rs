@@ -34,6 +34,66 @@ pub fn validate_docs_references(diag: &mut DiagnosticCollector) {
     }
 }
 
+/// D002: CLAUDE.md size limit (500 lines).
+pub fn validate_claudemd_size(diag: &mut DiagnosticCollector) {
+    let claude_md = Path::new("CLAUDE.md");
+    if !claude_md.is_file() {
+        return;
+    }
+
+    let content = match fs::read_to_string(claude_md) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let line_count = content.lines().count();
+    if line_count > 500 {
+        diag.report(
+            LintRule::ClaudemdTooLarge,
+            &format!(
+                "CLAUDE.md exceeds 500 lines ({} lines); consider splitting into docs/ files",
+                line_count
+            ),
+        );
+    }
+}
+
+/// D003: TODO/FIXME/HACK/XXX markers in CLAUDE.md.
+pub fn validate_claudemd_todos(diag: &mut DiagnosticCollector) {
+    let claude_md = Path::new("CLAUDE.md");
+    if !claude_md.is_file() {
+        return;
+    }
+
+    let content = match fs::read_to_string(claude_md) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let re_todo = Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap();
+    let mut in_fence = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence {
+            if let Some(m) = re_todo.find(line) {
+                diag.report(
+                    LintRule::TodoInDocs,
+                    &format!(
+                        "CLAUDE.md contains {} marker; remove before publishing",
+                        m.as_str()
+                    ),
+                );
+                break; // Report once per file (matches G006/G007 pattern)
+            }
+        }
+    }
+}
+
 fn extract_canonical_sources_section(content: &str) -> String {
     let mut in_section = false;
     let mut result = Vec::new();
@@ -135,6 +195,73 @@ Should not be here\n\
 
         let mut diag = DiagnosticCollector::new();
         validate_docs_references(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // D002: claudemd-too-large
+    #[test]
+    #[serial_test::serial]
+    fn test_d002_claudemd_too_large() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let content = "line\n".repeat(501);
+        std::fs::write("CLAUDE.md", &content).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_claudemd_size(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("exceeds 500")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_d002_claudemd_500_lines_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let content = "line\n".repeat(500);
+        std::fs::write("CLAUDE.md", &content).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_claudemd_size(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("exceeds 500")));
+    }
+
+    // D003: todo-in-docs
+    #[test]
+    #[serial_test::serial]
+    fn test_d003_todo_outside_fence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write("CLAUDE.md", "# Docs\nTODO: finish this section\n").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_claudemd_todos(&mut diag);
+        assert!(diag.errors().iter().any(|e| e.contains("TODO")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_d003_todo_inside_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write(
+            "CLAUDE.md",
+            "# Docs\n\n```bash\n# TODO: this is in a code block\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_claudemd_todos(&mut diag);
+        assert!(!diag.errors().iter().any(|e| e.contains("TODO")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_d003_no_claudemd_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_claudemd_todos(&mut diag);
         assert_eq!(diag.error_count(), 0);
     }
 }
