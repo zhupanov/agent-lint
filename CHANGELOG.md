@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.7] - 2026-04-12
+
+### Added
+
+- Ruff-style error codes: 46 lint rules across 9 categories (M/H/S/A/G/E/U/K/D), each with a unique code (e.g., M001) and human-readable name (e.g., plugin-json-missing)
+- TOML configuration file (`claude-lint.toml`) with `[lint]` section supporting `ignore` (suppress errors) and `warn` (downgrade to warnings) by code or name
+- Config validation: unknown rule codes/names rejected at load time, typos in section/field names detected via `deny_unknown_fields`
+
+### Changed
+
+- Diagnostic output format: `error[CODE/name]: message` replaces `LINT ERROR: message`
+- Exit code semantics: exit 0 when only warnings remain, exit 1 for errors, exit 2 for config errors
+- `validate_userconfig_env_mapping` now reports missing env var references when `scripts/` directory is absent
+
 ## [0.2.6] - 2026-04-12
 
 ### Added
