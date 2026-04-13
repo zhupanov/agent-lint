@@ -59,6 +59,26 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+  self-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+      - name: Build
+        run: cargo build
+      - name: Self-lint
+        run: ./target/debug/claude-lint .
+
   musl-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15

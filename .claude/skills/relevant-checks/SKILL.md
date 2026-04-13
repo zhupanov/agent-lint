@@ -6,9 +6,17 @@ allowed-tools: Bash
 
 # Relevant Checks
 
-Run validation checks scoped to files modified on the current branch. This is a repo-specific skill — each repository defines its own `/relevant-checks` with checks appropriate for that repo.
+Run validation checks on the current branch. This is a repo-specific skill — each repository defines its own `/relevant-checks` with checks appropriate for that repo.
 
 ## How it works
+
+The script runs two phases:
+
+### Phase 1: Unconditional self-lint
+
+Regardless of which files changed, the script builds and runs `claude-lint` against the repository root to validate the repo's own Claude configuration (`.claude/` directory). This is a repo-wide invariant check that always executes. Requires `cargo` — if unavailable, this phase is skipped with a warning.
+
+### Phase 2: Change-scoped linting
 
 Changed files are collected from the branch diff, staged changes, unstaged changes, and untracked files. The union is passed to `pre-commit run --files`, which routes each file to the appropriate linter hooks based on file type. Deleted files are filtered out automatically.
 
@@ -25,7 +33,7 @@ The following linters are configured in `.pre-commit-config.yaml`:
 
 When Rust source files (`.rs`, `Cargo.toml`, `Cargo.lock`) are among the changes and `cargo` is available, the script also runs `cargo test` and `cargo clippy -- -D warnings` after pre-commit.
 
-If all changed files are deletions (no existing files to lint), the script exits 0 with a message — there are no files to run checks against.
+If all changed files are deletions (no existing files to lint), the change-scoped phase exits early — but the self-lint phase still runs.
 
 ## Usage
 
