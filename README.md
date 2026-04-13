@@ -28,6 +28,12 @@ configuration and plugins.
     path: "."
 ```
 
+### Install on macOS
+
+```bash
+curl -fsSL "$(curl -fsSL https://api.github.com/repos/zhupanov/claude-lint/releases/latest | grep -o 'https://[^"]*aarch64-apple-darwin.tar.gz')" | tar -xz -C /usr/local/bin
+```
+
 ### CLI
 
 ```bash
@@ -77,6 +83,31 @@ GitHub App token with restricted permissions, and the default
 - uses: zhupanov/claude-lint@v1
   with:
     version: "1.0.0"
+```
+
+## Add CI to Your Repo
+
+Give this prompt to Claude running in your repository:
+
+> **Add a GitHub Actions CI job called `claude-lint` that runs on pull requests
+> to `main`. Model it on the e2e-test job from
+> <https://github.com/marketplace/actions/claude-lint>. The job should use
+> `ubuntu-latest`, have a 5-minute timeout, check out the repo with
+> `actions/checkout@v4`, and then run `zhupanov/claude-lint@v1` with
+> `path: "."`. Add it to the existing CI workflow if one exists, otherwise
+> create `.github/workflows/ci.yaml` with `permissions: contents: read`.**
+
+The resulting job should look like:
+
+```yaml
+  claude-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: zhupanov/claude-lint@v1
+        with:
+          path: "."
 ```
 
 ## CLI Reference
@@ -245,6 +276,9 @@ Runs on pull requests to `main`:
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
 - **self-lint** -- runs claude-lint against its own repo and validates
   `--list-scripts` output
+- **e2e-test** -- uses `zhupanov/claude-lint@v1` as a GitHub Action
+  (the same way clients integrate it), serving as both end-to-end
+  validation and a reference model for users adding CI to their own repos
 
 ### Release (`.github/workflows/release.yml`)
 

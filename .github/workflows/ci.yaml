@@ -87,6 +87,15 @@ jobs:
           fi
           echo "OK: --list-scripts found $count script(s)"
 
+  e2e-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: zhupanov/claude-lint@v1
+        with:
+          path: "."
+
   musl-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
