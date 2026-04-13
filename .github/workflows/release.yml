@@ -186,6 +186,7 @@ jobs:
           echo "CHECKSUMS=${CHECKSUMS}" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
+        id: create_release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -193,6 +194,7 @@ jobs:
           cd artifacts
           if gh release view "v${VERSION}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
             echo "Release v${VERSION} already exists, skipping creation."
+            echo "created=false" >> "$GITHUB_OUTPUT"
           else
             gh release create "v${VERSION}" \
               --repo "${{ github.repository }}" \
@@ -200,13 +202,15 @@ jobs:
               --generate-notes \
               claude-lint-*.tar.gz \
               "claude-lint-v${VERSION}-checksums.txt"
+            echo "created=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Update major version tag
+        if: steps.create_release.outputs.created == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           MAJOR=$(echo "$VERSION" | cut -d. -f1)
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -fa "v${MAJOR}" -m "Update v${MAJOR} to v${VERSION}"
+          git tag -fa "v${MAJOR}" "v${VERSION}" -m "Update v${MAJOR} to v${VERSION}"
           git push origin "v${MAJOR}" --force
