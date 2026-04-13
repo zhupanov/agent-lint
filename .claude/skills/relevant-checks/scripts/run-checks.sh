@@ -4,14 +4,6 @@
 # This script is private to the /relevant-checks skill.
 set -uo pipefail
 
-# ---------------------------------------------------------------------------
-# Pre-flight: ensure pre-commit is installed
-# ---------------------------------------------------------------------------
-command -v pre-commit >/dev/null 2>&1 || {
-    echo "ERROR: pre-commit not found. Run: pip install pre-commit"
-    exit 1
-}
-
 REPO_ROOT="$(git rev-parse --show-toplevel)" || { echo "ERROR: not inside a git repository"; exit 1; }
 cd "$REPO_ROOT" || exit 1
 
@@ -22,12 +14,7 @@ PC_EXIT=0
 # ---------------------------------------------------------------------------
 if command -v cargo >/dev/null 2>&1; then
     echo "=== Running claude-lint (self-lint) ==="
-    if cargo build --quiet; then
-        ./target/debug/claude-lint . || PC_EXIT=1
-    else
-        echo "ERROR: cargo build failed"
-        PC_EXIT=1
-    fi
+    cargo run --locked --quiet -- . || PC_EXIT=1
 else
     echo "WARN: cargo not available, skipping claude-lint self-lint"
 fi
@@ -80,6 +67,14 @@ if [ ${#files[@]} -eq 0 ]; then
     echo "No existing modified files to check (all changes are deletions)."
     exit "$PC_EXIT"
 fi
+
+# ---------------------------------------------------------------------------
+# Pre-flight: ensure pre-commit is installed (gates Phase 2 only)
+# ---------------------------------------------------------------------------
+command -v pre-commit >/dev/null 2>&1 || {
+    echo "ERROR: pre-commit not found. Run: pip install pre-commit"
+    exit 1
+}
 
 # ---------------------------------------------------------------------------
 # Run pre-commit on changed files. Pre-commit handles file-type routing via
