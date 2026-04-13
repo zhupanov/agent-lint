@@ -5,6 +5,74 @@ use regex::Regex;
 use std::fs;
 use std::path::Path;
 
+/// Pre-parsed data for a single SKILL.md file.
+#[allow(dead_code)]
+pub struct SkillInfo {
+    /// Display path, e.g. "skills/my-skill/SKILL.md"
+    pub path: String,
+    /// Directory name, e.g. "my-skill"
+    pub dir_name: String,
+    /// Frontmatter lines (between the --- delimiters).
+    pub fm_lines: Vec<String>,
+    /// Body content after the frontmatter closing delimiter.
+    pub body: String,
+}
+
+/// Walk a skills directory and collect SkillInfo for each valid skill.
+/// Skips `shared/` subdirectory. Returns empty vec if dir doesn't exist.
+pub fn collect_skills(base_dir: &str) -> Vec<SkillInfo> {
+    let dir = Path::new(base_dir);
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut skills = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if dir_name == "shared" {
+            continue;
+        }
+
+        let skill_md = path.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+
+        let content = match fs::read_to_string(&skill_md) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        let fm_lines = match frontmatter::extract_frontmatter(&content) {
+            Some(lines) => lines,
+            None => continue, // S004 fires from existing validator
+        };
+
+        let body = frontmatter::extract_body(&content).to_string();
+        let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
+
+        skills.push(SkillInfo {
+            path: skill_path,
+            dir_name,
+            fm_lines,
+            body,
+        });
+    }
+    skills
+}
+
 /// V5: Validate skills/* layout — every skills/*/ (except shared/) must contain SKILL.md.
 pub fn validate_skills_layout(diag: &mut DiagnosticCollector) {
     let skills_dir = Path::new("skills");

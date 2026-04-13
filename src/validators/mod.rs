@@ -4,7 +4,8 @@ mod email;
 mod hooks;
 pub mod hygiene;
 mod manifest;
-mod skills;
+mod skill_content;
+pub(crate) mod skills;
 mod slack;
 mod user_config;
 
@@ -29,9 +30,11 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     hygiene::validate_private_script_references(diag);
     // V10-adapted: executability for .claude/skills/*/scripts/*.sh
     hygiene::validate_private_executability(diag);
+    // Skill content checks (both-mode subset: excludes S015, S016, S017, S029, S033)
+    skill_content::validate_private_skill_content(diag);
 }
 
-/// Plugin mode: run all 25 validators plus `.claude/` checks.
+/// Plugin mode: run all validators plus `.claude/` checks.
 fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag);
@@ -88,6 +91,10 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     user_config::validate_userconfig_title(ctx, diag);
     // V25: userConfig type field
     user_config::validate_userconfig_type(ctx, diag);
+    // Skill content checks (all 26 rules including plugin-only)
+    skill_content::validate_skill_content(diag);
+    // Private skill content checks (both-mode subset)
+    skill_content::validate_private_skill_content(diag);
 }
 
 #[cfg(test)]
@@ -108,7 +115,7 @@ mod tests {
         std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
         std::fs::write(
             ".claude/skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A skill\n---\n",
+            "---\nname: my-skill\ndescription: A skill that does useful things for developers\n---\nBody content here\n",
         )
         .unwrap();
 
@@ -140,7 +147,7 @@ mod tests {
         std::fs::create_dir_all("scripts").unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A skill\n---\n",
+            "---\nname: my-skill\ndescription: Use when you need a skill that does useful things for developers\n---\nBody content here\n",
         )
         .unwrap();
         std::fs::write(

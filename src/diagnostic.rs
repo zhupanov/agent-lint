@@ -115,6 +115,7 @@ impl DiagnosticCollector {
 
     /// Return collected warning messages for test assertions.
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn warnings(&self) -> Vec<String> {
         self.diagnostics
             .iter()

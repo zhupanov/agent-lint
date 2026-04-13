@@ -60,6 +60,58 @@ pub enum LintRule {
     FrontmatterFieldEmpty,
     /// S008: shared markdown reference missing on disk
     SharedMdMissing,
+    /// S009: skill name exceeds 64 characters
+    NameTooLong,
+    /// S010: skill name contains characters outside [a-z0-9-]
+    NameInvalidChars,
+    /// S011: skill name starts/ends with hyphen or has consecutive hyphens
+    NameBadHyphens,
+    /// S012: skill name contains reserved word (anthropic, claude)
+    NameReservedWord,
+    /// S013: skill name contains XML/HTML tags
+    NameHasXml,
+    /// S014: skill description exceeds 1024 characters
+    DescTooLong,
+    /// S015: skill description exceeds 250 characters (listing truncation)
+    DescTruncated,
+    /// S016: skill description uses first/second person
+    DescUsesPerson,
+    /// S017: skill description lacks trigger/usage context
+    DescNoTrigger,
+    /// S018: skill description contains XML/HTML tags
+    DescHasXml,
+    /// S019: SKILL.md body exceeds 500 lines
+    BodyTooLong,
+    /// S020: SKILL.md has no content after frontmatter
+    BodyEmpty,
+    /// S021: consecutive bash code blocks that could be combined
+    ConsecutiveBash,
+    /// S022: Windows-style backslash paths in skill content
+    BackslashPath,
+    /// S023: boolean frontmatter field is not true/false
+    BoolFieldInvalid,
+    /// S024: context field value is not fork
+    ContextFieldInvalid,
+    /// S025: effort field value is not low/medium/high/max
+    EffortFieldInvalid,
+    /// S026: shell field value is not bash/powershell
+    ShellFieldInvalid,
+    /// S027: skill is unreachable (both disable-model-invocation and user-invocable false)
+    SkillUnreachable,
+    /// S028: $ARGUMENTS used in body but argument-hint not set
+    ArgsNoHint,
+    /// S029: referenced shared .md file itself references other shared .md files
+    NestedRefDeep,
+    /// S030: files in skill scripts/ not referenced from SKILL.md
+    OrphanedSkillFiles,
+    /// S031: http:// URL in skill content (not https)
+    NonHttpsUrl,
+    /// S032: potential hardcoded API key/token/secret
+    HardcodedSecret,
+    /// S033: skill name uses vague/generic terms
+    NameVague,
+    /// S034: skill description under 20 characters
+    DescTooShort,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -147,6 +199,32 @@ impl LintRule {
             Self::FrontmatterNameMismatch => "S006",
             Self::FrontmatterFieldEmpty => "S007",
             Self::SharedMdMissing => "S008",
+            Self::NameTooLong => "S009",
+            Self::NameInvalidChars => "S010",
+            Self::NameBadHyphens => "S011",
+            Self::NameReservedWord => "S012",
+            Self::NameHasXml => "S013",
+            Self::DescTooLong => "S014",
+            Self::DescTruncated => "S015",
+            Self::DescUsesPerson => "S016",
+            Self::DescNoTrigger => "S017",
+            Self::DescHasXml => "S018",
+            Self::BodyTooLong => "S019",
+            Self::BodyEmpty => "S020",
+            Self::ConsecutiveBash => "S021",
+            Self::BackslashPath => "S022",
+            Self::BoolFieldInvalid => "S023",
+            Self::ContextFieldInvalid => "S024",
+            Self::EffortFieldInvalid => "S025",
+            Self::ShellFieldInvalid => "S026",
+            Self::SkillUnreachable => "S027",
+            Self::ArgsNoHint => "S028",
+            Self::NestedRefDeep => "S029",
+            Self::OrphanedSkillFiles => "S030",
+            Self::NonHttpsUrl => "S031",
+            Self::HardcodedSecret => "S032",
+            Self::NameVague => "S033",
+            Self::DescTooShort => "S034",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -207,6 +285,32 @@ impl LintRule {
             Self::FrontmatterNameMismatch => "frontmatter-name-mismatch",
             Self::FrontmatterFieldEmpty => "frontmatter-field-empty",
             Self::SharedMdMissing => "shared-md-missing",
+            Self::NameTooLong => "name-too-long",
+            Self::NameInvalidChars => "name-invalid-chars",
+            Self::NameBadHyphens => "name-bad-hyphens",
+            Self::NameReservedWord => "name-reserved-word",
+            Self::NameHasXml => "name-has-xml",
+            Self::DescTooLong => "desc-too-long",
+            Self::DescTruncated => "desc-truncated",
+            Self::DescUsesPerson => "desc-uses-person",
+            Self::DescNoTrigger => "desc-no-trigger",
+            Self::DescHasXml => "desc-has-xml",
+            Self::BodyTooLong => "body-too-long",
+            Self::BodyEmpty => "body-empty",
+            Self::ConsecutiveBash => "consecutive-bash",
+            Self::BackslashPath => "backslash-path",
+            Self::BoolFieldInvalid => "bool-field-invalid",
+            Self::ContextFieldInvalid => "context-field-invalid",
+            Self::EffortFieldInvalid => "effort-field-invalid",
+            Self::ShellFieldInvalid => "shell-field-invalid",
+            Self::SkillUnreachable => "skill-unreachable",
+            Self::ArgsNoHint => "args-no-hint",
+            Self::NestedRefDeep => "nested-ref-deep",
+            Self::OrphanedSkillFiles => "orphaned-skill-files",
+            Self::NonHttpsUrl => "non-https-url",
+            Self::HardcodedSecret => "hardcoded-secret",
+            Self::NameVague => "name-vague",
+            Self::DescTooShort => "desc-too-short",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -274,6 +378,32 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::FrontmatterNameMismatch,
     LintRule::FrontmatterFieldEmpty,
     LintRule::SharedMdMissing,
+    LintRule::NameTooLong,
+    LintRule::NameInvalidChars,
+    LintRule::NameBadHyphens,
+    LintRule::NameReservedWord,
+    LintRule::NameHasXml,
+    LintRule::DescTooLong,
+    LintRule::DescTruncated,
+    LintRule::DescUsesPerson,
+    LintRule::DescNoTrigger,
+    LintRule::DescHasXml,
+    LintRule::BodyTooLong,
+    LintRule::BodyEmpty,
+    LintRule::ConsecutiveBash,
+    LintRule::BackslashPath,
+    LintRule::BoolFieldInvalid,
+    LintRule::ContextFieldInvalid,
+    LintRule::EffortFieldInvalid,
+    LintRule::ShellFieldInvalid,
+    LintRule::SkillUnreachable,
+    LintRule::ArgsNoHint,
+    LintRule::NestedRefDeep,
+    LintRule::OrphanedSkillFiles,
+    LintRule::NonHttpsUrl,
+    LintRule::HardcodedSecret,
+    LintRule::NameVague,
+    LintRule::DescTooShort,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -308,7 +438,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            46,
+            72,
             "ALL_RULES length must match enum variant count"
         );
     }
