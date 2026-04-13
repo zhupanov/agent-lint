@@ -11,8 +11,10 @@ pub enum Severity {
 /// A single lint diagnostic with rule identity and resolved severity.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
+    #[allow(dead_code)] // stored for future use (e.g., JSON output, --list-rules)
     pub rule: LintRule,
     pub severity: Severity,
+    #[allow(dead_code)] // read by #[cfg(test)] accessors (errors(), warnings())
     pub message: String,
 }
 
@@ -31,6 +33,7 @@ pub struct DiagnosticCollector {
 impl DiagnosticCollector {
     /// Create a collector with default config (all rules enabled as errors).
     /// Used by tests and when no config file is present.
+    #[cfg(test)]
     pub fn new() -> Self {
         Self {
             config: LintConfig::default(),

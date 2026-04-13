@@ -5,11 +5,13 @@ use std::path::Path;
 
 /// Raw TOML structure for deserialization.
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct RawConfig {
     lint: Option<RawLintSection>,
 }
 
 #[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 struct RawLintSection {
     #[serde(default)]
     ignore: Vec<String>,
@@ -182,5 +184,31 @@ mod tests {
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
         assert!(config.warn.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn typo_in_section_name_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("claude-lint.toml"),
+            "[lnt]\nignore = [\"M001\"]\n",
+        )
+        .unwrap();
+        let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(err.contains("unknown field"), "Expected unknown field error, got: {err}");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn typo_in_field_name_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("claude-lint.toml"),
+            "[lint]\nwran = [\"M001\"]\n",
+        )
+        .unwrap();
+        let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(err.contains("unknown field"), "Expected unknown field error, got: {err}");
     }
 }

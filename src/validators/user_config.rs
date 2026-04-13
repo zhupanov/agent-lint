@@ -60,18 +60,19 @@ pub fn validate_userconfig_env_mapping(ctx: &LintContext, diag: &mut DiagnosticC
     };
 
     let scripts_dir = Path::new("scripts");
-    if !scripts_dir.is_dir() {
-        return;
-    }
 
+    // Collect all script content; if scripts/ doesn't exist, this stays empty
+    // and every userConfig key will correctly trigger U003.
     let mut scripts_content = String::new();
-    for entry in WalkDir::new(scripts_dir).into_iter().flatten() {
-        if entry.path().is_file() {
-            if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".sh") {
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        scripts_content.push_str(&content);
-                        scripts_content.push('\n');
+    if scripts_dir.is_dir() {
+        for entry in WalkDir::new(scripts_dir).into_iter().flatten() {
+            if entry.path().is_file() {
+                if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
+                    if name.ends_with(".sh") {
+                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                            scripts_content.push_str(&content);
+                            scripts_content.push('\n');
+                        }
                     }
                 }
             }
@@ -283,6 +284,26 @@ mod tests {
 
         std::fs::create_dir_all("scripts").unwrap();
         std::fs::write("scripts/run.sh", "#!/bin/bash\necho hello\n").unwrap();
+
+        let val = serde_json::json!({
+            "userConfig": {
+                "slackBotToken": {"description": "token"}
+            }
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new();
+        validate_userconfig_env_mapping(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v20_no_scripts_dir_fires_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // No scripts/ directory at all
 
         let val = serde_json::json!({
             "userConfig": {
