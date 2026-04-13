@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.12] - 2026-04-13
+
+### Added
+
+- Unit tests for `context.rs` (`ManifestState::load`, `LintContext::new`) and `main.rs` (`detect_mode`, `resolve_repo_root`) — previously zero test coverage
+- 15 new tests covering file I/O states, mode detection precedence, and git root resolution
+
 ## [1.0.9] - 2026-04-13
 
 ### Fixed
