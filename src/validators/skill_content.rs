@@ -817,9 +817,13 @@ fn validate_orphaned_skill_files(
                 None => continue,
             };
 
+            let display_path = format!("{base_dir}/{dir_name}/scripts/{script_name}");
+            if exclude.is_excluded(&display_path) {
+                continue;
+            }
+
             // Check if the script file name is referenced anywhere in SKILL.md
             if !skill_content.contains(&script_name) {
-                let display_path = format!("{base_dir}/{dir_name}/scripts/{script_name}");
                 diag.report(
                     LintRule::OrphanedSkillFiles,
                     &format!(

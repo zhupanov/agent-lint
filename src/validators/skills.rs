@@ -87,6 +87,7 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
     }
 
     let mut skill_count = 0;
+    let mut excluded_count = 0;
     let entries = match fs::read_dir(skills_dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -106,6 +107,7 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
         }
         let skill_path = format!("skills/{name}/SKILL.md");
         if exclude.is_excluded(&skill_path) {
+            excluded_count += 1;
             continue;
         }
         let skill_md = path.join("SKILL.md");
@@ -119,7 +121,7 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
         skill_count += 1;
     }
 
-    if skill_count == 0 {
+    if skill_count == 0 && excluded_count == 0 {
         diag.report(
             LintRule::NoExportedSkills,
             "no plugin-exported skills found under skills/",

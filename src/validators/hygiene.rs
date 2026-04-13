@@ -266,7 +266,7 @@ fn check_executability_in_dirs(
 
 /// Collect all .sh script paths for the given lint mode.
 /// Returns sorted, deduplicated repo-relative paths.
-pub fn collect_script_paths(mode: LintMode) -> Vec<String> {
+pub fn collect_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<String> {
     let patterns = match mode {
         LintMode::Plugin => PLUGIN_SCRIPT_DIRS,
         LintMode::Basic => BASIC_SCRIPT_DIRS,
@@ -284,7 +284,10 @@ pub fn collect_script_paths(mode: LintMode) -> Vec<String> {
             }
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.ends_with(".sh") {
-                    paths.insert(path.display().to_string());
+                    let display = path.display().to_string();
+                    if !exclude.is_excluded(&display) {
+                        paths.insert(display);
+                    }
                 }
             }
         }
@@ -363,6 +366,10 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
             if !entry.path().is_file() {
                 continue;
             }
+            let entry_display = entry.path().display().to_string();
+            if exclude.is_excluded(&entry_display) {
+                continue;
+            }
             let content = match fs::read_to_string(entry.path()) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -420,6 +427,10 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
     let re_c = Regex::new(r"\$SCRIPT_DIR/[a-zA-Z0-9._-]+\.sh").unwrap();
     for entry in WalkDir::new(scripts_dir).into_iter().flatten() {
         if !entry.path().is_file() {
+            continue;
+        }
+        let script_display = entry.path().display().to_string();
+        if exclude.is_excluded(&script_display) {
             continue;
         }
         let content = match fs::read_to_string(entry.path()) {
@@ -485,6 +496,10 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
         for entry in WalkDir::new(shared_dir).into_iter().flatten() {
             let path = entry.path();
             if !path.is_file() {
+                continue;
+            }
+            let shared_display = path.display().to_string();
+            if exclude.is_excluded(&shared_display) {
                 continue;
             }
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -1068,7 +1083,7 @@ mod tests {
         // Non-.sh file should be ignored
         std::fs::write(".claude/skills/my-skill/scripts/readme.txt", "text\n").unwrap();
 
-        let paths = collect_script_paths(LintMode::Basic);
+        let paths = collect_script_paths(LintMode::Basic, &crate::config::ExcludeSet::default());
         assert_eq!(paths.len(), 2);
         assert!(paths[0].ends_with("helper.sh"));
         assert!(paths[1].ends_with("run.sh"));
@@ -1088,7 +1103,7 @@ mod tests {
         std::fs::write("skills/foo/scripts/build.sh", "#!/bin/bash\n").unwrap();
         std::fs::write(".claude/skills/bar/scripts/run.sh", "#!/bin/bash\n").unwrap();
 
-        let paths = collect_script_paths(LintMode::Plugin);
+        let paths = collect_script_paths(LintMode::Plugin, &crate::config::ExcludeSet::default());
         assert_eq!(paths.len(), 3);
         // Sorted by BTreeSet — paths should be in lexicographic order
         assert!(paths.iter().any(|p| p.ends_with("install.sh")));
@@ -1103,7 +1118,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let paths = collect_script_paths(LintMode::Basic);
+        let paths = collect_script_paths(LintMode::Basic, &crate::config::ExcludeSet::default());
         assert!(paths.is_empty());
     }
 
@@ -1118,7 +1133,7 @@ mod tests {
         std::fs::write("scripts/install.sh", "#!/bin/bash\n").unwrap();
 
         // Basic mode should NOT include scripts/ (only .claude/skills/*/scripts/)
-        let paths = collect_script_paths(LintMode::Basic);
+        let paths = collect_script_paths(LintMode::Basic, &crate::config::ExcludeSet::default());
         assert!(paths.is_empty());
     }
 

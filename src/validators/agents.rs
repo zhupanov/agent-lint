@@ -14,6 +14,7 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     }
 
     let mut found = 0;
+    let mut excluded_count = 0;
     let re_name_invalid = regex::Regex::new(r"[^a-z0-9-]").unwrap();
     let entries = match fs::read_dir(agents_dir) {
         Ok(e) => e,
@@ -32,6 +33,7 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 
         let agent_path = format!("agents/{name}");
         if exclude.is_excluded(&agent_path) {
+            excluded_count += 1;
             continue;
         }
 
@@ -110,7 +112,7 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         }
     }
 
-    if found == 0 {
+    if found == 0 && excluded_count == 0 {
         diag.report(LintRule::NoAgentFiles, "agents/ has no .md files");
     }
 }
