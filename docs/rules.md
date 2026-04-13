@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 81 rules across 9 categories. Every rule has a unique
+Claude Lint ships 88 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
@@ -127,6 +127,9 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | A005 | `template-file-missing` | `skills/shared/reviewer-templates.md` is missing | Plugin |
 | A006 | `template-marker-missing` | Agent `.md` missing "Derived from" marker | Plugin |
 | A007 | `template-count-mismatch` | Agent-template count mismatch | Plugin |
+| A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Plugin |
+| A009 | `agent-desc-short` | Agent description under 20 characters | Plugin |
+| A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Plugin |
 
 ## Hygiene / Scripts Rules (G)
 
@@ -137,6 +140,8 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | G003 | `script-not-executable` | Script file not executable | Both |
 | G004 | `dead-script` | Dead script with no structured invocation reference | Plugin |
 | G005 | `security-md-missing` | `SECURITY.md` is missing from repo root | Plugin |
+| G006 | `todo-in-skill` | `TODO`/`FIXME`/`HACK`/`XXX` marker in published skill body | Plugin |
+| G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin |
 
 ## Email Rules (E)
 
@@ -166,3 +171,5 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
 | D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin |
+| D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin |
+| D003 | `todo-in-docs` | `TODO`/`FIXME`/`HACK`/`XXX` marker in `CLAUDE.md` (outside code fences) | Plugin |

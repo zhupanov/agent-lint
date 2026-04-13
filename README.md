@@ -7,7 +7,7 @@ configuration and plugins.
 
 ## Features
 
-- **81 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
+- **88 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
   Hygiene, Email, User Config, Slack, Docs)
 - **Two lint modes**:
   - **Basic mode** -- validates `.claude/` contents (settings, hooks, private
@@ -148,19 +148,19 @@ warning[G005/security-md-missing]: SECURITY.md is missing from repo root
 
 ## Lint Rules
 
-Claude Lint ships **81 rules** organized into 9 categories:
+Claude Lint ships **88 rules** organized into 9 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 11 | `plugin.json` and `marketplace.json` validation |
 | Hooks | H | 6 | `hooks.json` and `settings.json` hook paths |
 | Skills | S | 43 | Skill frontmatter, naming, descriptions, body content, security |
-| Agents | A | 7 | Agent frontmatter and template alignment |
-| Hygiene | G | 5 | `$PWD` hygiene, script integrity, executability, dead scripts |
+| Agents | A | 10 | Agent frontmatter, templates, description quality, name format |
+| Hygiene | G | 7 | `$PWD` hygiene, script integrity, executability, dead scripts, TODO detection |
 | Email | E | 1 | Email format validation |
 | User Config | U | 6 | `userConfig` structure and env var mapping |
 | Slack | K | 1 | Slack fallback consistency |
-| Docs | D | 1 | Docs file reference integrity |
+| Docs | D | 3 | Docs file references, CLAUDE.md size, TODO detection |
 
 For the complete rule table with codes, names, descriptions, and modes,
 see **[docs/rules.md](docs/rules.md)**.
@@ -170,7 +170,7 @@ see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | `.claude/` directory exists | Settings hooks, private skill frontmatter, script refs, executability, both-mode S-rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 81 rules including manifest, agents, hygiene, and plugin-only S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 88 rules including manifest, agents, hygiene, and plugin-only S-rules |
 
 If neither directory exists, the tool prints "Nothing to lint" and exits 0.
 
@@ -216,16 +216,16 @@ src/
 +-- context.rs           # LintContext, ManifestState, LintMode
 +-- diagnostic.rs        # DiagnosticCollector, Severity, config-aware filtering
 +-- frontmatter.rs       # YAML frontmatter extraction
-+-- rules.rs             # Central LintRule enum (81 rules, codes, names)
++-- rules.rs             # Central LintRule enum (88 rules, codes, names)
 +-- validators/
     +-- mod.rs           # run_all -> run_basic / run_plugin dispatch
     +-- manifest.rs      # M001-M011: plugin.json & marketplace.json
     +-- hooks.rs         # H001-H006: hooks.json & settings.json
     +-- skills.rs        # S001-S008: skills layout & frontmatter
     +-- skill_content.rs # S009-S043: name, description, body, security checks
-    +-- agents.rs        # A001-A007: agent frontmatter & templates
-    +-- hygiene.rs       # G001-G005: PWD hygiene, scripts, executability
-    +-- docs.rs          # D001: docs file references
+    +-- agents.rs        # A001-A010: agent frontmatter, templates, description quality
+    +-- hygiene.rs       # G001-G007: PWD hygiene, scripts, executability, TODO detection
+    +-- docs.rs          # D001-D003: docs file references, CLAUDE.md size, TODO detection
     +-- email.rs         # E001: email format
     +-- user_config.rs   # U001-U006: userConfig validation
     +-- slack.rs         # K001: Slack fallback consistency
