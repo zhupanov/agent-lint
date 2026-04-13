@@ -42,11 +42,24 @@ Add to your GitHub Actions workflow:
 
 ```bash
 claude-lint [PATH]
+claude-lint --list-scripts [PATH]
 ```
 
 If `PATH` is omitted, lints the current directory. The tool detects the
 repository root via `git rev-parse --show-toplevel` and selects Basic or
 Plugin mode based on the presence of `.claude-plugin/`.
+
+#### `--list-scripts`
+
+Prints all `.sh` script paths discovered in skill and script directories
+(one per line) and exits. Useful for piping to external tools like
+`shellcheck`:
+
+```bash
+claude-lint --list-scripts . | xargs -r shellcheck
+```
+
+The wrapper script `scripts/shellcheck-scripts.sh` automates this.
 
 ## Prerequisites
 
@@ -87,6 +100,7 @@ make setup   # runs: pre-commit install
 | `make clippy` | `cargo clippy --all-targets -- -D warnings` | Run Clippy on all targets |
 | `make fmt` | `cargo fmt -- --check` | Check Rust formatting |
 | `make shellcheck` | `pre-commit run shellcheck --all-files` | Run ShellCheck on shell scripts |
+| `make shellcheck-skills` | `scripts/shellcheck-scripts.sh` | Run ShellCheck on skill-discovered scripts |
 | `make markdownlint` | `pre-commit run markdownlint --all-files` | Run markdownlint |
 | `make jsonlint` | `pre-commit run jsonlint --all-files` | Validate JSON files |
 | `make actionlint` | `pre-commit run actionlint --all-files` | Lint GitHub Actions workflows |

@@ -1,10 +1,18 @@
+use crate::context::LintMode;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+/// Directory patterns for Plugin mode script discovery (V10, --list-scripts).
+pub const PLUGIN_SCRIPT_DIRS: &[&str] =
+    &["scripts", "skills/*/scripts", ".claude/skills/*/scripts"];
+
+/// Directory patterns for Basic mode script discovery (V10-adapted, --list-scripts).
+pub const BASIC_SCRIPT_DIRS: &[&str] = &[".claude/skills/*/scripts"];
 
 /// V8: ${CLAUDE_PLUGIN_ROOT} hygiene — public skills/*/SKILL.md must not use
 /// $PWD/, ${PWD}/, or hardcoded paths (/Users/, /home/, /opt/).
@@ -198,7 +206,10 @@ pub fn validate_private_executability(diag: &mut DiagnosticCollector) {
     check_executability_in_dirs(&[".claude/skills/*/scripts"], diag);
 }
 
-fn check_executability_in_dirs(patterns: &[&str], diag: &mut DiagnosticCollector) {
+/// Expand glob-like directory patterns into concrete directory paths.
+/// Handles single-`*` patterns (e.g., `skills/*/scripts`) and plain directories.
+pub fn expand_script_dirs(patterns: &[&str]) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
     for pattern in patterns {
         if pattern.contains('*') {
             let parts: Vec<&str> = pattern.split('*').collect();
@@ -213,7 +224,7 @@ fn check_executability_in_dirs(patterns: &[&str], diag: &mut DiagnosticCollector
                     for entry in entries.flatten() {
                         let sub = entry.path().join(suffix);
                         if sub.is_dir() {
-                            check_sh_executability(&sub, diag);
+                            dirs.push(sub);
                         }
                     }
                 }
@@ -221,10 +232,45 @@ fn check_executability_in_dirs(patterns: &[&str], diag: &mut DiagnosticCollector
         } else {
             let dir = Path::new(pattern);
             if dir.is_dir() {
-                check_sh_executability(dir, diag);
+                dirs.push(dir.to_path_buf());
             }
         }
     }
+    dirs
+}
+
+fn check_executability_in_dirs(patterns: &[&str], diag: &mut DiagnosticCollector) {
+    for dir in expand_script_dirs(patterns) {
+        check_sh_executability(&dir, diag);
+    }
+}
+
+/// Collect all .sh script paths for the given lint mode.
+/// Returns sorted, deduplicated repo-relative paths.
+pub fn collect_script_paths(mode: LintMode) -> Vec<String> {
+    let patterns = match mode {
+        LintMode::Plugin => PLUGIN_SCRIPT_DIRS,
+        LintMode::Basic => BASIC_SCRIPT_DIRS,
+    };
+    let mut paths = BTreeSet::new();
+    for dir in expand_script_dirs(patterns) {
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with(".sh") {
+                    paths.insert(path.display().to_string());
+                }
+            }
+        }
+    }
+    paths.into_iter().collect()
 }
 
 fn check_sh_executability(dir: &Path, diag: &mut DiagnosticCollector) {
@@ -812,5 +858,111 @@ mod tests {
         validate_dead_scripts(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("dead script"));
+    }
+
+    // expand_script_dirs tests
+    #[test]
+    #[serial_test::serial]
+    fn test_expand_script_dirs_plain_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        let dirs = expand_script_dirs(&["scripts"]);
+        assert_eq!(dirs.len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_expand_script_dirs_glob() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/a/scripts").unwrap();
+        std::fs::create_dir_all("skills/b/scripts").unwrap();
+        let mut dirs = expand_script_dirs(&["skills/*/scripts"]);
+        dirs.sort();
+        assert_eq!(dirs.len(), 2);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_expand_script_dirs_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let dirs = expand_script_dirs(&["nonexistent"]);
+        assert!(dirs.is_empty());
+    }
+
+    // collect_script_paths tests
+    #[test]
+    #[serial_test::serial]
+    fn test_collect_script_paths_basic_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
+        std::fs::write(".claude/skills/my-skill/scripts/run.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(".claude/skills/my-skill/scripts/helper.sh", "#!/bin/bash\n").unwrap();
+        // Non-.sh file should be ignored
+        std::fs::write(".claude/skills/my-skill/scripts/readme.txt", "text\n").unwrap();
+
+        let paths = collect_script_paths(LintMode::Basic);
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].ends_with("helper.sh"));
+        assert!(paths[1].ends_with("run.sh"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_collect_script_paths_plugin_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/foo/scripts").unwrap();
+        std::fs::create_dir_all(".claude/skills/bar/scripts").unwrap();
+        std::fs::write("scripts/install.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write("skills/foo/scripts/build.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(".claude/skills/bar/scripts/run.sh", "#!/bin/bash\n").unwrap();
+
+        let paths = collect_script_paths(LintMode::Plugin);
+        assert_eq!(paths.len(), 3);
+        // Sorted by BTreeSet — paths should be in lexicographic order
+        assert!(paths.iter().any(|p| p.ends_with("install.sh")));
+        assert!(paths.iter().any(|p| p.ends_with("build.sh")));
+        assert!(paths.iter().any(|p| p.ends_with("run.sh")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_collect_script_paths_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let paths = collect_script_paths(LintMode::Basic);
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_collect_script_paths_basic_excludes_top_level_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/install.sh", "#!/bin/bash\n").unwrap();
+
+        // Basic mode should NOT include scripts/ (only .claude/skills/*/scripts/)
+        let paths = collect_script_paths(LintMode::Basic);
+        assert!(paths.is_empty());
     }
 }

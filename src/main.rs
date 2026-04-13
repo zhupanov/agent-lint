@@ -14,12 +14,27 @@ use diagnostic::DiagnosticCollector;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() > 2 {
-        eprintln!("Usage: claude-lint [PATH]");
+    // Partition args[1..] into flags and positional args.
+    let mut list_scripts = false;
+    let mut positional = Vec::new();
+    for arg in &args[1..] {
+        if arg == "--list-scripts" {
+            list_scripts = true;
+        } else if arg.starts_with("--") {
+            eprintln!("Unknown flag: {arg}");
+            eprintln!("Usage: claude-lint [--list-scripts] [PATH]");
+            std::process::exit(2);
+        } else {
+            positional.push(arg.as_str());
+        }
+    }
+
+    if positional.len() > 1 {
+        eprintln!("Usage: claude-lint [--list-scripts] [PATH]");
         std::process::exit(2);
     }
 
-    let target = if args.len() == 2 { &args[1] } else { "." };
+    let target = positional.first().copied().unwrap_or(".");
 
     // Resolve repo root from the target path.
     let repo_root = match resolve_repo_root(target) {
@@ -36,14 +51,26 @@ fn main() {
     }
 
     // Detect lint mode.
-    let mode = if std::path::Path::new(".claude-plugin").is_dir() {
-        LintMode::Plugin
-    } else if std::path::Path::new(".claude").is_dir() {
-        LintMode::Basic
-    } else {
-        println!("Nothing to lint (no .claude/ or .claude-plugin/ directory found).");
-        std::process::exit(0);
+    let mode = match detect_mode() {
+        Some(m) => m,
+        None => {
+            if list_scripts {
+                // Silent exit — no stdout contamination for pipe consumers.
+                std::process::exit(0);
+            }
+            println!("Nothing to lint (no .claude/ or .claude-plugin/ directory found).");
+            std::process::exit(0);
+        }
     };
+
+    // --list-scripts: print discovered script paths and exit.
+    if list_scripts {
+        let scripts = validators::hygiene::collect_script_paths(mode);
+        for path in &scripts {
+            println!("{path}");
+        }
+        std::process::exit(0);
+    }
 
     // Load configuration AFTER mode detection (so "Nothing to lint" repos
     // are not affected by malformed config files).
@@ -87,6 +114,17 @@ fn main() {
             eprintln!("({suppressed} suppressed)");
         }
         std::process::exit(1);
+    }
+}
+
+/// Detect lint mode based on directory presence.
+fn detect_mode() -> Option<LintMode> {
+    if std::path::Path::new(".claude-plugin").is_dir() {
+        Some(LintMode::Plugin)
+    } else if std::path::Path::new(".claude").is_dir() {
+        Some(LintMode::Basic)
+    } else {
+        None
     }
 }
 

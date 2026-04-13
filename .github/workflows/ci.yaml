@@ -76,6 +76,16 @@ jobs:
             cargo-${{ runner.os }}-
       - name: Self-lint
         run: cargo run -- .
+      - name: Validate --list-scripts
+        run: |
+          scripts=$(cargo run -- --list-scripts .)
+          echo "$scripts"
+          count=$(echo "$scripts" | grep -c '\.sh$' || true)
+          if [ "$count" -lt 1 ]; then
+            echo "ERROR: --list-scripts produced no output"
+            exit 1
+          fi
+          echo "OK: --list-scripts found $count script(s)"
 
   musl-build:
     runs-on: ubuntu-latest

@@ -2,7 +2,7 @@ mod agents;
 mod docs;
 mod email;
 mod hooks;
-mod hygiene;
+pub mod hygiene;
 mod manifest;
 mod skills;
 mod slack;
