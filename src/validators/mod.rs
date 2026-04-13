@@ -124,7 +124,6 @@ mod tests {
         run_all(&ctx, &mut diag);
         // Basic mode with valid .claude/ structure should pass
         assert_eq!(diag.error_count(), 0);
-
     }
 
     // Integration test: Plugin mode dispatches all 25 validators
@@ -185,7 +184,6 @@ mod tests {
             errors.iter().any(|e| e.contains("reviewer-templates.md")),
             "Expected V16 error for missing reviewer-templates.md, got: {errors:?}"
         );
-
     }
 
     // Integration test: Basic mode does NOT run plugin-only validators
@@ -221,6 +219,5 @@ mod tests {
             !errors.iter().any(|e| e.contains("agents/")),
             "Basic mode should not validate agents/"
         );
-
     }
 }

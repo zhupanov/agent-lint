@@ -214,7 +214,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skills_layout(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -228,7 +227,6 @@ mod tests {
         validate_skills_layout(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("skills/ directory is missing"));
-
     }
 
     #[test]
@@ -246,7 +244,6 @@ mod tests {
         // Missing SKILL.md + no skills found = 2 errors
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("missing SKILL.md")));
-
     }
 
     #[test]
@@ -263,7 +260,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skills_layout(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     // V6: validate_skill_frontmatter (public skills)
@@ -284,7 +280,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skill_frontmatter(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -305,7 +300,6 @@ mod tests {
         validate_skill_frontmatter(&mut diag);
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("name")));
-
     }
 
     #[test]
@@ -326,7 +320,6 @@ mod tests {
         validate_skill_frontmatter(&mut diag);
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("does not match")));
-
     }
 
     #[test]
@@ -343,7 +336,6 @@ mod tests {
         validate_skill_frontmatter(&mut diag);
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("malformed")));
-
     }
 
     // V6-adapted: validate_private_skill_frontmatter (Basic mode)
@@ -364,7 +356,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_private_skill_frontmatter(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -385,7 +376,6 @@ mod tests {
         validate_private_skill_frontmatter(&mut diag);
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("description")));
-
     }
 
     #[test]
@@ -398,7 +388,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_private_skill_frontmatter(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     // V15: validate_shared_md_references
@@ -421,7 +410,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_shared_md_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -442,6 +430,5 @@ mod tests {
         validate_shared_md_references(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
-
     }
 }

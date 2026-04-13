@@ -553,7 +553,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_pwd_hygiene(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -574,7 +573,6 @@ mod tests {
         validate_pwd_hygiene(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("$PWD"));
-
     }
 
     #[test]
@@ -595,7 +593,6 @@ mod tests {
         validate_pwd_hygiene(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("hardcoded path"));
-
     }
 
     // V10: validate_executability
@@ -616,7 +613,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_executability(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[cfg(unix)]
@@ -637,7 +633,6 @@ mod tests {
         validate_executability(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
-
     }
 
     // V10-adapted: validate_private_executability (Basic mode)
@@ -658,7 +653,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_private_executability(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[cfg(unix)]
@@ -679,7 +673,6 @@ mod tests {
         validate_private_executability(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
-
     }
 
     // V14: validate_security_md
@@ -695,7 +688,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_security_md(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -709,7 +701,6 @@ mod tests {
         validate_security_md(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("SECURITY.md"));
-
     }
 
     // V9: validate_script_references
@@ -732,7 +723,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_script_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -753,7 +743,6 @@ mod tests {
         validate_script_references(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
-
     }
 
     // V9-adapted: validate_private_script_references (Basic mode)
@@ -775,7 +764,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_private_script_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -796,7 +784,6 @@ mod tests {
         validate_private_script_references(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
-
     }
 
     // V11: validate_dead_scripts
@@ -819,7 +806,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_dead_scripts(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -836,6 +822,5 @@ mod tests {
         validate_dead_scripts(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("dead script"));
-
     }
 }

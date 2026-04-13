@@ -213,7 +213,6 @@ mod tests {
         validate_hook_command_paths(&val, "test", &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
-
     }
 
     #[test]
@@ -238,7 +237,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_hook_command_paths(&val, "test", &mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[cfg(unix)]
@@ -263,6 +261,5 @@ mod tests {
         validate_hook_command_paths(&val, "test", &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
-
     }
 }

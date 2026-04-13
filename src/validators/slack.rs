@@ -72,7 +72,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_slack_fallback_consistency(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -93,7 +92,6 @@ mod tests {
         validate_slack_fallback_consistency(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
-
     }
 
     #[test]
@@ -113,7 +111,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_slack_fallback_consistency(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -133,6 +130,5 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_slack_fallback_consistency(&mut diag);
         assert_eq!(diag.error_count(), 2);
-
     }
 }

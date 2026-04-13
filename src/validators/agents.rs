@@ -182,7 +182,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_agents(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -196,7 +195,6 @@ mod tests {
         validate_agents(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("agents/ directory is missing"));
-
     }
 
     #[test]
@@ -212,7 +210,6 @@ mod tests {
         validate_agents(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("no .md files"));
-
     }
 
     #[test]
@@ -233,7 +230,6 @@ mod tests {
         validate_agents(&mut diag);
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("name")));
-
     }
 
     // V16: validate_agent_template_alignment
@@ -256,7 +252,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_agent_template_alignment(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -279,7 +274,6 @@ mod tests {
         validate_agent_template_alignment(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing"));
-
     }
 
     // V21: validate_agent_template_count
@@ -303,7 +297,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_agent_template_count(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -327,6 +320,5 @@ mod tests {
         validate_agent_template_count(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("mismatch"));
-
     }
 }

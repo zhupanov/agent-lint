@@ -112,7 +112,6 @@ Should not be here\n\
         let mut diag = DiagnosticCollector::new();
         validate_docs_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -132,7 +131,6 @@ Should not be here\n\
         validate_docs_references(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not found on disk"));
-
     }
 
     #[test]
@@ -145,6 +143,5 @@ Should not be here\n\
         let mut diag = DiagnosticCollector::new();
         validate_docs_references(&mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 }

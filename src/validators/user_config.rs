@@ -282,7 +282,6 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_userconfig_env_mapping(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
-
     }
 
     #[test]
@@ -305,7 +304,6 @@ mod tests {
         validate_userconfig_env_mapping(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
-
     }
 
     // V23: validate_userconfig_sensitive_type
