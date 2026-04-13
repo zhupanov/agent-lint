@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.9] - 2026-04-12
+
+### Fixed
+
+- Fixed release pipeline: removed deprecated `macos-13` runner that was causing all release workflow runs to fail (zero GitHub Releases were being created)
+- Fixed `workflow_dispatch` version-handling bug where release job received empty version
+- Added version fallback null guards and release idempotency check
+
+### Removed
+
+- Dropped Intel macOS (x86_64-apple-darwin) binary support (Intel Macs are EOL)
+
 ## [0.2.8] - 2026-04-12
 
 ### Added
