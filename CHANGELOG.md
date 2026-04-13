@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.12] - 2026-04-12
+
+### Fixed
+
+- bump-version now regenerates Cargo.lock after updating Cargo.toml version, preventing stale lockfile drift
+
 ## [0.2.11] - 2026-04-12
 
 ### Added
