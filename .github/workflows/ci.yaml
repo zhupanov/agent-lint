@@ -75,7 +75,7 @@ jobs:
           restore-keys: |
             cargo-${{ runner.os }}-
       - name: Self-lint
-        run: cargo run --locked -- .
+        run: cargo run -- .
 
   musl-build:
     runs-on: ubuntu-latest

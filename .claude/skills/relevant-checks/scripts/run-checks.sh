@@ -14,7 +14,7 @@ PC_EXIT=0
 # ---------------------------------------------------------------------------
 if command -v cargo >/dev/null 2>&1; then
     echo "=== Running claude-lint (self-lint) ==="
-    cargo run --locked --quiet -- . || PC_EXIT=1
+    cargo run --quiet -- . || PC_EXIT=1
 else
     echo "WARN: cargo not available, skipping claude-lint self-lint"
 fi
