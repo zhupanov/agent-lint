@@ -4,16 +4,20 @@
 # This script is private to the /relevant-checks skill.
 set -uo pipefail
 
-# ---------------------------------------------------------------------------
-# Pre-flight: ensure pre-commit is installed
-# ---------------------------------------------------------------------------
-command -v pre-commit >/dev/null 2>&1 || {
-    echo "ERROR: pre-commit not found. Run: pip install pre-commit"
-    exit 1
-}
-
 REPO_ROOT="$(git rev-parse --show-toplevel)" || { echo "ERROR: not inside a git repository"; exit 1; }
 cd "$REPO_ROOT" || exit 1
+
+PC_EXIT=0
+
+# ---------------------------------------------------------------------------
+# Self-lint: always validate the repo's own Claude configuration
+# ---------------------------------------------------------------------------
+if command -v cargo >/dev/null 2>&1; then
+    echo "=== Running claude-lint (self-lint) ==="
+    cargo run --quiet -- . || PC_EXIT=1
+else
+    echo "WARN: cargo not available, skipping claude-lint self-lint"
+fi
 
 # ---------------------------------------------------------------------------
 # Determine changed files (union of branch diff + staged + unstaged + untracked)
@@ -39,8 +43,8 @@ untracked="$(git ls-files --others --exclude-standard 2>/dev/null || true)"
 MODIFIED_FILES="$(printf '%s\n%s\n%s\n%s' "$branch_diff" "$staged_diff" "$unstaged_diff" "$untracked" | sort -u | grep -v '^$' || true)"
 
 if [ -z "$MODIFIED_FILES" ]; then
-    echo "No modified files detected — no checks to run."
-    exit 0
+    echo "No modified files detected — no further checks to run."
+    exit "$PC_EXIT"
 fi
 
 # ---------------------------------------------------------------------------
@@ -61,16 +65,23 @@ done <<< "$MODIFIED_FILES"
 # ---------------------------------------------------------------------------
 if [ ${#files[@]} -eq 0 ]; then
     echo "No existing modified files to check (all changes are deletions)."
-    exit 0
+    exit "$PC_EXIT"
 fi
+
+# ---------------------------------------------------------------------------
+# Pre-flight: ensure pre-commit is installed (gates Phase 2 only)
+# ---------------------------------------------------------------------------
+command -v pre-commit >/dev/null 2>&1 || {
+    echo "ERROR: pre-commit not found. Run: pip install pre-commit"
+    exit 1
+}
 
 # ---------------------------------------------------------------------------
 # Run pre-commit on changed files. Pre-commit handles file-type routing via
 # the types/files fields in .pre-commit-config.yaml — no manual gating needed.
 # ---------------------------------------------------------------------------
 echo "=== Running pre-commit on ${#files[@]} changed file(s) ==="
-pre-commit run --files "${files[@]}"
-PC_EXIT=$?
+pre-commit run --files "${files[@]}" || PC_EXIT=1
 
 # ---------------------------------------------------------------------------
 # Run Rust checks when .rs or Cargo.toml files are among the changes.

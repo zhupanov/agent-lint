@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2.6] - 2026-04-12
+
+### Added
+
+- Self-lint CI job that builds and runs `claude-lint` against the repo's own `.claude/` configuration
+- Unconditional self-lint phase in `/relevant-checks` that validates Claude config on every invocation
+
+### Changed
+
+- `/relevant-checks` now runs in two phases: unconditional self-lint (Phase 1) followed by change-scoped pre-commit checks (Phase 2)
+- Moved pre-commit availability check to gate only Phase 2, allowing self-lint to run independently
+- Early exits in `run-checks.sh` now propagate self-lint exit status instead of hardcoded `exit 0`
+
 ## [0.2.5] - 2026-04-12
 
 ### Fixed
