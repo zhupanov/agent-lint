@@ -57,6 +57,8 @@ CARGO_TOML="$PWD/Cargo.toml"
 GIT_DIR="$(git rev-parse --git-dir)"
 BACKUP="$GIT_DIR/package.json.bump-backup"
 CARGO_BACKUP="$GIT_DIR/Cargo.toml.bump-backup"
+CARGO_LOCK="$PWD/Cargo.lock"
+CARGO_LOCK_BACKUP="$GIT_DIR/Cargo.lock.bump-backup"
 
 # Step 1 (FIRST): Verify clean working tree.
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
@@ -71,6 +73,9 @@ jq empty "$VERSION_FILE" 2>/dev/null || fail "$VERSION_FILE is not valid JSON"
 cp "$VERSION_FILE" "$BACKUP"
 if [[ -f "$CARGO_TOML" ]]; then
   cp "$CARGO_TOML" "$CARGO_BACKUP"
+  if [[ -f "$CARGO_LOCK" ]]; then
+    cp "$CARGO_LOCK" "$CARGO_LOCK_BACKUP"
+  fi
 fi
 
 # Step 4a: Atomic rewrite of package.json via jq + mv.
@@ -99,28 +104,49 @@ if [[ -f "$CARGO_TOML" ]]; then
     rm -f "$TMP_CARGO"
     # Restore package.json from backup since we already rewrote it.
     mv "$BACKUP" "$VERSION_FILE"
-    rm -f "$CARGO_BACKUP"
+    rm -f "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
     fail "Cargo.toml awk rewrite failed: [package] version field not found or empty output"
   fi
   # Verify the new version appears in the rewritten file.
   if ! grep -q "version = \"$NEW_VERSION\"" "$TMP_CARGO"; then
     rm -f "$TMP_CARGO"
     mv "$BACKUP" "$VERSION_FILE"
-    rm -f "$CARGO_BACKUP"
+    rm -f "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
     fail "Cargo.toml rewrite verification failed: version $NEW_VERSION not found in output"
   fi
   mv "$TMP_CARGO" "$CARGO_TOML"
+
+  # Step 4c: Regenerate Cargo.lock to reflect the new version.
+  if ! command -v cargo >/dev/null 2>&1; then
+    mv "$BACKUP" "$VERSION_FILE"
+    mv "$CARGO_BACKUP" "$CARGO_TOML"
+    if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
+      mv "$CARGO_LOCK_BACKUP" "$CARGO_LOCK"
+    fi
+    fail "cargo not found in PATH; cannot regenerate Cargo.lock"
+  fi
+  if ! cargo generate-lockfile --quiet 2>/dev/null; then
+    mv "$BACKUP" "$VERSION_FILE"
+    mv "$CARGO_BACKUP" "$CARGO_TOML"
+    if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
+      mv "$CARGO_LOCK_BACKUP" "$CARGO_LOCK"
+    fi
+    fail "cargo generate-lockfile failed after Cargo.toml rewrite"
+  fi
 fi
 
 # Step 5: Stage and commit.
 git add "$VERSION_FILE"
 if [[ -f "$CARGO_TOML" ]]; then
   git add "$CARGO_TOML"
+  if [[ -f "$CARGO_LOCK" ]]; then
+    git add "$CARGO_LOCK"
+  fi
 fi
 COMMIT_MSG="Bump version to $NEW_VERSION"
 if git commit -m "$COMMIT_MSG" --quiet; then
-  # Success — remove backup, emit result.
-  rm -f "$BACKUP"
+  # Success — remove backups, emit result.
+  rm -f "$BACKUP" "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
   COMMIT_SHA=$(git rev-parse HEAD)
   echo "APPLIED=true"
   echo "COMMIT_SHA=$COMMIT_SHA"
@@ -133,7 +159,11 @@ if [[ -f "$CARGO_BACKUP" ]]; then
   mv "$CARGO_BACKUP" "$CARGO_TOML"
   git reset HEAD "$CARGO_TOML" >/dev/null 2>&1 || true
 fi
+if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
+  mv "$CARGO_LOCK_BACKUP" "$CARGO_LOCK"
+  git reset HEAD "$CARGO_LOCK" >/dev/null 2>&1 || true
+fi
 git reset HEAD "$VERSION_FILE" >/dev/null 2>&1 || true
 echo "APPLIED=false"
-echo "ERROR=git commit failed; rolled back $VERSION_FILE and $CARGO_TOML from backup"
+echo "ERROR=git commit failed; rolled back $VERSION_FILE, $CARGO_TOML, and $CARGO_LOCK from backup"
 exit 1
