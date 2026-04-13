@@ -67,7 +67,9 @@ mod tests {
 
     #[test]
     fn load_missing_file_returns_missing() {
-        let state = ManifestState::load("/tmp/nonexistent-file-12345.json");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nonexistent.json");
+        let state = ManifestState::load(path.to_str().unwrap());
         assert!(matches!(state, ManifestState::Missing));
     }
 

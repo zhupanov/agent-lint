@@ -220,7 +220,10 @@ mod tests {
 
     #[test]
     fn resolve_repo_root_nonexistent_dir() {
-        let result = resolve_repo_root("/tmp/nonexistent-dir-999888777");
+        let tmp = tempfile::tempdir().unwrap();
+        let nonexistent = tmp.path().join("does-not-exist");
+        let result = resolve_repo_root(nonexistent.to_str().unwrap());
         assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not inside a git repository"));
     }
 }
