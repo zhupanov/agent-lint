@@ -88,6 +88,15 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
             LintRule::HooksKeyMissing,
             &format!("{f} missing top-level 'hooks' key"),
         );
+    } else if val
+        .get("hooks")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| a.is_empty())
+    {
+        diag.report(
+            LintRule::HooksArrayEmpty,
+            &format!("{f} has empty 'hooks' array"),
+        );
     }
 
     validate_hook_command_paths(
@@ -175,6 +184,16 @@ mod tests {
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("hooks"));
+    }
+
+    #[test]
+    fn test_v3_empty_hooks_array() {
+        let val = json!({"hooks": []});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("empty"));
     }
 
     // V4: validate_settings_hooks

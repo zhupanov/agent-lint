@@ -42,6 +42,8 @@ pub enum LintRule {
     HookNotExecutable,
     /// H006: .claude/settings.json is not valid JSON
     SettingsJsonInvalid,
+    /// H007: hooks.json hooks array is empty
+    HooksArrayEmpty,
 
     // ── Skills (S) ────────────────────────────────────────────────
     /// S001: skills/ directory is missing
@@ -222,6 +224,7 @@ impl LintRule {
             Self::HookCommandMissing => "H004",
             Self::HookNotExecutable => "H005",
             Self::SettingsJsonInvalid => "H006",
+            Self::HooksArrayEmpty => "H007",
 
             Self::SkillsDirMissing => "S001",
             Self::SkillMdMissing => "S002",
@@ -324,6 +327,7 @@ impl LintRule {
             Self::HookCommandMissing => "hook-command-missing",
             Self::HookNotExecutable => "hook-not-executable",
             Self::SettingsJsonInvalid => "settings-json-invalid",
+            Self::HooksArrayEmpty => "hooks-array-empty",
 
             Self::SkillsDirMissing => "skills-dir-missing",
             Self::SkillMdMissing => "skill-md-missing",
@@ -434,6 +438,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::HookCommandMissing,
     LintRule::HookNotExecutable,
     LintRule::SettingsJsonInvalid,
+    LintRule::HooksArrayEmpty,
     LintRule::SkillsDirMissing,
     LintRule::SkillMdMissing,
     LintRule::NoExportedSkills,
@@ -518,7 +523,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            88,
+            89,
             "ALL_RULES length must match enum variant count"
         );
     }

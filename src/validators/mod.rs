@@ -179,7 +179,7 @@ mod tests {
             "owner": {"name": "owner", "email": "a@b.com"},
             "plugins": [{"name": "p", "source": "s", "category": "lint"}]
         });
-        let hooks_val = json!({"hooks": []});
+        let hooks_val = json!({"hooks": [{"command": "echo test"}]});
 
         let ctx = LintContext {
             base_path: tmp.path().to_path_buf(),
@@ -340,7 +340,7 @@ mod tests {
             "owner": {"name": "owner", "email": "a@b.com"},
             "plugins": [{"name": "p", "source": "s", "category": "lint"}]
         });
-        let hooks_val = json!({"hooks": []});
+        let hooks_val = json!({"hooks": [{"command": "echo test"}]});
 
         let ctx = LintContext {
             base_path: tmp.path().to_path_buf(),
@@ -506,7 +506,7 @@ mod tests {
             "owner": {"name": "owner", "email": "a@b.com"},
             "plugins": [{"name": "p", "source": "s", "category": "lint"}]
         });
-        let hooks_val = json!({"hooks": []});
+        let hooks_val = json!({"hooks": [{"command": "echo test"}]});
 
         let ctx = LintContext {
             base_path: tmp.path().to_path_buf(),

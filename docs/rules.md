@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 88 rules across 9 categories. Every rule has a unique
+Claude Lint ships 89 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
@@ -35,6 +35,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | H004 | `hook-command-missing` | Hook command script missing on disk | Both |
 | H005 | `hook-not-executable` | Hook command script not executable | Both |
 | H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Both |
+| H007 | `hooks-array-empty` | `hooks.json` has empty `hooks` array | Plugin |
 
 ## Skills Rules (S)
 
@@ -42,7 +43,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
-| S001 | `skills-dir-missing` | `skills/` directory is missing | Plugin |
+| S001 | `skills-dir-missing` | `skills/` directory is missing (deprecated — no longer fires) | Plugin |
 | S002 | `skill-md-missing` | `skills/{name}/` missing `SKILL.md` | Plugin |
 | S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin |
 | S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Both |

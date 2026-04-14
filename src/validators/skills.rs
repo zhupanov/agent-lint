@@ -87,7 +87,6 @@ pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
 pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
-        diag.report(LintRule::SkillsDirMissing, "skills/ directory is missing");
         return;
     }
 
@@ -333,8 +332,7 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new();
         validate_skills_layout(&mut diag, &crate::config::ExcludeSet::default());
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("skills/ directory is missing"));
+        assert_eq!(diag.error_count(), 0);
     }
 
     #[test]
