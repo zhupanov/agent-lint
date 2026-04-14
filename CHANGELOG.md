@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.20] - 2026-04-13
+
+### Added
+
+- Added `--help` (`-h`) and `--version` CLI flags for discoverability
+- Added CWD fallback when git is unavailable or target is not a git repo, with a warning to stderr
+- Single-dash flags (e.g., `-v`) are now rejected as unknown flags instead of being silently treated as paths
+
 ## [1.0.19] - 2026-04-13
 
 ### Fixed
