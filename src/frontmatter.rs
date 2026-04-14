@@ -33,25 +33,39 @@ pub enum FieldState {
     Value(String),
 }
 
-/// Get the three-state value of a frontmatter field: Missing, Empty, or Value.
-pub fn get_field_state(fm_lines: &[String], key: &str) -> FieldState {
+/// Strip outer quotes (double or single) from a string value.
+fn strip_quotes(val: &str) -> &str {
+    if val.len() >= 2
+        && ((val.starts_with('"') && val.ends_with('"'))
+            || (val.starts_with('\'') && val.ends_with('\'')))
+    {
+        &val[1..val.len() - 1]
+    } else {
+        val
+    }
+}
+
+/// Extract the raw value for a key from frontmatter lines.
+/// Strips leading whitespace and outer quotes (double or single).
+/// Returns `None` if the key is not found, `Some("")` if the value is empty after stripping.
+fn extract_raw_value<'a>(fm_lines: &'a [String], key: &str) -> Option<&'a str> {
     let prefix = format!("{key}:");
     for line in fm_lines {
         if line.starts_with(&prefix) {
-            let val = &line[prefix.len()..];
-            let val = val.trim_start();
-            let val = if val.starts_with('"') && val.ends_with('"') && val.len() >= 2 {
-                &val[1..val.len() - 1]
-            } else {
-                val
-            };
-            if val.is_empty() {
-                return FieldState::Empty;
-            }
-            return FieldState::Value(val.to_string());
+            let val = line[prefix.len()..].trim_start();
+            return Some(strip_quotes(val));
         }
     }
-    FieldState::Missing
+    None
+}
+
+/// Get the three-state value of a frontmatter field: Missing, Empty, or Value.
+pub fn get_field_state(fm_lines: &[String], key: &str) -> FieldState {
+    match extract_raw_value(fm_lines, key) {
+        None => FieldState::Missing,
+        Some("") => FieldState::Empty,
+        Some(v) => FieldState::Value(v.to_string()),
+    }
 }
 
 /// Check whether a key is present in frontmatter (regardless of value).
@@ -118,28 +132,14 @@ pub fn extract_body(content: &str) -> &str {
 }
 
 /// Get the value of a top-level scalar key from frontmatter lines.
-/// Strips outer double quotes and leading whitespace from the value.
+/// Strips outer quotes (double or single) and leading whitespace from the value.
 /// Returns None if the key is not found or the value is empty.
 /// Uses starts_with("{key}:") to match bash's index() semantics exactly.
 pub fn get_field(fm_lines: &[String], key: &str) -> Option<String> {
-    let prefix = format!("{key}:");
-    for line in fm_lines {
-        if line.starts_with(&prefix) {
-            let val = &line[prefix.len()..];
-            let val = val.trim_start();
-            // Strip outer double quotes
-            let val = if val.starts_with('"') && val.ends_with('"') && val.len() >= 2 {
-                &val[1..val.len() - 1]
-            } else {
-                val
-            };
-            if val.is_empty() {
-                return None;
-            }
-            return Some(val.to_string());
-        }
+    match extract_raw_value(fm_lines, key) {
+        Some(v) if !v.is_empty() => Some(v.to_string()),
+        _ => None,
     }
-    None
 }
 
 #[cfg(test)]
@@ -179,6 +179,23 @@ mod tests {
         let content = "---\nname: \"hello world\"\n---\n";
         let fm = extract_frontmatter(content).unwrap();
         assert_eq!(get_field(&fm, "name"), Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn test_single_quoted_value() {
+        let content = "---\nname: 'my-skill'\n---\n";
+        let fm = extract_frontmatter(content).unwrap();
+        assert_eq!(get_field(&fm, "name"), Some("my-skill".to_string()));
+    }
+
+    #[test]
+    fn test_single_quoted_value_field_state() {
+        let content = "---\nname: 'my-skill'\n---\n";
+        let fm = extract_frontmatter(content).unwrap();
+        assert_eq!(
+            get_field_state(&fm, "name"),
+            FieldState::Value("my-skill".to_string())
+        );
     }
 
     #[test]
