@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.19] - 2026-04-13
+
+### Fixed
+
+- Fixed docs path regex to match subdirectory paths (e.g., `docs/api/reference.md`) by adding `/` to character class
+- Made canonical sources heading match case-insensitive so `## Canonical Sources` variants are detected
+- Extracted `shared_ref_regex` helper to build shared-reference regex from `base_dir` parameter with `regex::escape`, replacing hardcoded `skills/shared` in S029 and S036 validators
+
 ## [1.0.18] - 2026-04-13
 
 ### Changed
