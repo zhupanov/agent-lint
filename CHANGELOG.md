@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.23] - 2026-04-14
+
+### Changed
+
+- Added `use regex::Regex` import to `agents.rs` to match all other validator files
+- Added doc comment on `extract_raw_value` noting colon-suffix prevents prefix collisions
+- Audited `.markdownlint.json`: removed 13 unnecessary suppressions, kept MD013 and MD024
+- Fixed MD022/MD032 violations in `bump-version/SKILL.md` and `relevant-checks/SKILL.md`
+
 ## [1.0.22] - 2026-04-13
 
 ### Changed
