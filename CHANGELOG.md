@@ -9,9 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- New rule S044 (`mcp-tool-unqualified`): detects backtick-quoted MCP tool references without `ServerName:` prefix
-- Context-word gating to reduce false positives (only flags near "use", "call", "invoke", etc.)
-- Built-in platform tool exclusion list in snake_case form
+- Added S044 `tools-list-syntax` rule: detects when `allowed-tools` uses YAML block-list syntax instead of comma-separated scalar; suppresses S007 for the same field when list items are present
 
 ## [1.0.27] - 2026-04-14
 
