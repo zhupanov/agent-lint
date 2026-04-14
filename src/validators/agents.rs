@@ -74,12 +74,12 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 
         // A008: agent description too long
         if let Some(ref desc) = fm_desc {
-            if desc.len() > 1024 {
+            if desc.chars().count() > 1024 {
                 diag.report(
                     LintRule::AgentDescLong,
                     &format!(
                         "{agent_path}: description exceeds 1024 characters ({})",
-                        desc.len()
+                        desc.chars().count()
                     ),
                 );
             }
@@ -87,12 +87,12 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 
         // A009: agent description too short
         if let Some(ref desc) = fm_desc {
-            if desc.len() < 20 {
+            if desc.chars().count() < 20 {
                 diag.report(
                     LintRule::AgentDescShort,
                     &format!(
                         "{agent_path}: description is under 20 characters ({})",
-                        desc.len()
+                        desc.chars().count()
                     ),
                 );
             }

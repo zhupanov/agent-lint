@@ -138,37 +138,37 @@ fn check_description_quality(info: &SkillInfo, plugin_mode: bool, diag: &mut Dia
     };
 
     // S014: description too long
-    if desc.len() > 1024 {
+    if desc.chars().count() > 1024 {
         diag.report(
             LintRule::DescTooLong,
             &format!(
                 "{}: description exceeds 1024 characters ({})",
                 info.path,
-                desc.len()
+                desc.chars().count()
             ),
         );
     }
 
     // S034: description too short
-    if desc.len() < 20 {
+    if desc.chars().count() < 20 {
         diag.report(
             LintRule::DescTooShort,
             &format!(
                 "{}: description is under 20 characters ({})",
                 info.path,
-                desc.len()
+                desc.chars().count()
             ),
         );
     }
 
     // S015: description truncated in listing (plugin-only)
-    if plugin_mode && desc.len() > 250 {
+    if plugin_mode && desc.chars().count() > 250 {
         diag.report(
             LintRule::DescTruncated,
             &format!(
                 "{}: description exceeds 250 characters ({}) and will be truncated in skill listing",
                 info.path,
-                desc.len()
+                desc.chars().count()
             ),
         );
     }
@@ -2484,7 +2484,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         // "Use when testing " = 17 chars + 1007 x's = exactly 1024
         let desc = format!("Use when testing {}", "x".repeat(1007));
-        assert_eq!(desc.len(), 1024);
+        assert_eq!(desc.chars().count(), 1024);
         std::fs::write(
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody\n"),
@@ -2546,7 +2546,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         // exactly 20 characters
         let desc = "Use when needed now!";
-        assert_eq!(desc.len(), 20);
+        assert_eq!(desc.chars().count(), 20);
         std::fs::write(
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody\n"),
