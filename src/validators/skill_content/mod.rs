@@ -1326,7 +1326,8 @@ mod tests {
             ("S041", "fork-no-task"),
             ("S042", "dmi-empty-desc"),
             ("S043", "frontmatter-backslash"),
-            ("S044", "tools-list-syntax"),
+            ("S044", "mcp-tool-unqualified"),
+            ("S045", "tools-list-syntax"),
         ];
         for (code, name) in &new_rules {
             assert!(

@@ -132,7 +132,9 @@ pub enum LintRule {
     DmiEmptyDesc,
     /// S043: Windows-style backslash paths in frontmatter fields
     FrontmatterBackslash,
-    /// S044: allowed-tools uses YAML list syntax instead of comma-separated scalar
+    /// S044: MCP tool reference without server prefix
+    McpToolUnqualified,
+    /// S045: allowed-tools uses YAML list syntax instead of comma-separated scalar
     ToolsListSyntax,
 
     // ── Agents (A) ────────────────────────────────────────────────
@@ -271,7 +273,8 @@ impl LintRule {
             Self::ForkNoTask => "S041",
             Self::DmiEmptyDesc => "S042",
             Self::FrontmatterBackslash => "S043",
-            Self::ToolsListSyntax => "S044",
+            Self::McpToolUnqualified => "S044",
+            Self::ToolsListSyntax => "S045",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -375,6 +378,7 @@ impl LintRule {
             Self::ForkNoTask => "fork-no-task",
             Self::DmiEmptyDesc => "dmi-empty-desc",
             Self::FrontmatterBackslash => "frontmatter-backslash",
+            Self::McpToolUnqualified => "mcp-tool-unqualified",
             Self::ToolsListSyntax => "tools-list-syntax",
 
             Self::AgentsDirMissing => "agents-dir-missing",
@@ -486,6 +490,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::ForkNoTask,
     LintRule::DmiEmptyDesc,
     LintRule::FrontmatterBackslash,
+    LintRule::McpToolUnqualified,
     LintRule::ToolsListSyntax,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
@@ -528,7 +533,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            90,
+            91,
             "ALL_RULES length must match enum variant count"
         );
     }

@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 90 rules across 9 categories. Every rule has a unique
+Claude Lint ships 91 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
@@ -96,7 +96,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S026 | `shell-field-invalid` | `shell` field must be `bash`/`powershell` (if present) | Both |
 | S027 | `skill-unreachable` | Skill unreachable: `disable-model-invocation: true` AND `user-invocable: false` | Both |
 
-### Extended Frontmatter (S035, S039--S040, S042--S044)
+### Extended Frontmatter (S035, S039--S040, S042--S045)
 
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
@@ -105,7 +105,8 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S040 | `tools-unknown` | `allowed-tools` lists unrecognized tool name | Both |
 | S042 | `dmi-empty-desc` | `disable-model-invocation: true` with empty/missing description | Both |
 | S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Both |
-| S044 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Both |
+| S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Both |
+| S045 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Both |
 
 ### Cross-Field and Structural (S028--S032, S036)
 
