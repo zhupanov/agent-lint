@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.15] - 2026-04-13
+
+### Fixed
+
+- Fixed rules A008, A009, S014, S015, S034 to count Unicode characters (`chars().count()`) instead of bytes (`len()`), correcting diagnostics for non-ASCII descriptions
+- Cached `chars().count()` result in local variable to avoid redundant O(n) traversals
+- Added boundary tests for A008/A009 and Unicode-specific tests with multi-byte CJK characters
+
 ## [1.0.14] - 2026-04-13
 
 ### Fixed
