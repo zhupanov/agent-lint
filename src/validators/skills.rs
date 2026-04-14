@@ -56,7 +56,7 @@ pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
         let has_scripts_dir = scripts_dir.is_dir()
             && fs::read_dir(&scripts_dir)
                 .ok()
-                .is_some_and(|mut e| e.next().is_some());
+                .is_some_and(|mut e| matches!(e.next(), Some(Ok(_))));
 
         skills.push(SkillInfo {
             path: skill_path,

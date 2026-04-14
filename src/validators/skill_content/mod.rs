@@ -2295,6 +2295,37 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn test_s051_md_only_body_ref_does_not_fire() {
+        // A skill referencing only .md files should NOT be classified as script-backed
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md for details.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("dependency/package")),
+            "S051 should not fire for skill referencing only .md files"
+        );
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("verification/validation")),
+            "S052 should not fire for skill referencing only .md files"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s051_s052_detected_via_body_ref() {
         // Script detected via body .sh reference (no scripts/ dir)
         let tmp = tempfile::tempdir().unwrap();

@@ -42,6 +42,10 @@ static RE_EXAMPLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?m)^\s*(?:#{2,3} (?:Example|Usage|Template|Format)\b|\*\*(?:Example|Input|Output)(?:\s*\d*)?:\*\*)").unwrap()
 });
 
+// S051/S052: Script file reference (narrower than RE_BODY_FILE_REF — excludes .md, shared/, ${CLAUDE_PLUGIN_ROOT})
+static RE_SCRIPT_FILE_REF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.sh\b|\.py\b|\.js\b|\.ts\b|scripts/").unwrap());
+
 // S051: Dependency keywords (case-insensitive)
 static RE_DEPS_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:pip3?\s+install|npm\s+install|brew\s+install|apt\s+install|cargo\s+install|\brequires\b|\bdependencies\b|\bprerequisite\b|\binstall\b|requirements\.txt|package\.json|Cargo\.toml|(?m)^#{2,3}\s+(?:Dependencies|Requirements|Prerequisites|Setup)\b)").unwrap()
@@ -220,7 +224,7 @@ pub(super) fn check_body_content(
 /// A skill is "script-backed" if it has a non-empty `scripts/` subdirectory
 /// or its body references script file extensions (.sh, .py, .js, .ts).
 fn is_script_backed(info: &SkillInfo) -> bool {
-    info.has_scripts_dir || RE_BODY_FILE_REF.is_match(&info.body)
+    info.has_scripts_dir || RE_SCRIPT_FILE_REF.is_match(&info.body)
 }
 
 fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
