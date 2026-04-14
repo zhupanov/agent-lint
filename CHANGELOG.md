@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.26] - 2026-04-14
+
+### Fixed
+
+- Fixed `validate_email_format` silently passing non-string email fields (number, boolean, array, null now report E001)
+- Added H007 `hooks-array-empty` rule for empty `hooks` arrays in `hooks.json`
+- Changed `validate_skills_layout` to silently return when `skills/` is missing (S001 deprecated — hooks-only and agent-only plugins no longer get a false positive)
+- Fixed V12/V13 enriched validators to not report "missing" for non-string email fields
+
 ## [1.0.25] - 2026-04-14
 
 ### Fixed
