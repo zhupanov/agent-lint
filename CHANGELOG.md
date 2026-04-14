@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.27] - 2026-04-14
+
+### Changed
+
+- Split `skill_content.rs` (2942 lines) into 8 submodules for improved maintainability
+- Split `hygiene.rs` (1436 lines) into 5 submodules for improved maintainability
+- Extracted shared directory-walking helpers into `walk.rs`
+- Deduplicated `RE_NAME_INVALID` and `RE_TODO_MARKER` regex patterns into `common.rs`
+- Updated `agents.rs`, `docs.rs`, and `skills.rs` to use shared utilities
+
 ## [1.0.26] - 2026-04-14
 
 ### Fixed
