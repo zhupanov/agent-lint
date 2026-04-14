@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.21] - 2026-04-13
+
+### Fixed
+
+- Fixed `expand_script_dirs` to support multiple `*` wildcards in glob patterns (e.g., `skills/*/nested/*/scripts`) instead of silently skipping them
+- Moved `#[cfg(unix)]` guard to outer executability functions so the entire directory walk is skipped on non-Unix platforms
+
 ## [1.0.20] - 2026-04-13
 
 ### Added

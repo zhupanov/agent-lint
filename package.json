@@ -1,6 +1,6 @@
 {
   "name": "claude-lint",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "private": true,
   "description": "Configuration linter for Claude Code"
 }
