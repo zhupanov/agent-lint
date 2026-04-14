@@ -246,14 +246,8 @@ fn check_body_content(info: &SkillInfo, plugin_mode: bool, diag: &mut Diagnostic
     let re_backslash =
         Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap();
     // Only check outside code fences to reduce false positives
-    let mut in_fence = false;
-    for line in info.body.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if !in_fence && re_backslash.is_match(line) {
+    for line in crate::fence::lines_outside_fences(&info.body) {
+        if re_backslash.is_match(line) {
             diag.report(
                 LintRule::BackslashPath,
                 &format!(
@@ -285,14 +279,8 @@ fn check_body_content(info: &SkillInfo, plugin_mode: bool, diag: &mut Diagnostic
     // S038: time-sensitive (plugin-only) — date/year patterns outside code fences
     if plugin_mode {
         let re_year = Regex::new(r"\b20[2-3][0-9]\b").unwrap();
-        let mut in_code = false;
-        for line in info.body.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_code = !in_code;
-                continue;
-            }
-            if !in_code && re_year.is_match(line) {
+        for line in crate::fence::lines_outside_fences(&info.body) {
+            if re_year.is_match(line) {
                 diag.report(
                     LintRule::TimeSensitive,
                     &format!(
@@ -324,50 +312,54 @@ fn check_body_content(info: &SkillInfo, plugin_mode: bool, diag: &mut Diagnostic
 }
 
 fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
+    use crate::fence::{CodeFenceTracker, LineClass};
+
     let re_bash_fence = Regex::new(r"^```(bash|sh|shell)\s*$").unwrap();
 
+    let mut tracker = CodeFenceTracker::new();
     let mut last_bash_end: Option<usize> = None;
-    let mut in_fence = false;
     let mut fence_is_bash = false;
 
     for (i, line) in info.body.lines().enumerate() {
         let trimmed = line.trim_start();
-        if !in_fence {
-            if re_bash_fence.is_match(trimmed) {
-                // Opening a bash fence
-                if let Some(prev_end) = last_bash_end {
-                    // Check if only blank lines between prev close and this open
-                    let between_lines: Vec<&str> = info
-                        .body
-                        .lines()
-                        .skip(prev_end + 1)
-                        .take(i - prev_end - 1)
-                        .collect();
-                    let only_blank = between_lines.iter().all(|l| l.trim().is_empty());
-                    if only_blank {
-                        diag.report(
-                            LintRule::ConsecutiveBash,
-                            &format!(
-                                "{}: consecutive bash code blocks (lines {} and {}) could be combined into one",
-                                info.path, prev_end + 1, i + 1
-                            ),
-                        );
-                        return; // Report once per file
+        match tracker.process_line(line) {
+            LineClass::Delimiter => {
+                if !tracker.in_fence() {
+                    // This delimiter just closed a fence
+                    if fence_is_bash {
+                        last_bash_end = Some(i);
+                    }
+                    fence_is_bash = false;
+                } else {
+                    // This delimiter just opened a fence
+                    if re_bash_fence.is_match(trimmed) {
+                        // Opening a bash fence — check for consecutive
+                        if let Some(prev_end) = last_bash_end {
+                            let between_lines: Vec<&str> = info
+                                .body
+                                .lines()
+                                .skip(prev_end + 1)
+                                .take(i - prev_end - 1)
+                                .collect();
+                            let only_blank = between_lines.iter().all(|l| l.trim().is_empty());
+                            if only_blank {
+                                diag.report(
+                                    LintRule::ConsecutiveBash,
+                                    &format!(
+                                        "{}: consecutive bash code blocks (lines {} and {}) could be combined into one",
+                                        info.path, prev_end + 1, i + 1
+                                    ),
+                                );
+                                return; // Report once per file
+                            }
+                        }
+                        fence_is_bash = true;
+                    } else {
+                        fence_is_bash = false;
                     }
                 }
-                in_fence = true;
-                fence_is_bash = true;
-            } else if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_fence = true;
-                fence_is_bash = false;
             }
-        } else if trimmed == "```" || trimmed == "~~~" {
-            // Closing fence
-            if fence_is_bash {
-                last_bash_end = Some(i);
-            }
-            in_fence = false;
-            fence_is_bash = false;
+            LineClass::Inside | LineClass::Outside => {}
         }
     }
 }
@@ -635,9 +627,11 @@ fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) 
 // ── Cross-field checks (S028) ────────────────────────────────────────
 
 fn check_cross_field(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    // S028: $ARGUMENTS in body without argument-hint
+    // S028: $ARGUMENTS in body without argument-hint (only outside code fences)
     let re_args = Regex::new(r"\$ARGUMENTS|\$\{ARGUMENTS\}").unwrap();
-    if re_args.is_match(&info.body) && !frontmatter::field_exists(&info.fm_lines, "argument-hint") {
+    if crate::fence::lines_outside_fences(&info.body).any(|line| re_args.is_match(line))
+        && !frontmatter::field_exists(&info.fm_lines, "argument-hint")
+    {
         diag.report(
             LintRule::ArgsNoHint,
             &format!(
@@ -1689,6 +1683,26 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("argument-hint")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s028_args_in_code_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // $ARGUMENTS only inside a code fence — should NOT trigger S028
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nSome body text\n\n```bash\necho $ARGUMENTS\n```\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("argument-hint")),
+            "$ARGUMENTS inside code fence should not trigger S028"
+        );
     }
 
     // ── S031: non-https-url ──────────────────────────────────────────

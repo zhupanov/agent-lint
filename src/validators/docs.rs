@@ -81,25 +81,17 @@ pub fn validate_claudemd_todos(diag: &mut DiagnosticCollector, exclude: &Exclude
     };
 
     let re_todo = Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap();
-    let mut in_fence = false;
 
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if !in_fence {
-            if let Some(m) = re_todo.find(line) {
-                diag.report(
-                    LintRule::TodoInDocs,
-                    &format!(
-                        "CLAUDE.md contains {} marker; remove before publishing",
-                        m.as_str()
-                    ),
-                );
-                break; // Report once per file (matches G006/G007 pattern)
-            }
+    for line in crate::fence::lines_outside_fences(&content) {
+        if let Some(m) = re_todo.find(line) {
+            diag.report(
+                LintRule::TodoInDocs,
+                &format!(
+                    "CLAUDE.md contains {} marker; remove before publishing",
+                    m.as_str()
+                ),
+            );
+            break; // Report once per file (matches G006/G007 pattern)
         }
     }
 }
@@ -262,6 +254,26 @@ Should not be here\n\
         let mut diag = DiagnosticCollector::new();
         validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("TODO")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_d003_todo_in_nested_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // 4-backtick fence containing 3-backtick line with TODO — should not trigger
+        std::fs::write(
+            "CLAUDE.md",
+            "# Docs\n\n````\n```\n# TODO: nested fence content\n```\n````\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("TODO")),
+            "TODO inside nested 4-backtick fence should not trigger D003"
+        );
     }
 
     #[test]

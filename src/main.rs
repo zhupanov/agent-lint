@@ -1,6 +1,7 @@
 mod config;
 mod context;
 mod diagnostic;
+mod fence;
 mod frontmatter;
 mod rules;
 #[cfg(test)]

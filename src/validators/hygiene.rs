@@ -600,25 +600,17 @@ pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector, exclude: &Exclude
 
         // Extract body after frontmatter
         let body = crate::frontmatter::extract_body(&content);
-        let mut in_fence = false;
 
-        for line in body.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_fence = !in_fence;
-                continue;
-            }
-            if !in_fence {
-                if let Some(m) = re_todo.find(line) {
-                    diag.report(
-                        LintRule::TodoInSkill,
-                        &format!(
-                            "skills/{dir_name}/SKILL.md contains {} marker; remove before publishing",
-                            m.as_str()
-                        ),
-                    );
-                    break; // Report once per file
-                }
+        for line in crate::fence::lines_outside_fences(body) {
+            if let Some(m) = re_todo.find(line) {
+                diag.report(
+                    LintRule::TodoInSkill,
+                    &format!(
+                        "skills/{dir_name}/SKILL.md contains {} marker; remove before publishing",
+                        m.as_str()
+                    ),
+                );
+                break; // Report once per file
             }
         }
     }
@@ -660,25 +652,16 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
         };
 
         let body = crate::frontmatter::extract_body(&content);
-        let mut in_fence = false;
-
-        for line in body.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_fence = !in_fence;
-                continue;
-            }
-            if !in_fence {
-                if let Some(m) = re_todo.find(line) {
-                    diag.report(
-                        LintRule::TodoInAgent,
-                        &format!(
-                            "agents/{name} contains {} marker; remove before publishing",
-                            m.as_str()
-                        ),
-                    );
-                    break; // Report once per file
-                }
+        for line in crate::fence::lines_outside_fences(body) {
+            if let Some(m) = re_todo.find(line) {
+                diag.report(
+                    LintRule::TodoInAgent,
+                    &format!(
+                        "agents/{name} contains {} marker; remove before publishing",
+                        m.as_str()
+                    ),
+                );
+                break; // Report once per file
             }
         }
     }
@@ -736,21 +719,9 @@ fn strip_trailing_yaml_comment(line: &str) -> String {
 }
 
 fn extract_code_fences(content: &str) -> String {
-    let mut in_code = false;
-    let mut result = Vec::new();
-
-    for line in content.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_code = !in_code;
-            continue;
-        }
-        if in_code {
-            result.push(line);
-        }
-    }
-
-    result.join("\n")
+    crate::fence::lines_inside_fences(content)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -1257,6 +1228,27 @@ mod tests {
         assert!(!diag.errors().iter().any(|e| e.contains("TODO")));
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_g006_todo_in_nested_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // 4-backtick fence containing 3-backtick line with TODO — should not trigger
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: desc\n---\n\n````\n```\n# TODO: nested\n```\n````\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_todo_in_skills(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("TODO")),
+            "TODO inside nested 4-backtick fence should not trigger G006"
+        );
+    }
+
     // G007: todo-in-agent
     #[test]
     #[serial_test::serial]
@@ -1290,5 +1282,26 @@ mod tests {
         let mut diag = DiagnosticCollector::new();
         validate_todo_in_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("FIXME")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g007_todo_in_nested_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        // 4-backtick fence containing 3-backtick line with FIXME — should not trigger
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\n\n````\n```\n# FIXME: nested\n```\n````\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_todo_in_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("FIXME")),
+            "FIXME inside nested 4-backtick fence should not trigger G007"
+        );
     }
 }
