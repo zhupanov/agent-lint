@@ -125,9 +125,7 @@ pub fn validate_marketplace_enriched(ctx: &LintContext, diag: &mut DiagnosticCol
         _ => return, // Missing/invalid already reported by V2
     };
 
-    let email_val = val.get("owner").and_then(|o| o.get("email"));
-    let email = email_val.and_then(|v| v.as_str()).unwrap_or("");
-    if email.is_empty() && email_val.is_none() {
+    if val.get("owner").and_then(|o| o.get("email")).is_none() {
         diag.report(
             LintRule::MarketplaceEnrichedMissing,
             &format!("{f} missing required field: owner.email"),
@@ -169,9 +167,7 @@ pub fn validate_plugin_enriched(ctx: &LintContext, diag: &mut DiagnosticCollecto
         );
     }
 
-    let email_val = val.get("author").and_then(|o| o.get("email"));
-    let email = email_val.and_then(|v| v.as_str()).unwrap_or("");
-    if email.is_empty() && email_val.is_none() {
+    if val.get("author").and_then(|o| o.get("email")).is_none() {
         diag.report(
             LintRule::PluginEnrichedMissing,
             &format!("{f} missing required field: author.email"),
@@ -372,6 +368,22 @@ mod tests {
     }
 
     #[test]
+    fn test_v12_non_string_email_no_missing_report() {
+        let val = json!({
+            "owner": {"name": "o", "email": 42},
+            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new();
+        validate_marketplace_enriched(&ctx, &mut diag);
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "non-string email should not fire M010"
+        );
+    }
+
+    #[test]
     fn test_v12_skips_when_not_parsed() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
         let mut diag = DiagnosticCollector::new();
@@ -424,6 +436,23 @@ mod tests {
         validate_plugin_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("keywords"));
+    }
+
+    #[test]
+    fn test_v13_non_string_email_no_missing_report() {
+        let val = json!({
+            "description": "desc",
+            "author": {"email": true},
+            "keywords": ["lint"]
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new();
+        validate_plugin_enriched(&ctx, &mut diag);
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "non-string email should not fire M011"
+        );
     }
 
     #[test]
