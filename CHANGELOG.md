@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.16] - 2026-04-13
+
+### Fixed
+
+- Fixed `strip_yaml_comments` regex stripping `#` inside quoted strings (e.g., `key: "value with # hash"` was truncated)
+- Replaced naive trailing comment regex with quote-aware character parser supporting double/single quotes, backslash escapes, and doubled single-quote escapes
+- Fixed potential panic on multibyte UTF-8 input by switching from char-index to byte-offset slicing via `char_indices()`
+
 ## [1.0.15] - 2026-04-13
 
 ### Fixed

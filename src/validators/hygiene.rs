@@ -686,14 +686,53 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
 
 fn strip_yaml_comments(content: &str) -> String {
     let re_full = Regex::new(r"^[[:space:]]*#").unwrap();
-    let re_trailing = Regex::new(r"[[:space:]]+#.*$").unwrap();
 
     content
         .lines()
         .filter(|line| !re_full.is_match(line))
-        .map(|line| re_trailing.replace(line, "").to_string())
+        .map(strip_trailing_yaml_comment)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn strip_trailing_yaml_comment(line: &str) -> String {
+    let mut in_quote: Option<char> = None;
+    let mut prev_was_ws = false;
+    let mut skip_next = false;
+
+    for (byte_pos, ch) in line.char_indices() {
+        if skip_next {
+            skip_next = false;
+            prev_was_ws = ch.is_whitespace();
+            continue;
+        }
+        match in_quote {
+            Some(q) => {
+                if q == '"' && ch == '\\' {
+                    skip_next = true;
+                } else if q == '\'' && ch == '\'' {
+                    let rest = &line[byte_pos + ch.len_utf8()..];
+                    if rest.starts_with('\'') {
+                        skip_next = true;
+                    } else {
+                        in_quote = None;
+                    }
+                } else if ch == q {
+                    in_quote = None;
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    in_quote = Some(ch);
+                } else if ch == '#' && prev_was_ws {
+                    return line[..byte_pos].trim_end().to_string();
+                }
+            }
+        }
+        prev_was_ws = ch.is_whitespace();
+    }
+
+    line.to_string()
 }
 
 fn extract_code_fences(content: &str) -> String {
@@ -726,6 +765,52 @@ mod tests {
         assert!(!result.contains("# comment"));
         assert!(result.contains("key2: val2"));
         assert!(!result.contains("trailing"));
+    }
+
+    #[test]
+    fn test_strip_yaml_comments_preserves_hash_in_double_quotes() {
+        let result = strip_yaml_comments("key: \"value with # hash\"\n");
+        assert!(result.contains("key: \"value with # hash\""));
+    }
+
+    #[test]
+    fn test_strip_yaml_comments_preserves_hash_in_single_quotes() {
+        let result = strip_yaml_comments("key: 'value with # hash'\n");
+        assert!(result.contains("key: 'value with # hash'"));
+    }
+
+    #[test]
+    fn test_strip_yaml_comments_strips_after_closing_quote() {
+        let result = strip_yaml_comments("key: \"quoted\" # comment\n");
+        assert!(result.contains("key: \"quoted\""));
+        assert!(!result.contains("comment"));
+    }
+
+    #[test]
+    fn test_strip_yaml_comments_preserves_unclosed_quote() {
+        let result = strip_yaml_comments("key: \"unterminated # hash\n");
+        assert!(result.contains("key: \"unterminated # hash"));
+    }
+
+    #[test]
+    fn test_strip_yaml_comments_multibyte_chars() {
+        let result = strip_yaml_comments("clé: \"über\" # comment\n");
+        assert!(result.contains("clé: \"über\""));
+        assert!(!result.contains("comment"));
+    }
+
+    #[test]
+    fn test_strip_yaml_comments_escaped_double_quote() {
+        let result = strip_yaml_comments("key: \"say \\\"hello\\\" # still in\" # comment\n");
+        assert!(result.contains("# still in"));
+        assert!(!result.contains("# comment"));
+    }
+
+    #[test]
+    fn test_strip_yaml_comments_doubled_single_quote() {
+        let result = strip_yaml_comments("key: 'it''s a # value' # comment\n");
+        assert!(result.contains("it''s a # value"));
+        assert!(!result.contains("# comment"));
     }
 
     #[test]
