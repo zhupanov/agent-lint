@@ -5,6 +5,9 @@ use crate::rules::LintRule;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
+
+static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
 
 /// V7: Validate agents/*.md frontmatter.
 pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -16,7 +19,6 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 
     let mut found = 0;
     let mut excluded_count = 0;
-    let re_name_invalid = Regex::new(r"[^a-z0-9-]").unwrap();
     let entries = match fs::read_dir(agents_dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -93,7 +95,7 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 
         // A010: agent name invalid characters
         if let Some(ref n) = fm_name {
-            if re_name_invalid.is_match(n) {
+            if RE_NAME_INVALID.is_match(n) {
                 diag.report(
                     LintRule::AgentNameInvalid,
                     &format!(

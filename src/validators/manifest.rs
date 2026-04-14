@@ -2,6 +2,10 @@ use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use regex::Regex;
+use std::sync::LazyLock;
+
+static RE_SEMVER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+$").unwrap());
 
 /// V1: Validate .claude-plugin/plugin.json
 pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
@@ -33,8 +37,7 @@ pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
             &format!("{f} missing required field: version"),
         );
     } else {
-        let semver_re = Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+$").unwrap();
-        if !semver_re.is_match(version) {
+        if !RE_SEMVER.is_match(version) {
             diag.report(
                 LintRule::PluginVersionFormat,
                 &format!("{f} version '{version}' is not strict MAJOR.MINOR.PATCH semver"),

@@ -2,18 +2,19 @@ use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use regex::Regex;
+use std::sync::LazyLock;
+
+static RE_EMAIL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^.+@.+\..+$").unwrap());
 
 /// V17: Email format validation.
 pub fn validate_email_format(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let email_re = Regex::new(r"^.+@.+\..+$").unwrap();
-
     if let ManifestState::Parsed(val) = &ctx.marketplace_json {
         let email = val
             .get("owner")
             .and_then(|o| o.get("email"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if !email.is_empty() && !email_re.is_match(email) {
+        if !email.is_empty() && !RE_EMAIL.is_match(email) {
             diag.report(
                 LintRule::InvalidEmailFormat,
                 &format!(".claude-plugin/marketplace.json owner.email is not a valid email format: {email}"),
@@ -27,7 +28,7 @@ pub fn validate_email_format(ctx: &LintContext, diag: &mut DiagnosticCollector) 
             .and_then(|o| o.get("email"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if !email.is_empty() && !email_re.is_match(email) {
+        if !email.is_empty() && !RE_EMAIL.is_match(email) {
             diag.report(
                 LintRule::InvalidEmailFormat,
                 &format!(

@@ -5,6 +5,11 @@ use crate::rules::LintRule;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
+
+static RE_SHARED_MD_REF: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._/-]+\.md").unwrap()
+});
 
 /// Pre-parsed data for a single SKILL.md file.
 #[allow(dead_code)]
@@ -250,8 +255,6 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &E
         return;
     }
 
-    let re = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._/-]+\.md").unwrap();
-
     let entries = match fs::read_dir(skills_dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -285,7 +288,7 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &E
             Err(_) => continue,
         };
 
-        for cap in re.find_iter(&content) {
+        for cap in RE_SHARED_MD_REF.find_iter(&content) {
             let reference = cap.as_str();
             let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
             if !Path::new(&rel).is_file() {

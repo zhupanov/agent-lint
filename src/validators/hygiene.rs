@@ -6,7 +6,37 @@ use regex::Regex;
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use walkdir::WalkDir;
+
+static RE_PWD_HYGIENE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[$]PWD/|[$]\{PWD\}/|/Users/|/home/|/opt/").unwrap());
+static RE_SCRIPT_PUB: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/(scripts|skills|\.claude/skills)/[a-zA-Z0-9._/-]+\.sh")
+        .unwrap()
+});
+static RE_SCRIPT_PRIV: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$PWD/\.claude/skills/[a-zA-Z0-9._/-]+\.sh").unwrap());
+static RE_SCRIPT_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-\$PWD\}/\.claude/skills/[a-zA-Z0-9._/-]+\.sh")
+        .unwrap()
+});
+static RE_DEAD_SCRIPT_AB: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\$(\{CLAUDE_PLUGIN_ROOT\}|PWD)/(scripts|\.claude/skills/[^/]+/scripts)/[a-zA-Z0-9._-]+\.sh",
+    )
+    .unwrap()
+});
+static RE_SCRIPT_DIR_REF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$SCRIPT_DIR/[a-zA-Z0-9._-]+\.sh").unwrap());
+static RE_SCRIPTS_PATH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(^|[^a-zA-Z0-9._/-])scripts/[a-zA-Z0-9._-]+\.sh").unwrap());
+static RE_SCRIPTS_EXTRACT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"scripts/[a-zA-Z0-9._-]+\.sh").unwrap());
+static RE_TODO_MARKER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap());
+static RE_YAML_FULL_COMMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[[:space:]]*#").unwrap());
 
 /// Directory patterns for Plugin mode script discovery (V10, --list-scripts).
 pub const PLUGIN_SCRIPT_DIRS: &[&str] =
@@ -22,8 +52,6 @@ pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector, exclude: &ExcludeSet
     if !skills_dir.is_dir() {
         return;
     }
-
-    let re = Regex::new(r"[$]PWD/|[$]\{PWD\}/|/Users/|/home/|/opt/").unwrap();
 
     let entries = match fs::read_dir(skills_dir) {
         Ok(e) => e,
@@ -58,7 +86,7 @@ pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector, exclude: &ExcludeSet
             Err(_) => continue,
         };
 
-        if re.is_match(&content) {
+        if RE_PWD_HYGIENE.is_match(&content) {
             diag.report(
                 LintRule::PwdInSkill,
                 &format!(
@@ -71,16 +99,6 @@ pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector, exclude: &ExcludeSet
 
 /// V9: Script reference integrity.
 pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let re_pub = Regex::new(
-        r"\$\{CLAUDE_PLUGIN_ROOT\}/(scripts|skills|\.claude/skills)/[a-zA-Z0-9._/-]+\.sh",
-    )
-    .unwrap();
-    let re_priv = Regex::new(r"\$PWD/\.claude/skills/[a-zA-Z0-9._/-]+\.sh").unwrap();
-    let re_placeholder = Regex::new(
-        r"\$\{CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-\$PWD\}/\.claude/skills/[a-zA-Z0-9._/-]+\.sh",
-    )
-    .unwrap();
-
     let mut seen = HashSet::new();
 
     for dir in &["skills", ".claude/skills"] {
@@ -102,7 +120,7 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
                 Err(_) => continue,
             };
 
-            for cap in re_pub.find_iter(&content) {
+            for cap in RE_SCRIPT_PUB.find_iter(&content) {
                 let reference = cap.as_str().to_string();
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
@@ -117,7 +135,7 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
                 }
             }
 
-            for cap in re_priv.find_iter(&content) {
+            for cap in RE_SCRIPT_PRIV.find_iter(&content) {
                 let reference = cap.as_str().to_string();
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("$PWD/", "");
@@ -132,7 +150,7 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
                 }
             }
 
-            for cap in re_placeholder.find_iter(&content) {
+            for cap in RE_SCRIPT_PLACEHOLDER.find_iter(&content) {
                 let reference = cap.as_str().to_string();
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
@@ -152,12 +170,6 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
 
 /// V9-adapted: Script reference integrity for private .claude/skills/ only.
 pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let re_priv = Regex::new(r"\$PWD/\.claude/skills/[a-zA-Z0-9._/-]+\.sh").unwrap();
-    let re_placeholder = Regex::new(
-        r"\$\{CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-\$PWD\}/\.claude/skills/[a-zA-Z0-9._/-]+\.sh",
-    )
-    .unwrap();
-
     let mut seen = HashSet::new();
     let base = Path::new(".claude/skills");
     if !base.is_dir() {
@@ -178,7 +190,7 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclud
             Err(_) => continue,
         };
 
-        for cap in re_priv.find_iter(&content) {
+        for cap in RE_SCRIPT_PRIV.find_iter(&content) {
             let reference = cap.as_str().to_string();
             if seen.insert(reference.clone()) {
                 let rel = reference.replace("$PWD/", "");
@@ -191,7 +203,7 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclud
             }
         }
 
-        for cap in re_placeholder.find_iter(&content) {
+        for cap in RE_SCRIPT_PLACEHOLDER.find_iter(&content) {
             let reference = cap.as_str().to_string();
             if seen.insert(reference.clone()) {
                 let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
@@ -379,16 +391,6 @@ pub fn validate_dead_scripts(
 
     let mut references: HashSet<String> = HashSet::new();
 
-    let re_ab = Regex::new(
-        r"\$(\{CLAUDE_PLUGIN_ROOT\}|PWD)/(scripts|\.claude/skills/[^/]+/scripts)/[a-zA-Z0-9._-]+\.sh",
-    )
-    .unwrap();
-
-    let re_placeholder = Regex::new(
-        r"\$\{CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-\$PWD\}/\.claude/skills/[a-zA-Z0-9._/-]+\.sh",
-    )
-    .unwrap();
-
     for dir in &[
         "skills",
         ".claude/skills",
@@ -412,7 +414,7 @@ pub fn validate_dead_scripts(
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            for cap in re_ab.find_iter(&content) {
+            for cap in RE_DEAD_SCRIPT_AB.find_iter(&content) {
                 let s = cap.as_str();
                 let rel = if s.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
                     s.replace("${CLAUDE_PLUGIN_ROOT}/", "")
@@ -423,7 +425,7 @@ pub fn validate_dead_scripts(
                 };
                 references.insert(rel);
             }
-            for cap in re_placeholder.find_iter(&content) {
+            for cap in RE_SCRIPT_PLACEHOLDER.find_iter(&content) {
                 let s = cap.as_str();
                 let rel = s.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
                 references.insert(rel);
@@ -438,7 +440,7 @@ pub fn validate_dead_scripts(
     for manifest in [&ctx.settings_json, &ctx.hooks_json] {
         if let ManifestState::Parsed(val) = manifest {
             for s in collect_json_strings(val) {
-                for cap in re_ab.find_iter(&s) {
+                for cap in RE_DEAD_SCRIPT_AB.find_iter(&s) {
                     let matched = cap.as_str();
                     let rel = if matched.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
                         matched.replace("${CLAUDE_PLUGIN_ROOT}/", "")
@@ -453,7 +455,6 @@ pub fn validate_dead_scripts(
         }
     }
 
-    let re_c = Regex::new(r"\$SCRIPT_DIR/[a-zA-Z0-9._-]+\.sh").unwrap();
     for entry in WalkDir::new(scripts_dir).into_iter().flatten() {
         if !entry.path().is_file() {
             continue;
@@ -466,15 +467,12 @@ pub fn validate_dead_scripts(
             Ok(c) => c,
             Err(_) => continue,
         };
-        for cap in re_c.find_iter(&content) {
+        for cap in RE_SCRIPT_DIR_REF.find_iter(&content) {
             let s = cap.as_str();
             let name = s.replace("$SCRIPT_DIR/", "scripts/");
             references.insert(name);
         }
     }
-
-    let re_d = Regex::new(r"(^|[^a-zA-Z0-9._/-])scripts/[a-zA-Z0-9._-]+\.sh").unwrap();
-    let re_extract = Regex::new(r"scripts/[a-zA-Z0-9._-]+\.sh").unwrap();
 
     for dir in &[".github/workflows"] {
         let base = Path::new(dir);
@@ -496,8 +494,8 @@ pub fn validate_dead_scripts(
                     Err(_) => continue,
                 };
                 let stripped = strip_yaml_comments(&content);
-                for cap in re_d.find_iter(&stripped) {
-                    if let Some(m) = re_extract.find(cap.as_str()) {
+                for cap in RE_SCRIPTS_PATH.find_iter(&stripped) {
+                    if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
                         references.insert(m.as_str().to_string());
                     }
                 }
@@ -510,8 +508,8 @@ pub fn validate_dead_scripts(
     for manifest in [&ctx.settings_json, &ctx.hooks_json] {
         if let ManifestState::Parsed(val) = manifest {
             for s in collect_json_strings(val) {
-                for cap in re_d.find_iter(&s) {
-                    if let Some(m) = re_extract.find(cap.as_str()) {
+                for cap in RE_SCRIPTS_PATH.find_iter(&s) {
+                    if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
                         references.insert(m.as_str().to_string());
                     }
                 }
@@ -539,8 +537,8 @@ pub fn validate_dead_scripts(
                 Err(_) => continue,
             };
             let fenced = extract_code_fences(&content);
-            for cap in re_d.find_iter(&fenced) {
-                if let Some(m) = re_extract.find(cap.as_str()) {
+            for cap in RE_SCRIPTS_PATH.find_iter(&fenced) {
+                if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
                     references.insert(m.as_str().to_string());
                 }
             }
@@ -591,8 +589,6 @@ pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector, exclude: &Exclude
         return;
     }
 
-    let re_todo = Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap();
-
     let entries = match fs::read_dir(skills_dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -630,7 +626,7 @@ pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector, exclude: &Exclude
         let body = crate::frontmatter::extract_body(&content);
 
         for line in crate::fence::lines_outside_fences(body) {
-            if let Some(m) = re_todo.find(line) {
+            if let Some(m) = RE_TODO_MARKER.find(line) {
                 diag.report(
                     LintRule::TodoInSkill,
                     &format!(
@@ -651,8 +647,6 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
     if !agents_dir.is_dir() {
         return;
     }
-
-    let re_todo = Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap();
 
     let entries = match fs::read_dir(agents_dir) {
         Ok(e) => e,
@@ -681,7 +675,7 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
 
         let body = crate::frontmatter::extract_body(&content);
         for line in crate::fence::lines_outside_fences(body) {
-            if let Some(m) = re_todo.find(line) {
+            if let Some(m) = RE_TODO_MARKER.find(line) {
                 diag.report(
                     LintRule::TodoInAgent,
                     &format!(
@@ -696,11 +690,9 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
 }
 
 fn strip_yaml_comments(content: &str) -> String {
-    let re_full = Regex::new(r"^[[:space:]]*#").unwrap();
-
     content
         .lines()
-        .filter(|line| !re_full.is_match(line))
+        .filter(|line| !RE_YAML_FULL_COMMENT.is_match(line))
         .map(strip_trailing_yaml_comment)
         .collect::<Vec<_>>()
         .join("\n")

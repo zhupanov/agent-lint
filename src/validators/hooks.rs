@@ -4,6 +4,12 @@ use crate::rules::LintRule;
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
+use std::sync::LazyLock;
+
+static RE_PLUGIN_ROOT_SH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh").unwrap());
+static RE_PWD_SH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$PWD/[a-zA-Z0-9._/-]+\.sh").unwrap());
 
 /// Validate hook command paths in a parsed JSON value.
 /// Extracts script paths matching ${CLAUDE_PLUGIN_ROOT}/...sh or $PWD/...sh
@@ -15,18 +21,15 @@ fn validate_hook_command_paths(
     not_exec_rule: LintRule,
     diag: &mut DiagnosticCollector,
 ) {
-    let re_plugin = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh").unwrap();
-    let re_pwd = Regex::new(r"\$PWD/[a-zA-Z0-9._/-]+\.sh").unwrap();
-
     let strings = collect_json_strings(val);
     for raw in &strings {
         // Extract script paths from the string using regex (handles commands with arguments)
-        for cap in re_plugin.find_iter(raw) {
+        for cap in RE_PLUGIN_ROOT_SH.find_iter(raw) {
             let reference = cap.as_str();
             let rel = reference.replacen("${CLAUDE_PLUGIN_ROOT}/", "", 1);
             check_hook_path(&rel, reference, label, missing_rule, not_exec_rule, diag);
         }
-        for cap in re_pwd.find_iter(raw) {
+        for cap in RE_PWD_SH.find_iter(raw) {
             let reference = cap.as_str();
             let rel = reference.replacen("$PWD/", "", 1);
             check_hook_path(&rel, reference, label, missing_rule, not_exec_rule, diag);

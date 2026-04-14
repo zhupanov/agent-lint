@@ -4,6 +4,12 @@ use crate::rules::LintRule;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
+
+static RE_DOCS_REF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"docs/[a-zA-Z0-9._/-]+\.md").unwrap());
+static RE_TODO: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap());
 
 /// V22: Docs file references from CLAUDE.md.
 pub fn validate_docs_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -22,10 +28,9 @@ pub fn validate_docs_references(diag: &mut DiagnosticCollector, exclude: &Exclud
 
     let section = extract_canonical_sources_section(&content);
 
-    let re = Regex::new(r"docs/[a-zA-Z0-9._/-]+\.md").unwrap();
     let mut seen = std::collections::HashSet::new();
 
-    for cap in re.find_iter(&section) {
+    for cap in RE_DOCS_REF.find_iter(&section) {
         let doc_path = cap.as_str();
         if seen.insert(doc_path.to_string()) && !Path::new(doc_path).is_file() {
             diag.report(
@@ -80,10 +85,8 @@ pub fn validate_claudemd_todos(diag: &mut DiagnosticCollector, exclude: &Exclude
         Err(_) => return,
     };
 
-    let re_todo = Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap();
-
     for line in crate::fence::lines_outside_fences(&content) {
-        if let Some(m) = re_todo.find(line) {
+        if let Some(m) = RE_TODO.find(line) {
             diag.report(
                 LintRule::TodoInDocs,
                 &format!(

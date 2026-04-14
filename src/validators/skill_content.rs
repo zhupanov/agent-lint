@@ -7,6 +7,63 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
+
+// S010/S013/S018: Name/description validation
+static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
+static RE_XML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
+
+// S016/S017: Description quality (plugin-only)
+static RE_PERSON: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b(I|you|we|my|your|our)\b").unwrap());
+static RE_TRIGGER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(use\s+when|use\s+this|use\s+for|trigger\s+when|do\s+not\s+trigger|\bwhen\b)")
+        .unwrap()
+});
+
+// S022/S043: Backslash paths
+static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
+});
+
+// S037: Body-no-refs
+static RE_BODY_FILE_REF: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}|\.sh\b|\.md\b|\.py\b|\.js\b|\.ts\b|scripts/|shared/")
+        .unwrap()
+});
+
+// S038: Time-sensitive
+static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b20[2-3][0-9]\b").unwrap());
+
+// S041: Fork-no-task
+static RE_IMPERATIVE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(run|execute|create|build|generate|invoke|call|launch|start|perform|apply|install|deploy|write|implement)\b").unwrap()
+});
+
+// S021: Consecutive bash
+static RE_BASH_FENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
+
+// S028: $ARGUMENTS
+static RE_ARGS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$ARGUMENTS|\$\{ARGUMENTS\}").unwrap());
+
+// S031: Non-HTTPS URLs
+static RE_HTTP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"http://[a-zA-Z0-9]").unwrap());
+
+// S032: Secret patterns
+static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(),
+        Regex::new(r"ghp_[a-zA-Z0-9]{36,}").unwrap(),
+        Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}").unwrap(),
+        Regex::new(
+            r#"(?i)(api[_\-]?key|api[_\-]?secret|api[_\-]?token)\s*[=:]\s*["']?[A-Za-z0-9]{20,}"#,
+        )
+        .unwrap(),
+        Regex::new(r#"(?i)(password|secret|token)\s*[=:]\s*["'][^"']{8,}"#).unwrap(),
+    ]
+});
 
 /// Validate skill content for public skills (skills/). Runs all S009–S043 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -15,9 +72,9 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
         run_content_checks(info, true, diag);
     }
     // Cross-skill checks
-    validate_nested_references("skills", diag, exclude);
+    validate_nested_references("skills", &skills, diag);
     validate_orphaned_skill_files("skills", diag, exclude);
-    validate_ref_no_toc("skills", diag, exclude);
+    validate_ref_no_toc("skills", &skills, diag);
 }
 
 /// Validate skill content for private skills (.claude/skills/).
@@ -62,8 +119,7 @@ fn check_name_format(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticC
     }
 
     // S010: invalid characters
-    let re_invalid = Regex::new(r"[^a-z0-9-]").unwrap();
-    if re_invalid.is_match(&name) {
+    if RE_NAME_INVALID.is_match(&name) {
         diag.report(
             LintRule::NameInvalidChars,
             &format!(
@@ -97,8 +153,7 @@ fn check_name_format(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticC
     }
 
     // S013: XML tags in name
-    let re_xml = Regex::new(r"<[^>]+>").unwrap();
-    if re_xml.is_match(&name) {
+    if RE_XML_TAG.is_match(&name) {
         diag.report(
             LintRule::NameHasXml,
             &format!("{}: name '{}' contains XML/HTML tags", info.path, name),
@@ -173,39 +228,29 @@ fn check_description_quality(info: &SkillInfo, plugin_mode: bool, diag: &mut Dia
     }
 
     // S016: uses first/second person (plugin-only)
-    if plugin_mode {
-        let re_person = Regex::new(r"(?i)\b(I|you|we|my|your|our)\b").unwrap();
-        if re_person.is_match(&desc) {
-            diag.report(
-                LintRule::DescUsesPerson,
-                &format!(
-                    "{}: description uses first/second person; use third person for published skills",
-                    info.path
-                ),
-            );
-        }
+    if plugin_mode && RE_PERSON.is_match(&desc) {
+        diag.report(
+            LintRule::DescUsesPerson,
+            &format!(
+                "{}: description uses first/second person; use third person for published skills",
+                info.path
+            ),
+        );
     }
 
     // S017: no trigger context (plugin-only)
-    if plugin_mode {
-        let re_trigger = Regex::new(
-            r"(?i)(use\s+when|use\s+this|use\s+for|trigger\s+when|do\s+not\s+trigger|\bwhen\b)",
-        )
-        .unwrap();
-        if !re_trigger.is_match(&desc) {
-            diag.report(
-                LintRule::DescNoTrigger,
-                &format!(
-                    "{}: description lacks trigger/usage context (e.g., 'Use when...', 'Trigger when...')",
-                    info.path
-                ),
-            );
-        }
+    if plugin_mode && !RE_TRIGGER.is_match(&desc) {
+        diag.report(
+            LintRule::DescNoTrigger,
+            &format!(
+                "{}: description lacks trigger/usage context (e.g., 'Use when...', 'Trigger when...')",
+                info.path
+            ),
+        );
     }
 
     // S018: XML tags in description
-    let re_xml = Regex::new(r"<[^>]+>").unwrap();
-    if re_xml.is_match(&desc) {
+    if RE_XML_TAG.is_match(&desc) {
         diag.report(
             LintRule::DescHasXml,
             &format!("{}: description contains XML/HTML tags", info.path),
@@ -243,11 +288,9 @@ fn check_body_content(info: &SkillInfo, plugin_mode: bool, diag: &mut Diagnostic
     // S022: backslash paths — require path-like context to avoid false positives
     // on regex escapes (\s, \n, \t), LaTeX (\frac), etc.
     // Matches: C:\Users, \dir\file, path\to\something (letter, backslash, letter pattern)
-    let re_backslash =
-        Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap();
     // Only check outside code fences to reduce false positives
     for line in crate::fence::lines_outside_fences(&info.body) {
-        if re_backslash.is_match(line) {
+        if RE_BACKSLASH_PATH.is_match(line) {
             diag.report(
                 LintRule::BackslashPath,
                 &format!(
@@ -260,27 +303,20 @@ fn check_body_content(info: &SkillInfo, plugin_mode: bool, diag: &mut Diagnostic
     }
 
     // S037: body-no-refs (plugin-only) — body > 300 lines with no file references
-    if plugin_mode && line_count > 300 {
-        let re_ref = Regex::new(
-            r"\$\{CLAUDE_PLUGIN_ROOT\}|\.sh\b|\.md\b|\.py\b|\.js\b|\.ts\b|scripts/|shared/",
-        )
-        .unwrap();
-        if !re_ref.is_match(&info.body) {
-            diag.report(
-                LintRule::BodyNoRefs,
-                &format!(
-                    "{}: body exceeds 300 lines ({}) with no file references; consider splitting into reference files",
-                    info.path, line_count
-                ),
-            );
-        }
+    if plugin_mode && line_count > 300 && !RE_BODY_FILE_REF.is_match(&info.body) {
+        diag.report(
+            LintRule::BodyNoRefs,
+            &format!(
+                "{}: body exceeds 300 lines ({}) with no file references; consider splitting into reference files",
+                info.path, line_count
+            ),
+        );
     }
 
     // S038: time-sensitive (plugin-only) — date/year patterns outside code fences
     if plugin_mode {
-        let re_year = Regex::new(r"\b20[2-3][0-9]\b").unwrap();
         for line in crate::fence::lines_outside_fences(&info.body) {
-            if re_year.is_match(line) {
+            if RE_YEAR.is_match(line) {
                 diag.report(
                     LintRule::TimeSensitive,
                     &format!(
@@ -294,27 +330,21 @@ fn check_body_content(info: &SkillInfo, plugin_mode: bool, diag: &mut Diagnostic
     }
 
     // S041: fork-no-task — context: fork set but no task instructions in body
-    if frontmatter::get_field(&info.fm_lines, "context").as_deref() == Some("fork") {
-        let re_imperative = Regex::new(
-            r"(?i)\b(run|execute|create|build|generate|invoke|call|launch|start|perform|apply|install|deploy|write|implement)\b",
-        )
-        .unwrap();
-        if !re_imperative.is_match(&info.body) {
-            diag.report(
-                LintRule::ForkNoTask,
-                &format!(
-                    "{}: context: fork is set but body has no task instructions (fork subagent needs an actionable prompt)",
-                    info.path
-                ),
-            );
-        }
+    if frontmatter::get_field(&info.fm_lines, "context").as_deref() == Some("fork")
+        && !RE_IMPERATIVE.is_match(&info.body)
+    {
+        diag.report(
+            LintRule::ForkNoTask,
+            &format!(
+                "{}: context: fork is set but body has no task instructions (fork subagent needs an actionable prompt)",
+                info.path
+            ),
+        );
     }
 }
 
 fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     use crate::fence::{CodeFenceTracker, LineClass};
-
-    let re_bash_fence = Regex::new(r"^```(bash|sh|shell)\s*$").unwrap();
 
     let mut tracker = CodeFenceTracker::new();
     let mut last_bash_end: Option<usize> = None;
@@ -332,7 +362,7 @@ fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                     fence_is_bash = false;
                 } else {
                     // This delimiter just opened a fence
-                    if re_bash_fence.is_match(trimmed) {
+                    if RE_BASH_FENCE.is_match(trimmed) {
                         // Opening a bash fence — check for consecutive
                         if let Some(prev_end) = last_bash_end {
                             let between_lines: Vec<&str> = info
@@ -608,10 +638,8 @@ fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) 
     }
 
     // S043: backslash paths in frontmatter
-    let re_fm_backslash =
-        Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap();
     for line in &info.fm_lines {
-        if re_fm_backslash.is_match(line) {
+        if RE_BACKSLASH_PATH.is_match(line) {
             diag.report(
                 LintRule::FrontmatterBackslash,
                 &format!(
@@ -628,8 +656,7 @@ fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) 
 
 fn check_cross_field(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     // S028: $ARGUMENTS in body without argument-hint (only outside code fences)
-    let re_args = Regex::new(r"\$ARGUMENTS|\$\{ARGUMENTS\}").unwrap();
-    if crate::fence::lines_outside_fences(&info.body).any(|line| re_args.is_match(line))
+    if crate::fence::lines_outside_fences(&info.body).any(|line| RE_ARGS.is_match(line))
         && !frontmatter::field_exists(&info.fm_lines, "argument-hint")
     {
         diag.report(
@@ -650,8 +677,7 @@ fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     }
 
     // S031: non-HTTPS URLs (exclude localhost, 127.0.0.1, 0.0.0.0, example.com/org)
-    let re_http = Regex::new(r"http://[a-zA-Z0-9]").unwrap();
-    for cap in re_http.find_iter(&info.body) {
+    for cap in RE_HTTP.find_iter(&info.body) {
         let start = cap.start();
         let after = &info.body[start + 7..]; // skip "http://"
         if after.starts_with("localhost")
@@ -673,15 +699,7 @@ fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     }
 
     // S032: hardcoded secrets
-    let secret_patterns = [
-        r"sk-[a-zA-Z0-9]{20,}",
-        r"ghp_[a-zA-Z0-9]{36,}",
-        r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}",
-        r#"(?i)(api[_\-]?key|api[_\-]?secret|api[_\-]?token)\s*[=:]\s*["']?[A-Za-z0-9]{20,}"#,
-        r#"(?i)(password|secret|token)\s*[=:]\s*["'][^"']{8,}"#,
-    ];
-    for pattern in &secret_patterns {
-        let re = Regex::new(pattern).unwrap();
+    for re in SECRET_PATTERNS.iter() {
         if re.is_match(&info.body) {
             diag.report(
                 LintRule::HardcodedSecret,
@@ -707,8 +725,8 @@ fn shared_ref_regex(base_dir: &str) -> Regex {
 /// Matches `${CLAUDE_PLUGIN_ROOT}/<base_dir>/shared/*.md` references.
 fn validate_nested_references(
     base_dir: &str,
+    skills: &[SkillInfo],
     diag: &mut DiagnosticCollector,
-    exclude: &ExcludeSet,
 ) {
     let shared_dir = Path::new(base_dir).join("shared");
     if !shared_dir.is_dir() {
@@ -717,12 +735,11 @@ fn validate_nested_references(
 
     let re_shared = shared_ref_regex(base_dir);
 
-    let skills = collect_skills(base_dir, exclude);
     // Cache: which shared .md files are nested (avoids re-reading files from disk)
     let mut checked: HashSet<String> = HashSet::new();
     let mut nested: HashSet<String> = HashSet::new();
 
-    for info in &skills {
+    for info in skills {
         // Find shared-md references in this skill's body
         for cap in re_shared.find_iter(&info.body) {
             let reference = cap.as_str();
@@ -839,7 +856,7 @@ fn validate_orphaned_skill_files(
 
 /// S036: Check that referenced shared .md files > 100 lines have headings (TOC).
 /// Only runs in plugin mode (called from validate_skill_content).
-fn validate_ref_no_toc(base_dir: &str, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn validate_ref_no_toc(base_dir: &str, skills: &[SkillInfo], diag: &mut DiagnosticCollector) {
     let shared_dir = Path::new(base_dir).join("shared");
     if !shared_dir.is_dir() {
         return;
@@ -847,10 +864,9 @@ fn validate_ref_no_toc(base_dir: &str, diag: &mut DiagnosticCollector, exclude: 
 
     let re_shared = shared_ref_regex(base_dir);
 
-    let skills = collect_skills(base_dir, exclude);
     let mut checked: HashSet<String> = HashSet::new();
 
-    for info in &skills {
+    for info in skills {
         for cap in re_shared.find_iter(&info.body) {
             let reference = cap.as_str();
             let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
@@ -1813,6 +1829,71 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("itself references"))
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s029_multi_skill_same_nested_ref() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/skill-a").unwrap();
+        std::fs::create_dir_all("skills/skill-b").unwrap();
+        std::fs::write(
+            "skills/shared/nested.md",
+            "# Nested\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/other.md\n",
+        )
+        .unwrap();
+        std::fs::write("skills/shared/other.md", "# Other\n").unwrap();
+        std::fs::write(
+            "skills/skill-a/SKILL.md",
+            "---\nname: skill-a\ndescription: Use when you need skill A for testing\n---\nRef ${CLAUDE_PLUGIN_ROOT}/skills/shared/nested.md\n",
+        ).unwrap();
+        std::fs::write(
+            "skills/skill-b/SKILL.md",
+            "---\nname: skill-b\ndescription: Use when you need skill B for testing\n---\nRef ${CLAUDE_PLUGIN_ROOT}/skills/shared/nested.md\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        // Both skills reference the same nested shared file — S029 should fire for each
+        let errors = diag.errors();
+        let nested_count = errors
+            .iter()
+            .filter(|e| e.contains("itself references"))
+            .count();
+        assert_eq!(nested_count, 2);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s036_multi_skill_deduplicates_per_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/skill-a").unwrap();
+        std::fs::create_dir_all("skills/skill-b").unwrap();
+        // Create a large shared .md without headings (>100 lines)
+        let long_content = "line\n".repeat(101);
+        std::fs::write("skills/shared/big.md", &long_content).unwrap();
+        std::fs::write(
+            "skills/skill-a/SKILL.md",
+            "---\nname: skill-a\ndescription: Use when you need skill A for testing\n---\nRef ${CLAUDE_PLUGIN_ROOT}/skills/shared/big.md\n",
+        ).unwrap();
+        std::fs::write(
+            "skills/skill-b/SKILL.md",
+            "---\nname: skill-b\ndescription: Use when you need skill B for testing\n---\nRef ${CLAUDE_PLUGIN_ROOT}/skills/shared/big.md\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        // S036 should fire once per unique file, not once per referencing skill
+        let errors = diag.errors();
+        let toc_count = errors
+            .iter()
+            .filter(|e| e.contains("no ## headings"))
+            .count();
+        assert_eq!(toc_count, 1);
     }
 
     // ── S030: orphaned-skill-files ───────────────────────────────────
