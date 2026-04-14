@@ -242,7 +242,7 @@ fn validate_skill_frontmatter_in_dir(
 }
 
 /// V15: Validate shared markdown reference integrity.
-/// Every `${CLAUDE_PLUGIN_ROOT}/skills/shared/*.md` path referenced from
+/// Every `${CLAUDE_PLUGIN_ROOT}/skills/shared/**/*.md` path referenced from
 /// `skills/*/SKILL.md` must exist on disk.
 pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills_dir = Path::new("skills");
@@ -250,7 +250,7 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &E
         return;
     }
 
-    let re = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._-]+\.md").unwrap();
+    let re = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._/-]+\.md").unwrap();
 
     let entries = match fs::read_dir(skills_dir) {
         Ok(e) => e,
@@ -528,6 +528,47 @@ mod tests {
         std::fs::write(
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: s\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/nonexistent.md\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing on disk"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v15_subdirectory_shared_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/shared/sub").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("skills/shared/sub/util.md", "# Util\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: s\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/sub/util.md\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v15_missing_subdirectory_shared_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: s\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/sub/missing.md\n",
         )
         .unwrap();
 

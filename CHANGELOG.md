@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.24] - 2026-04-14
+
+### Fixed
+
+- Fixed S008 shared-ref regex in `validate_shared_md_references` to include `/` in the character class, enabling detection of subdirectory shared references (e.g., `skills/shared/sub/util.md`)
+
 ## [1.0.23] - 2026-04-14
 
 ### Changed
