@@ -1,34 +1,9 @@
-use crate::context::{LintContext, ManifestState};
+use crate::context::{LintContext, ManifestState, collect_json_strings};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
-
-/// Recursively collect all string values from a JSON value.
-/// Equivalent to jq '.. | strings'.
-fn extract_all_strings(value: &Value) -> Vec<String> {
-    let mut result = Vec::new();
-    collect_strings(value, &mut result);
-    result
-}
-
-fn collect_strings(value: &Value, out: &mut Vec<String>) {
-    match value {
-        Value::String(s) => out.push(s.clone()),
-        Value::Array(arr) => {
-            for item in arr {
-                collect_strings(item, out);
-            }
-        }
-        Value::Object(map) => {
-            for (_, v) in map {
-                collect_strings(v, out);
-            }
-        }
-        _ => {}
-    }
-}
 
 /// Validate hook command paths in a parsed JSON value.
 /// Extracts script paths matching ${CLAUDE_PLUGIN_ROOT}/...sh or $PWD/...sh
@@ -43,7 +18,7 @@ fn validate_hook_command_paths(
     let re_plugin = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh").unwrap();
     let re_pwd = Regex::new(r"\$PWD/[a-zA-Z0-9._/-]+\.sh").unwrap();
 
-    let strings = extract_all_strings(val);
+    let strings = collect_json_strings(val);
     for raw in &strings {
         // Extract script paths from the string using regex (handles commands with arguments)
         for cap in re_plugin.find_iter(raw) {
@@ -149,7 +124,7 @@ mod tests {
 
     fn make_ctx(hooks: ManifestState, settings: ManifestState) -> LintContext {
         LintContext {
-            repo_root: String::new(),
+            base_path: std::path::PathBuf::new(),
             mode: LintMode::Plugin,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,

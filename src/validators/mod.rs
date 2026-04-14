@@ -63,7 +63,7 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     // V10: executability (generic, no hardcoded block-submodule-edit.sh)
     hygiene::validate_executability(diag, exclude);
     // V11: dead-script detection
-    hygiene::validate_dead_scripts(diag, exclude);
+    hygiene::validate_dead_scripts(ctx, diag, exclude);
     // V12: marketplace enriched metadata
     manifest::validate_marketplace_enriched(ctx, diag);
     // V13: plugin enriched metadata
@@ -130,7 +130,7 @@ mod tests {
         .unwrap();
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Basic,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
@@ -182,7 +182,7 @@ mod tests {
         let hooks_val = json!({"hooks": []});
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Plugin,
             plugin_json: ManifestState::Parsed(plugin_val),
             marketplace_json: ManifestState::Parsed(marketplace_val),
@@ -213,7 +213,7 @@ mod tests {
 
         // No .claude/ structure at all
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Basic,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
@@ -255,7 +255,7 @@ mod tests {
         .unwrap();
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Basic,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
@@ -293,7 +293,7 @@ mod tests {
         };
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Basic,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
@@ -343,7 +343,7 @@ mod tests {
         let hooks_val = json!({"hooks": []});
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Plugin,
             plugin_json: ManifestState::Parsed(plugin_val),
             marketplace_json: ManifestState::Parsed(marketplace_val),
@@ -384,7 +384,7 @@ mod tests {
         .unwrap();
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Basic,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
@@ -439,7 +439,7 @@ mod tests {
         }
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Basic,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
@@ -509,7 +509,7 @@ mod tests {
         let hooks_val = json!({"hooks": []});
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Plugin,
             plugin_json: ManifestState::Parsed(plugin_val),
             marketplace_json: ManifestState::Parsed(marketplace_val),
@@ -544,7 +544,7 @@ mod tests {
         std::fs::create_dir_all(".claude").unwrap();
 
         let ctx = LintContext {
-            repo_root: tmp.path().to_string_lossy().to_string(),
+            base_path: tmp.path().to_path_buf(),
             mode: LintMode::Basic,
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,

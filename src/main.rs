@@ -102,7 +102,7 @@ fn main() {
         std::process::exit(0);
     }
 
-    let ctx = LintContext::new(repo_root.clone(), mode);
+    let ctx = LintContext::new(std::path::Path::new(&repo_root), mode);
     let mut diag = DiagnosticCollector::with_config(lint_config);
 
     validators::run_all(&ctx, &mut diag, &exclude);

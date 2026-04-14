@@ -1,5 +1,5 @@
 use crate::config::ExcludeSet;
-use crate::context::LintMode;
+use crate::context::{LintContext, LintMode, ManifestState, collect_json_strings};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use regex::Regex;
@@ -367,7 +367,11 @@ fn check_sh_executability(dir: &Path, diag: &mut DiagnosticCollector, exclude: &
 }
 
 /// V11: Dead-script detection
-pub fn validate_dead_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+pub fn validate_dead_scripts(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
     let scripts_dir = Path::new("scripts");
     if !scripts_dir.is_dir() {
         return;
@@ -427,33 +431,24 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
         }
     }
 
-    if Path::new(".claude/settings.json").is_file() {
-        if let Ok(content) = fs::read_to_string(".claude/settings.json") {
-            for cap in re_ab.find_iter(&content) {
-                let s = cap.as_str();
-                let rel = if s.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
-                    s.replace("${CLAUDE_PLUGIN_ROOT}/", "")
-                } else if s.starts_with("$PWD/") {
-                    s.replace("$PWD/", "")
-                } else {
-                    continue;
-                };
-                references.insert(rel);
-            }
-        }
-    }
-    if Path::new("hooks/hooks.json").is_file() {
-        if let Ok(content) = fs::read_to_string("hooks/hooks.json") {
-            for cap in re_ab.find_iter(&content) {
-                let s = cap.as_str();
-                let rel = if s.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
-                    s.replace("${CLAUDE_PLUGIN_ROOT}/", "")
-                } else if s.starts_with("$PWD/") {
-                    s.replace("$PWD/", "")
-                } else {
-                    continue;
-                };
-                references.insert(rel);
+    // Extract script references from pre-parsed settings.json and hooks.json
+    // via LintContext instead of reading files directly from disk.
+    // Only re_ab applies here (not re_placeholder, which is directory-walk only).
+    // For Invalid/Missing manifests, skip extraction — other validators report those errors.
+    for manifest in [&ctx.settings_json, &ctx.hooks_json] {
+        if let ManifestState::Parsed(val) = manifest {
+            for s in collect_json_strings(val) {
+                for cap in re_ab.find_iter(&s) {
+                    let matched = cap.as_str();
+                    let rel = if matched.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
+                        matched.replace("${CLAUDE_PLUGIN_ROOT}/", "")
+                    } else if matched.starts_with("$PWD/") {
+                        matched.replace("$PWD/", "")
+                    } else {
+                        continue;
+                    };
+                    references.insert(rel);
+                }
             }
         }
     }
@@ -510,17 +505,16 @@ pub fn validate_dead_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
         }
     }
 
-    for json_path in &[".claude/settings.json", "hooks/hooks.json"] {
-        if !Path::new(json_path).is_file() {
-            continue;
-        }
-        let content = match fs::read_to_string(json_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        for cap in re_d.find_iter(&content) {
-            if let Some(m) = re_extract.find(cap.as_str()) {
-                references.insert(m.as_str().to_string());
+    // Extract bare scripts/...sh references from pre-parsed settings/hooks manifests.
+    // Only re_d applies here for bare script references.
+    for manifest in [&ctx.settings_json, &ctx.hooks_json] {
+        if let ManifestState::Parsed(val) = manifest {
+            for s in collect_json_strings(val) {
+                for cap in re_d.find_iter(&s) {
+                    if let Some(m) = re_extract.find(cap.as_str()) {
+                        references.insert(m.as_str().to_string());
+                    }
+                }
             }
         }
     }
@@ -1100,8 +1094,16 @@ mod tests {
         )
         .unwrap();
 
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Missing,
+            settings_json: crate::context::ManifestState::Missing,
+        };
         let mut diag = DiagnosticCollector::new();
-        validate_dead_scripts(&mut diag, &crate::config::ExcludeSet::default());
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
 
@@ -1115,10 +1117,80 @@ mod tests {
         std::fs::create_dir_all("scripts").unwrap();
         std::fs::write("scripts/orphan.sh", "#!/bin/bash\n").unwrap();
 
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Missing,
+            settings_json: crate::context::ManifestState::Missing,
+        };
         let mut diag = DiagnosticCollector::new();
-        validate_dead_scripts(&mut diag, &crate::config::ExcludeSet::default());
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("dead script"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_script_referenced_in_hooks_json_not_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/referenced.sh", "#!/bin/bash\n").unwrap();
+
+        // Script referenced via ${CLAUDE_PLUGIN_ROOT}/scripts/referenced.sh in hooks.json
+        let hooks_val = serde_json::json!({
+            "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/referenced.sh"}]
+        });
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Parsed(hooks_val),
+            settings_json: crate::context::ManifestState::Missing,
+        };
+        let mut diag = DiagnosticCollector::new();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "Script referenced in hooks.json should not be reported as dead"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_script_referenced_in_settings_json_not_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/setup.sh", "#!/bin/bash\n").unwrap();
+
+        // Script referenced via bare scripts/setup.sh in settings.json (re_d pattern)
+        let settings_val = serde_json::json!({
+            "permissions": {"allow": ["scripts/setup.sh"]}
+        });
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Missing,
+            settings_json: crate::context::ManifestState::Parsed(settings_val),
+        };
+        let mut diag = DiagnosticCollector::new();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "Script referenced in settings.json should not be reported as dead"
+        );
     }
 
     // expand_script_dirs tests

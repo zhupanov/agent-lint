@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.22] - 2026-04-13
+
+### Changed
+
+- Refactored `LintContext` to accept explicit `base_path` instead of relying on process CWD for manifest loading
+- Made `validate_dead_scripts` use pre-parsed `ManifestState` from `LintContext` instead of reading JSON files directly
+- Skipped `plugin_json`/`marketplace_json` loading in Basic mode (never used by `run_basic`)
+- Changed `ManifestState::load` to accept `&Path` instead of `&str`
+- Consolidated `collect_json_strings` helper into `context.rs`, eliminating duplication in `hooks.rs`
+
 ## [1.0.21] - 2026-04-13
 
 ### Fixed

@@ -201,7 +201,7 @@ mod tests {
 
     fn make_ctx(plugin: ManifestState, marketplace: ManifestState) -> LintContext {
         LintContext {
-            repo_root: String::new(),
+            base_path: std::path::PathBuf::new(),
             mode: LintMode::Plugin,
             plugin_json: plugin,
             marketplace_json: marketplace,
