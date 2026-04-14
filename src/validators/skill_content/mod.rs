@@ -19,26 +19,28 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-/// Validate skill content for public skills (skills/). Runs all S009-S044 rules.
+/// Validate skill content for public skills (skills/). Runs S009-S045, S048, S049.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
         run_content_checks(info, true, diag);
     }
-    // Cross-skill checks (plugin-only: S029, S036; both-mode: S030)
+    // Cross-skill checks (plugin-only: S029, S036; both-mode: S030, S048)
     cross_skill::validate_nested_references("skills", &skills, diag);
     cross_skill::validate_orphaned_skill_files("skills", diag, exclude);
     cross_skill::validate_ref_no_toc("skills", &skills, diag);
+    cross_skill::validate_generic_ref_names("skills", diag, exclude);
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038).
+/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S049).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
         run_content_checks(info, false, diag);
     }
     cross_skill::validate_orphaned_skill_files(".claude/skills", diag, exclude);
+    cross_skill::validate_generic_ref_names(".claude/skills", diag, exclude);
 }
 
 fn run_content_checks(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticCollector) {
@@ -1328,6 +1330,8 @@ mod tests {
             ("S043", "frontmatter-backslash"),
             ("S044", "mcp-tool-unqualified"),
             ("S045", "tools-list-syntax"),
+            ("S048", "ref-name-generic"),
+            ("S049", "name-not-gerund"),
         ];
         for (code, name) in &new_rules {
             assert!(
@@ -2187,10 +2191,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/code-review").unwrap();
+        std::fs::create_dir_all("skills/reviewing-code").unwrap();
         std::fs::write(
-            "skills/code-review/SKILL.md",
-            "---\nname: code-review\ndescription: Use when code changes need thorough review and analysis\nuser-invocable: true\neffort: high\nshell: bash\nargument-hint: <PR number or branch name>\n---\n\n# Code Review\n\nPerform a thorough code review of the specified changes.\n\n## Steps\n\n1. Run the analysis on $ARGUMENTS\n2. Generate a summary report\n",
+            "skills/reviewing-code/SKILL.md",
+            "---\nname: reviewing-code\ndescription: Use when code changes need thorough review and analysis\nuser-invocable: true\neffort: high\nshell: bash\nargument-hint: <PR number or branch name>\n---\n\n# Code Review\n\nPerform a thorough code review of the specified changes.\n\n## Steps\n\n1. Run the analysis on $ARGUMENTS\n2. Generate a summary report\n",
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new();
@@ -2198,7 +2202,7 @@ mod tests {
         let skill_errors: Vec<_> = diag
             .errors()
             .iter()
-            .filter(|e| e.contains("skills/code-review"))
+            .filter(|e| e.contains("skills/reviewing-code"))
             .cloned()
             .collect();
         assert!(
@@ -2388,5 +2392,258 @@ mod tests {
             "Expected exactly one S044 diagnostic for duplicate tool, got: {:?}",
             diag.errors()
         );
+    }
+
+    // ── S048: ref-name-generic ──────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_generic_ref_name_doc1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/doc1.md", "some content").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("non-descriptive reference file name"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_descriptive_name_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/api-reference.md", "some content").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("non-descriptive reference file name"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_skill_md_excluded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("SKILL.md") && e.contains("non-descriptive"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_scripts_subdir_excluded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/scripts/doc1.md", "some content").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("scripts/doc1.md") && e.contains("non-descriptive"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_single_letter_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/a.md", "some content").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("non-descriptive reference file name"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_numeric_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/02.md", "some content").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("non-descriptive reference file name"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_plain_stem_no_digits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/data.md", "some content").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("non-descriptive reference file name"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_private_mode_also_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(".claude/skills/my-skill/file1.md", "some content").unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("non-descriptive reference file name"))
+        );
+    }
+
+    // ── S049: name-not-gerund ───────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s049_no_gerund_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/code-review").unwrap();
+        std::fs::write(
+            "skills/code-review/SKILL.md",
+            "---\nname: code-review\ndescription: Use when code changes need thorough review\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(diag.errors().iter().any(|e| e.contains("gerund")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s049_gerund_name_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/processing-pdfs").unwrap();
+        std::fs::write(
+            "skills/processing-pdfs/SKILL.md",
+            "---\nname: processing-pdfs\ndescription: Use when you need to process PDF documents\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("gerund")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s049_exception_string_still_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/string-utils").unwrap();
+        std::fs::write(
+            "skills/string-utils/SKILL.md",
+            "---\nname: string-utils\ndescription: Use when you need string manipulation utilities\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        // "string" ends in "ing" but is in the exception list — S049 should fire
+        // because there are no actual gerund words, only a non-gerund exception
+        assert!(diag.errors().iter().any(|e| e.contains("gerund")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s049_private_mode_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/code-review").unwrap();
+        std::fs::write(
+            ".claude/skills/code-review/SKILL.md",
+            "---\nname: code-review\ndescription: A valid skill description here\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        // S049 is plugin-only, should not fire in private mode
+        assert!(!diag.errors().iter().any(|e| e.contains("gerund")));
     }
 }

@@ -98,4 +98,24 @@ pub(super) fn check_name_format(
             );
         }
     }
+
+    // S049: name not in gerund form (plugin-only)
+    if plugin_mode {
+        const NON_GERUND_ING: &[&str] = &[
+            "string", "ring", "spring", "king", "thing", "bling", "sing", "wing", "ping", "sting",
+            "swing", "bring", "cling", "fling", "sling", "wring",
+        ];
+        let has_gerund = name
+            .split('-')
+            .any(|word| word.ends_with("ing") && !NON_GERUND_ING.contains(&word));
+        if !has_gerund {
+            diag.report(
+                LintRule::NameNotGerund,
+                &format!(
+                    "{}: name '{}' does not use gerund form (consider e.g. 'processing-pdfs', 'reviewing-code')",
+                    info.path, name
+                ),
+            );
+        }
+    }
 }

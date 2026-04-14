@@ -7,7 +7,7 @@ configuration and plugins.
 
 ## Features
 
-- **90 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
+- **93 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
   Hygiene, Email, User Config, Slack, Docs)
 - **Two lint modes**:
   - **Basic mode** -- validates `.claude/` contents (settings, hooks, private
@@ -202,13 +202,13 @@ warning[G005/security-md-missing]: SECURITY.md is missing from repo root
 
 ## Lint Rules
 
-Claude Lint ships **90 rules** organized into 9 categories:
+Claude Lint ships **93 rules** organized into 9 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 11 | `plugin.json` and `marketplace.json` validation |
 | Hooks | H | 7 | `hooks.json` and `settings.json` hook paths |
-| Skills | S | 44 | Skill frontmatter, naming, descriptions, body content, security |
+| Skills | S | 47 | Skill frontmatter, naming, descriptions, body content, security |
 | Agents | A | 10 | Agent frontmatter, templates, description quality, name format |
 | Hygiene | G | 7 | `$PWD` hygiene, script integrity, executability, dead scripts, TODO detection |
 | Email | E | 1 | Email format validation |
@@ -224,7 +224,7 @@ see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | `.claude/` directory exists | Settings hooks, private skill frontmatter, script refs, executability, both-mode S-rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 90 rules including manifest, agents, hygiene, and plugin-only S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 93 rules including manifest, agents, hygiene, and plugin-only S-rules |
 
 If neither directory exists, the tool prints "Nothing to lint" and exits 0.
 
@@ -270,14 +270,14 @@ src/
 +-- context.rs           # LintContext, ManifestState, LintMode
 +-- diagnostic.rs        # DiagnosticCollector, Severity, config-aware filtering
 +-- frontmatter.rs       # YAML frontmatter extraction
-+-- rules.rs             # Central LintRule enum (90 rules, codes, names)
++-- rules.rs             # Central LintRule enum (93 rules, codes, names)
 +-- test_helpers.rs      # Shared test utilities
 +-- validators/
     +-- mod.rs           # run_all -> run_basic / run_plugin dispatch
     +-- manifest.rs      # M001-M011: plugin.json & marketplace.json
     +-- hooks.rs         # H001-H007: hooks.json & settings.json
     +-- skills.rs        # S001-S008: skills layout & frontmatter
-    +-- skill_content/   # S009-S044: name, description, body, MCP, security checks
+    +-- skill_content/   # S009-S045, S048-S049: name, description, body, MCP, security checks
     +-- agents.rs        # A001-A010: agent frontmatter, templates, description quality
     +-- hygiene.rs       # G001-G007: PWD hygiene, scripts, executability, TODO detection
     +-- docs.rs          # D001-D003: docs file references, CLAUDE.md size, TODO detection

@@ -136,6 +136,10 @@ pub enum LintRule {
     McpToolUnqualified,
     /// S045: allowed-tools uses YAML list syntax instead of comma-separated scalar
     ToolsListSyntax,
+    /// S048: non-descriptive reference file name in skill directory
+    RefNameGeneric,
+    /// S049: skill name not in gerund form
+    NameNotGerund,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -275,6 +279,8 @@ impl LintRule {
             Self::FrontmatterBackslash => "S043",
             Self::McpToolUnqualified => "S044",
             Self::ToolsListSyntax => "S045",
+            Self::RefNameGeneric => "S048",
+            Self::NameNotGerund => "S049",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -380,6 +386,8 @@ impl LintRule {
             Self::FrontmatterBackslash => "frontmatter-backslash",
             Self::McpToolUnqualified => "mcp-tool-unqualified",
             Self::ToolsListSyntax => "tools-list-syntax",
+            Self::RefNameGeneric => "ref-name-generic",
+            Self::NameNotGerund => "name-not-gerund",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -492,6 +500,8 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::FrontmatterBackslash,
     LintRule::McpToolUnqualified,
     LintRule::ToolsListSyntax,
+    LintRule::RefNameGeneric,
+    LintRule::NameNotGerund,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -533,7 +543,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            91,
+            93,
             "ALL_RULES length must match enum variant count"
         );
     }

@@ -6,6 +6,14 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
+
+/// S048: denylist for non-descriptive reference file names in skill directories.
+/// Matches generic stems (doc, file, ref, data, info, tmp, test) with optional
+/// digits, single letters (case-insensitive), and pure numeric names — all with .md extension.
+static RE_GENERIC_REF_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i:^(?:doc|file|ref|data|info|tmp|test)\d*|^[a-z]|^\d+)\.md$").unwrap()
+});
 
 const REF_NO_TOC_THRESHOLD: usize = 100;
 
@@ -195,6 +203,79 @@ pub(super) fn validate_ref_no_toc(
                         );
                     }
                 }
+            }
+        }
+    }
+}
+
+/// S048: Detect non-descriptive reference file names in skill directories.
+/// Walks each skill subdirectory (non-recursive), skips SKILL.md and subdirectories
+/// (e.g., scripts/), and flags `.md` files whose names match the generic denylist.
+pub(super) fn validate_generic_ref_names(
+    base_dir: &str,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    let dir = Path::new(base_dir);
+    if !dir.is_dir() {
+        return;
+    }
+
+    let entries = match fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if dir_name == "shared" {
+            continue;
+        }
+
+        let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
+        if exclude.is_excluded(&skill_path) {
+            continue;
+        }
+
+        let skill_entries = match fs::read_dir(&path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for file_entry in skill_entries.flatten() {
+            let file_path = file_entry.path();
+            if !file_path.is_file() {
+                continue;
+            }
+            let file_name = match file_path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+
+            if file_name == "SKILL.md" {
+                continue;
+            }
+
+            let display_path = format!("{base_dir}/{dir_name}/{file_name}");
+            if exclude.is_excluded(&display_path) {
+                continue;
+            }
+
+            if RE_GENERIC_REF_NAME.is_match(&file_name) {
+                diag.report(
+                    LintRule::RefNameGeneric,
+                    &format!(
+                        "{}: non-descriptive reference file name (use a descriptive name like 'form-validation-rules.md')",
+                        display_path
+                    ),
+                );
             }
         }
     }

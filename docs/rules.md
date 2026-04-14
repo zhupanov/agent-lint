@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 91 rules across 9 categories. Every rule has a unique
+Claude Lint ships 93 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
