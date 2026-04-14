@@ -2,10 +2,65 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
 use super::common::RE_NAME_INVALID;
+
+/// Jaccard similarity threshold (strict greater-than).
+const JACCARD_THRESHOLD: f64 = 0.8;
+/// Descriptions with fewer than this many words are eligible for Jaccard flagging.
+const MIN_DESC_WORDS: usize = 6;
+
+const STOPWORDS: &[&str] = &[
+    "a", "an", "the", "is", "for", "and", "of", "to", "that", "which",
+];
+
+/// Check whether an agent description is too similar to the agent name.
+///
+/// Returns `true` when the description adds no meaningful information beyond
+/// what the name already conveys.
+fn is_desc_redundant(name: &str, desc: &str) -> bool {
+    let name_lower = name.to_lowercase().replace('-', " ");
+    let name_words: HashSet<&str> = name_lower.split_whitespace().collect();
+
+    let desc_lower = desc.to_lowercase();
+    let desc_all_words: Vec<&str> = desc_lower.split_whitespace().collect();
+    let desc_word_count = desc_all_words.len();
+
+    let stopwords: HashSet<&str> = STOPWORDS.iter().copied().collect();
+    let desc_content_words: HashSet<&str> = desc_all_words
+        .iter()
+        .copied()
+        .filter(|w| !stopwords.contains(w))
+        .collect();
+
+    // Jaccard path: flag short descriptions with high word overlap.
+    if desc_word_count < MIN_DESC_WORDS && !name_words.is_empty() && !desc_content_words.is_empty()
+    {
+        let intersection = name_words.intersection(&desc_content_words).count();
+        let union = name_words.union(&desc_content_words).count();
+        if union > 0 {
+            let jaccard = intersection as f64 / union as f64;
+            if jaccard > JACCARD_THRESHOLD {
+                return true;
+            }
+        }
+    }
+
+    // Token containment path: flag if all name words appear in the description
+    // and the description adds at most one content word beyond the name
+    // (catching filler like "tool", "agent", "helper" without listing them).
+    if !name_words.is_empty() && name_words.is_subset(&desc_content_words) {
+        let extra_content = desc_content_words.difference(&name_words).count();
+        if extra_content <= 1 {
+            return true;
+        }
+    }
+
+    false
+}
 
 /// V7: Validate agents/*.md frontmatter.
 pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -88,6 +143,20 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                     LintRule::AgentDescShort,
                     &format!("{agent_path}: description is under 20 characters ({char_count})"),
                 );
+            }
+        }
+
+        // A011: agent description too similar to agent name
+        if let Some(ref n) = fm_name {
+            if let Some(ref desc) = fm_desc {
+                if is_desc_redundant(n, desc) {
+                    diag.report(
+                        LintRule::AgentDescRedundant,
+                        &format!(
+                            "{agent_path}: description is too similar to the agent name '{n}'"
+                        ),
+                    );
+                }
             }
         }
 
@@ -540,6 +609,153 @@ mod tests {
                 .errors()
                 .iter()
                 .any(|e| e.contains("outside [a-z0-9-]"))
+        );
+    }
+
+    // ── A011: agent-desc-redundant ──────────────────────────────────
+
+    // Unit tests for is_desc_redundant helper
+    #[test]
+    fn test_is_desc_redundant_exact_token_match() {
+        // Name tokens match desc content tokens exactly
+        assert!(is_desc_redundant("code-analyzer", "A code analyzer agent"));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_with_only_stopwords_extra() {
+        // Description has name words + only stopwords → redundant
+        assert!(is_desc_redundant("test-runner", "The test runner tool"));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_descriptive_passes() {
+        // Description adds meaningful content beyond the name
+        assert!(!is_desc_redundant(
+            "security-reviewer",
+            "Reviews code for security vulnerabilities and auth flaws"
+        ));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_short_name_with_context_passes() {
+        // Short name with a descriptive description should NOT fire
+        assert!(!is_desc_redundant(
+            "api",
+            "API helper tool for REST requests"
+        ));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_overlapping_but_distinct() {
+        assert!(!is_desc_redundant(
+            "code-reviewer",
+            "Performs deep analysis of code for bugs and security issues"
+        ));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_token_containment_with_extra_content_passes() {
+        // Name tokens present but description adds extra content words
+        assert!(!is_desc_redundant(
+            "test-runner",
+            "Test runner for CI integration workflows"
+        ));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_boundary_extra_words() {
+        // 1 extra content word beyond name → fires (token containment)
+        assert!(is_desc_redundant("code-analyzer", "code analyzer tool"));
+        // 2 extra content words → does not fire
+        assert!(!is_desc_redundant(
+            "code-analyzer",
+            "code analyzer tool agent"
+        ));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_low_jaccard_passes() {
+        // Low word overlap should not fire even with short desc.
+        // name={code,analyzer}, desc={static,analysis,tool} → jaccard=0/5=0
+        assert!(!is_desc_redundant(
+            "code-analyzer",
+            "Static analysis tool"
+        ));
+    }
+
+    #[test]
+    fn test_is_desc_redundant_existing_fixture_safe() {
+        // Existing test fixture should NOT fire A011
+        assert!(!is_desc_redundant(
+            "general",
+            "General reviewer for code quality analysis"
+        ));
+    }
+
+    // Integration tests through validate_agents
+    #[test]
+    #[serial_test::serial]
+    fn test_a011_redundant_desc_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/analyzer.md",
+            "---\nname: code-analyzer\ndescription: A code analyzer agent\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("too similar to the agent name"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a011_descriptive_desc_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/reviewer.md",
+            "---\nname: security-reviewer\ndescription: Reviews code for security vulnerabilities including injection and XSS flaws\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("too similar to the agent name"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a011_existing_fixture_no_false_positive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: General reviewer for code quality analysis\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("too similar to the agent name")),
+            "Existing fixture should not trigger A011"
         );
     }
 }

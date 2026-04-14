@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 93 rules across 9 categories. Every rule has a unique
+Claude Lint ships 94 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
@@ -139,6 +139,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Plugin |
 | A009 | `agent-desc-short` | Agent description under 20 characters | Plugin |
 | A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Plugin |
+| A011 | `agent-desc-redundant` | Agent description too similar to agent name | Plugin |
 
 ## Hygiene / Scripts Rules (G)
 
