@@ -6,10 +6,10 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
+use super::common::RE_TODO_MARKER;
+
 static RE_DOCS_REF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"docs/[a-zA-Z0-9._/-]+\.md").unwrap());
-static RE_TODO: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap());
 
 /// V22: Docs file references from CLAUDE.md.
 pub fn validate_docs_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -86,7 +86,7 @@ pub fn validate_claudemd_todos(diag: &mut DiagnosticCollector, exclude: &Exclude
     };
 
     for line in crate::fence::lines_outside_fences(&content) {
-        if let Some(m) = RE_TODO.find(line) {
+        if let Some(m) = RE_TODO_MARKER.find(line) {
             diag.report(
                 LintRule::TodoInDocs,
                 &format!(

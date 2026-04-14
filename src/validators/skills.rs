@@ -28,29 +28,10 @@ pub struct SkillInfo {
 /// Skips `shared/` subdirectory and excluded paths. Returns empty vec if dir doesn't exist.
 pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
     let dir = Path::new(base_dir);
-    if !dir.is_dir() {
-        return Vec::new();
-    }
-
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
+    let subdirs = super::walk::read_subdirs(dir, base_dir, exclude, true);
 
     let mut skills = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if dir_name == "shared" {
-            continue;
-        }
-
+    for (path, dir_name) in subdirs {
         let skill_md = path.join("SKILL.md");
         if !skill_md.is_file() {
             continue;
@@ -68,10 +49,6 @@ pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
 
         let body = frontmatter::extract_body(&content).to_string();
         let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
-
-        if exclude.is_excluded(&skill_path) {
-            continue;
-        }
 
         skills.push(SkillInfo {
             path: skill_path,

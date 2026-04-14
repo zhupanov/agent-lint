@@ -1,80 +1,33 @@
+mod body;
+mod cross_field;
+mod cross_skill;
+mod description;
+mod frontmatter_extended;
+mod frontmatter_fields;
+mod name;
+mod security;
+
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
-use crate::frontmatter;
-use crate::rules::LintRule;
 use crate::validators::skills::{SkillInfo, collect_skills};
 use regex::Regex;
-use std::collections::HashSet;
-use std::fs;
-use std::path::Path;
 use std::sync::LazyLock;
 
-// S010/S013/S018: Name/description validation
-static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
-static RE_XML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
-
-// S016/S017: Description quality (plugin-only)
-static RE_PERSON: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b(I|you|we|my|your|our)\b").unwrap());
-static RE_TRIGGER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(use\s+when|use\s+this|use\s+for|trigger\s+when|do\s+not\s+trigger|\bwhen\b)")
-        .unwrap()
-});
-
-// S022/S043: Backslash paths
-static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
+// S022/S043: Backslash paths — shared between body.rs and frontmatter_extended.rs
+pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-// S037: Body-no-refs
-static RE_BODY_FILE_REF: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}|\.sh\b|\.md\b|\.py\b|\.js\b|\.ts\b|scripts/|shared/")
-        .unwrap()
-});
-
-// S038: Time-sensitive
-static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b20[2-3][0-9]\b").unwrap());
-
-// S041: Fork-no-task
-static RE_IMPERATIVE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(run|execute|create|build|generate|invoke|call|launch|start|perform|apply|install|deploy|write|implement)\b").unwrap()
-});
-
-// S021: Consecutive bash
-static RE_BASH_FENCE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
-
-// S028: $ARGUMENTS
-static RE_ARGS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\$ARGUMENTS|\$\{ARGUMENTS\}").unwrap());
-
-// S031: Non-HTTPS URLs
-static RE_HTTP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"http://[a-zA-Z0-9]").unwrap());
-
-// S032: Secret patterns
-static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    vec![
-        Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(),
-        Regex::new(r"ghp_[a-zA-Z0-9]{36,}").unwrap(),
-        Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}").unwrap(),
-        Regex::new(
-            r#"(?i)(api[_\-]?key|api[_\-]?secret|api[_\-]?token)\s*[=:]\s*["']?[A-Za-z0-9]{20,}"#,
-        )
-        .unwrap(),
-        Regex::new(r#"(?i)(password|secret|token)\s*[=:]\s*["'][^"']{8,}"#).unwrap(),
-    ]
-});
-
-/// Validate skill content for public skills (skills/). Runs all S009–S043 rules.
+/// Validate skill content for public skills (skills/). Runs all S009-S043 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
         run_content_checks(info, true, diag);
     }
-    // Cross-skill checks
-    validate_nested_references("skills", &skills, diag);
-    validate_orphaned_skill_files("skills", diag, exclude);
-    validate_ref_no_toc("skills", &skills, diag);
+    // Cross-skill checks (plugin-only: S029, S036; both-mode: S030)
+    cross_skill::validate_nested_references("skills", &skills, diag);
+    cross_skill::validate_orphaned_skill_files("skills", diag, exclude);
+    cross_skill::validate_ref_no_toc("skills", &skills, diag);
 }
 
 /// Validate skill content for private skills (.claude/skills/).
@@ -84,819 +37,17 @@ pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &
     for info in &skills {
         run_content_checks(info, false, diag);
     }
-    validate_orphaned_skill_files(".claude/skills", diag, exclude);
+    cross_skill::validate_orphaned_skill_files(".claude/skills", diag, exclude);
 }
 
 fn run_content_checks(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticCollector) {
-    check_name_format(info, plugin_mode, diag);
-    check_description_quality(info, plugin_mode, diag);
-    check_body_content(info, plugin_mode, diag);
-    check_frontmatter_fields(info, diag);
-    check_frontmatter_extended(info, diag);
-    check_cross_field(info, diag);
-    check_content_security(info, diag);
-}
-
-// ── Name validation (S009–S013, S033) ────────────────────────────────
-
-fn check_name_format(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticCollector) {
-    let name = match frontmatter::get_field(&info.fm_lines, "name") {
-        Some(n) => n,
-        None => return, // S005 fires from existing validator
-    };
-
-    // S009: name too long
-    if name.len() > 64 {
-        diag.report(
-            LintRule::NameTooLong,
-            &format!(
-                "{}: name '{}' exceeds 64 characters ({})",
-                info.path,
-                name,
-                name.len()
-            ),
-        );
-    }
-
-    // S010: invalid characters
-    if RE_NAME_INVALID.is_match(&name) {
-        diag.report(
-            LintRule::NameInvalidChars,
-            &format!(
-                "{}: name '{}' contains characters outside [a-z0-9-]",
-                info.path, name
-            ),
-        );
-    }
-
-    // S011: bad hyphens
-    if name.starts_with('-') || name.ends_with('-') || name.contains("--") {
-        diag.report(
-            LintRule::NameBadHyphens,
-            &format!(
-                "{}: name '{}' starts/ends with hyphen or contains consecutive hyphens",
-                info.path, name
-            ),
-        );
-    }
-
-    // S012: reserved words
-    let lower = name.to_lowercase();
-    if lower.contains("anthropic") || lower.contains("claude") {
-        diag.report(
-            LintRule::NameReservedWord,
-            &format!(
-                "{}: name '{}' contains reserved word ('anthropic' or 'claude')",
-                info.path, name
-            ),
-        );
-    }
-
-    // S013: XML tags in name
-    if RE_XML_TAG.is_match(&name) {
-        diag.report(
-            LintRule::NameHasXml,
-            &format!("{}: name '{}' contains XML/HTML tags", info.path, name),
-        );
-    }
-
-    // S033: vague name (plugin-only)
-    if plugin_mode {
-        let vague_names = [
-            "helper",
-            "helpers",
-            "utils",
-            "utility",
-            "tools",
-            "data",
-            "files",
-            "documents",
-        ];
-        if vague_names.contains(&name.as_str()) {
-            diag.report(
-                LintRule::NameVague,
-                &format!(
-                    "{}: name '{}' is too vague/generic for a published skill",
-                    info.path, name
-                ),
-            );
-        }
-    }
-}
-
-// ── Description validation (S014–S018, S034) ─────────────────────────
-
-fn check_description_quality(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticCollector) {
-    let desc = match frontmatter::get_field(&info.fm_lines, "description") {
-        Some(d) => d,
-        None => return, // S005 fires from existing validator
-    };
-
-    let char_count = desc.chars().count();
-
-    // S014: description too long
-    if char_count > 1024 {
-        diag.report(
-            LintRule::DescTooLong,
-            &format!(
-                "{}: description exceeds 1024 characters ({})",
-                info.path, char_count
-            ),
-        );
-    }
-
-    // S034: description too short
-    if char_count < 20 {
-        diag.report(
-            LintRule::DescTooShort,
-            &format!(
-                "{}: description is under 20 characters ({})",
-                info.path, char_count
-            ),
-        );
-    }
-
-    // S015: description truncated in listing (plugin-only)
-    if plugin_mode && char_count > 250 {
-        diag.report(
-            LintRule::DescTruncated,
-            &format!(
-                "{}: description exceeds 250 characters ({}) and will be truncated in skill listing",
-                info.path, char_count
-            ),
-        );
-    }
-
-    // S016: uses first/second person (plugin-only)
-    if plugin_mode && RE_PERSON.is_match(&desc) {
-        diag.report(
-            LintRule::DescUsesPerson,
-            &format!(
-                "{}: description uses first/second person; use third person for published skills",
-                info.path
-            ),
-        );
-    }
-
-    // S017: no trigger context (plugin-only)
-    if plugin_mode && !RE_TRIGGER.is_match(&desc) {
-        diag.report(
-            LintRule::DescNoTrigger,
-            &format!(
-                "{}: description lacks trigger/usage context (e.g., 'Use when...', 'Trigger when...')",
-                info.path
-            ),
-        );
-    }
-
-    // S018: XML tags in description
-    if RE_XML_TAG.is_match(&desc) {
-        diag.report(
-            LintRule::DescHasXml,
-            &format!("{}: description contains XML/HTML tags", info.path),
-        );
-    }
-}
-
-// ── Body content (S019–S022) ─────────────────────────────────────────
-
-fn check_body_content(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticCollector) {
-    // S020: empty body
-    if info.body.trim().is_empty() {
-        diag.report(
-            LintRule::BodyEmpty,
-            &format!("{}: no content after frontmatter", info.path),
-        );
-        return; // No point checking other body rules
-    }
-
-    // S019: body too long
-    let line_count = info.body.lines().count();
-    if line_count > 500 {
-        diag.report(
-            LintRule::BodyTooLong,
-            &format!(
-                "{}: body exceeds 500 lines ({} lines)",
-                info.path, line_count
-            ),
-        );
-    }
-
-    // S021: consecutive bash code blocks
-    check_consecutive_bash(info, diag);
-
-    // S022: backslash paths — require path-like context to avoid false positives
-    // on regex escapes (\s, \n, \t), LaTeX (\frac), etc.
-    // Matches: C:\Users, \dir\file, path\to\something (letter, backslash, letter pattern)
-    // Only check outside code fences to reduce false positives
-    for line in crate::fence::lines_outside_fences(&info.body) {
-        if RE_BACKSLASH_PATH.is_match(line) {
-            diag.report(
-                LintRule::BackslashPath,
-                &format!(
-                    "{}: Windows-style backslash path detected; use forward slashes",
-                    info.path
-                ),
-            );
-            break; // Report once per file
-        }
-    }
-
-    // S037: body-no-refs (plugin-only) — body > 300 lines with no file references
-    if plugin_mode && line_count > 300 && !RE_BODY_FILE_REF.is_match(&info.body) {
-        diag.report(
-            LintRule::BodyNoRefs,
-            &format!(
-                "{}: body exceeds 300 lines ({}) with no file references; consider splitting into reference files",
-                info.path, line_count
-            ),
-        );
-    }
-
-    // S038: time-sensitive (plugin-only) — date/year patterns outside code fences
-    if plugin_mode {
-        for line in crate::fence::lines_outside_fences(&info.body) {
-            if RE_YEAR.is_match(line) {
-                diag.report(
-                    LintRule::TimeSensitive,
-                    &format!(
-                        "{}: body contains date/year pattern that may become outdated",
-                        info.path
-                    ),
-                );
-                break; // Report once per file
-            }
-        }
-    }
-
-    // S041: fork-no-task — context: fork set but no task instructions in body
-    if frontmatter::get_field(&info.fm_lines, "context").as_deref() == Some("fork")
-        && !RE_IMPERATIVE.is_match(&info.body)
-    {
-        diag.report(
-            LintRule::ForkNoTask,
-            &format!(
-                "{}: context: fork is set but body has no task instructions (fork subagent needs an actionable prompt)",
-                info.path
-            ),
-        );
-    }
-}
-
-fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    use crate::fence::{CodeFenceTracker, LineClass};
-
-    let mut tracker = CodeFenceTracker::new();
-    let mut last_bash_end: Option<usize> = None;
-    let mut fence_is_bash = false;
-
-    for (i, line) in info.body.lines().enumerate() {
-        let trimmed = line.trim_start();
-        match tracker.process_line(line) {
-            LineClass::Delimiter => {
-                if !tracker.in_fence() {
-                    // This delimiter just closed a fence
-                    if fence_is_bash {
-                        last_bash_end = Some(i);
-                    }
-                    fence_is_bash = false;
-                } else {
-                    // This delimiter just opened a fence
-                    if RE_BASH_FENCE.is_match(trimmed) {
-                        // Opening a bash fence — check for consecutive
-                        if let Some(prev_end) = last_bash_end {
-                            let between_lines: Vec<&str> = info
-                                .body
-                                .lines()
-                                .skip(prev_end + 1)
-                                .take(i - prev_end - 1)
-                                .collect();
-                            let only_blank = between_lines.iter().all(|l| l.trim().is_empty());
-                            if only_blank {
-                                diag.report(
-                                    LintRule::ConsecutiveBash,
-                                    &format!(
-                                        "{}: consecutive bash code blocks (lines {} and {}) could be combined into one",
-                                        info.path, prev_end + 1, i + 1
-                                    ),
-                                );
-                                return; // Report once per file
-                            }
-                        }
-                        fence_is_bash = true;
-                    } else {
-                        fence_is_bash = false;
-                    }
-                }
-            }
-            LineClass::Inside | LineClass::Outside => {}
-        }
-    }
-}
-
-// ── Frontmatter field types (S023–S027) ──────────────────────────────
-
-fn check_frontmatter_fields(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    // S023: boolean fields
-    for field_name in &["user-invocable", "disable-model-invocation"] {
-        match frontmatter::get_field_state(&info.fm_lines, field_name) {
-            frontmatter::FieldState::Value(val) => {
-                if val != "true" && val != "false" {
-                    diag.report(
-                        LintRule::BoolFieldInvalid,
-                        &format!(
-                            "{}: '{}' must be true or false, got '{}'",
-                            info.path, field_name, val
-                        ),
-                    );
-                }
-            }
-            frontmatter::FieldState::Empty => {
-                diag.report(
-                    LintRule::BoolFieldInvalid,
-                    &format!(
-                        "{}: '{}' is present but empty (must be true or false)",
-                        info.path, field_name
-                    ),
-                );
-            }
-            frontmatter::FieldState::Missing => {} // Not required
-        }
-    }
-
-    // S024: context field
-    match frontmatter::get_field_state(&info.fm_lines, "context") {
-        frontmatter::FieldState::Value(val) => {
-            if val != "fork" {
-                diag.report(
-                    LintRule::ContextFieldInvalid,
-                    &format!("{}: 'context' must be 'fork', got '{}'", info.path, val),
-                );
-            }
-        }
-        frontmatter::FieldState::Empty => {
-            diag.report(
-                LintRule::ContextFieldInvalid,
-                &format!(
-                    "{}: 'context' is present but empty (must be 'fork')",
-                    info.path
-                ),
-            );
-        }
-        frontmatter::FieldState::Missing => {}
-    }
-
-    // S025: effort field
-    match frontmatter::get_field_state(&info.fm_lines, "effort") {
-        frontmatter::FieldState::Value(val) => {
-            if !["low", "medium", "high", "max"].contains(&val.as_str()) {
-                diag.report(
-                    LintRule::EffortFieldInvalid,
-                    &format!(
-                        "{}: 'effort' must be low/medium/high/max, got '{}'",
-                        info.path, val
-                    ),
-                );
-            }
-        }
-        frontmatter::FieldState::Empty => {
-            diag.report(
-                LintRule::EffortFieldInvalid,
-                &format!("{}: 'effort' is present but empty", info.path),
-            );
-        }
-        frontmatter::FieldState::Missing => {}
-    }
-
-    // S026: shell field
-    match frontmatter::get_field_state(&info.fm_lines, "shell") {
-        frontmatter::FieldState::Value(val) => {
-            if !["bash", "powershell"].contains(&val.as_str()) {
-                diag.report(
-                    LintRule::ShellFieldInvalid,
-                    &format!(
-                        "{}: 'shell' must be bash/powershell, got '{}'",
-                        info.path, val
-                    ),
-                );
-            }
-        }
-        frontmatter::FieldState::Empty => {
-            diag.report(
-                LintRule::ShellFieldInvalid,
-                &format!("{}: 'shell' is present but empty", info.path),
-            );
-        }
-        frontmatter::FieldState::Missing => {}
-    }
-
-    // S027: unreachable skill
-    let dmi = frontmatter::get_field(&info.fm_lines, "disable-model-invocation");
-    let ui = frontmatter::get_field(&info.fm_lines, "user-invocable");
-    if dmi.as_deref() == Some("true") && ui.as_deref() == Some("false") {
-        diag.report(
-            LintRule::SkillUnreachable,
-            &format!(
-                "{}: skill is unreachable (disable-model-invocation: true and user-invocable: false)",
-                info.path
-            ),
-        );
-    }
-}
-
-// ── Extended frontmatter checks (S035, S039, S040, S042, S043) ───────
-
-fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    // S035: compatibility field too long
-    if let frontmatter::FieldState::Value(val) =
-        frontmatter::get_field_state(&info.fm_lines, "compatibility")
-    {
-        if val.len() > 500 {
-            diag.report(
-                LintRule::CompatTooLong,
-                &format!(
-                    "{}: 'compatibility' exceeds 500 characters ({})",
-                    info.path,
-                    val.len()
-                ),
-            );
-        }
-    }
-
-    // S039: metadata values should be strings
-    // Look for metadata lines in frontmatter that have bare true/false/numeric values
-    let mut in_metadata = false;
-    for line in &info.fm_lines {
-        if line == "metadata:" || line.starts_with("metadata:") {
-            // Check for inline scalar value on the metadata: line itself
-            let inline_val = line["metadata:".len()..].trim();
-            if !inline_val.is_empty()
-                && !inline_val.starts_with('"')
-                && !inline_val.starts_with('\'')
-                && (inline_val == "true"
-                    || inline_val == "false"
-                    || inline_val.parse::<f64>().is_ok())
-            {
-                diag.report(
-                    LintRule::MetadataNotString,
-                    &format!(
-                        "{}: metadata has non-string inline value '{}' (wrap in quotes)",
-                        info.path, inline_val
-                    ),
-                );
-            }
-            in_metadata = true;
-            continue;
-        }
-        if in_metadata {
-            // Metadata entries are indented (e.g., "  key: value")
-            if !line.starts_with(' ') && !line.starts_with('\t') {
-                break; // End of metadata block
-            }
-            if let Some(colon_pos) = line.find(':') {
-                let val = line[colon_pos + 1..].trim();
-                if !val.is_empty()
-                    && !val.starts_with('"')
-                    && !val.starts_with('\'')
-                    && (val == "true" || val == "false" || val.parse::<f64>().is_ok())
-                {
-                    let key = line[..colon_pos].trim();
-                    diag.report(
-                        LintRule::MetadataNotString,
-                        &format!(
-                            "{}: metadata key '{}' has non-string value '{}' (wrap in quotes)",
-                            info.path, key, val
-                        ),
-                    );
-                }
-            }
-        }
-    }
-
-    // S040: allowed-tools unknown
-    if let Some(tools_str) = frontmatter::get_field(&info.fm_lines, "allowed-tools") {
-        let known_tools = [
-            "AskUserQuestion",
-            "Bash",
-            "Read",
-            "Edit",
-            "Write",
-            "Grep",
-            "Glob",
-            "Agent",
-            "Task",
-            "WebFetch",
-            "WebSearch",
-            "Skill",
-            "NotebookEdit",
-            "LSP",
-            "TaskCreate",
-            "TaskUpdate",
-            "TaskList",
-            "TaskGet",
-            "TaskStop",
-            "TaskOutput",
-        ];
-        for tool in tools_str.split(',') {
-            let tool = tool.trim();
-            // Skip tool patterns like "Bash(git *)" — extract base name
-            let base_name = if let Some(paren) = tool.find('(') {
-                tool[..paren].trim()
-            } else {
-                tool
-            };
-            if base_name.is_empty() {
-                continue;
-            }
-            if !known_tools.contains(&base_name) {
-                diag.report(
-                    LintRule::ToolsUnknown,
-                    &format!(
-                        "{}: allowed-tools lists unrecognized tool '{}' (tool names are case-sensitive PascalCase; may be an MCP tool — verify spelling)",
-                        info.path, base_name
-                    ),
-                );
-            }
-        }
-    }
-
-    // S042: disable-model-invocation: true with empty/missing description
-    if frontmatter::get_field(&info.fm_lines, "disable-model-invocation").as_deref() == Some("true")
-    {
-        match frontmatter::get_field_state(&info.fm_lines, "description") {
-            frontmatter::FieldState::Missing | frontmatter::FieldState::Empty => {
-                diag.report(
-                    LintRule::DmiEmptyDesc,
-                    &format!(
-                        "{}: disable-model-invocation: true but description is empty/missing (user-only skills need descriptions for the / menu)",
-                        info.path
-                    ),
-                );
-            }
-            frontmatter::FieldState::Value(_) => {}
-        }
-    }
-
-    // S043: backslash paths in frontmatter
-    for line in &info.fm_lines {
-        if RE_BACKSLASH_PATH.is_match(line) {
-            diag.report(
-                LintRule::FrontmatterBackslash,
-                &format!(
-                    "{}: Windows-style backslash path in frontmatter; use forward slashes",
-                    info.path
-                ),
-            );
-            break; // Report once per file
-        }
-    }
-}
-
-// ── Cross-field checks (S028) ────────────────────────────────────────
-
-fn check_cross_field(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    // S028: $ARGUMENTS in body without argument-hint (only outside code fences)
-    if crate::fence::lines_outside_fences(&info.body).any(|line| RE_ARGS.is_match(line))
-        && !frontmatter::field_exists(&info.fm_lines, "argument-hint")
-    {
-        diag.report(
-            LintRule::ArgsNoHint,
-            &format!(
-                "{}: body uses $ARGUMENTS but frontmatter has no 'argument-hint' field",
-                info.path
-            ),
-        );
-    }
-}
-
-// ── Content security (S031–S032) ─────────────────────────────────────
-
-fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    if info.body.trim().is_empty() {
-        return;
-    }
-
-    // S031: non-HTTPS URLs (exclude localhost, 127.0.0.1, 0.0.0.0, example.com/org)
-    for cap in RE_HTTP.find_iter(&info.body) {
-        let start = cap.start();
-        let after = &info.body[start + 7..]; // skip "http://"
-        if after.starts_with("localhost")
-            || after.starts_with("127.0.0.1")
-            || after.starts_with("0.0.0.0")
-            || after.starts_with("example.com")
-            || after.starts_with("example.org")
-        {
-            continue;
-        }
-        diag.report(
-            LintRule::NonHttpsUrl,
-            &format!(
-                "{}: non-HTTPS URL found; use https:// for security",
-                info.path
-            ),
-        );
-        break; // Report once per file
-    }
-
-    // S032: hardcoded secrets
-    for re in SECRET_PATTERNS.iter() {
-        if re.is_match(&info.body) {
-            diag.report(
-                LintRule::HardcodedSecret,
-                &format!("{}: potential hardcoded secret/API key detected", info.path),
-            );
-            return; // Report once per file
-        }
-    }
-}
-
-// ── Cross-skill validators (S029, S030) ──────────────────────────────
-
-/// Build a regex matching `${CLAUDE_PLUGIN_ROOT}/<base_dir>/shared/<path>.md` references.
-fn shared_ref_regex(base_dir: &str) -> Regex {
-    Regex::new(&format!(
-        r"\$\{{CLAUDE_PLUGIN_ROOT\}}/{}/shared/[a-zA-Z0-9._/-]+\.md",
-        regex::escape(base_dir)
-    ))
-    .unwrap()
-}
-
-/// S029: Check for deeply nested shared markdown references.
-/// Matches `${CLAUDE_PLUGIN_ROOT}/<base_dir>/shared/*.md` references.
-fn validate_nested_references(
-    base_dir: &str,
-    skills: &[SkillInfo],
-    diag: &mut DiagnosticCollector,
-) {
-    let shared_dir = Path::new(base_dir).join("shared");
-    if !shared_dir.is_dir() {
-        return;
-    }
-
-    let re_shared = shared_ref_regex(base_dir);
-
-    // Cache: which shared .md files are nested (avoids re-reading files from disk)
-    let mut checked: HashSet<String> = HashSet::new();
-    let mut nested: HashSet<String> = HashSet::new();
-
-    for info in skills {
-        // Find shared-md references in this skill's body
-        for cap in re_shared.find_iter(&info.body) {
-            let reference = cap.as_str();
-            let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
-            let rel_path = Path::new(&rel);
-
-            if !rel_path.is_file() {
-                continue; // S008 handles missing refs
-            }
-
-            // Check the file once for nesting, cache result
-            if !checked.contains(&rel) {
-                checked.insert(rel.clone());
-                if let Ok(content) = fs::read_to_string(rel_path) {
-                    if re_shared.is_match(&content) {
-                        nested.insert(rel.clone());
-                    }
-                }
-            }
-
-            // Report for every referencing skill (not just the first)
-            if nested.contains(&rel) {
-                diag.report(
-                    LintRule::NestedRefDeep,
-                    &format!(
-                        "{}: references {} which itself references other shared .md files (keep references one level deep)",
-                        info.path, reference
-                    ),
-                );
-            }
-        }
-    }
-}
-
-/// S030: Detect orphaned files in skill scripts/ subdirectories.
-fn validate_orphaned_skill_files(
-    base_dir: &str,
-    diag: &mut DiagnosticCollector,
-    exclude: &ExcludeSet,
-) {
-    let dir = Path::new(base_dir);
-    if !dir.is_dir() {
-        return;
-    }
-
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if dir_name == "shared" {
-            continue;
-        }
-
-        let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
-        if exclude.is_excluded(&skill_path) {
-            continue;
-        }
-
-        let scripts_dir = path.join("scripts");
-        if !scripts_dir.is_dir() {
-            continue;
-        }
-
-        let skill_md = path.join("SKILL.md");
-        let skill_content = match fs::read_to_string(&skill_md) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        // Check each file in scripts/
-        let script_entries = match fs::read_dir(&scripts_dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        for script_entry in script_entries.flatten() {
-            let script_path = script_entry.path();
-            if !script_path.is_file() {
-                continue;
-            }
-            let script_name = match script_path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-
-            let display_path = format!("{base_dir}/{dir_name}/scripts/{script_name}");
-            if exclude.is_excluded(&display_path) {
-                continue;
-            }
-
-            // Check if the script file name is referenced anywhere in SKILL.md
-            if !skill_content.contains(&script_name) {
-                diag.report(
-                    LintRule::OrphanedSkillFiles,
-                    &format!(
-                        "{}: not referenced from {base_dir}/{dir_name}/SKILL.md",
-                        display_path
-                    ),
-                );
-            }
-        }
-    }
-}
-
-/// S036: Check that referenced shared .md files > 100 lines have headings (TOC).
-/// Only runs in plugin mode (called from validate_skill_content).
-fn validate_ref_no_toc(base_dir: &str, skills: &[SkillInfo], diag: &mut DiagnosticCollector) {
-    let shared_dir = Path::new(base_dir).join("shared");
-    if !shared_dir.is_dir() {
-        return;
-    }
-
-    let re_shared = shared_ref_regex(base_dir);
-
-    let mut checked: HashSet<String> = HashSet::new();
-
-    for info in skills {
-        for cap in re_shared.find_iter(&info.body) {
-            let reference = cap.as_str();
-            let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
-
-            if !checked.insert(rel.clone()) {
-                continue;
-            }
-
-            let rel_path = Path::new(&rel);
-            if !rel_path.is_file() {
-                continue;
-            }
-
-            if let Ok(content) = fs::read_to_string(rel_path) {
-                let line_count = content.lines().count();
-                if line_count > 100 {
-                    let has_headings = content.lines().any(|l| l.starts_with("## "));
-                    if !has_headings {
-                        diag.report(
-                            LintRule::RefNoToc,
-                            &format!(
-                                "{}: references {} ({} lines) which has no ## headings for navigation",
-                                info.path, reference, line_count
-                            ),
-                        );
-                    }
-                }
-            }
-        }
-    }
+    name::check_name_format(info, plugin_mode, diag);
+    description::check_description_quality(info, plugin_mode, diag);
+    body::check_body_content(info, plugin_mode, diag);
+    frontmatter_fields::check_frontmatter_fields(info, diag);
+    frontmatter_extended::check_frontmatter_extended(info, diag);
+    cross_field::check_cross_field(info, diag);
+    security::check_content_security(info, diag);
 }
 
 #[cfg(test)]
@@ -1715,7 +866,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all("skills/my-skill").unwrap();
-        // $ARGUMENTS only inside a code fence — should NOT trigger S028
+        // $ARGUMENTS only inside a code fence -- should NOT trigger S028
         std::fs::write(
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nSome body text\n\n```bash\necho $ARGUMENTS\n```\n",
@@ -1766,12 +917,12 @@ mod tests {
 
     #[test]
     fn test_shared_ref_regex_uses_base_dir() {
-        let re = shared_ref_regex("skills");
+        let re = cross_skill::shared_ref_regex("skills");
         assert!(re.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md"));
         assert!(re.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/sub/util.md"));
         assert!(!re.is_match("${CLAUDE_PLUGIN_ROOT}/other/shared/helpers.md"));
 
-        let re2 = shared_ref_regex(".claude/skills");
+        let re2 = cross_skill::shared_ref_regex(".claude/skills");
         assert!(re2.is_match("${CLAUDE_PLUGIN_ROOT}/.claude/skills/shared/helpers.md"));
         assert!(!re2.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md"));
     }
@@ -1856,7 +1007,7 @@ mod tests {
         ).unwrap();
         let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        // Both skills reference the same nested shared file — S029 should fire for each
+        // Both skills reference the same nested shared file -- S029 should fire for each
         let errors = diag.errors();
         let nested_count = errors
             .iter()
@@ -2136,7 +1287,7 @@ mod tests {
     #[test]
     fn test_new_rules_lookup_by_code_and_name() {
         use crate::rules::LintRule;
-        // Verify S009–S043 rules round-trip via code and name lookups
+        // Verify S009-S043 rules round-trip via code and name lookups
         let new_rules = [
             ("S009", "name-too-long"),
             ("S010", "name-invalid-chars"),
@@ -2823,6 +1974,7 @@ mod tests {
         assert!(diag.errors().iter().any(|e| e.contains("under 20")));
 
         // With config ignoring S020
+        use crate::rules::LintRule;
         let config = crate::config::LintConfig {
             ignore: std::collections::HashSet::from([LintRule::BodyEmpty]),
             warn: std::collections::HashSet::new(),
@@ -2854,6 +2006,7 @@ mod tests {
         )
         .unwrap();
 
+        use crate::rules::LintRule;
         let config = crate::config::LintConfig {
             ignore: std::collections::HashSet::new(),
             warn: std::collections::HashSet::from([LintRule::DescTooShort]),
@@ -2885,7 +2038,7 @@ mod tests {
         )
         .unwrap();
 
-        // Private skill — should NOT fire S016 (plugin-only person check)
+        // Private skill -- should NOT fire S016 (plugin-only person check)
         std::fs::create_dir_all(".claude/skills/helper").unwrap();
         std::fs::write(
             ".claude/skills/helper/SKILL.md",

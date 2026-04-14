@@ -2,12 +2,10 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
-use regex::Regex;
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
 
-static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
+use super::common::RE_NAME_INVALID;
 
 /// V7: Validate agents/*.md frontmatter.
 pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
