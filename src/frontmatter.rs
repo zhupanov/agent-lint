@@ -199,6 +199,22 @@ mod tests {
     }
 
     #[test]
+    fn test_double_quoted_empty_value() {
+        let content = "---\nname: \"\"\n---\n";
+        let fm = extract_frontmatter(content).unwrap();
+        assert_eq!(get_field(&fm, "name"), None);
+        assert_eq!(get_field_state(&fm, "name"), FieldState::Empty);
+    }
+
+    #[test]
+    fn test_single_quoted_empty_value() {
+        let content = "---\nname: ''\n---\n";
+        let fm = extract_frontmatter(content).unwrap();
+        assert_eq!(get_field(&fm, "name"), None);
+        assert_eq!(get_field_state(&fm, "name"), FieldState::Empty);
+    }
+
+    #[test]
     fn test_key_prefix_no_false_match() {
         // "name:" should not match "name-suffix: foo"
         let content = "---\nname-suffix: foo\n---\n";
