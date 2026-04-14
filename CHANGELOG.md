@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.18] - 2026-04-13
+
+### Changed
+
+- Separated `DiagnosticCollector` output from collection by introducing a writer abstraction (`Box<dyn Write>`), defaulting to stderr in production and `io::sink()` in tests to eliminate stderr noise during test runs
+
 ## [1.0.17] - 2026-04-13
 
 ### Fixed

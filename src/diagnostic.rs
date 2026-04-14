@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use crate::config::LintConfig;
 use crate::rules::LintRule;
 
@@ -28,6 +30,7 @@ pub struct DiagnosticCollector {
     config: LintConfig,
     diagnostics: Vec<Diagnostic>,
     suppressed_count: usize,
+    writer: Box<dyn Write>,
 }
 
 impl DiagnosticCollector {
@@ -39,6 +42,7 @@ impl DiagnosticCollector {
             config: LintConfig::default(),
             diagnostics: Vec::new(),
             suppressed_count: 0,
+            writer: Box::new(io::sink()),
         }
     }
 
@@ -48,12 +52,13 @@ impl DiagnosticCollector {
             config,
             diagnostics: Vec::new(),
             suppressed_count: 0,
+            writer: Box::new(io::stderr()),
         }
     }
 
     /// Report a diagnostic for the given rule. Checks config to determine
     /// disposition: suppress (ignore), downgrade to warning, or record as error.
-    /// Non-suppressed diagnostics are printed immediately to stderr.
+    /// Non-suppressed diagnostics are written to the configured writer.
     pub fn report(&mut self, rule: LintRule, msg: &str) {
         if self.config.ignore.contains(&rule) {
             self.suppressed_count += 1;
@@ -71,7 +76,12 @@ impl DiagnosticCollector {
             Severity::Warning => "warning",
         };
 
-        eprintln!("{label}[{}/{}]: {msg}", rule.code(), rule.name());
+        let _ = writeln!(
+            self.writer,
+            "{label}[{}/{}]: {msg}",
+            rule.code(),
+            rule.name()
+        );
 
         self.diagnostics.push(Diagnostic {
             rule,
