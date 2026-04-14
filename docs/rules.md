@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 89 rules across 9 categories. Every rule has a unique
+Claude Lint ships 90 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
@@ -116,6 +116,12 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content | Both |
 | S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | Both |
 | S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no `##` headings | Plugin |
+
+### MCP Tool References (S044)
+
+| Code | Name | Description | Mode |
+|------|------|-------------|------|
+| S044 | `mcp-tool-unqualified` | Backtick-quoted MCP tool reference without `ServerName:` prefix | Both |
 
 ## Agent Rules (A)
 

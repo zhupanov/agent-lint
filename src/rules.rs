@@ -132,6 +132,8 @@ pub enum LintRule {
     DmiEmptyDesc,
     /// S043: Windows-style backslash paths in frontmatter fields
     FrontmatterBackslash,
+    /// S044: backtick-quoted MCP tool reference without ServerName: prefix
+    McpToolUnqualified,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -269,6 +271,7 @@ impl LintRule {
             Self::ForkNoTask => "S041",
             Self::DmiEmptyDesc => "S042",
             Self::FrontmatterBackslash => "S043",
+            Self::McpToolUnqualified => "S044",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -372,6 +375,7 @@ impl LintRule {
             Self::ForkNoTask => "fork-no-task",
             Self::DmiEmptyDesc => "dmi-empty-desc",
             Self::FrontmatterBackslash => "frontmatter-backslash",
+            Self::McpToolUnqualified => "mcp-tool-unqualified",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -482,6 +486,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::ForkNoTask,
     LintRule::DmiEmptyDesc,
     LintRule::FrontmatterBackslash,
+    LintRule::McpToolUnqualified,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -523,7 +528,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            89,
+            90,
             "ALL_RULES length must match enum variant count"
         );
     }

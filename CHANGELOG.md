@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.28] - 2026-04-14
+
+### Added
+
+- New rule S044 (`mcp-tool-unqualified`): detects backtick-quoted MCP tool references without `ServerName:` prefix
+- Context-word gating to reduce false positives (only flags near "use", "call", "invoke", etc.)
+- Built-in platform tool exclusion list in snake_case form
+
 ## [1.0.27] - 2026-04-14
 
 ### Changed

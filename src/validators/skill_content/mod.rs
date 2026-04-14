@@ -4,6 +4,7 @@ mod cross_skill;
 mod description;
 mod frontmatter_extended;
 mod frontmatter_fields;
+mod mcp;
 mod name;
 mod security;
 
@@ -18,7 +19,7 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-/// Validate skill content for public skills (skills/). Runs all S009-S043 rules.
+/// Validate skill content for public skills (skills/). Runs all S009-S044 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
@@ -48,6 +49,7 @@ fn run_content_checks(info: &SkillInfo, plugin_mode: bool, diag: &mut Diagnostic
     frontmatter_extended::check_frontmatter_extended(info, diag);
     cross_field::check_cross_field(info, diag);
     security::check_content_security(info, diag);
+    mcp::check_mcp_tool_refs(info, diag);
 }
 
 #[cfg(test)]
@@ -2090,6 +2092,189 @@ mod tests {
         assert!(
             skill_errors.is_empty(),
             "Expected zero errors for valid skill, got: {skill_errors:?}"
+        );
+    }
+
+    // ── S044: mcp-tool-unqualified ─────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_unqualified_mcp_tool_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nUse the `create_issue` tool to file bugs.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("create_issue") && e.contains("MCP tool reference")),
+            "Expected S044 for unqualified MCP tool, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_qualified_tool_no_fire() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nUse the `GitHub:create_issue` tool.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("MCP tool reference")),
+            "Should not fire S044 for qualified tool, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_builtin_tool_no_fire() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nUse the `task_create` tool.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("MCP tool reference")),
+            "Should not fire S044 for built-in tool, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_inside_code_fence_no_fire() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\n```bash\nUse the `create_issue` tool\n```\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("MCP tool reference")),
+            "Should not fire S044 inside code fence, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_no_context_word_no_fire() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nCheck `exit_code` value after completion.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("MCP tool reference")),
+            "Should not fire S044 without context word, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_private_skill_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nUse the `create_issue` tool.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("create_issue") && e.contains("MCP tool reference")),
+            "Expected S044 in private mode, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_dedup_same_tool_fires_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nUse the `create_issue` tool.\nCall `create_issue` again.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            diag.errors()
+                .iter()
+                .filter(|e| e.contains("create_issue") && e.contains("MCP tool reference"))
+                .count(),
+            1,
+            "Expected exactly one S044 diagnostic for duplicate tool, got: {:?}",
+            diag.errors()
         );
     }
 }
