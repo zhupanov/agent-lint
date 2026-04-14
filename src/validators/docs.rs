@@ -22,7 +22,7 @@ pub fn validate_docs_references(diag: &mut DiagnosticCollector, exclude: &Exclud
 
     let section = extract_canonical_sources_section(&content);
 
-    let re = Regex::new(r"docs/[a-zA-Z0-9._-]+\.md").unwrap();
+    let re = Regex::new(r"docs/[a-zA-Z0-9._/-]+\.md").unwrap();
     let mut seen = std::collections::HashSet::new();
 
     for cap in re.find_iter(&section) {
@@ -101,7 +101,10 @@ fn extract_canonical_sources_section(content: &str) -> String {
     let mut result = Vec::new();
 
     for line in content.lines() {
-        if line.starts_with("## Canonical sources") {
+        if line
+            .to_ascii_lowercase()
+            .starts_with("## canonical sources")
+        {
             in_section = true;
             result.push(line);
             continue;
@@ -134,6 +137,38 @@ This should not be included\n\
         assert!(section.contains("docs/foo.md"));
         assert!(section.contains("docs/bar.md"));
         assert!(!section.contains("Contributing"));
+    }
+
+    #[test]
+    fn test_extract_section_case_insensitive() {
+        let content = "\
+## Canonical Sources\n\
+- docs/foo.md\n\
+## Other\n\
+";
+        let section = extract_canonical_sources_section(content);
+        assert!(section.contains("docs/foo.md"));
+        assert!(!section.contains("Other"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v22_subdirectory_docs_reference() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("docs/sub").unwrap();
+        std::fs::write("docs/sub/architecture.md", "# Arch\n").unwrap();
+        std::fs::write(
+            "CLAUDE.md",
+            "# Claude\n## Canonical sources\n- docs/sub/architecture.md\n## Other\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_docs_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
     }
 
     #[test]

@@ -694,8 +694,17 @@ fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticCollector) {
 
 // ── Cross-skill validators (S029, S030) ──────────────────────────────
 
+/// Build a regex matching `${CLAUDE_PLUGIN_ROOT}/<base_dir>/shared/<path>.md` references.
+fn shared_ref_regex(base_dir: &str) -> Regex {
+    Regex::new(&format!(
+        r"\$\{{CLAUDE_PLUGIN_ROOT\}}/{}/shared/[a-zA-Z0-9._/-]+\.md",
+        regex::escape(base_dir)
+    ))
+    .unwrap()
+}
+
 /// S029: Check for deeply nested shared markdown references.
-/// Only follows canonical ${CLAUDE_PLUGIN_ROOT}/skills/shared/*.md syntax.
+/// Matches `${CLAUDE_PLUGIN_ROOT}/<base_dir>/shared/*.md` references.
 fn validate_nested_references(
     base_dir: &str,
     diag: &mut DiagnosticCollector,
@@ -706,8 +715,7 @@ fn validate_nested_references(
         return;
     }
 
-    let re_shared =
-        Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._-]+\.md").unwrap();
+    let re_shared = shared_ref_regex(base_dir);
 
     let skills = collect_skills(base_dir, exclude);
     // Cache: which shared .md files are nested (avoids re-reading files from disk)
@@ -837,8 +845,7 @@ fn validate_ref_no_toc(base_dir: &str, diag: &mut DiagnosticCollector, exclude: 
         return;
     }
 
-    let re_shared =
-        Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._-]+\.md").unwrap();
+    let re_shared = shared_ref_regex(base_dir);
 
     let skills = collect_skills(base_dir, exclude);
     let mut checked: HashSet<String> = HashSet::new();
@@ -1740,6 +1747,18 @@ mod tests {
     }
 
     // ── S029: nested-ref-deep ───────────────────────────────────────
+
+    #[test]
+    fn test_shared_ref_regex_uses_base_dir() {
+        let re = shared_ref_regex("skills");
+        assert!(re.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md"));
+        assert!(re.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/sub/util.md"));
+        assert!(!re.is_match("${CLAUDE_PLUGIN_ROOT}/other/shared/helpers.md"));
+
+        let re2 = shared_ref_regex(".claude/skills");
+        assert!(re2.is_match("${CLAUDE_PLUGIN_ROOT}/.claude/skills/shared/helpers.md"));
+        assert!(!re2.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md"));
+    }
 
     #[test]
     #[serial_test::serial]
