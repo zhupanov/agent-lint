@@ -162,6 +162,8 @@ pub enum LintRule {
     AgentDescShort,
     /// A010: agent name contains characters outside [a-z0-9-]
     AgentNameInvalid,
+    /// A011: agent description too similar to agent name
+    AgentDescRedundant,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
@@ -292,6 +294,7 @@ impl LintRule {
             Self::AgentDescLong => "A008",
             Self::AgentDescShort => "A009",
             Self::AgentNameInvalid => "A010",
+            Self::AgentDescRedundant => "A011",
 
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
@@ -399,6 +402,7 @@ impl LintRule {
             Self::AgentDescLong => "agent-desc-long",
             Self::AgentDescShort => "agent-desc-short",
             Self::AgentNameInvalid => "agent-name-invalid",
+            Self::AgentDescRedundant => "agent-desc-redundant",
 
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
@@ -512,6 +516,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AgentDescLong,
     LintRule::AgentDescShort,
     LintRule::AgentNameInvalid,
+    LintRule::AgentDescRedundant,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
@@ -543,7 +548,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            93,
+            94,
             "ALL_RULES length must match enum variant count"
         );
     }
