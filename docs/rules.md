@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 98 rules across 9 categories. Every rule has a unique
+Claude Lint ships 99 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
@@ -63,7 +63,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S013 | `name-has-xml` | Skill name contains XML/HTML tags | Both |
 | S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin |
 
-### Description Validation (S014--S018, S034)
+### Description Validation (S014--S018, S034, S050)
 
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
@@ -73,6 +73,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S017 | `desc-no-trigger` | Skill description lacks trigger context (e.g., "Use when...") | Plugin |
 | S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Both |
 | S034 | `desc-too-short` | Skill description under 20 characters | Both |
+| S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin |
 
 ### Body Content (S019--S022, S037--S038, S041, S046--S047, S051--S052)
 
