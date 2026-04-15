@@ -41,7 +41,8 @@ repos:
 ```
 
 The hook automatically downloads the pre-built binary for your platform
-and caches it. Pass CLI flags via `args`:
+and caches it. Run `pre-commit autoupdate` to update to the latest
+release. Pass CLI flags via `args`:
 
 ```yaml
       - id: agent-lint

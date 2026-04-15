@@ -61,18 +61,18 @@ BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
 TARBALL="agent-lint-v${VERSION}-${TARGET}.tar.gz"
 CHECKSUMS="agent-lint-v${VERSION}-checksums.txt"
 
-TMPDIR="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR"' EXIT
+TMP_WORKDIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_WORKDIR"' EXIT
 
 echo "Downloading agent-lint v${VERSION} for ${TARGET}..." >&2
-curl -fsSL -o "$TMPDIR/$TARBALL" "${BASE_URL}/${TARBALL}" || {
+curl -fsSL -o "$TMP_WORKDIR/$TARBALL" "${BASE_URL}/${TARBALL}" || {
   echo "error: failed to download ${BASE_URL}/${TARBALL}" >&2
   exit 1
 }
 
 # --- Checksum verification ----------------------------------------------------
 
-curl -fsSL -o "$TMPDIR/$CHECKSUMS" "${BASE_URL}/${CHECKSUMS}" || {
+curl -fsSL -o "$TMP_WORKDIR/$CHECKSUMS" "${BASE_URL}/${CHECKSUMS}" || {
   echo "error: failed to download checksums" >&2
   exit 1
 }
@@ -86,13 +86,13 @@ else
   exit 1
 fi
 
-EXPECTED="$(grep "$TARBALL" "$TMPDIR/$CHECKSUMS" | awk '{ print $1 }')"
+EXPECTED="$(grep -F "$TARBALL" "$TMP_WORKDIR/$CHECKSUMS" | awk '{ print $1 }')"
 if [ -z "$EXPECTED" ]; then
   echo "error: checksum entry for ${TARBALL} not found" >&2
   exit 1
 fi
 
-ACTUAL="$($SHA_CMD "$TMPDIR/$TARBALL" | awk '{ print $1 }')"
+ACTUAL="$($SHA_CMD "$TMP_WORKDIR/$TARBALL" | awk '{ print $1 }')"
 if [ "$EXPECTED" != "$ACTUAL" ]; then
   echo "error: checksum mismatch. Expected: ${EXPECTED}, Got: ${ACTUAL}" >&2
   exit 1
@@ -100,10 +100,9 @@ fi
 
 # --- Extract and cache --------------------------------------------------------
 
-tar -xzf "$TMPDIR/$TARBALL" -C "$TMPDIR"
+tar -xzf "$TMP_WORKDIR/$TARBALL" -C "$TMP_WORKDIR"
 mkdir -p "$CACHE_DIR"
-mv "$TMPDIR/agent-lint" "$BINARY"
-chmod +x "$BINARY"
+install -m 0755 "$TMP_WORKDIR/agent-lint" "$BINARY"
 echo "Cached agent-lint v${VERSION} at ${BINARY}" >&2
 
 exec "$BINARY" "$@"
