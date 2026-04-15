@@ -280,9 +280,9 @@ exclusive (using both exits with code 2).
 **`--pedantic`**: Promotes all warnings (both `warn`-listed and
 default-warning rules) to errors, except too-long rules (`name-too-long`,
 `desc-too-long`, `body-too-long`, `compat-too-long`). Rules in `ignore`
-stay ignored. The one default-suppressed rule (`name-not-gerund`) stays
-suppressed unless explicitly enabled. Too-long rules keep their current
-severity.
+stay ignored. The default-suppressed rules (`name-not-gerund`,
+`body-no-examples`) stay suppressed unless explicitly enabled. Too-long
+rules keep their current severity.
 
 **`--all`**: Forces every rule to fire as an error. The `ignore` and `warn`
 lists are bypassed entirely — all 104 rules are promoted to errors. File
@@ -292,9 +292,9 @@ plugin-only rules are not dispatched regardless of `--all`.
 
 ### Behavior Without Config
 
-If `agent-lint.toml` is absent, 68 rules fire as errors, 35
-style/quality/niche rules fire as warnings, and 1 rule
-(`name-not-gerund`) is off. A malformed config file, unknown rule
+If `agent-lint.toml` is absent, 68 rules fire as errors, 34
+style/quality/niche rules fire as warnings, and 2 rules
+(`name-not-gerund`, `body-no-examples`) are off. A malformed config file, unknown rule
 code/name, or invalid glob pattern causes exit code 2.
 
 ### Diagnostic Output
