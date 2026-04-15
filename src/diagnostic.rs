@@ -21,7 +21,7 @@ pub struct Diagnostic {
 
 /// Collects lint diagnostics, applying configuration-based filtering.
 ///
-/// Priority: `config.ignore` (suppress with count) > `config.error` (promote
+/// Priority: `config.suppress` (suppress with count) > `config.error` (promote
 /// to error) > `config.warn` (downgrade to warning) > `default_severity()`
 /// (compiled-in default: error or silently skipped).
 pub struct DiagnosticCollector {
@@ -96,11 +96,11 @@ impl DiagnosticCollector {
     }
 
     /// Report a diagnostic for the given rule. Checks config and default
-    /// severity to determine disposition. Priority: user ignore > user error >
+    /// severity to determine disposition. Priority: user suppress > user error >
     /// user warn > compiled default severity.
     pub fn report(&mut self, rule: LintRule, msg: &str) {
-        // User ignore always wins — suppress and count.
-        if self.config.ignore.contains(&rule) {
+        // User suppress always wins — suppress and count.
+        if self.config.suppress.contains(&rule) {
             self.suppressed_count += 1;
             return;
         }
@@ -205,9 +205,9 @@ mod tests {
     }
 
     #[test]
-    fn ignored_rule_is_suppressed() {
+    fn suppressed_rule_is_suppressed() {
         let config = LintConfig {
-            ignore: HashSet::from([LintRule::PluginJsonMissing]),
+            suppress: HashSet::from([LintRule::PluginJsonMissing]),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn warned_rule_is_warning() {
         let config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn mixed_severities() {
         let config = LintConfig {
-            ignore: HashSet::from([LintRule::PluginJsonMissing]),
+            suppress: HashSet::from([LintRule::PluginJsonMissing]),
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn error_set_promotes_to_error() {
         let config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::from([LintRule::NameVague]),
             warn: HashSet::new(),
             exclude: vec![],
@@ -280,7 +280,7 @@ mod tests {
     #[test]
     fn default_suppressed_rule_is_silently_skipped() {
         let config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn default_warning_rule_fires_as_warning() {
         let config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn default_error_rule_fires_without_config() {
         let config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],

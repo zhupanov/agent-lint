@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.3.0] - 2026-04-15
+
+### Changed
+
+- **BREAKING**: Renamed `ignore` config field to `suppress` in `agent-lint.toml` — users must update `[lint] ignore = [...]` to `[lint] suppress = [...]`
+- Using the old `ignore` field now produces a clear error listing the valid field names
+
 ## [2.2.7] - 2026-04-15
 
 ### Changed
@@ -69,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - `--pedantic` CLI flag: promotes warn-listed rules to errors (except too-long rules)
-- `--all` CLI flag: forces every rule to error, bypassing ignore/warn config
+- `--all` CLI flag: forces every rule to error, bypassing suppress/warn config
 - `pedantic` and `all` boolean inputs for the GitHub Actions CI action
 - CI self-lint steps exercising both new flags
 
@@ -91,7 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Config priority cascade: user ignore > user error > user warn > compiled default severity
+- Config priority cascade: user suppress > user error > user warn > compiled default severity
 - Default-suppressed rules are silently skipped (no count, no output) unless promoted via config
 - Updated S050 and S056 diagnostic messages to remove stale config guidance
 
@@ -326,7 +333,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Integration tests: mode dispatch with content rules, config ignore/warn for new S* rules
+- Integration tests: mode dispatch with content rules, config suppress/warn for new S* rules
 - Boundary tests: S009 at 64 chars, S014 at 1024 chars, S019 at 500 lines, S034 at 20 chars
 - CRLF regression test for extract_body, delimiter exact-match test
 - collect_skills edge cases: empty dir, missing dir, malformed frontmatter, shared skipping
@@ -413,7 +420,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Ruff-style error codes: 46 lint rules across 9 categories (M/H/S/A/G/E/U/K/D), each with a unique code (e.g., M001) and human-readable name (e.g., plugin-json-missing)
-- TOML configuration file (`agent-lint.toml`) with `[lint]` section supporting `ignore` (suppress errors) and `warn` (downgrade to warnings) by code or name
+- TOML configuration file (`agent-lint.toml`) with `[lint]` section supporting `suppress` (suppress errors) and `warn` (downgrade to warnings) by code or name
 - Config validation: unknown rule codes/names rejected at load time, typos in section/field names detected via `deny_unknown_fields`
 
 ### Changed
