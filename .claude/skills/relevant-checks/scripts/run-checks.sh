@@ -14,7 +14,7 @@ PC_EXIT=0
 # ---------------------------------------------------------------------------
 if command -v cargo >/dev/null 2>&1; then
     echo "=== Running agent-lint (self-lint) ==="
-    cargo run --quiet -- . || PC_EXIT=1
+    cargo run --quiet -- --all . || PC_EXIT=1
 else
     echo "WARN: cargo not available, skipping agent-lint self-lint"
 fi
