@@ -295,8 +295,7 @@ pub(super) fn check_body_content(
                     LintRule::BodyNoDefault,
                     &format!(
                         "{}: body lists multiple alternatives without stating a default; \
-                         pick a recommended option or add conditional context \
-                         (off by default; enable with [lint] error = [\"S056\"] in agent-lint.toml)",
+                         pick a recommended option or add conditional context",
                         info.path
                     ),
                 );

@@ -152,8 +152,7 @@ pub(super) fn check_description_quality(
             LintRule::DescVagueContent,
             &format!(
                 "{}: description content is too vague/generic; \
-                 add specific terms describing what the skill does \
-                 (off by default; enable with [lint] error = [\"S050\"] in agent-lint.toml)",
+                 add specific terms describing what the skill does",
                 info.path
             ),
         );

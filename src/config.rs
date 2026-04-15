@@ -182,6 +182,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
+        assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
 
@@ -260,6 +261,7 @@ mod tests {
         std::fs::write(tmp.path().join("agent-lint.toml"), "[lint]\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
+        assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
 
@@ -270,6 +272,7 @@ mod tests {
         std::fs::write(tmp.path().join("agent-lint.toml"), "# empty config\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
+        assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
 

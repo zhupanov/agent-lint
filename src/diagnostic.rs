@@ -22,10 +22,9 @@ pub struct Diagnostic {
 
 /// Collects lint diagnostics, applying configuration-based filtering.
 ///
-/// - Rules in `config.ignore` are completely suppressed (no output, no count).
-/// - Rules in `config.warn` are downgraded to warnings (printed, but do not
-///   contribute to the error count or exit code 1).
-/// - All other rules are errors.
+/// Priority: `config.ignore` (suppress with count) > `config.error` (promote
+/// to error) > `config.warn` (downgrade to warning) > `default_severity()`
+/// (compiled-in default: error or silently skipped).
 pub struct DiagnosticCollector {
     config: LintConfig,
     diagnostics: Vec<Diagnostic>,

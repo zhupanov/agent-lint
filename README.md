@@ -206,7 +206,7 @@ code/name, or invalid glob pattern causes exit code 2.
 
 ```text
 error[M001/plugin-json-missing]: .claude-plugin/plugin.json is missing
-warning[G005/security-md-missing]: SECURITY.md is missing from repo root
+warning[M002/plugin-json-invalid]: plugin.json is not valid JSON
 ```
 
 ## Lint Rules
