@@ -33,7 +33,7 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S051, S052).
+/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
@@ -1334,6 +1334,7 @@ mod tests {
             ("S047", "body-no-examples"),
             ("S048", "ref-name-generic"),
             ("S049", "name-not-gerund"),
+            ("S050", "desc-vague-content"),
             ("S051", "script-deps-missing"),
             ("S052", "script-verify-missing"),
         ];
@@ -3312,5 +3313,68 @@ mod tests {
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // S049 is plugin-only, should not fire in private mode
         assert!(!diag.errors().iter().any(|e| e.contains("gerund")));
+    }
+
+    // ── S050: desc-vague-content ────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s050_vague_description_flagged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Helps with documents. Use when working with files.\n---\nBody content\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors().iter().any(|e| e.contains("vague/generic")),
+            "Expected S050 to flag vague description"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s050_specific_description_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/pdf-tool").unwrap();
+        std::fs::write(
+            "skills/pdf-tool/SKILL.md",
+            "---\nname: pdf-tool\ndescription: Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files.\n---\nBody content\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("vague/generic")),
+            "S050 should not flag specific descriptions"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s050_private_skill_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Helps with documents. Use when working with files.\n---\nBody content\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        // S050 is plugin-only, should not fire in private mode
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("vague/generic")),
+            "S050 should not fire for private skills"
+        );
     }
 }

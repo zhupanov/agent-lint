@@ -144,6 +144,8 @@ pub enum LintRule {
     RefNameGeneric,
     /// S049: skill name not in gerund form
     NameNotGerund,
+    /// S050: skill description content is too vague/generic
+    DescVagueContent,
     /// S051: script-backed skill lacks dependency/package notes
     ScriptDepsMissing,
     /// S052: script-backed skill lacks verification step
@@ -293,6 +295,7 @@ impl LintRule {
             Self::BodyNoExamples => "S047",
             Self::RefNameGeneric => "S048",
             Self::NameNotGerund => "S049",
+            Self::DescVagueContent => "S050",
             Self::ScriptDepsMissing => "S051",
             Self::ScriptVerifyMissing => "S052",
 
@@ -405,6 +408,7 @@ impl LintRule {
             Self::BodyNoExamples => "body-no-examples",
             Self::RefNameGeneric => "ref-name-generic",
             Self::NameNotGerund => "name-not-gerund",
+            Self::DescVagueContent => "desc-vague-content",
             Self::ScriptDepsMissing => "script-deps-missing",
             Self::ScriptVerifyMissing => "script-verify-missing",
 
@@ -524,6 +528,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::BodyNoExamples,
     LintRule::RefNameGeneric,
     LintRule::NameNotGerund,
+    LintRule::DescVagueContent,
     LintRule::ScriptDepsMissing,
     LintRule::ScriptVerifyMissing,
     LintRule::AgentsDirMissing,
@@ -568,7 +573,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            98,
+            99,
             "ALL_RULES length must match enum variant count"
         );
     }
