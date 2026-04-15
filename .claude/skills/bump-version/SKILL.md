@@ -1,12 +1,12 @@
 ---
 name: bump-version
-description: Classify and apply a semantic version bump based on the current branch diff. Updates package.json and Cargo.toml, and commits exactly one version-only commit.
+description: Classify and apply a semantic version bump based on the current branch diff. Updates package.json, Cargo.toml, and README.md, and commits exactly one version-only commit.
 allowed-tools: Bash, Read
 ---
 
 # Bump Version
 
-Classify and apply a semantic version bump for this PR. Produces exactly ONE commit: a version-only edit of `package.json` and `Cargo.toml`.
+Classify and apply a semantic version bump for this PR. Produces exactly ONE commit: a version-only edit of `package.json`, `Cargo.toml`, and `README.md`.
 
 ## Classification rules
 
@@ -60,8 +60,9 @@ If you escalate, append a paragraph to the reasoning log file explaining why.
    - Rewrites `package.json` `.version` field via `jq` (atomic via tmp + mv)
    - Rewrites `Cargo.toml` `[package]` version via `awk` (atomic via tmp + mv)
    - Regenerates `Cargo.lock` via `cargo generate-lockfile` to reflect the new version
-   - `git add` (package.json, Cargo.toml, Cargo.lock) + `git commit -m "Bump version to <NEW_VERSION>"`
-   - Rolls back all three files from backup on commit failure
+   - Replaces all occurrences of the old version (X.Y.Z) with the new version in `README.md` (so pinned version examples stay current)
+   - `git add` (package.json, Cargo.toml, Cargo.lock, README.md) + `git commit -m "Bump version to <NEW_VERSION>"`
+   - Rolls back all four files from backup on commit failure
 5. If `BUMP_TYPE=NONE`, skip the apply step and report "already bumped".
 
 ## Usage

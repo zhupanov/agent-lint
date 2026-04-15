@@ -23,8 +23,9 @@ configuration and plugins.
 ### GitHub Action
 
 ```yaml
-- uses: zhupanov/agent-lint@v1
+- uses: zhupanov/agent-lint@v2
   with:
+    version: "2.2.4"
     path: "."
 ```
 
@@ -35,14 +36,18 @@ Add to your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/zhupanov/agent-lint
-    rev: v2.2.2  # or any release tag
+    rev: v2.2.4  # pin to exact version
     hooks:
       - id: agent-lint
 ```
 
+> **Pin to an exact version** (e.g., `rev: v2.2.4`) to protect your
+> workflow from breaking changes. agent-lint is under active development
+> and minor/patch releases may change lint behavior. Run
+> `pre-commit autoupdate` when you are ready to upgrade.
+
 The hook automatically downloads the pre-built binary for your platform
-and caches it. Run `pre-commit autoupdate` to update to the latest
-release. Pass CLI flags via `args`:
+and caches it. Pass CLI flags via `args`:
 
 ```yaml
       - id: agent-lint
@@ -108,7 +113,7 @@ must be enabled via `agent-lint.toml` to be detected and fixed.
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `version` | Version of agent-lint (e.g., `1.0.0`) | Latest release |
+| `version` | Version of agent-lint (e.g., `2.2.4`) | Latest release |
 | `path` | Path to the repository to lint | `"."` |
 | `github-token` | GitHub token for resolving latest version | `""` (see below) |
 | `pedantic` | Enable pedantic mode (promote warn-listed rules to errors, except too-long) | `"false"` |
@@ -121,7 +126,7 @@ must be enabled via `agent-lint.toml` to be detected and fixed.
 The `github-token` input is **optional** and has a narrow purpose: it is
 used solely to call the GitHub API to resolve the latest release version
 when no explicit `version` is provided. If you pin `version` (e.g.,
-`version: "1.0.0"`), no API call is made and the token is never used.
+`version: "2.2.4"`), no API call is made and the token is never used.
 
 **When omitted**, the action automatically falls back to the built-in
 `github.token` that GitHub provides to every workflow run. You do not need
@@ -139,12 +144,14 @@ GitHub App token with restricted permissions, and the default
 
 ```yaml
 # Minimal -- token handled automatically:
-- uses: zhupanov/agent-lint@v1
+- uses: zhupanov/agent-lint@v2
+  with:
+    version: "2.2.4"
 
 # Explicit version -- no token needed at all:
-- uses: zhupanov/agent-lint@v1
+- uses: zhupanov/agent-lint@v2
   with:
-    version: "1.0.0"
+    version: "2.2.4"
 ```
 
 ## Add CI to Your Repo
@@ -154,9 +161,13 @@ Give this prompt to Claude running in your repository:
 > **Add a GitHub Actions CI job called `agent-lint` that runs on pull requests
 > to `main`. The job should use `ubuntu-latest`, have a 5-minute timeout,
 > check out the repo with `actions/checkout@v4`, and then run
-> `zhupanov/agent-lint@v1` with `path: "."`. Add it to the existing CI
-> workflow if one exists, otherwise create `.github/workflows/ci.yaml` with
-> `permissions: contents: read`.**
+> `zhupanov/agent-lint@v2` with `path: "."` and `version: "2.2.4"`. Add it
+> to the existing CI workflow if one exists, otherwise create
+> `.github/workflows/ci.yaml` with `permissions: contents: read`.**
+>
+> **Pin to an exact version** (e.g., `version: "2.2.4"`) to protect your
+> CI from breaking changes. agent-lint is under active development and
+> minor/patch releases may change lint behavior.
 
 The resulting job should look like:
 
@@ -166,8 +177,9 @@ The resulting job should look like:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: zhupanov/agent-lint@v1
+      - uses: zhupanov/agent-lint@v2
         with:
+          version: "2.2.4"
           path: "."
 ```
 
@@ -388,7 +400,7 @@ Runs on pull requests to `main` and `workflow_dispatch`:
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
 - **self-lint** -- runs agent-lint against its own repo and validates
   `--list-scripts` output
-- **e2e-test** -- uses `zhupanov/agent-lint@v1` as a GitHub Action
+- **e2e-test** -- uses `zhupanov/agent-lint@v2` as a GitHub Action
   (the same way clients integrate it), serving as both end-to-end
   validation and a reference model for users adding CI to their own repos
 
@@ -401,5 +413,5 @@ Triggered on push to `main`, tag push (`v*`), or `workflow_dispatch`:
 2. **build** -- cross-compiles for Linux (x86_64, aarch64 musl) and macOS
    (aarch64)
 3. **release** -- creates a GitHub Release with tarballs and checksums;
-   on a new release, also moves the floating `v1` tag forward so `@v1`
+   on a new release, also moves the floating `v2` tag forward so `@v2`
    action references always resolve to the newest version
