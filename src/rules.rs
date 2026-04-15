@@ -9,6 +9,8 @@
 pub enum DefaultSeverity {
     /// Rule fires as an error by default.
     Error,
+    /// Rule fires as a warning by default (reported but non-blocking).
+    Warning,
     /// Rule is silently skipped by default (not reported, not counted).
     Suppressed,
 }
@@ -522,36 +524,39 @@ impl LintRule {
     /// `Suppressed`; structural and correctness rules default to `Error`.
     pub fn default_severity(self) -> DefaultSeverity {
         match self {
-            // ── Default-suppressed: enriched metadata ────────────────
+            // ── Default-suppressed: gerund rule stays suppressed ──────
+            Self::NameNotGerund => DefaultSeverity::Suppressed,
+
+            // ── Default-warning: enriched metadata ───────────────────
             Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
 
-            // ── Default-suppressed: style / quality (skills) ─────────
+            // ── Default-warning: style / quality (skills) ────────────
             Self::DescTruncated | Self::BodyTooLong | Self::ConsecutiveBash |
             Self::NameVague | Self::DescTooShort | Self::BodyNoRefs |
             Self::BodyNoWorkflow | Self::BodyNoExamples | Self::RefNameGeneric |
-            Self::NameNotGerund | Self::DescVagueContent | Self::ScriptDepsMissing |
+            Self::DescVagueContent | Self::ScriptDepsMissing |
             Self::ScriptVerifyMissing | Self::TerminologyInconsistent |
             Self::DescBodyMisalign | Self::ScriptErrhandMissing |
             Self::BodyNoDefault | Self::MagicNumberUndoc |
 
-            // ── Default-suppressed: niche (skills) ───────────────────
+            // ── Default-warning: niche (skills) ──────────────────────
             Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
             Self::TimeSensitive | Self::ToolsUnknown |
             Self::McpToolUnqualified | Self::ToolsListSyntax |
 
-            // ── Default-suppressed: template rules (agents) ──────────
+            // ── Default-warning: template rules (agents) ─────────────
             Self::TemplateFileMissing | Self::TemplateMarkerMissing |
             Self::TemplateCountMismatch |
 
-            // ── Default-suppressed: hygiene ───────────────────────────
+            // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
 
-            // ── Default-suppressed: Slack ─────────────────────────────
+            // ── Default-warning: Slack ───────────────────────────────
             Self::SlackFallbackMismatch |
 
-            // ── Default-suppressed: docs ──────────────────────────────
+            // ── Default-warning: docs ────────────────────────────────
             Self::ClaudemdTooLarge | Self::TodoInDocs
-                => DefaultSeverity::Suppressed,
+                => DefaultSeverity::Warning,
 
             // Everything else defaults to error.
             _ => DefaultSeverity::Error,
@@ -746,9 +751,23 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            36,
-            "Expected 36 default-suppressed rules, got {}",
+            1,
+            "Expected 1 default-suppressed rule, got {}",
             suppressed.len()
+        );
+    }
+
+    #[test]
+    fn default_warning_count() {
+        let warnings: Vec<_> = ALL_RULES
+            .iter()
+            .filter(|r| r.default_severity() == DefaultSeverity::Warning)
+            .collect();
+        assert_eq!(
+            warnings.len(),
+            35,
+            "Expected 35 default-warning rules, got {}",
+            warnings.len()
         );
     }
 

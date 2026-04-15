@@ -31,9 +31,7 @@ fn main() {
                 println!("  --help, -h         Print this help message");
                 println!("  --version          Print version information");
                 println!("  --list-scripts     List discovered script paths and exit");
-                println!(
-                    "  --pedantic         Promote all enabled rules to errors (except too-long rules)"
-                );
+                println!("  --pedantic         Promote warnings to errors (except too-long rules)");
                 println!(
                     "  --all              Force every rule to error, ignoring config overrides"
                 );

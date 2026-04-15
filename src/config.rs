@@ -10,8 +10,9 @@ use std::path::Path;
 pub enum CliMode {
     #[default]
     Normal,
-    /// Promotes warn-listed rules to errors (except too-long rules).
-    /// Respects ignore list. Default-suppressed rules stay suppressed.
+    /// Promotes warn-listed and default-warning rules to errors (except
+    /// too-long rules). Respects ignore list. Default-suppressed rules
+    /// stay suppressed.
     Pedantic,
     /// All 104 rules fire as errors. Ignores all TOML severity config.
     All,
@@ -180,15 +181,18 @@ impl LintConfig {
     /// Apply CLI strictness mode. Transforms the ignore/error/warn sets
     /// so that `DiagnosticCollector::report()` needs no changes.
     ///
-    /// - `Pedantic`: moves warn entries to error (except too-long rules).
-    ///   Respects ignore list. Default-suppressed rules stay suppressed.
+    /// - `Pedantic`: moves warn entries and default-warning rules to error
+    ///   (except too-long rules). Respects ignore list. Default-suppressed
+    ///   rules stay suppressed.
     /// - `All`: clears ignore/warn, fills error with all rules. Overrides
     ///   all TOML severity config. File exclusions (`exclude`) are not
     ///   affected — `--all` changes rule severity, not file selection.
     pub fn apply_cli_mode(&mut self, mode: CliMode) {
+        use crate::rules::DefaultSeverity;
         match mode {
             CliMode::Normal => {}
             CliMode::Pedantic => {
+                // Promote user-warn rules to error (except too-long).
                 let to_promote: Vec<_> = self
                     .warn
                     .iter()
@@ -198,6 +202,16 @@ impl LintConfig {
                 for r in to_promote {
                     self.warn.remove(&r);
                     self.error.insert(r);
+                }
+                // Promote default-warning rules to error (except too-long
+                // and already-ignored).
+                for r in ALL_RULES {
+                    if r.default_severity() == DefaultSeverity::Warning
+                        && !r.is_too_long()
+                        && !self.ignore.contains(r)
+                    {
+                        self.error.insert(*r);
+                    }
                 }
             }
             CliMode::All => {
@@ -705,10 +719,66 @@ mod tests {
             exclude: vec![],
         };
         config.apply_cli_mode(CliMode::Pedantic);
-        // Default-error rules like PluginJsonMissing aren't in the error set,
-        // but they fire as errors via default_severity() in report().
-        // Pedantic doesn't need to touch them.
-        assert!(config.error.is_empty());
+        // Default-error rules like PluginJsonMissing aren't in the error set
+        // from TOML, but fire as errors via default_severity() in report().
+        // Pedantic adds default-warning rules to the error set (except too-long).
+        assert!(!config.error.contains(&LintRule::PluginJsonMissing));
+    }
+
+    #[test]
+    fn apply_pedantic_promotes_default_warning_to_error() {
+        let mut config = LintConfig {
+            ignore: HashSet::new(),
+            error: HashSet::new(),
+            warn: HashSet::new(),
+            exclude: vec![],
+        };
+        config.apply_cli_mode(CliMode::Pedantic);
+        // Default-warning rules are promoted to error by pedantic.
+        assert!(config.error.contains(&LintRule::SecurityMdMissing));
+        assert!(config.error.contains(&LintRule::TodoInSkill));
+        assert!(config.error.contains(&LintRule::NameVague));
+    }
+
+    #[test]
+    fn apply_pedantic_skips_default_warning_too_long() {
+        let mut config = LintConfig {
+            ignore: HashSet::new(),
+            error: HashSet::new(),
+            warn: HashSet::new(),
+            exclude: vec![],
+        };
+        config.apply_cli_mode(CliMode::Pedantic);
+        // Default-warning too-long rules stay as warnings.
+        assert!(!config.error.contains(&LintRule::BodyTooLong));
+        assert!(!config.error.contains(&LintRule::CompatTooLong));
+    }
+
+    #[test]
+    fn apply_pedantic_respects_ignore_for_default_warning() {
+        let mut config = LintConfig {
+            ignore: HashSet::from([LintRule::NameVague]),
+            error: HashSet::new(),
+            warn: HashSet::new(),
+            exclude: vec![],
+        };
+        config.apply_cli_mode(CliMode::Pedantic);
+        // Ignored default-warning rules are not promoted.
+        assert!(!config.error.contains(&LintRule::NameVague));
+        assert!(config.ignore.contains(&LintRule::NameVague));
+    }
+
+    #[test]
+    fn apply_pedantic_leaves_suppressed_alone() {
+        let mut config = LintConfig {
+            ignore: HashSet::new(),
+            error: HashSet::new(),
+            warn: HashSet::new(),
+            exclude: vec![],
+        };
+        config.apply_cli_mode(CliMode::Pedantic);
+        // NameNotGerund is default-suppressed, should not be promoted.
+        assert!(!config.error.contains(&LintRule::NameNotGerund));
     }
 
     #[test]
