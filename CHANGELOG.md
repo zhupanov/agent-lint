@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.2.1] - 2026-04-15
+
+### Changed
+
+- Expanded e2e-test CI job from 1 step to 3 steps running agent-lint in default, pedantic, and all modes
+- Increased e2e-test job timeout from 5 to 10 minutes to accommodate triple action invocation
+
 ## [2.2.0] - 2026-04-15
 
 ### Added
