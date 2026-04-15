@@ -11,7 +11,7 @@ pub enum CliMode {
     #[default]
     Normal,
     /// Promotes warn-listed and default-warning rules to errors (except
-    /// too-long rules). Respects ignore list. Default-suppressed rules
+    /// too-long rules). Respects suppress list. Default-suppressed rules
     /// stay suppressed.
     Pedantic,
     /// All 104 rules fire as errors. Ignores all TOML severity config.
@@ -29,7 +29,7 @@ struct RawConfig {
 #[serde(deny_unknown_fields)]
 struct RawLintSection {
     #[serde(default)]
-    ignore: Vec<String>,
+    suppress: Vec<String>,
     #[serde(default)]
     error: Vec<String>,
     #[serde(default)]
@@ -38,13 +38,13 @@ struct RawLintSection {
     exclude: Vec<String>,
 }
 
-/// Resolved lint configuration. Rules in `ignore` are completely suppressed.
+/// Resolved lint configuration. Rules in `suppress` are completely suppressed.
 /// Rules in `error` are promoted to errors (overriding default severity).
-/// Rules in `warn` are downgraded to warnings. Priority: ignore > error > warn.
+/// Rules in `warn` are downgraded to warnings. Priority: suppress > error > warn.
 /// Rules not in any set fall back to `LintRule::default_severity()`.
 #[derive(Debug, Default, Clone)]
 pub struct LintConfig {
-    pub ignore: HashSet<LintRule>,
+    pub suppress: HashSet<LintRule>,
     pub error: HashSet<LintRule>,
     pub warn: HashSet<LintRule>,
     pub exclude: Vec<String>,
@@ -153,25 +153,25 @@ impl LintConfig {
             }
         }
 
-        // Parse ignore list. ignore wins over error and warn.
-        let mut ignore = HashSet::new();
-        for entry in &section.ignore {
+        // Parse suppress list. suppress wins over error and warn.
+        let mut suppress = HashSet::new();
+        for entry in &section.suppress {
             let rule = LintRule::from_code_or_name(entry).ok_or_else(|| {
                 format!(
-                    "{}: unknown rule in ignore list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
+                    "{}: unknown rule in suppress list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
                     path.display()
                 )
             })?;
             error.remove(&rule);
             warn.remove(&rule);
-            ignore.insert(rule);
+            suppress.insert(rule);
         }
 
         // Validate exclude patterns at load time (compile a throwaway GlobSet).
         ExcludeSet::new(&section.exclude).map_err(|e| format!("{}: {e}", path.display()))?;
 
         Ok(Self {
-            ignore,
+            suppress,
             error,
             warn,
             exclude: section.exclude,
@@ -182,9 +182,9 @@ impl LintConfig {
     /// so that `DiagnosticCollector::report()` needs no changes.
     ///
     /// - `Pedantic`: moves warn entries and default-warning rules to error
-    ///   (except too-long rules). Respects ignore list. Default-suppressed
+    ///   (except too-long rules). Respects suppress list. Default-suppressed
     ///   rules stay suppressed.
-    /// - `All`: clears ignore/warn, fills error with all rules. Overrides
+    /// - `All`: clears suppress/warn, fills error with all rules. Overrides
     ///   all TOML severity config. File exclusions (`exclude`) are not
     ///   affected — `--all` changes rule severity, not file selection.
     pub fn apply_cli_mode(&mut self, mode: CliMode) {
@@ -208,14 +208,14 @@ impl LintConfig {
                 for r in ALL_RULES {
                     if r.default_severity() == DefaultSeverity::Warning
                         && !r.is_too_long()
-                        && !self.ignore.contains(r)
+                        && !self.suppress.contains(r)
                     {
                         self.error.insert(*r);
                     }
                 }
             }
             CliMode::All => {
-                self.ignore.clear();
+                self.suppress.clear();
                 self.warn.clear();
                 self.error.clear();
                 for r in ALL_RULES {
@@ -242,7 +242,7 @@ mod tests {
     fn missing_config_file_returns_default() {
         let tmp = tempfile::tempdir().unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.is_empty());
+        assert!(config.suppress.is_empty());
         assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
@@ -253,11 +253,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"M001\"]\nwarn = [\"G005\"]\n",
+            "[lint]\nsuppress = [\"M001\"]\nwarn = [\"G005\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.contains(&LintRule::PluginJsonMissing));
+        assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
         assert!(config.warn.contains(&LintRule::SecurityMdMissing));
     }
 
@@ -267,25 +267,25 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"plugin-json-missing\"]\nwarn = [\"security-md-missing\"]\n",
+            "[lint]\nsuppress = [\"plugin-json-missing\"]\nwarn = [\"security-md-missing\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.contains(&LintRule::PluginJsonMissing));
+        assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
         assert!(config.warn.contains(&LintRule::SecurityMdMissing));
     }
 
     #[test]
     #[serial_test::serial]
-    fn ignore_wins_over_warn() {
+    fn suppress_wins_over_warn() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"M001\"]\nwarn = [\"M001\"]\n",
+            "[lint]\nsuppress = [\"M001\"]\nwarn = [\"M001\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.contains(&LintRule::PluginJsonMissing));
+        assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
         assert!(!config.warn.contains(&LintRule::PluginJsonMissing));
     }
 
@@ -295,7 +295,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"X999\"]\n",
+            "[lint]\nsuppress = [\"X999\"]\n",
         )
         .unwrap();
         let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
@@ -321,7 +321,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("agent-lint.toml"), "[lint]\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.is_empty());
+        assert!(config.suppress.is_empty());
         assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
@@ -332,7 +332,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("agent-lint.toml"), "# empty config\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.is_empty());
+        assert!(config.suppress.is_empty());
         assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
@@ -366,6 +366,22 @@ mod tests {
         assert!(
             err.contains("unknown field"),
             "Expected unknown field error, got: {err}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn old_ignore_field_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nignore = [\"M001\"]\n",
+        )
+        .unwrap();
+        let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(
+            err.contains("unknown field"),
+            "Expected unknown field error for old 'ignore' syntax, got: {err}"
         );
     }
 
@@ -431,29 +447,29 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn ignore_wins_over_error() {
+    fn suppress_wins_over_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"S033\"]\nerror = [\"S033\"]\n",
+            "[lint]\nsuppress = [\"S033\"]\nerror = [\"S033\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.contains(&LintRule::NameVague));
+        assert!(config.suppress.contains(&LintRule::NameVague));
         assert!(!config.error.contains(&LintRule::NameVague));
     }
 
     #[test]
     #[serial_test::serial]
-    fn ignore_wins_over_error_and_warn() {
+    fn suppress_wins_over_error_and_warn() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"S033\"]\nerror = [\"S033\"]\nwarn = [\"S033\"]\n",
+            "[lint]\nsuppress = [\"S033\"]\nerror = [\"S033\"]\nwarn = [\"S033\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
-        assert!(config.ignore.contains(&LintRule::NameVague));
+        assert!(config.suppress.contains(&LintRule::NameVague));
         assert!(!config.error.contains(&LintRule::NameVague));
         assert!(!config.warn.contains(&LintRule::NameVague));
     }
@@ -464,7 +480,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"M001\"]\n",
+            "[lint]\nsuppress = [\"M001\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
@@ -503,7 +519,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nignore = [\"M001\"]\n",
+            "[lint]\nsuppress = [\"M001\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
@@ -650,13 +666,13 @@ mod tests {
     #[test]
     fn apply_normal_no_change() {
         let mut config = LintConfig {
-            ignore: HashSet::from([LintRule::PluginJsonMissing]),
+            suppress: HashSet::from([LintRule::PluginJsonMissing]),
             error: HashSet::from([LintRule::NameVague]),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
         };
         config.apply_cli_mode(CliMode::Normal);
-        assert!(config.ignore.contains(&LintRule::PluginJsonMissing));
+        assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
         assert!(config.error.contains(&LintRule::NameVague));
         assert!(config.warn.contains(&LintRule::SecurityMdMissing));
     }
@@ -664,7 +680,7 @@ mod tests {
     #[test]
     fn apply_pedantic_moves_warn_to_error() {
         let mut config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing, LintRule::TodoInSkill]),
             exclude: vec![],
@@ -678,7 +694,7 @@ mod tests {
     #[test]
     fn apply_pedantic_skips_too_long() {
         let mut config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::from([
                 LintRule::SecurityMdMissing,
@@ -698,22 +714,22 @@ mod tests {
     }
 
     #[test]
-    fn apply_pedantic_leaves_ignore_intact() {
+    fn apply_pedantic_leaves_suppress_intact() {
         let mut config = LintConfig {
-            ignore: HashSet::from([LintRule::PluginJsonMissing]),
+            suppress: HashSet::from([LintRule::PluginJsonMissing]),
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
         };
         config.apply_cli_mode(CliMode::Pedantic);
-        assert!(config.ignore.contains(&LintRule::PluginJsonMissing));
+        assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
         assert!(config.error.contains(&LintRule::SecurityMdMissing));
     }
 
     #[test]
     fn apply_pedantic_default_error_stays_error() {
         let mut config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
@@ -728,7 +744,7 @@ mod tests {
     #[test]
     fn apply_pedantic_promotes_default_warning_to_error() {
         let mut config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
@@ -743,7 +759,7 @@ mod tests {
     #[test]
     fn apply_pedantic_skips_default_warning_too_long() {
         let mut config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
@@ -756,23 +772,23 @@ mod tests {
     }
 
     #[test]
-    fn apply_pedantic_respects_ignore_for_default_warning() {
+    fn apply_pedantic_respects_suppress_for_default_warning() {
         let mut config = LintConfig {
-            ignore: HashSet::from([LintRule::NameVague]),
+            suppress: HashSet::from([LintRule::NameVague]),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
         };
         config.apply_cli_mode(CliMode::Pedantic);
-        // Ignored default-warning rules are not promoted.
+        // Suppressed default-warning rules are not promoted.
         assert!(!config.error.contains(&LintRule::NameVague));
-        assert!(config.ignore.contains(&LintRule::NameVague));
+        assert!(config.suppress.contains(&LintRule::NameVague));
     }
 
     #[test]
     fn apply_pedantic_leaves_suppressed_alone() {
         let mut config = LintConfig {
-            ignore: HashSet::new(),
+            suppress: HashSet::new(),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
@@ -785,13 +801,13 @@ mod tests {
     #[test]
     fn apply_all_enables_everything() {
         let mut config = LintConfig {
-            ignore: HashSet::from([LintRule::PluginJsonMissing]),
+            suppress: HashSet::from([LintRule::PluginJsonMissing]),
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec!["docs/*.md".to_string()],
         };
         config.apply_cli_mode(CliMode::All);
-        assert!(config.ignore.is_empty());
+        assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
         assert_eq!(config.error.len(), 104);
         // Exclude is NOT cleared — it's about file paths, not rule severity
@@ -799,15 +815,15 @@ mod tests {
     }
 
     #[test]
-    fn apply_all_overrides_ignore() {
+    fn apply_all_overrides_suppress() {
         let mut config = LintConfig {
-            ignore: HashSet::from([LintRule::PluginJsonMissing, LintRule::NameVague]),
+            suppress: HashSet::from([LintRule::PluginJsonMissing, LintRule::NameVague]),
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
         };
         config.apply_cli_mode(CliMode::All);
-        assert!(config.ignore.is_empty());
+        assert!(config.suppress.is_empty());
         assert!(config.error.contains(&LintRule::PluginJsonMissing));
         assert!(config.error.contains(&LintRule::NameVague));
     }

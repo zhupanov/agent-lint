@@ -224,17 +224,17 @@ repository root.
 
 ```toml
 [lint]
-ignore = ["M001"]                          # suppress entirely (by code)
-error  = ["S033", "G005"]                  # promote to error (by code or name)
-warn   = ["plugin-json-invalid"]           # downgrade to warning (by name)
-exclude = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
+suppress = ["M001"]                        # suppress entirely (by code)
+error    = ["S033", "G005"]                # promote to error (by code or name)
+warn     = ["plugin-json-invalid"]         # downgrade to warning (by name)
+exclude  = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
 ```
 
 ### Options
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `ignore` | string array | Rules to suppress completely (no output, no exit code effect) |
+| `suppress` | string array | Rules to suppress completely (no output, no exit code effect) |
 | `error` | string array | Rules to promote to error (overrides default severity) |
 | `warn` | string array | Rules to downgrade to warning (printed, but exit 0) |
 | `exclude` | string array | File glob patterns -- matching files are skipped entirely |
@@ -243,7 +243,7 @@ exclude = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
 
 Rules can be referenced by **code** (e.g., `M001`) or **human-readable
 name** (e.g., `plugin-json-missing`). Priority when a rule appears in
-multiple lists: `ignore` > `error` > `warn`.
+multiple lists: `suppress` > `error` > `warn`.
 
 ### File Exclusion
 
@@ -261,14 +261,14 @@ and no diagnostics are produced for them.
 **Scope**: File exclusion applies to file-walking validators (skills,
 agents, scripts, docs). It does **not** apply to fixed-path structural
 checks (e.g., `plugin.json` must exist, `SECURITY.md` must exist). Use
-`ignore` to suppress those rules instead.
+`suppress` to suppress those rules instead.
 
 ### Default Severity
 
 Each rule has a compiled-in default severity: **error** (68 rules),
 **warn** (33 rules), or **off** (3 rules). Style, quality, and niche
 rules fire as warnings by default. Use `error = [...]` in
-`agent-lint.toml` to promote them to errors, or `ignore = [...]` to
+`agent-lint.toml` to promote them to errors, or `suppress = [...]` to
 suppress them. See [docs/rules.md](docs/rules.md) for the default
 severity of each rule.
 
@@ -279,12 +279,12 @@ exclusive (using both exits with code 2).
 
 **`--pedantic`**: Promotes all warnings (both `warn`-listed and
 default-warning rules) to errors, except too-long rules (`name-too-long`,
-`desc-too-long`, `compat-too-long`). Rules in `ignore`
-stay ignored. The default-suppressed rules (`name-not-gerund`,
+`desc-too-long`, `compat-too-long`). Rules in `suppress`
+stay suppressed. The default-suppressed rules (`name-not-gerund`,
 `body-no-examples`, `body-too-long`) stay suppressed unless explicitly enabled. Too-long
 rules keep their current severity.
 
-**`--all`**: Forces every rule to fire as an error. The `ignore` and `warn`
+**`--all`**: Forces every rule to fire as an error. The `suppress` and `warn`
 lists are bypassed entirely — all 104 rules are promoted to errors. File
 exclusions (`exclude`) remain in effect. Note: `--all` applies to rules
 emittable by the detected lint mode. In Basic mode (`.claude/` only),

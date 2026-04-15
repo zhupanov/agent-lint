@@ -2778,10 +2778,10 @@ mod tests {
             "S034 should be default-suppressed"
         );
 
-        // With config ignoring S020
+        // With config suppressing S020
         use crate::rules::LintRule;
         let config = crate::config::LintConfig {
-            ignore: std::collections::HashSet::from([LintRule::BodyEmpty]),
+            suppress: std::collections::HashSet::from([LintRule::BodyEmpty]),
             error: std::collections::HashSet::from([LintRule::DescTooShort]),
             warn: std::collections::HashSet::new(),
             exclude: vec![],
@@ -2814,7 +2814,7 @@ mod tests {
 
         use crate::rules::LintRule;
         let config = crate::config::LintConfig {
-            ignore: std::collections::HashSet::new(),
+            suppress: std::collections::HashSet::new(),
             error: std::collections::HashSet::new(),
             warn: std::collections::HashSet::from([LintRule::DescTooShort]),
             exclude: vec![],

@@ -289,7 +289,7 @@ mod tests {
 
         // Suppress S020 via config
         let config = crate::config::LintConfig {
-            ignore: std::collections::HashSet::from([crate::rules::LintRule::BodyEmpty]),
+            suppress: std::collections::HashSet::from([crate::rules::LintRule::BodyEmpty]),
             error: std::collections::HashSet::new(),
             warn: std::collections::HashSet::new(),
             exclude: vec![],
