@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.2] - 2026-04-15
+
+### Added
+
+- `--pedantic` CLI flag: promotes warn-listed rules to errors (except too-long rules)
+- `--all` CLI flag: forces every rule to error, bypassing ignore/warn config
+- `pedantic` and `all` boolean inputs for the GitHub Actions CI action
+- CI self-lint steps exercising both new flags
+
 ## [2.1.1] - 2026-04-14
 
 ### Added
