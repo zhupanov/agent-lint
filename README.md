@@ -266,7 +266,7 @@ checks (e.g., `plugin.json` must exist, `SECURITY.md` must exist). Use
 ### Default Severity
 
 Each rule has a compiled-in default severity: **error** (68 rules),
-**warn** (35 rules), or **off** (1 rule). Style, quality, and niche
+**warn** (33 rules), or **off** (3 rules). Style, quality, and niche
 rules fire as warnings by default. Use `error = [...]` in
 `agent-lint.toml` to promote them to errors, or `ignore = [...]` to
 suppress them. See [docs/rules.md](docs/rules.md) for the default
@@ -292,9 +292,9 @@ plugin-only rules are not dispatched regardless of `--all`.
 
 ### Behavior Without Config
 
-If `agent-lint.toml` is absent, 68 rules fire as errors, 34
-style/quality/niche rules fire as warnings, and 2 rules
-(`name-not-gerund`, `body-no-examples`) are off. A malformed config file, unknown rule
+If `agent-lint.toml` is absent, 68 rules fire as errors, 33
+style/quality/niche rules fire as warnings, and 3 rules
+(`name-not-gerund`, `body-no-examples`, `body-too-long`) are off. A malformed config file, unknown rule
 code/name, or invalid glob pattern causes exit code 2.
 
 ### Diagnostic Output

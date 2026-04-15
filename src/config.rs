@@ -749,9 +749,10 @@ mod tests {
             exclude: vec![],
         };
         config.apply_cli_mode(CliMode::Pedantic);
-        // Default-warning too-long rules stay as warnings.
-        assert!(!config.error.contains(&LintRule::BodyTooLong));
+        // CompatTooLong is a default-warning too-long rule; stays as warning.
         assert!(!config.error.contains(&LintRule::CompatTooLong));
+        // BodyTooLong is default-suppressed, so pedantic never considers it.
+        assert!(!config.error.contains(&LintRule::BodyTooLong));
     }
 
     #[test]
