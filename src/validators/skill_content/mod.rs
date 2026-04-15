@@ -19,11 +19,11 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-/// Validate skill content for public skills (skills/). Runs all S009-S054 rules.
+/// Validate skill content for public skills (skills/). Runs all S009-S055 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
-        run_content_checks(info, true, diag);
+        run_content_checks(info, true, diag, exclude);
     }
     // Cross-skill checks (plugin-only: S029, S036; both-mode: S030, S048)
     cross_skill::validate_nested_references("skills", &skills, diag);
@@ -33,20 +33,25 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054).
+/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
-        run_content_checks(info, false, diag);
+        run_content_checks(info, false, diag, exclude);
     }
     cross_skill::validate_orphaned_skill_files(".claude/skills", diag, exclude);
     cross_skill::validate_generic_ref_names(".claude/skills", diag, exclude);
 }
 
-fn run_content_checks(info: &SkillInfo, plugin_mode: bool, diag: &mut DiagnosticCollector) {
+fn run_content_checks(
+    info: &SkillInfo,
+    plugin_mode: bool,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
     name::check_name_format(info, plugin_mode, diag);
     description::check_description_quality(info, plugin_mode, diag);
-    body::check_body_content(info, plugin_mode, diag);
+    body::check_body_content(info, plugin_mode, diag, exclude);
     frontmatter_fields::check_frontmatter_fields(info, diag);
     frontmatter_extended::check_frontmatter_extended(info, diag);
     cross_field::check_cross_field(info, plugin_mode, diag);
@@ -1339,6 +1344,7 @@ mod tests {
             ("S052", "script-verify-missing"),
             ("S053", "terminology-inconsistent"),
             ("S054", "desc-body-misalign"),
+            ("S055", "script-errhand-missing"),
         ];
         for (code, name) in &new_rules {
             assert!(
@@ -3660,6 +3666,294 @@ mod tests {
         assert!(
             !diag.errors().iter().any(|e| e.contains("synonym group")),
             "S053 should not fire for private skills"
+        );
+    }
+
+    // ── S055: script-errhand-missing ─────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_sh_with_set_e_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run.sh",
+            "#!/bin/bash\nset -euo pipefail\necho hello\necho world\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should not fire when set -e present"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_sh_with_trap_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run.sh",
+            "#!/bin/bash\ntrap 'echo failed' ERR\necho step1\necho step2\necho step3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should not fire when trap present"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_sh_with_or_exit_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run.sh",
+            "#!/bin/bash\ncommand1 || exit 1\necho step1\necho step2\necho step3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should not fire when || exit present"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_sh_without_error_handling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run.sh",
+            "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should fire when no error handling"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_py_with_try_except_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run.py",
+            "import sys\ntry:\n    do_something()\nexcept Exception as e:\n    print(e)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.py to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should not fire when try/except present"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_py_without_error_handling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run.py",
+            "import sys\nimport os\ndef main():\n    print('hello')\nmain()\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.py to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should fire when no try/except"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_non_script_skill_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nJust a plain skill with no scripts.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should not fire for non-script skill"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_private_mode_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/scripts/run.sh",
+            "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nThis skill runs a script.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should not fire in private mode"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_short_script_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run.sh",
+            "#!/bin/bash\necho hello\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 should not fire for short scripts"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_mixed_scripts_partial() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/good.sh",
+            "#!/bin/bash\nset -euo pipefail\necho step1\necho step2\necho step3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/bad.sh",
+            "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let errors = diag.errors();
+        let errhand_errors: Vec<_> = errors
+            .iter()
+            .filter(|e| e.contains("lacks error handling"))
+            .collect();
+        assert_eq!(
+            errhand_errors.len(),
+            1,
+            "S055 should fire for exactly one script (bad.sh), got: {:?}",
+            errhand_errors
+        );
+        assert!(
+            errhand_errors[0].contains("bad.sh"),
+            "S055 should fire for bad.sh, not good.sh"
         );
     }
 }

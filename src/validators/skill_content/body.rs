@@ -1,9 +1,12 @@
+use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 use std::sync::LazyLock;
 
 use super::RE_BACKSLASH_PATH;
@@ -71,6 +74,20 @@ const SYNONYM_GROUPS: &[(&str, &[&str])] = &[
     ("component/module/package",       &["component", "module", "package"]),
 ];
 
+// S055: Python error handling patterns (statement-level try/except)
+static RE_PY_ERROR_HANDLING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*(try\s*:|except\b)").unwrap());
+
+// S055: Shell error handling patterns (set -e, set -o errexit, trap, || exit/return)
+static RE_SH_ERROR_HANDLING: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)(^\s*set\s+-[^\s]*e[^\s]*(\s|$)|^\s*set\s+-o\s+errexit\b|^\s*trap\b|\|\|\s*(exit|return))",
+    )
+    .unwrap()
+});
+
+const SCRIPT_MIN_LINES: usize = 5;
+
 // S021: Consecutive bash
 static RE_BASH_FENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
@@ -79,6 +96,7 @@ pub(super) fn check_body_content(
     info: &SkillInfo,
     plugin_mode: bool,
     diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
 ) {
     // S020: empty body
     if info.body.trim().is_empty() {
@@ -238,6 +256,9 @@ pub(super) fn check_body_content(
                 ),
             );
         }
+
+        // S055: check actual script files for error handling patterns
+        check_script_error_handling(info, diag, exclude);
     }
 }
 
@@ -326,6 +347,70 @@ fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                 }
             }
             LineClass::Inside | LineClass::Outside => {}
+        }
+    }
+}
+
+/// S055: Check .py and .sh files in the skill's scripts/ directory for error
+/// handling patterns. Reports per-file diagnostics for scripts lacking any
+/// recognized error handling.
+fn check_script_error_handling(
+    info: &SkillInfo,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    let scripts_dir = match Path::new(&info.path).parent().map(|p| p.join("scripts")) {
+        Some(d) if d.is_dir() => d,
+        _ => return,
+    };
+
+    let entries = match fs::read_dir(&scripts_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext != "py" && ext != "sh" {
+            continue;
+        }
+
+        let path_str = path.to_string_lossy();
+        if exclude.is_excluded(&path_str) {
+            continue;
+        }
+
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Skip trivially small scripts (< 5 non-empty lines)
+        let nonempty_lines = content.lines().filter(|l| !l.trim().is_empty()).count();
+        if nonempty_lines < SCRIPT_MIN_LINES {
+            continue;
+        }
+
+        let has_handling = match ext {
+            "py" => RE_PY_ERROR_HANDLING.is_match(&content),
+            "sh" => RE_SH_ERROR_HANDLING.is_match(&content),
+            _ => true,
+        };
+
+        if !has_handling {
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            diag.report(
+                LintRule::ScriptErrhandMissing,
+                &format!(
+                    "{}: script {} lacks error handling (try/except for .py, set -e/trap/|| exit for .sh)",
+                    info.path, file_name
+                ),
+            );
         }
     }
 }

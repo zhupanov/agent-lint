@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Claude Lint ships 101 rules across 9 categories. Every rule has a unique
+Claude Lint ships 102 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 
@@ -75,7 +75,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S034 | `desc-too-short` | Skill description under 20 characters | Both |
 | S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin |
 
-### Body Content (S019--S022, S037--S038, S041, S046--S047, S051--S053)
+### Body Content (S019--S022, S037--S038, S041, S046--S047, S051--S053, S055)
 
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
@@ -91,6 +91,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S051 | `script-deps-missing` | Script-backed skill lacks dependency/package documentation | Plugin |
 | S052 | `script-verify-missing` | Script-backed skill lacks verification/validation steps | Plugin |
 | S053 | `terminology-inconsistent` | Uses 3+ variants from the same synonym group | Plugin |
+| S055 | `script-errhand-missing` | Script file lacks error handling patterns (`set -e`/`trap` for shell, `try`/`except` for Python) | Plugin |
 
 ### Frontmatter Field Types (S023--S027)
 
