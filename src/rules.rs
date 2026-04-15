@@ -150,6 +150,8 @@ pub enum LintRule {
     ScriptDepsMissing,
     /// S052: script-backed skill lacks verification step
     ScriptVerifyMissing,
+    /// S053: terminology inconsistency — 3+ synonym variants used
+    TerminologyInconsistent,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -298,6 +300,7 @@ impl LintRule {
             Self::DescVagueContent => "S050",
             Self::ScriptDepsMissing => "S051",
             Self::ScriptVerifyMissing => "S052",
+            Self::TerminologyInconsistent => "S053",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -411,6 +414,7 @@ impl LintRule {
             Self::DescVagueContent => "desc-vague-content",
             Self::ScriptDepsMissing => "script-deps-missing",
             Self::ScriptVerifyMissing => "script-verify-missing",
+            Self::TerminologyInconsistent => "terminology-inconsistent",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -531,6 +535,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::DescVagueContent,
     LintRule::ScriptDepsMissing,
     LintRule::ScriptVerifyMissing,
+    LintRule::TerminologyInconsistent,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -573,7 +578,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            99,
+            100,
             "ALL_RULES length must match enum variant count"
         );
     }

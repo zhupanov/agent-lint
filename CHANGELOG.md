@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.34] - 2026-04-14
+
+### Added
+
+- Added S053 `terminology-inconsistent` rule: detects when a skill body uses 3+ variants from the same synonym group (e.g., endpoint/route/url), with 8 curated synonym groups scanning prose outside code fences (plugin-only)
+
 ## [1.0.33] - 2026-04-14
 
 ### Added

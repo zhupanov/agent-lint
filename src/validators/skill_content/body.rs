@@ -3,6 +3,7 @@ use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use super::RE_BACKSLASH_PATH;
@@ -55,6 +56,20 @@ static RE_DEPS_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
 static RE_VERIFY_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:\bverify\b|\bvalidate\b|\bcheck\b|\btest\b|\bconfirm\b|if\s+.*\bfails\b|if\s+.*\berrors\b|validation\s+passes|run\s+.*\bagain\b|\brepeat\b|\bre-?run\b|(?m)^#{2,3}\s+(?:Verify|Validation|Testing)\b)").unwrap()
 });
+
+// S053: Synonym groups for terminology consistency
+// Each entry: (group label, &[single-token lowercase members])
+#[rustfmt::skip]
+const SYNONYM_GROUPS: &[(&str, &[&str])] = &[
+    ("endpoint/route/URL",             &["endpoint", "route", "url"]),
+    ("field/element/control",          &["field", "element", "control", "widget"]),
+    ("extract/retrieve/fetch",         &["extract", "retrieve", "fetch", "pull"]),
+    ("function/method/routine",        &["function", "method", "routine", "procedure"]),
+    ("exception/failure/fault",        &["exception", "failure", "fault"]),
+    ("configuration/settings/preferences", &["configuration", "settings", "preferences"]),
+    ("execute/invoke/launch",          &["execute", "invoke", "launch"]),
+    ("component/module/package",       &["component", "module", "package"]),
+];
 
 // S021: Consecutive bash
 static RE_BASH_FENCE: LazyLock<Regex> =
@@ -196,6 +211,11 @@ pub(super) fn check_body_content(
         }
     }
 
+    // S053: terminology consistency (plugin-only) — outside code fences only
+    if plugin_mode {
+        check_terminology_consistency(info, diag);
+    }
+
     // S051/S052: script-backed skill quality checks (plugin-only)
     // Intentionally scans full body INCLUDING code fences — dependency
     // declarations and verification steps are often in code blocks.
@@ -225,6 +245,38 @@ pub(super) fn check_body_content(
 /// or its body references script file extensions (.sh, .py, .js, .ts).
 fn is_script_backed(info: &SkillInfo) -> bool {
     info.has_scripts_dir || RE_SCRIPT_FILE_REF.is_match(&info.body)
+}
+
+fn check_terminology_consistency(info: &SkillInfo, diag: &mut DiagnosticCollector) {
+    // Collect all words outside code fences into a set
+    let mut words = HashSet::new();
+    for line in crate::fence::lines_outside_fences(&info.body) {
+        for token in line.to_lowercase().split(|c: char| !c.is_alphanumeric()) {
+            if !token.is_empty() {
+                words.insert(token.to_string());
+            }
+        }
+    }
+
+    for (group_name, members) in SYNONYM_GROUPS {
+        let mut found: Vec<&str> = members
+            .iter()
+            .filter(|m| words.contains(**m))
+            .copied()
+            .collect();
+        if found.len() >= 3 {
+            found.sort_unstable();
+            diag.report(
+                LintRule::TerminologyInconsistent,
+                &format!(
+                    "{}: uses 3+ variants from the same synonym group ({}): {}; pick one term and use it consistently",
+                    info.path,
+                    group_name,
+                    found.join(", ")
+                ),
+            );
+        }
+    }
 }
 
 fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {

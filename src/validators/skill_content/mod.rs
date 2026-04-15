@@ -19,7 +19,7 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-/// Validate skill content for public skills (skills/). Runs all S009-S052 rules.
+/// Validate skill content for public skills (skills/). Runs all S009-S053 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
@@ -33,7 +33,7 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052).
+/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
@@ -1337,6 +1337,7 @@ mod tests {
             ("S050", "desc-vague-content"),
             ("S051", "script-deps-missing"),
             ("S052", "script-verify-missing"),
+            ("S053", "terminology-inconsistent"),
         ];
         for (code, name) in &new_rules {
             assert!(
@@ -3375,6 +3376,126 @@ mod tests {
         assert!(
             !diag.errors().iter().any(|e| e.contains("vague/generic")),
             "S050 should not fire for private skills"
+        );
+    }
+
+    // ── S053: terminology-inconsistent ───────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s053_three_variants_triggers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill that does useful things here\n---\n\
+             Use the endpoint to access data.\n\
+             The route should be configured.\n\
+             Check the url for the response.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("synonym group") && e.contains("endpoint")),
+            "S053 should fire when 3+ synonym variants are used"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s053_two_variants_no_trigger() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill that does useful things here\n---\n\
+             Use the endpoint to access data.\n\
+             The route should be configured.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("synonym group")),
+            "S053 should not fire when only 2 variants are used"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s053_fence_isolation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill that does useful things here\n---\n\
+             Use the endpoint to access data.\n\
+             The route should be configured.\n\
+             ```bash\n\
+             curl $url\n\
+             ```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("synonym group")),
+            "S053 should not count terms inside code fences"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s053_case_insensitive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill that does useful things here\n---\n\
+             The Endpoint should be stable.\n\
+             Configure the URL properly.\n\
+             Set up the Route correctly.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors().iter().any(|e| e.contains("synonym group")),
+            "S053 should match case-insensitively"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s053_private_mode_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill that does useful things here\n---\n\
+             Use the endpoint to access data.\n\
+             The route should be configured.\n\
+             Check the url for the response.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("synonym group")),
+            "S053 should not fire for private skills"
         );
     }
 }
