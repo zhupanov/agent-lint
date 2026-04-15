@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.2.5] - 2026-04-15
+
+### Changed
+
+- 35 previously suppressed rules now fire as warnings by default (only `name-not-gerund` stays suppressed)
+- `--pedantic` mode now promotes default-warning rules to errors (in addition to user-warn-listed rules)
+
 ## [2.2.4] - 2026-04-15
 
 ### Changed
