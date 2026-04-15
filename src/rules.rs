@@ -497,6 +497,26 @@ impl LintRule {
             .copied()
     }
 
+    /// Whether this rule's violations can be automatically fixed by `--autofix`.
+    /// Only purely mechanical, unambiguous fixes are classified as auto-fixable.
+    pub fn is_autofixable(self) -> bool {
+        matches!(
+            self,
+            Self::HookNotExecutable
+                | Self::ScriptNotExecutable
+                | Self::FrontmatterNameMismatch
+                | Self::FrontmatterFieldEmpty
+                | Self::NameHasXml
+                | Self::DescHasXml
+                | Self::ConsecutiveBash
+                | Self::BackslashPath
+                | Self::NonHttpsUrl
+                | Self::FrontmatterBackslash
+                | Self::ToolsListSyntax
+                | Self::PwdInSkill
+        )
+    }
+
     /// Compiled-in default severity. Rules not mentioned in the user's config
     /// fall back to this. Style, quality, and niche rules default to
     /// `Suppressed`; structural and correctness rules default to `Error`.
@@ -754,6 +774,17 @@ mod tests {
         assert!(!LintRule::AgentDescLong.is_too_long());
         assert!(!LintRule::ClaudemdTooLarge.is_too_long());
         assert!(!LintRule::PluginJsonMissing.is_too_long());
+    }
+
+    #[test]
+    fn autofixable_count() {
+        let fixable: Vec<_> = ALL_RULES.iter().filter(|r| r.is_autofixable()).collect();
+        assert_eq!(
+            fixable.len(),
+            12,
+            "Expected 12 auto-fixable rules, got {}",
+            fixable.len()
+        );
     }
 
     #[test]

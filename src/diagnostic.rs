@@ -13,10 +13,9 @@ pub enum Severity {
 /// A single lint diagnostic with rule identity and resolved severity.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
-    #[allow(dead_code)] // stored for future use (e.g., JSON output, --list-rules)
     pub rule: LintRule,
     pub severity: Severity,
-    #[allow(dead_code)] // read by #[cfg(test)] accessors (errors(), warnings())
+    #[allow(dead_code)] // read by #[cfg(test)] accessors and available via diagnostics()
     pub message: String,
 }
 
@@ -76,6 +75,17 @@ impl DiagnosticCollector {
             diagnostics: Vec::new(),
             suppressed_count: 0,
             writer: Box::new(io::stderr()),
+        }
+    }
+
+    /// Create a collector that collects diagnostics silently (no stderr output).
+    /// Used by the autofix loop to re-validate without spamming stderr.
+    pub fn with_config_silent(config: LintConfig) -> Self {
+        Self {
+            config,
+            diagnostics: Vec::new(),
+            suppressed_count: 0,
+            writer: Box::new(io::sink()),
         }
     }
 
@@ -142,6 +152,11 @@ impl DiagnosticCollector {
     /// Number of diagnostics that were completely suppressed by config.
     pub fn suppressed_count(&self) -> usize {
         self.suppressed_count
+    }
+
+    /// Return collected diagnostics for programmatic access (e.g., autofix).
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        &self.diagnostics
     }
 
     /// Return collected error messages for test assertions.

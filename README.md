@@ -40,12 +40,48 @@ sudo mv /tmp/agent-lint /usr/local/bin/agent-lint
 ### CLI
 
 ```bash
-agent-lint [PATH]
+agent-lint [OPTIONS] [PATH]
 ```
 
 If `PATH` is omitted, the current directory is used. The tool detects the
 repo root via `git rev-parse --show-toplevel` and selects Basic or Plugin
 mode automatically based on the presence of `.claude-plugin/`.
+
+#### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--help`, `-h` | Print help message |
+| `--version` | Print version information |
+| `--list-scripts` | List discovered script paths and exit |
+| `--autofix` | Fix auto-fixable violations in-place and report remaining issues |
+
+#### `--autofix`
+
+When `--autofix` is provided, agent-lint attempts to automatically fix
+violations for rules that have purely mechanical, unambiguous fixes. After
+all possible fixes are applied, it runs a final validation pass and reports
+any remaining issues with normal exit semantics (exit 1 if errors remain).
+
+**Auto-fixable rules (12 of 104):**
+
+| Rule | Code | Fix |
+|------|------|-----|
+| hook-not-executable | H005 | `chmod +x` on script |
+| script-not-executable | G003 | `chmod +x` on script |
+| frontmatter-name-mismatch | S006 | Set `name:` to match directory |
+| frontmatter-field-empty | S007 | Remove empty optional field |
+| name-has-xml | S013 | Strip XML tags from name |
+| desc-has-xml | S018 | Strip XML tags from description |
+| consecutive-bash | S021 | Merge adjacent bash blocks |
+| backslash-path | S022 | Replace `\` with `/` in body |
+| non-https-url | S031 | `http://` → `https://` |
+| frontmatter-backslash | S043 | Replace `\` with `/` in frontmatter |
+| tools-list-syntax | S045 | YAML list → comma-separated scalar |
+| pwd-in-skill | G001 | `$PWD/` → `${CLAUDE_PLUGIN_ROOT}/` |
+
+Each fix is logged to stderr. Default-suppressed rules (S021, S045, etc.)
+must be enabled via `agent-lint.toml` to be detected and fixed.
 
 ## GitHub Action Inputs
 

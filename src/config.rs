@@ -41,7 +41,7 @@ struct RawLintSection {
 /// Rules in `error` are promoted to errors (overriding default severity).
 /// Rules in `warn` are downgraded to warnings. Priority: ignore > error > warn.
 /// Rules not in any set fall back to `LintRule::default_severity()`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct LintConfig {
     pub ignore: HashSet<LintRule>,
     pub error: HashSet<LintRule>,

@@ -1,3 +1,4 @@
+mod autofix;
 mod config;
 mod context;
 mod diagnostic;
@@ -19,6 +20,7 @@ fn main() {
     let mut list_scripts = false;
     let mut pedantic = false;
     let mut all = false;
+    let mut autofix = false;
     let mut positional = Vec::new();
     for arg in &args[1..] {
         match arg.as_str() {
@@ -35,6 +37,9 @@ fn main() {
                 println!(
                     "  --all              Force every rule to error, ignoring config overrides"
                 );
+                println!(
+                    "  --autofix          Fix auto-fixable violations in-place and report remaining issues"
+                );
                 std::process::exit(0);
             }
             "--version" => {
@@ -50,10 +55,13 @@ fn main() {
             "--all" => {
                 all = true;
             }
+            "--autofix" => {
+                autofix = true;
+            }
             flag if flag.starts_with('-') => {
                 eprintln!("Unknown flag: {arg}");
                 eprintln!(
-                    "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [PATH]"
+                    "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [--autofix] [PATH]"
                 );
                 std::process::exit(2);
             }
@@ -78,7 +86,7 @@ fn main() {
 
     if positional.len() > 1 {
         eprintln!(
-            "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [PATH]"
+            "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [--autofix] [PATH]"
         );
         std::process::exit(2);
     }
@@ -135,10 +143,23 @@ fn main() {
         std::process::exit(0);
     }
 
-    let ctx = LintContext::new(std::path::Path::new(&repo_root), mode);
+    if autofix {
+        run_autofix(&repo_root, mode, lint_config, &exclude);
+    } else {
+        run_lint(&repo_root, mode, lint_config, &exclude);
+    }
+}
+
+fn run_lint(
+    repo_root: &str,
+    mode: LintMode,
+    lint_config: LintConfig,
+    exclude: &config::ExcludeSet,
+) {
+    let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
     let mut diag = DiagnosticCollector::with_config(lint_config);
 
-    validators::run_all(&ctx, &mut diag, &exclude);
+    validators::run_all(&ctx, &mut diag, exclude);
 
     let errors = diag.error_count();
     let warnings = diag.warning_count();
@@ -155,7 +176,6 @@ fn main() {
         }
         std::process::exit(0);
     } else if errors == 0 {
-        // Only warnings — exit 0
         eprintln!("Lint: {warnings} warning(s)");
         if suppressed > 0 {
             eprintln!("({suppressed} suppressed)");
@@ -168,6 +188,51 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+const MAX_FIX_ITERATIONS: usize = 50;
+
+fn run_autofix(
+    repo_root: &str,
+    mode: LintMode,
+    lint_config: LintConfig,
+    exclude: &config::ExcludeSet,
+) {
+    // Autofix loop: silently re-validate, fix one rule at a time
+    for _ in 0..MAX_FIX_ITERATIONS {
+        let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
+        let mut diag = DiagnosticCollector::with_config_silent(lint_config.clone());
+        validators::run_all(&ctx, &mut diag, exclude);
+
+        // Collect unique auto-fixable rules that have violations
+        let fixable_rules: Vec<rules::LintRule> = {
+            let mut seen = std::collections::HashSet::new();
+            diag.diagnostics()
+                .iter()
+                .filter(|d| d.rule.is_autofixable())
+                .filter(|d| seen.insert(d.rule))
+                .map(|d| d.rule)
+                .collect()
+        };
+
+        if fixable_rules.is_empty() {
+            break;
+        }
+
+        let mut made_progress = false;
+        for rule in fixable_rules {
+            if autofix::apply_fix(rule, mode, exclude) {
+                made_progress = true;
+                break; // Re-validate after each fix
+            }
+        }
+        if !made_progress {
+            break;
+        }
+    }
+
+    // Final validation pass with normal stderr output
+    run_lint(repo_root, mode, lint_config, exclude);
 }
 
 /// Detect lint mode based on directory presence.
