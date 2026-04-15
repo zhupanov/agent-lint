@@ -28,6 +28,26 @@ configuration and plugins.
     path: "."
 ```
 
+### Pre-commit
+
+Add to your `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/zhupanov/agent-lint
+    rev: v2.2.2  # or any release tag
+    hooks:
+      - id: agent-lint
+```
+
+The hook automatically downloads the pre-built binary for your platform
+and caches it. Pass CLI flags via `args`:
+
+```yaml
+      - id: agent-lint
+        args: [--pedantic]
+```
+
 ### Install on macOS
 
 ```bash

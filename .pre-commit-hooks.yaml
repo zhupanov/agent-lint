@@ -1,0 +1,7 @@
+- id: agent-lint
+  name: agent-lint
+  description: Lint AI agent configuration files (CLAUDE.md, .cursorrules, etc.)
+  entry: scripts/pre-commit-hook.sh
+  language: script
+  pass_filenames: false
+  always_run: true
