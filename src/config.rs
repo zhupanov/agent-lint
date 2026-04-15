@@ -178,7 +178,7 @@ impl LintConfig {
         })
     }
 
-    /// Apply CLI strictness mode. Transforms the ignore/error/warn sets
+    /// Apply CLI strictness mode. Transforms the suppress/error/warn sets
     /// so that `DiagnosticCollector::report()` needs no changes.
     ///
     /// - `Pedantic`: moves warn entries and default-warning rules to error
@@ -204,7 +204,7 @@ impl LintConfig {
                     self.error.insert(r);
                 }
                 // Promote default-warning rules to error (except too-long
-                // and already-ignored).
+                // and already-suppressed).
                 for r in ALL_RULES {
                     if r.default_severity() == DefaultSeverity::Warning
                         && !r.is_too_long()
@@ -343,7 +343,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lnt]\nignore = [\"M001\"]\n",
+            "[lnt]\nsuppress = [\"M001\"]\n",
         )
         .unwrap();
         let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();

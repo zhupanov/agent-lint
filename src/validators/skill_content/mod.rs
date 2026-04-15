@@ -2755,7 +2755,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_config_ignore_suppresses_new_rule() {
+    fn test_config_suppress_suppresses_rule() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
