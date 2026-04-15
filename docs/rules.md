@@ -100,7 +100,7 @@ regardless of config. See README for details.
 | S038 | `time-sensitive` | Body contains time-sensitive date/year patterns | Plugin | warn |
 | S041 | `fork-no-task` | `context: fork` set but body lacks task instructions | Both | error |
 | S046 | `body-no-workflow` | Body exceeds 300 lines with no workflow structure | Plugin | warn |
-| S047 | `body-no-examples` | Body exceeds 200 lines with no examples or templates | Plugin | warn |
+| S047 | `body-no-examples` | Body exceeds 200 lines with no examples or templates | Plugin | suppressed |
 | S051 | `script-deps-missing` | Script-backed skill lacks dependency/package documentation | Plugin | warn |
 | S052 | `script-verify-missing` | Script-backed skill lacks verification/validation steps | Plugin | warn |
 | S053 | `terminology-inconsistent` | Uses 3+ variants from the same synonym group | Plugin | warn |

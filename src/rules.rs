@@ -524,8 +524,8 @@ impl LintRule {
     /// `Suppressed`; structural and correctness rules default to `Error`.
     pub fn default_severity(self) -> DefaultSeverity {
         match self {
-            // ── Default-suppressed: gerund rule stays suppressed ──────
-            Self::NameNotGerund => DefaultSeverity::Suppressed,
+            // ── Default-suppressed ──────────────────────────────────
+            Self::NameNotGerund | Self::BodyNoExamples => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
             Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
@@ -533,7 +533,7 @@ impl LintRule {
             // ── Default-warning: style / quality (skills) ────────────
             Self::DescTruncated | Self::BodyTooLong | Self::ConsecutiveBash |
             Self::NameVague | Self::DescTooShort | Self::BodyNoRefs |
-            Self::BodyNoWorkflow | Self::BodyNoExamples | Self::RefNameGeneric |
+            Self::BodyNoWorkflow | Self::RefNameGeneric |
             Self::DescVagueContent | Self::ScriptDepsMissing |
             Self::ScriptVerifyMissing | Self::TerminologyInconsistent |
             Self::DescBodyMisalign | Self::ScriptErrhandMissing |
@@ -751,8 +751,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            1,
-            "Expected 1 default-suppressed rule, got {}",
+            2,
+            "Expected 2 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -765,8 +765,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            35,
-            "Expected 35 default-warning rules, got {}",
+            34,
+            "Expected 34 default-warning rules, got {}",
             warnings.len()
         );
     }
