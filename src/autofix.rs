@@ -174,8 +174,7 @@ fn make_executable(path: &str) -> bool {
         return false; // Already executable
     }
     let new_mode = mode | 0o111;
-    let _ = fs::set_permissions(p, std::os::unix::fs::PermissionsExt::from_mode(new_mode));
-    true
+    fs::set_permissions(p, std::os::unix::fs::PermissionsExt::from_mode(new_mode)).is_ok()
 }
 
 /// Expand simple glob patterns like "scripts" or "skills/*/scripts".
@@ -278,10 +277,14 @@ fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet) -> bool {
                 continue;
             }
 
-            // Replace name: <old> with name: <new> in raw text
-            let old_line = format!("name: {name}");
+            // Replace the raw name line (handles quoted values)
+            let raw_name_line = fm_lines
+                .iter()
+                .find(|l| l.starts_with("name:"))
+                .cloned()
+                .unwrap_or_default();
             let new_line = format!("name: {dir_name}");
-            if let Some(new_content) = replace_in_frontmatter(&content, &old_line, &new_line) {
+            if let Some(new_content) = replace_in_frontmatter(&content, &raw_name_line, &new_line) {
                 if fs::write(&skill_md, new_content).is_ok() {
                     log_fix(
                         LintRule::FrontmatterNameMismatch,
@@ -433,9 +436,16 @@ fn fix_frontmatter_field_regex(
                 Err(_) => continue,
             };
 
-            let old_line = format!("{field_name}: {value}");
+            // Use raw line from fm_lines (handles quoted values)
+            let prefix = format!("{field_name}:");
+            let raw_line = info
+                .fm_lines
+                .iter()
+                .find(|l| l.starts_with(&prefix))
+                .cloned()
+                .unwrap_or_default();
             let new_line = format!("{field_name}: {new_value}");
-            if let Some(new_content) = replace_in_frontmatter(&content, &old_line, &new_line) {
+            if let Some(new_content) = replace_in_frontmatter(&content, &raw_line, &new_line) {
                 if fs::write(&skill_path, new_content).is_ok() {
                     log_fix(
                         rule,
@@ -577,7 +587,8 @@ fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet) -> bool {
             for line in body.lines() {
                 let class = tracker.process_line(line);
                 if class == crate::fence::LineClass::Outside && RE_BACKSLASH_PATH.is_match(line) {
-                    new_body.push_str(&line.replace('\\', "/"));
+                    // Only replace backslashes within matched path patterns, not all backslashes
+                    new_body.push_str(&replace_backslash_paths(line));
                 } else {
                     new_body.push_str(line);
                 }
@@ -638,8 +649,12 @@ fn fix_non_https_url(mode: LintMode, exclude: &ExcludeSet) -> bool {
                 Err(_) => continue,
             };
 
-            // Replace http:// with https:// for non-excluded URLs
-            let new_content = replace_http_urls(&content);
+            // Replace http:// with https:// only in the body (matching validator scope)
+            let body = frontmatter::extract_body(&content);
+            let fm_end = content.len() - body.len();
+            let preamble = &content[..fm_end];
+            let new_body = replace_http_urls(body);
+            let new_content = format!("{preamble}{new_body}");
             if new_content != content && fs::write(&skill_path, &new_content).is_ok() {
                 log_fix(
                     LintRule::NonHttpsUrl,
@@ -714,7 +729,7 @@ fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet) -> bool {
                     }
                     new_content.push_str(line);
                 } else if in_frontmatter && RE_BACKSLASH_PATH.is_match(line) {
-                    new_content.push_str(&line.replace('\\', "/"));
+                    new_content.push_str(&replace_backslash_paths(line));
                     changed = true;
                 } else {
                     new_content.push_str(line);
@@ -914,6 +929,15 @@ fn fix_pwd_in_skill(exclude: &ExcludeSet) -> bool {
         }
     }
     fixed
+}
+
+// ── String helpers ──────────────────────────────────────────────────────
+
+/// Replace only backslash path patterns on a line, leaving other backslashes intact.
+fn replace_backslash_paths(line: &str) -> String {
+    RE_BACKSLASH_PATH
+        .replace_all(line, |caps: &regex::Captures| caps[0].replace('\\', "/"))
+        .to_string()
 }
 
 // ── Frontmatter helpers ─────────────────────────────────────────────────
