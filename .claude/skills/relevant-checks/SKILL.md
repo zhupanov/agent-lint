@@ -14,7 +14,7 @@ The script runs two phases:
 
 ### Phase 1: Unconditional self-lint
 
-Regardless of which files changed, the script builds and runs `claude-lint` against the repository root to validate the repo's own Claude configuration (`.claude/` directory). This is a repo-wide invariant check that always executes. Requires `cargo` — if unavailable, this phase is skipped with a warning.
+Regardless of which files changed, the script builds and runs `agent-lint` against the repository root to validate the repo's own Claude configuration (`.claude/` directory). This is a repo-wide invariant check that always executes. Requires `cargo` — if unavailable, this phase is skipped with a warning.
 
 ### Phase 2: Change-scoped linting
 

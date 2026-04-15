@@ -85,12 +85,12 @@ pub fn normalize_path(path: &str) -> String {
 }
 
 impl LintConfig {
-    /// Load configuration from `claude-lint.toml` in the given repo root.
+    /// Load configuration from `agent-lint.toml` in the given repo root.
     ///
     /// - Missing file → default (empty) config.
     /// - Malformed TOML or unknown rule code/name → `Err(msg)`.
     pub fn load(repo_root: &str) -> Result<Self, String> {
-        let path = Path::new(repo_root).join("claude-lint.toml");
+        let path = Path::new(repo_root).join("agent-lint.toml");
         if !path.is_file() {
             return Ok(Self::default());
         }
@@ -164,7 +164,7 @@ mod tests {
     fn valid_config_by_code() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nignore = [\"M001\"]\nwarn = [\"G005\"]\n",
         )
         .unwrap();
@@ -178,7 +178,7 @@ mod tests {
     fn valid_config_by_name() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nignore = [\"plugin-json-missing\"]\nwarn = [\"security-md-missing\"]\n",
         )
         .unwrap();
@@ -192,7 +192,7 @@ mod tests {
     fn ignore_wins_over_warn() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nignore = [\"M001\"]\nwarn = [\"M001\"]\n",
         )
         .unwrap();
@@ -206,7 +206,7 @@ mod tests {
     fn unknown_code_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nignore = [\"X999\"]\n",
         )
         .unwrap();
@@ -222,7 +222,7 @@ mod tests {
     #[serial_test::serial]
     fn malformed_toml_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("claude-lint.toml"), "not valid toml {{{\n").unwrap();
+        std::fs::write(tmp.path().join("agent-lint.toml"), "not valid toml {{{\n").unwrap();
         let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
         assert!(!err.is_empty());
     }
@@ -231,7 +231,7 @@ mod tests {
     #[serial_test::serial]
     fn empty_lint_section_is_valid() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("claude-lint.toml"), "[lint]\n").unwrap();
+        std::fs::write(tmp.path().join("agent-lint.toml"), "[lint]\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
         assert!(config.warn.is_empty());
@@ -241,7 +241,7 @@ mod tests {
     #[serial_test::serial]
     fn no_lint_section_is_valid() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("claude-lint.toml"), "# empty config\n").unwrap();
+        std::fs::write(tmp.path().join("agent-lint.toml"), "# empty config\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
         assert!(config.warn.is_empty());
@@ -252,7 +252,7 @@ mod tests {
     fn typo_in_section_name_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lnt]\nignore = [\"M001\"]\n",
         )
         .unwrap();
@@ -268,7 +268,7 @@ mod tests {
     fn typo_in_field_name_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nwran = [\"M001\"]\n",
         )
         .unwrap();
@@ -286,7 +286,7 @@ mod tests {
     fn exclude_parsed_from_config() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nexclude = [\"docs/*.md\", \"skills/internal/**\"]\n",
         )
         .unwrap();
@@ -300,11 +300,7 @@ mod tests {
     #[serial_test::serial]
     fn empty_exclude_is_valid() {
         let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tmp.path().join("claude-lint.toml"),
-            "[lint]\nexclude = []\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("agent-lint.toml"), "[lint]\nexclude = []\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.exclude.is_empty());
     }
@@ -314,7 +310,7 @@ mod tests {
     fn missing_exclude_defaults_to_empty() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nignore = [\"M001\"]\n",
         )
         .unwrap();
@@ -327,7 +323,7 @@ mod tests {
     fn invalid_exclude_pattern_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nexclude = [\"[invalid\"]\n",
         )
         .unwrap();
@@ -343,7 +339,7 @@ mod tests {
     fn exclude_not_array_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
-            tmp.path().join("claude-lint.toml"),
+            tmp.path().join("agent-lint.toml"),
             "[lint]\nexclude = \"not-an-array\"\n",
         )
         .unwrap();

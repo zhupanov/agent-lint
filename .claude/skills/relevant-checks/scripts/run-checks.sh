@@ -13,10 +13,10 @@ PC_EXIT=0
 # Self-lint: always validate the repo's own Claude configuration
 # ---------------------------------------------------------------------------
 if command -v cargo >/dev/null 2>&1; then
-    echo "=== Running claude-lint (self-lint) ==="
+    echo "=== Running agent-lint (self-lint) ==="
     cargo run --quiet -- . || PC_EXIT=1
 else
-    echo "WARN: cargo not available, skipping claude-lint self-lint"
+    echo "WARN: cargo not available, skipping agent-lint self-lint"
 fi
 
 # ---------------------------------------------------------------------------

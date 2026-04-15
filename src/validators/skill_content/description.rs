@@ -153,7 +153,7 @@ pub(super) fn check_description_quality(
             &format!(
                 "{}: description content is too vague/generic; \
                  add specific terms describing what the skill does \
-                 (to downgrade, add desc-vague-content to [lint] warn in claude-lint.toml)",
+                 (to downgrade, add desc-vague-content to [lint] warn in agent-lint.toml)",
                 info.path
             ),
         );

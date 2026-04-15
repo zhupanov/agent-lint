@@ -1,5 +1,5 @@
 [package]
-name = "claude-lint"
+name = "agent-lint"
 version = "1.0.39"
 edition = "2024"
 rust-version = "1.85.0"

@@ -1,5 +1,5 @@
 {
-  "name": "claude-lint",
+  "name": "agent-lint",
   "version": "1.0.39",
   "private": true,
   "description": "Configuration linter for Claude Code"

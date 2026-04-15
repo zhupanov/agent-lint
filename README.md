@@ -1,4 +1,4 @@
-# Claude Lint
+# Agent Lint
 
 - A linter for [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 configuration and plugins.
@@ -14,7 +14,7 @@ configuration and plugins.
     skill frontmatter, script references, executability)
   - **Plugin mode** -- runs the full rule suite when `.claude-plugin/` is
     present
-- **Configurable** -- suppress or downgrade rules via `claude-lint.toml`
+- **Configurable** -- suppress or downgrade rules via `agent-lint.toml`
 - **GitHub Action** for CI integration
 - **Cross-platform** binaries (Linux x86_64/aarch64, macOS aarch64)
 
@@ -23,7 +23,7 @@ configuration and plugins.
 ### GitHub Action
 
 ```yaml
-- uses: zhupanov/claude-lint@v1
+- uses: zhupanov/agent-lint@v1
   with:
     path: "."
 ```
@@ -31,16 +31,16 @@ configuration and plugins.
 ### Install on macOS
 
 ```bash
-curl -fsSL "$(curl -fsSL https://api.github.com/repos/zhupanov/claude-lint/releases/latest \
-  | grep -o 'https://[^"]*aarch64-apple-darwin.tar.gz')" -o /tmp/claude-lint.tar.gz
-tar -xzf /tmp/claude-lint.tar.gz -C /tmp
-sudo mv /tmp/claude-lint /usr/local/bin/claude-lint
+curl -fsSL "$(curl -fsSL https://api.github.com/repos/zhupanov/agent-lint/releases/latest \
+  | grep -o 'https://[^"]*aarch64-apple-darwin.tar.gz')" -o /tmp/agent-lint.tar.gz
+tar -xzf /tmp/agent-lint.tar.gz -C /tmp
+sudo mv /tmp/agent-lint /usr/local/bin/agent-lint
 ```
 
 ### CLI
 
 ```bash
-claude-lint [PATH]
+agent-lint [PATH]
 ```
 
 If `PATH` is omitted, the current directory is used. The tool detects the
@@ -51,7 +51,7 @@ mode automatically based on the presence of `.claude-plugin/`.
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `version` | Version of claude-lint (e.g., `1.0.0`) | Latest release |
+| `version` | Version of agent-lint (e.g., `1.0.0`) | Latest release |
 | `path` | Path to the repository to lint | `"."` |
 | `github-token` | GitHub token for resolving latest version | `""` (see below) |
 
@@ -69,8 +69,8 @@ when no explicit `version` is provided. If you pin `version` (e.g.,
 to configure or pass anything -- it just works.
 
 **What the token can access**: the token is sent in a single read-only API
-request to `api.github.com/repos/zhupanov/claude-lint/releases/latest` to
-fetch the latest tag name. It is never passed to the `claude-lint` binary.
+request to `api.github.com/repos/zhupanov/agent-lint/releases/latest` to
+fetch the latest tag name. It is never passed to the `agent-lint` binary.
 The linter itself only reads local files on disk -- it makes no network
 requests and has no access to your repository's GitHub API.
 
@@ -80,10 +80,10 @@ GitHub App token with restricted permissions, and the default
 
 ```yaml
 # Minimal -- token handled automatically:
-- uses: zhupanov/claude-lint@v1
+- uses: zhupanov/agent-lint@v1
 
 # Explicit version -- no token needed at all:
-- uses: zhupanov/claude-lint@v1
+- uses: zhupanov/agent-lint@v1
   with:
     version: "1.0.0"
 ```
@@ -92,22 +92,22 @@ GitHub App token with restricted permissions, and the default
 
 Give this prompt to Claude running in your repository:
 
-> **Add a GitHub Actions CI job called `claude-lint` that runs on pull requests
+> **Add a GitHub Actions CI job called `agent-lint` that runs on pull requests
 > to `main`. The job should use `ubuntu-latest`, have a 5-minute timeout,
 > check out the repo with `actions/checkout@v4`, and then run
-> `zhupanov/claude-lint@v1` with `path: "."`. Add it to the existing CI
+> `zhupanov/agent-lint@v1` with `path: "."`. Add it to the existing CI
 > workflow if one exists, otherwise create `.github/workflows/ci.yaml` with
 > `permissions: contents: read`.**
 
 The resulting job should look like:
 
 ```yaml
-  claude-lint:
+  agent-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: zhupanov/claude-lint@v1
+      - uses: zhupanov/agent-lint@v1
         with:
           path: "."
 ```
@@ -115,7 +115,7 @@ The resulting job should look like:
 ## CLI Reference
 
 ```text
-claude-lint [--list-scripts] [PATH]
+agent-lint [--list-scripts] [PATH]
 ```
 
 | Flag | Description |
@@ -136,14 +136,14 @@ Outputs discovered shell scripts, one per line. Useful for piping to
 external tools:
 
 ```bash
-claude-lint --list-scripts . | xargs -r shellcheck
+agent-lint --list-scripts . | xargs -r shellcheck
 ```
 
 The wrapper script `scripts/shellcheck-scripts.sh` automates this.
 
 ## Configuration
 
-Claude Lint reads an optional **`claude-lint.toml`** file from the
+Agent Lint reads an optional **`agent-lint.toml`** file from the
 repository root.
 
 ### File Format
@@ -189,7 +189,7 @@ checks (e.g., `plugin.json` must exist, `SECURITY.md` must exist). Use
 
 ### Behavior Without Config
 
-If `claude-lint.toml` is absent, all rules are enabled as errors and no
+If `agent-lint.toml` is absent, all rules are enabled as errors and no
 files are excluded. A malformed config file, unknown rule code/name, or
 invalid glob pattern causes exit code 2.
 
@@ -202,7 +202,7 @@ warning[G005/security-md-missing]: SECURITY.md is missing from repo root
 
 ## Lint Rules
 
-Claude Lint ships **104 rules** organized into 9 categories:
+Agent Lint ships **104 rules** organized into 9 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
@@ -266,7 +266,7 @@ make setup   # runs: pre-commit install
 ```text
 src/
 +-- main.rs              # CLI entry point: arg parsing, repo root, mode detection
-+-- config.rs            # claude-lint.toml loading and rule resolution
++-- config.rs            # agent-lint.toml loading and rule resolution
 +-- context.rs           # LintContext, ManifestState, LintMode
 +-- diagnostic.rs        # DiagnosticCollector, Severity, config-aware filtering
 +-- frontmatter.rs       # YAML frontmatter extraction
@@ -298,9 +298,9 @@ Runs on pull requests to `main` and `workflow_dispatch`:
   Rust fmt); clippy is skipped here and runs in build-and-test instead
 - **build-and-test** -- `cargo build`, `cargo test`, `cargo clippy`
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
-- **self-lint** -- runs claude-lint against its own repo and validates
+- **self-lint** -- runs agent-lint against its own repo and validates
   `--list-scripts` output
-- **e2e-test** -- uses `zhupanov/claude-lint@v1` as a GitHub Action
+- **e2e-test** -- uses `zhupanov/agent-lint@v1` as a GitHub Action
   (the same way clients integrate it), serving as both end-to-end
   validation and a reference model for users adding CI to their own repos
 

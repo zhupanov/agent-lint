@@ -187,7 +187,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- File glob exclusion via `[lint] exclude` in `claude-lint.toml` — matching files are
+- File glob exclusion via `[lint] exclude` in `agent-lint.toml` — matching files are
   completely invisible to the linter (no rules checked, no diagnostics produced)
 - `ExcludeSet` wrapper with path normalization (`./` stripping, backslash conversion)
 - Glob semantics matching `.gitignore` conventions (`*` single level, `**` recursive)
@@ -317,7 +317,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Ruff-style error codes: 46 lint rules across 9 categories (M/H/S/A/G/E/U/K/D), each with a unique code (e.g., M001) and human-readable name (e.g., plugin-json-missing)
-- TOML configuration file (`claude-lint.toml`) with `[lint]` section supporting `ignore` (suppress errors) and `warn` (downgrade to warnings) by code or name
+- TOML configuration file (`agent-lint.toml`) with `[lint]` section supporting `ignore` (suppress errors) and `warn` (downgrade to warnings) by code or name
 - Config validation: unknown rule codes/names rejected at load time, typos in section/field names detected via `deny_unknown_fields`
 
 ### Changed
@@ -330,7 +330,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Self-lint CI job that builds and runs `claude-lint` against the repo's own `.claude/` configuration
+- Self-lint CI job that builds and runs `agent-lint` against the repo's own `.claude/` configuration
 - Unconditional self-lint phase in `/relevant-checks` that validates Claude config on every invocation
 
 ### Changed

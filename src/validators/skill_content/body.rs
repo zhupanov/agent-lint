@@ -296,7 +296,7 @@ pub(super) fn check_body_content(
                     &format!(
                         "{}: body lists multiple alternatives without stating a default; \
                          pick a recommended option or add conditional context \
-                         (to downgrade, add body-no-default to [lint] warn in claude-lint.toml)",
+                         (to downgrade, add body-no-default to [lint] warn in agent-lint.toml)",
                         info.path
                     ),
                 );

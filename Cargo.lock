@@ -3,6 +3,20 @@
 version = 4
 
 [[package]]
+name = "agent-lint"
+version = "1.0.39"
+dependencies = [
+ "globset",
+ "regex",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "tempfile",
+ "toml",
+ "walkdir",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -38,20 +52,6 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
-
-[[package]]
-name = "claude-lint"
-version = "1.0.39"
-dependencies = [
- "globset",
- "regex",
- "serde",
- "serde_json",
- "serial_test",
- "tempfile",
- "toml",
- "walkdir",
-]
 
 [[package]]
 name = "equivalent"

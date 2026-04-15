@@ -1,4 +1,4 @@
-name: "Claude Lint"
+name: "Agent Lint"
 description: "Run Claude Code configuration linter"
 branding:
   icon: check-circle
@@ -6,7 +6,7 @@ branding:
 
 inputs:
   version:
-    description: "Version of claude-lint to use (e.g., '1.0.0'). Defaults to latest release."
+    description: "Version of agent-lint to use (e.g., '1.0.0'). Defaults to latest release."
     required: false
     default: ""
   path:
@@ -21,7 +21,7 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Install claude-lint
+    - name: Install agent-lint
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
@@ -29,6 +29,6 @@ runs:
         GITHUB_TOKEN: ${{ inputs.github-token || github.token }}
       run: bash "${{ github.action_path }}/scripts/install.sh"
 
-    - name: Run claude-lint
+    - name: Run agent-lint
       shell: bash
-      run: claude-lint "${{ inputs.path }}"
+      run: agent-lint "${{ inputs.path }}"

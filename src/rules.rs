@@ -1,4 +1,4 @@
-/// Central rule registry for claude-lint.
+/// Central rule registry for agent-lint.
 ///
 /// Every lint diagnostic has a unique code (e.g., "M001") and human-readable
 /// name (e.g., "plugin-json-missing"). Rules are grouped by category prefix.

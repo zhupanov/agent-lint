@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# claude-lint installer for GitHub Actions
+# agent-lint installer for GitHub Actions
 # Downloads a pre-built binary from GitHub Releases and adds it to PATH.
 
-REPO="zhupanov/claude-lint"
+REPO="zhupanov/agent-lint"
 
 # --- Platform guard -----------------------------------------------------------
 
 if [ "${RUNNER_OS:-}" = "Windows" ]; then
-  echo "::error::claude-lint GitHub Action does not support Windows runners."
+  echo "::error::agent-lint GitHub Action does not support Windows runners."
   exit 1
 fi
 
@@ -82,8 +82,8 @@ fi
 # --- Download -----------------------------------------------------------------
 
 BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
-TARBALL="claude-lint-v${VERSION}-${TARGET}.tar.gz"
-CHECKSUMS="claude-lint-v${VERSION}-checksums.txt"
+TARBALL="agent-lint-v${VERSION}-${TARGET}.tar.gz"
+CHECKSUMS="agent-lint-v${VERSION}-checksums.txt"
 
 INSTALL_DIR="$(mktemp -d)"
 cd "$INSTALL_DIR"
@@ -129,4 +129,4 @@ echo "Checksum verified."
 
 tar -xzf "$TARBALL"
 echo "${INSTALL_DIR}" >> "$GITHUB_PATH"
-echo "claude-lint ${VERSION} installed for ${TARGET}."
+echo "agent-lint ${VERSION} installed for ${TARGET}."

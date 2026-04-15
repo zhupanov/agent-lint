@@ -21,7 +21,7 @@ fn main() {
     for arg in &args[1..] {
         match arg.as_str() {
             "--help" | "-h" => {
-                println!("Usage: claude-lint [OPTIONS] [PATH]");
+                println!("Usage: agent-lint [OPTIONS] [PATH]");
                 println!();
                 println!("Options:");
                 println!("  --help, -h         Print this help message");
@@ -30,7 +30,7 @@ fn main() {
                 std::process::exit(0);
             }
             "--version" => {
-                println!("claude-lint {}", env!("CARGO_PKG_VERSION"));
+                println!("agent-lint {}", env!("CARGO_PKG_VERSION"));
                 std::process::exit(0);
             }
             "--list-scripts" => {
@@ -38,7 +38,7 @@ fn main() {
             }
             flag if flag.starts_with('-') => {
                 eprintln!("Unknown flag: {arg}");
-                eprintln!("Usage: claude-lint [--help] [--version] [--list-scripts] [PATH]");
+                eprintln!("Usage: agent-lint [--help] [--version] [--list-scripts] [PATH]");
                 std::process::exit(2);
             }
             _ => {
@@ -48,7 +48,7 @@ fn main() {
     }
 
     if positional.len() > 1 {
-        eprintln!("Usage: claude-lint [--help] [--version] [--list-scripts] [PATH]");
+        eprintln!("Usage: agent-lint [--help] [--version] [--list-scripts] [PATH]");
         std::process::exit(2);
     }
 
