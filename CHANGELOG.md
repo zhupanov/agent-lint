@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.2.0] - 2026-04-15
+
+### Added
+
+- `--autofix` CLI flag: automatically fixes violations for 12 rules with purely mechanical, unambiguous fixes
+- New `src/autofix.rs` module with per-rule fix implementations (chmod, frontmatter edits, text replacements, bash block merging)
+- `LintRule::is_autofixable()` method classifying which rules support automatic fixing
+- `DiagnosticCollector::with_config_silent()` for silent re-validation during autofix loop
+- `DiagnosticCollector::diagnostics()` accessor for programmatic access to collected diagnostics
+- Detect-fix-revalidate loop with max 50 iterations and progress tracking
+- Safety guards: S007 fix checks for `$ARGUMENTS` before removing `argument-hint`, S006 fix validates directory name before applying
+
 ## [2.1.2] - 2026-04-15
 
 ### Added
