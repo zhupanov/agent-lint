@@ -208,7 +208,7 @@ mod tests {
     fn test_v1_valid_plugin_json() {
         let val = json!({"name": "my-plugin", "version": "1.2.3"});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn test_v1_missing_plugin_json() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("is missing"));
@@ -228,7 +228,7 @@ mod tests {
             ManifestState::Invalid("parse error".to_string()),
             ManifestState::Missing,
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("parse error"));
@@ -238,7 +238,7 @@ mod tests {
     fn test_v1_missing_name() {
         let val = json!({"version": "1.0.0"});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("name"));
@@ -248,7 +248,7 @@ mod tests {
     fn test_v1_invalid_semver() {
         let val = json!({"name": "p", "version": "not-a-version"});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("semver"));
@@ -258,7 +258,7 @@ mod tests {
     fn test_v1_missing_version() {
         let val = json!({"name": "p"});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("version"));
@@ -273,7 +273,7 @@ mod tests {
             "plugins": [{"name": "p1", "source": "https://example.com"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn test_v2_missing_marketplace_json() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("is missing"));
@@ -291,7 +291,7 @@ mod tests {
     fn test_v2_empty_plugins_array() {
         let val = json!({"name": "mp", "owner": {"name": "o"}, "plugins": []});
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("empty plugins array"));
@@ -305,7 +305,7 @@ mod tests {
             "plugins": [{"name": "p", "source": "s"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("owner.name"));
@@ -319,7 +319,7 @@ mod tests {
             "plugins": [{"name": "p"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("plugins[0]"));
@@ -334,7 +334,7 @@ mod tests {
             "plugins": [{"name": "p", "source": "s", "category": "lint"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -347,7 +347,7 @@ mod tests {
             "plugins": [{"name": "p", "source": "s", "category": "lint"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("owner.email"));
@@ -361,7 +361,7 @@ mod tests {
             "plugins": [{"name": "p", "source": "s"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("category"));
@@ -374,7 +374,7 @@ mod tests {
             "plugins": [{"name": "p", "source": "s", "category": "lint"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
         assert_eq!(
             diag.error_count(),
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_v12_skips_when_not_parsed() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -402,7 +402,7 @@ mod tests {
             "keywords": ["lint"]
         });
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -416,7 +416,7 @@ mod tests {
             "keywords": ["lint"]
         });
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("description"));
@@ -432,7 +432,7 @@ mod tests {
             "keywords": []
         });
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("keywords"));
@@ -446,7 +446,7 @@ mod tests {
             "keywords": ["lint"]
         });
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
         assert_eq!(
             diag.error_count(),
@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn test_v13_skips_when_not_parsed() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }

@@ -150,7 +150,8 @@ repository root.
 
 ```toml
 [lint]
-ignore = ["M001", "G005"]                  # suppress entirely (by code)
+ignore = ["M001"]                          # suppress entirely (by code)
+error  = ["S033", "G005"]                  # promote to error (by code or name)
 warn   = ["plugin-json-invalid"]           # downgrade to warning (by name)
 exclude = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
 ```
@@ -160,14 +161,15 @@ exclude = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
 | Key | Type | Description |
 |-----|------|-------------|
 | `ignore` | string array | Rules to suppress completely (no output, no exit code effect) |
-| `warn` | string array | Rules to downgrade from error to warning (printed, but exit 0) |
+| `error` | string array | Rules to promote to error (overrides default severity) |
+| `warn` | string array | Rules to downgrade to warning (printed, but exit 0) |
 | `exclude` | string array | File glob patterns -- matching files are skipped entirely |
 
 ### Rule Identifiers
 
 Rules can be referenced by **code** (e.g., `M001`) or **human-readable
-name** (e.g., `plugin-json-missing`). If a rule appears in both `ignore`
-and `warn`, `ignore` takes precedence.
+name** (e.g., `plugin-json-missing`). Priority when a rule appears in
+multiple lists: `ignore` > `error` > `warn`.
 
 ### File Exclusion
 
@@ -187,17 +189,24 @@ agents, scripts, docs). It does **not** apply to fixed-path structural
 checks (e.g., `plugin.json` must exist, `SECURITY.md` must exist). Use
 `ignore` to suppress those rules instead.
 
+### Default Severity
+
+Each rule has a compiled-in default severity: **error** (68 rules) or
+**off** (36 rules). Style, quality, and niche rules are off by default.
+Use `error = [...]` in `agent-lint.toml` to enable them. See
+[docs/rules.md](docs/rules.md) for the default severity of each rule.
+
 ### Behavior Without Config
 
-If `agent-lint.toml` is absent, all rules are enabled as errors and no
-files are excluded. A malformed config file, unknown rule code/name, or
-invalid glob pattern causes exit code 2.
+If `agent-lint.toml` is absent, 68 rules are enabled as errors and 36
+style/quality/niche rules are off. A malformed config file, unknown rule
+code/name, or invalid glob pattern causes exit code 2.
 
 ### Diagnostic Output
 
 ```text
 error[M001/plugin-json-missing]: .claude-plugin/plugin.json is missing
-warning[G005/security-md-missing]: SECURITY.md is missing from repo root
+warning[M002/plugin-json-invalid]: plugin.json is not valid JSON
 ```
 
 ## Lint Rules

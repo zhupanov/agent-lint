@@ -231,7 +231,7 @@ mod tests {
             }
         });
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_structure(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -244,7 +244,7 @@ mod tests {
             }
         });
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_structure(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("description"));
@@ -254,7 +254,7 @@ mod tests {
     fn test_v18_no_userconfig_silent() {
         let val = serde_json::json!({"name": "p", "version": "1.0.0"});
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_structure(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -279,7 +279,7 @@ mod tests {
             }
         });
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_env_mapping(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -300,7 +300,7 @@ mod tests {
             }
         });
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_env_mapping(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
@@ -320,7 +320,7 @@ mod tests {
             }
         });
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_env_mapping(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
@@ -330,7 +330,7 @@ mod tests {
     fn test_v23_valid_sensitive_boolean() {
         let val = serde_json::json!({"userConfig": {"token": {"sensitive": true}}});
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_sensitive_type(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -339,7 +339,7 @@ mod tests {
     fn test_v23_invalid_sensitive_string() {
         let val = serde_json::json!({"userConfig": {"token": {"sensitive": "yes"}}});
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_sensitive_type(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("boolean"));
@@ -349,7 +349,7 @@ mod tests {
     fn test_v24_valid_title() {
         let val = serde_json::json!({"userConfig": {"token": {"title": "Bot Token"}}});
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_title(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -358,7 +358,7 @@ mod tests {
     fn test_v24_missing_title() {
         let val = serde_json::json!({"userConfig": {"token": {"description": "desc"}}});
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_title(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("title"));
@@ -368,7 +368,7 @@ mod tests {
     fn test_v25_valid_type() {
         let val = serde_json::json!({"userConfig": {"token": {"type": "string"}}});
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_type(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -377,7 +377,7 @@ mod tests {
     fn test_v25_missing_type() {
         let val = serde_json::json!({"userConfig": {"token": {"description": "desc"}}});
         let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_userconfig_type(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("type"));

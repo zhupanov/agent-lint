@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-04-14
+
+### Added
+
+- Compiled-in default severity for all 104 rules: 68 default to error, 36 style/quality/niche rules default to off
+- New `[lint] error` list in `agent-lint.toml` for promoting default-off rules to errors
+- `DefaultSeverity` enum and `LintRule::default_severity()` method for compile-time severity classification
+- `DiagnosticCollector::new_all_enabled()` test helper for exercising default-suppressed rules
+- Default severity column in `docs/rules.md` rules tables
+
+### Changed
+
+- Config priority cascade: user ignore > user error > user warn > compiled default severity
+- Default-suppressed rules are silently skipped (no count, no output) unless promoted via config
+- Updated S050 and S056 diagnostic messages to remove stale config guidance
+
 ## [2.0.0] - 2026-04-14
 
 ### Changed

@@ -78,7 +78,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("exceeds 64")));
     }
@@ -98,7 +98,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 64")));
     }
@@ -117,7 +117,7 @@ mod tests {
             "---\nname: my-skill-123\ndescription: A valid skill description here\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -139,7 +139,7 @@ mod tests {
             "---\nname: My-Skill\ndescription: A valid skill description here\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -162,7 +162,7 @@ mod tests {
             "---\nname: my--skill\ndescription: A valid skill description here\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -183,7 +183,7 @@ mod tests {
             "---\nname: -my-skill\ndescription: Use when testing hyphen rules\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -204,7 +204,7 @@ mod tests {
             "---\nname: my-skill-\ndescription: Use when testing hyphen rules\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -225,7 +225,7 @@ mod tests {
             "---\nname: my-good-skill\ndescription: Use when testing hyphen rules\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag
             .errors()
@@ -247,7 +247,7 @@ mod tests {
             "---\nname: claude-helper\ndescription: A valid skill description here\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("reserved word")));
     }
@@ -265,7 +265,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-<tag>skill\ndescription: A valid skill description here\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -286,7 +286,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -311,7 +311,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {long_desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 1024")));
     }
@@ -332,7 +332,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 1024")));
     }
@@ -352,7 +352,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {long_desc}\n---\nBody content\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("truncated")));
     }
@@ -371,7 +371,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody content\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("truncated")));
     }
@@ -389,7 +389,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need to analyze code\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -409,7 +409,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when the project needs code analysis and review\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -432,7 +432,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A skill that does things with code\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("trigger")));
     }
@@ -448,7 +448,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when the project needs analysis\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("trigger")));
     }
@@ -466,7 +466,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when <b>important</b> tasks need doing\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -486,7 +486,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when important tasks need doing well\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -513,7 +513,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -536,7 +536,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -558,7 +558,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n\n```bash\necho hello\n```\n\n```bash\necho world\n```\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("consecutive bash")));
     }
@@ -574,7 +574,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n\n```bash\necho hello\n```\n\nThen run the second command:\n\n```bash\necho world\n```\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("consecutive bash")));
     }
@@ -592,7 +592,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need path validation\n---\nUse the file at C:\\Users\\admin\\file.txt\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("backslash")));
     }
@@ -608,7 +608,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need path validation\n---\nUse the file at /Users/admin/file.txt\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("backslash")));
     }
@@ -624,7 +624,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need regex validation\n---\nUse regex like \\s and \\n to match patterns\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("backslash")));
     }
@@ -642,7 +642,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nuser-invocable: yes\n---\nBody\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -662,7 +662,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nuser-invocable: true\n---\nBody\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -685,7 +685,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need context testing\ncontext: invalid\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -705,7 +705,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need context testing\ncontext: fork\n---\nRun the analysis.\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -728,7 +728,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: extreme\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -748,7 +748,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: high\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("effort")));
     }
@@ -766,7 +766,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need shell testing\nshell: zsh\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -786,7 +786,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need shell testing\nshell: bash\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -809,7 +809,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\ndisable-model-invocation: true\nuser-invocable: false\n---\nBody\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("unreachable")));
     }
@@ -825,7 +825,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when testing reachability\ndisable-model-invocation: true\nuser-invocable: true\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("unreachable")));
     }
@@ -843,7 +843,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nUse $ARGUMENTS as input\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -863,7 +863,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <feature>\n---\nUse $ARGUMENTS as input\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("argument-hint")));
     }
@@ -880,7 +880,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nSome body text\n\n```bash\necho $ARGUMENTS\n```\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("argument-hint")),
@@ -901,7 +901,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nFetch from http://api.example.net/data\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("non-HTTPS")));
     }
@@ -917,7 +917,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nFetch from http://localhost:8080/data\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("non-HTTPS")));
     }
@@ -955,7 +955,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing\n---\nRefer to ${CLAUDE_PLUGIN_ROOT}/skills/shared/level1.md\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -981,7 +981,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing\n---\nRefer to ${CLAUDE_PLUGIN_ROOT}/skills/shared/flat.md\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1014,7 +1014,7 @@ mod tests {
             "skills/skill-b/SKILL.md",
             "---\nname: skill-b\ndescription: Use when you need skill B for testing\n---\nRef ${CLAUDE_PLUGIN_ROOT}/skills/shared/nested.md\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // Both skills reference the same nested shared file -- S029 should fire for each
         let errors = diag.errors();
@@ -1045,7 +1045,7 @@ mod tests {
             "skills/skill-b/SKILL.md",
             "---\nname: skill-b\ndescription: Use when you need skill B for testing\n---\nRef ${CLAUDE_PLUGIN_ROOT}/skills/shared/big.md\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // S036 should fire once per unique file, not once per referencing skill
         let errors = diag.errors();
@@ -1070,7 +1070,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nNo script refs\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("not referenced")));
     }
@@ -1087,7 +1087,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nRun helper.sh\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("not referenced")));
     }
@@ -1105,7 +1105,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need secret detection testing\n---\nSet key to sk-aBcDeFgHiJkLmNoPqRsT1234\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("hardcoded secret")));
     }
@@ -1121,7 +1121,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need secret detection testing\n---\nToken is ghp_abcdefghijklmnopqrstuvwxyz1234567890\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("hardcoded secret")));
     }
@@ -1137,7 +1137,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need secret detection testing\n---\nUse the $API_KEY environment variable for authentication\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("hardcoded secret")));
     }
@@ -1155,7 +1155,7 @@ mod tests {
             "skills/helper/SKILL.md",
             "---\nname: helper\ndescription: Use when you need help with various tasks\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("vague")));
     }
@@ -1171,7 +1171,7 @@ mod tests {
             "skills/code-review/SKILL.md",
             "---\nname: code-review\ndescription: Use when code changes need thorough review\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("vague")));
     }
@@ -1188,7 +1188,7 @@ mod tests {
             "---\nname: helper\ndescription: A valid skill description here\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // S033 is plugin-only, should not fire in private mode
         assert!(!diag.errors().iter().any(|e| e.contains("vague")));
@@ -1208,7 +1208,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Short\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("under 20")));
     }
@@ -1229,7 +1229,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("under 20")));
     }
@@ -1250,7 +1250,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {long_desc}\n---\nBody content\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // S016 (person) and S015 (truncated) should NOT fire in basic mode
         assert!(
@@ -1276,7 +1276,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: My-Skill\ndescription: I help you do things and more stuff here\n---\nBody content here\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // Both S010 and S016 should fire in plugin mode
         assert!(
@@ -1378,7 +1378,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: A valid skill description here\ncompatibility: {long_compat}\n---\nBody content\n"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1399,7 +1399,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when testing compat limits\ncompatibility: {compat}\n---\nBody content\n"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1426,7 +1426,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/big-ref.md\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("no ## headings")));
     }
@@ -1448,7 +1448,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/big-ref.md\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("no ## headings")));
     }
@@ -1467,7 +1467,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1489,7 +1489,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1512,7 +1512,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nThis expires after 2030 so plan accordingly.\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("date/year")));
     }
@@ -1528,7 +1528,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n\n```bash\necho 2030\n```\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("date/year")));
     }
@@ -1544,7 +1544,7 @@ mod tests {
             ".claude/skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nThis expires after 2030.\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("date/year")));
     }
@@ -1562,7 +1562,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nmetadata:\n  enabled: true\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1582,7 +1582,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when testing metadata validation\nmetadata: true\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1602,7 +1602,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when testing metadata validation\nmetadata:\n  version: \"1.0\"\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1625,7 +1625,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash, Read, FakeToolXyz\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("FakeToolXyz")));
     }
@@ -1641,7 +1641,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash, Read, Write, Grep, Glob\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1664,7 +1664,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\n---\nThis is just guidelines about how to behave.\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1684,7 +1684,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\n---\nRun the analysis and generate a report.\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1707,7 +1707,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription:\ndisable-model-invocation: true\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1727,7 +1727,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when the skill should be user-only\ndisable-model-invocation: true\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1750,7 +1750,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: C:\\Users\\file\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1770,7 +1770,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when testing frontmatter paths\nargument-hint: /usr/local/bin/tool\n---\nBody content\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1794,7 +1794,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1816,7 +1816,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1837,7 +1837,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nShort body without workflow.\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1862,7 +1862,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1887,7 +1887,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1909,7 +1909,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1933,7 +1933,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -1955,7 +1955,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -1976,7 +1976,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nShort body without examples.\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2001,7 +2001,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2024,7 +2024,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -2047,7 +2047,7 @@ mod tests {
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
         ).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -2079,7 +2079,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install requests\n\nRun scripts/run.sh\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2103,7 +2103,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nThis skill runs a script to do things.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -2125,7 +2125,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nJust a plain skill with no scripts.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2149,7 +2149,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nThis skill runs a script to do things.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2173,7 +2173,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nRun the script.\n\n```bash\npip install requests\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2199,7 +2199,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Validation\n\nRun the script and verify the output.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2223,7 +2223,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\nThis skill does stuff.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -2245,7 +2245,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nJust a plain skill.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2269,7 +2269,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\nThis skill does stuff.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2293,7 +2293,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n```bash\n# verify the output\necho 'done'\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2317,7 +2317,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md for details.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2348,7 +2348,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nRun setup.sh to configure the environment.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -2378,7 +2378,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\nThis does stuff.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2409,7 +2409,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Kubernetes deployment scaling orchestration\n---\nThis skill handles testing and linting of source code.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -2431,7 +2431,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Extract PDF tables and merge documents\n---\nThis skill extracts tables from PDF files and merges documents together.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2454,7 +2454,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Parse YAML\n---\nThis skill does something completely unrelated.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2477,7 +2477,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Kubernetes deployment scaling orchestration\n---\nThis skill handles testing and linting of source code.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2500,7 +2500,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need Kubernetes deployment scaling\n---\nThis skill manages Kubernetes deployment and scaling of pods.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2524,7 +2524,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Analyze TypeScript interfaces\n---\nThis skill analyzes TypeScript interfaces for correctness.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2547,7 +2547,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Kubernetes deployment scaling orchestration\n---\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2577,7 +2577,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("exceeds 64")));
     }
@@ -2597,7 +2597,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("exceeds 1024")));
     }
@@ -2617,7 +2617,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("exceeds 500")));
     }
@@ -2634,7 +2634,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when testing body presence\n---\nHas body content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -2659,7 +2659,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("under 20")));
     }
@@ -2768,16 +2768,21 @@ mod tests {
         )
         .unwrap();
 
-        // Without config: S020 and S034 should fire
+        // Without config: S020 fires (default-error), S034 is silently
+        // skipped (default-suppressed).
         let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("no content")));
-        assert!(diag.errors().iter().any(|e| e.contains("under 20")));
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("under 20")),
+            "S034 should be default-suppressed"
+        );
 
         // With config ignoring S020
         use crate::rules::LintRule;
         let config = crate::config::LintConfig {
             ignore: std::collections::HashSet::from([LintRule::BodyEmpty]),
+            error: std::collections::HashSet::from([LintRule::DescTooShort]),
             warn: std::collections::HashSet::new(),
             exclude: vec![],
         };
@@ -2810,6 +2815,7 @@ mod tests {
         use crate::rules::LintRule;
         let config = crate::config::LintConfig {
             ignore: std::collections::HashSet::new(),
+            error: std::collections::HashSet::new(),
             warn: std::collections::HashSet::from([LintRule::DescTooShort]),
             exclude: vec![],
         };
@@ -2848,7 +2854,7 @@ mod tests {
         .unwrap();
 
         // Plugin mode runs both public and private
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
 
@@ -2881,7 +2887,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools:\n  - Bash\n  - Read\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors().iter().any(|e| e.contains("list syntax")),
@@ -2902,7 +2908,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash, Read\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("list syntax")),
@@ -2923,7 +2929,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("list syntax")),
@@ -2944,7 +2950,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools:\n  - Bash\n  - Read\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         // Run both validators (skills frontmatter + content) like the full pipeline would
         crate::validators::skills::validate_skill_frontmatter(
             &mut diag,
@@ -2990,7 +2996,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: Use when testing boundary\n---\n{body}"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3014,7 +3020,7 @@ mod tests {
             format!("---\nname: my-skill\ndescription: Use when testing boundary\n---\n{body}"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3038,7 +3044,7 @@ mod tests {
             "---\nname: reviewing-code\ndescription: Use when code changes need thorough review and analysis\nuser-invocable: true\neffort: high\nshell: bash\nargument-hint: <PR number or branch name>\n---\n\n# Code Review\n\nPerform a thorough code review of the specified changes.\n\n## Steps\n\n1. Run the analysis on $ARGUMENTS\n2. Generate a summary report\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         let skill_errors: Vec<_> = diag
             .errors()
@@ -3068,7 +3074,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3093,7 +3099,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3119,7 +3125,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3145,7 +3151,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3171,7 +3177,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3197,7 +3203,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3222,7 +3228,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(
             diag.errors()
@@ -3250,7 +3256,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write("skills/my-skill/doc1.md", "some content").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3272,7 +3278,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write("skills/my-skill/api-reference.md", "some content").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3294,7 +3300,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need testing of ref names\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3317,7 +3323,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write("skills/my-skill/scripts/doc1.md", "some content").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3340,7 +3346,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write("skills/my-skill/a.md", "some content").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3362,7 +3368,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write("skills/my-skill/02.md", "some content").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3384,7 +3390,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write("skills/my-skill/data.md", "some content").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3406,7 +3412,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(".claude/skills/my-skill/file1.md", "some content").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3429,7 +3435,7 @@ mod tests {
             "---\nname: code-review\ndescription: Use when code changes need thorough review\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("gerund")));
     }
@@ -3446,7 +3452,7 @@ mod tests {
             "---\nname: processing-pdfs\ndescription: Use when you need to process PDF documents\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("gerund")));
     }
@@ -3463,7 +3469,7 @@ mod tests {
             "---\nname: string-utils\ndescription: Use when you need string manipulation utilities\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // "string" ends in "ing" but is in the exception list — S049 should fire
         // because there are no actual gerund words, only a non-gerund exception
@@ -3482,7 +3488,7 @@ mod tests {
             "---\nname: code-review\ndescription: A valid skill description here\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // S049 is plugin-only, should not fire in private mode
         assert!(!diag.errors().iter().any(|e| e.contains("gerund")));
@@ -3502,7 +3508,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Helps with documents. Use when working with files.\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors().iter().any(|e| e.contains("vague/generic")),
@@ -3522,7 +3528,7 @@ mod tests {
             "---\nname: pdf-tool\ndescription: Extract text and tables from PDF files, fill forms, merge documents. Use when working with PDF files.\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("vague/generic")),
@@ -3542,7 +3548,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Helps with documents. Use when working with files.\n---\nBody content\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // S050 is plugin-only, should not fire in private mode
         assert!(
@@ -3568,7 +3574,7 @@ mod tests {
              Check the url for the response.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3592,7 +3598,7 @@ mod tests {
              The route should be configured.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("synonym group")),
@@ -3617,7 +3623,7 @@ mod tests {
              ```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("synonym group")),
@@ -3640,7 +3646,7 @@ mod tests {
              Set up the Route correctly.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors().iter().any(|e| e.contains("synonym group")),
@@ -3663,7 +3669,7 @@ mod tests {
              Check the url for the response.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("synonym group")),
@@ -3690,7 +3696,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3718,7 +3724,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3746,7 +3752,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3774,7 +3780,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3801,7 +3807,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.py to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3829,7 +3835,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.py to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3851,7 +3857,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nJust a plain skill with no scripts.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3879,7 +3885,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nThis skill runs a script.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3907,7 +3913,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/run.sh to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -3940,7 +3946,7 @@ mod tests {
             "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts to verify.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         let errors = diag.errors();
         let errhand_errors: Vec<_> = errors
@@ -3973,7 +3979,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nYou can use pypdf, or pdfplumber, or PyMuPDF to extract text.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -3995,7 +4001,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nYou can use pypdf, pdfplumber, or PyMuPDF to extract text.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -4017,7 +4023,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nIf you need text extraction, use pdfplumber or pypdf or PyMuPDF.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4040,7 +4046,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nWe recommend pdfplumber, pypdf, or PyMuPDF for text extraction.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4063,7 +4069,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nUse pdfplumber or PyMuPDF for extraction.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4086,7 +4092,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```\nYou can use pypdf, or pdfplumber, or PyMuPDF to extract text.\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4109,7 +4115,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nYou can use pypdf, or pdfplumber, or PyMuPDF to extract text.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4132,7 +4138,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nWhen processing files, use tool A or tool B or tool C.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4155,7 +4161,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nUse tool A or tool B or tool C; tool A is the default.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4178,7 +4184,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nPrefer tool A over tool B or tool C for most cases.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4201,7 +4207,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nUse tool A or tool B or tool C if you need more speed.\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -4225,7 +4231,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nTIMEOUT = 47\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         let errors = diag.errors();
         assert!(
@@ -4249,7 +4255,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nPORT = 443\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4272,7 +4278,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nFLAG = 0\nCOUNT = 1\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4295,7 +4301,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nTIMEOUT = 47 # slow network tolerance\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4318,7 +4324,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\n# Timeout for slow networks\nTIMEOUT = 47\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4341,7 +4347,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nTIMEOUT = 47\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4364,7 +4370,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nTIMEOUT = 47\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4387,7 +4393,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```python\nRATIO = 3.14\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -4410,7 +4416,7 @@ mod tests {
             "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```python\n# TIMEOUT = 47\nx = 1\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag

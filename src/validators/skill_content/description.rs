@@ -152,8 +152,7 @@ pub(super) fn check_description_quality(
             LintRule::DescVagueContent,
             &format!(
                 "{}: description content is too vague/generic; \
-                 add specific terms describing what the skill does \
-                 (to downgrade, add desc-vague-content to [lint] warn in agent-lint.toml)",
+                 add specific terms describing what the skill does",
                 info.path
             ),
         );

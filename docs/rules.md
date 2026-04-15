@@ -2,7 +2,12 @@
 
 Agent Lint ships 104 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
-Either form can be used in `agent-lint.toml` to ignore or downgrade a rule.
+Either form can be used in `agent-lint.toml` to configure rule severity.
+
+**Default column key:**
+
+- **error** -- rule fires as an error by default
+- **off** -- rule is silently skipped by default (enable via `[lint] error`)
 
 **Mode column key:**
 
@@ -11,181 +16,181 @@ Either form can be used in `agent-lint.toml` to ignore or downgrade a rule.
 
 ## Manifest Rules (M)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| M001 | `plugin-json-missing` | `.claude-plugin/plugin.json` is missing | Plugin |
-| M002 | `plugin-json-invalid` | `plugin.json` is not valid JSON | Plugin |
-| M003 | `plugin-field-missing` | `plugin.json` missing required field (`name` or `version`) | Plugin |
-| M004 | `plugin-version-format` | `plugin.json` version is not strict `MAJOR.MINOR.PATCH` semver | Plugin |
-| M005 | `marketplace-json-missing` | `marketplace.json` is missing | Plugin |
-| M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON | Plugin |
-| M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name` or `owner.name`) | Plugin |
-| M008 | `marketplace-plugins-empty` | `marketplace.json` plugins array is empty | Plugin |
-| M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name` or `source` | Plugin |
-| M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin |
-| M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| M001 | `plugin-json-missing` | `.claude-plugin/plugin.json` is missing | Plugin | error |
+| M002 | `plugin-json-invalid` | `plugin.json` is not valid JSON | Plugin | error |
+| M003 | `plugin-field-missing` | `plugin.json` missing required field (`name` or `version`) | Plugin | error |
+| M004 | `plugin-version-format` | `plugin.json` version is not strict `MAJOR.MINOR.PATCH` semver | Plugin | error |
+| M005 | `marketplace-json-missing` | `marketplace.json` is missing | Plugin | error |
+| M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON | Plugin | error |
+| M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name` or `owner.name`) | Plugin | error |
+| M008 | `marketplace-plugins-empty` | `marketplace.json` plugins array is empty | Plugin | error |
+| M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name` or `source` | Plugin | error |
+| M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin | off |
+| M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | off |
 
 ## Hooks Rules (H)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| H001 | `hooks-json-missing` | `hooks/hooks.json` is missing | Plugin |
-| H002 | `hooks-json-invalid` | `hooks/hooks.json` is not valid JSON | Plugin |
-| H003 | `hooks-key-missing` | `hooks.json` missing top-level `hooks` key | Plugin |
-| H004 | `hook-command-missing` | Hook command script missing on disk | Both |
-| H005 | `hook-not-executable` | Hook command script not executable | Both |
-| H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Both |
-| H007 | `hooks-array-empty` | `hooks.json` has empty `hooks` array | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| H001 | `hooks-json-missing` | `hooks/hooks.json` is missing | Plugin | error |
+| H002 | `hooks-json-invalid` | `hooks/hooks.json` is not valid JSON | Plugin | error |
+| H003 | `hooks-key-missing` | `hooks.json` missing top-level `hooks` key | Plugin | error |
+| H004 | `hook-command-missing` | Hook command script missing on disk | Both | error |
+| H005 | `hook-not-executable` | Hook command script not executable | Both | error |
+| H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Both | error |
+| H007 | `hooks-array-empty` | `hooks.json` has empty `hooks` array | Plugin | error |
 
 ## Skills Rules (S)
 
 ### Structure and Frontmatter (S001--S008)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S001 | `skills-dir-missing` | `skills/` directory is missing (deprecated — no longer fires) | Plugin |
-| S002 | `skill-md-missing` | `skills/{name}/` missing `SKILL.md` | Plugin |
-| S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin |
-| S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Both |
-| S005 | `frontmatter-field-missing` | `SKILL.md` missing required field (`name` or `description`) | Both |
-| S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Plugin |
-| S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Both |
-| S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S001 | `skills-dir-missing` | `skills/` directory is missing (deprecated — no longer fires) | Plugin | error |
+| S002 | `skill-md-missing` | `skills/{name}/` missing `SKILL.md` | Plugin | error |
+| S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin | error |
+| S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Both | error |
+| S005 | `frontmatter-field-missing` | `SKILL.md` missing required field (`name` or `description`) | Both | error |
+| S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Plugin | error |
+| S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Both | error |
+| S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin | error |
 
 ### Name Validation (S009--S013, S033, S049)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S009 | `name-too-long` | Skill name exceeds 64 characters | Both |
-| S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | Both |
-| S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | Both |
-| S012 | `name-reserved-word` | Skill name contains reserved word (`anthropic` or `claude`) | Both |
-| S013 | `name-has-xml` | Skill name contains XML/HTML tags | Both |
-| S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin |
-| S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S009 | `name-too-long` | Skill name exceeds 64 characters | Both | error |
+| S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | Both | error |
+| S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | Both | error |
+| S012 | `name-reserved-word` | Skill name contains reserved word (`anthropic` or `claude`) | Both | error |
+| S013 | `name-has-xml` | Skill name contains XML/HTML tags | Both | error |
+| S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin | off |
+| S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin | off |
 
 ### Description Validation (S014--S018, S034, S050)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S014 | `desc-too-long` | Skill description exceeds 1024 characters | Both |
-| S015 | `desc-truncated` | Skill description exceeds 250 characters (truncated in listings) | Plugin |
-| S016 | `desc-uses-person` | Skill description uses first/second person | Plugin |
-| S017 | `desc-no-trigger` | Skill description lacks trigger context (e.g., "Use when...") | Plugin |
-| S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Both |
-| S034 | `desc-too-short` | Skill description under 20 characters | Both |
-| S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S014 | `desc-too-long` | Skill description exceeds 1024 characters | Both | error |
+| S015 | `desc-truncated` | Skill description exceeds 250 characters (truncated in listings) | Plugin | off |
+| S016 | `desc-uses-person` | Skill description uses first/second person | Plugin | error |
+| S017 | `desc-no-trigger` | Skill description lacks trigger context (e.g., "Use when...") | Plugin | error |
+| S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Both | error |
+| S034 | `desc-too-short` | Skill description under 20 characters | Both | off |
+| S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin | off |
 
 ### Body Content (S019--S022, S037--S038, S041, S046--S047, S051--S053, S055--S057)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S019 | `body-too-long` | `SKILL.md` body exceeds 500 lines | Both |
-| S020 | `body-empty` | `SKILL.md` has no content after frontmatter | Both |
-| S021 | `consecutive-bash` | Consecutive bash code blocks that could be combined | Both |
-| S022 | `backslash-path` | Windows-style backslash paths in skill content | Both |
-| S037 | `body-no-refs` | Body exceeds 300 lines with no file references | Plugin |
-| S038 | `time-sensitive` | Body contains time-sensitive date/year patterns | Plugin |
-| S041 | `fork-no-task` | `context: fork` set but body lacks task instructions | Both |
-| S046 | `body-no-workflow` | Body exceeds 300 lines with no workflow structure | Plugin |
-| S047 | `body-no-examples` | Body exceeds 200 lines with no examples or templates | Plugin |
-| S051 | `script-deps-missing` | Script-backed skill lacks dependency/package documentation | Plugin |
-| S052 | `script-verify-missing` | Script-backed skill lacks verification/validation steps | Plugin |
-| S053 | `terminology-inconsistent` | Uses 3+ variants from the same synonym group | Plugin |
-| S055 | `script-errhand-missing` | Script file lacks error handling patterns (`set -e`/`trap` for shell, `try`/`except` for Python) | Plugin |
-| S056 | `body-no-default` | Body lists alternatives without stating a default recommendation | Plugin |
-| S057 | `magic-number-undoc` | Undocumented magic number in code block (no justification comment) | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S019 | `body-too-long` | `SKILL.md` body exceeds 500 lines | Both | off |
+| S020 | `body-empty` | `SKILL.md` has no content after frontmatter | Both | error |
+| S021 | `consecutive-bash` | Consecutive bash code blocks that could be combined | Both | off |
+| S022 | `backslash-path` | Windows-style backslash paths in skill content | Both | error |
+| S037 | `body-no-refs` | Body exceeds 300 lines with no file references | Plugin | off |
+| S038 | `time-sensitive` | Body contains time-sensitive date/year patterns | Plugin | off |
+| S041 | `fork-no-task` | `context: fork` set but body lacks task instructions | Both | error |
+| S046 | `body-no-workflow` | Body exceeds 300 lines with no workflow structure | Plugin | off |
+| S047 | `body-no-examples` | Body exceeds 200 lines with no examples or templates | Plugin | off |
+| S051 | `script-deps-missing` | Script-backed skill lacks dependency/package documentation | Plugin | off |
+| S052 | `script-verify-missing` | Script-backed skill lacks verification/validation steps | Plugin | off |
+| S053 | `terminology-inconsistent` | Uses 3+ variants from the same synonym group | Plugin | off |
+| S055 | `script-errhand-missing` | Script file lacks error handling patterns (`set -e`/`trap` for shell, `try`/`except` for Python) | Plugin | off |
+| S056 | `body-no-default` | Body lists alternatives without stating a default recommendation | Plugin | off |
+| S057 | `magic-number-undoc` | Undocumented magic number in code block (no justification comment) | Plugin | off |
 
 ### Frontmatter Field Types (S023--S027)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S023 | `bool-field-invalid` | Boolean fields (`user-invocable`, `disable-model-invocation`) must be `true`/`false` | Both |
-| S024 | `context-field-invalid` | `context` field must be `fork` (if present) | Both |
-| S025 | `effort-field-invalid` | `effort` field must be `low`/`medium`/`high`/`max` (if present) | Both |
-| S026 | `shell-field-invalid` | `shell` field must be `bash`/`powershell` (if present) | Both |
-| S027 | `skill-unreachable` | Skill unreachable: `disable-model-invocation: true` AND `user-invocable: false` | Both |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S023 | `bool-field-invalid` | Boolean fields (`user-invocable`, `disable-model-invocation`) must be `true`/`false` | Both | error |
+| S024 | `context-field-invalid` | `context` field must be `fork` (if present) | Both | error |
+| S025 | `effort-field-invalid` | `effort` field must be `low`/`medium`/`high`/`max` (if present) | Both | error |
+| S026 | `shell-field-invalid` | `shell` field must be `bash`/`powershell` (if present) | Both | error |
+| S027 | `skill-unreachable` | Skill unreachable: `disable-model-invocation: true` AND `user-invocable: false` | Both | error |
 
 ### Extended Frontmatter (S035, S039--S040, S042--S045)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S035 | `compat-too-long` | `compatibility` field exceeds 500 characters | Both |
-| S039 | `metadata-not-string` | Metadata map values must be strings | Both |
-| S040 | `tools-unknown` | `allowed-tools` lists unrecognized tool name | Both |
-| S042 | `dmi-empty-desc` | `disable-model-invocation: true` with empty/missing description | Both |
-| S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Both |
-| S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Both |
-| S045 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Both |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S035 | `compat-too-long` | `compatibility` field exceeds 500 characters | Both | off |
+| S039 | `metadata-not-string` | Metadata map values must be strings | Both | error |
+| S040 | `tools-unknown` | `allowed-tools` lists unrecognized tool name | Both | off |
+| S042 | `dmi-empty-desc` | `disable-model-invocation: true` with empty/missing description | Both | error |
+| S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Both | error |
+| S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Both | off |
+| S045 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Both | off |
 
 ### Cross-Field and Structural (S028--S032, S036, S048, S054)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S028 | `args-no-hint` | Body uses `$ARGUMENTS` but frontmatter has no `argument-hint` field | Both |
-| S029 | `nested-ref-deep` | Referenced shared `.md` itself references other shared `.md` files | Plugin |
-| S030 | `orphaned-skill-files` | Files in skill `scripts/` not referenced from `SKILL.md` | Both |
-| S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content | Both |
-| S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | Both |
-| S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no `##` headings | Plugin |
-| S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Both |
-| S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S028 | `args-no-hint` | Body uses `$ARGUMENTS` but frontmatter has no `argument-hint` field | Both | error |
+| S029 | `nested-ref-deep` | Referenced shared `.md` itself references other shared `.md` files | Plugin | off |
+| S030 | `orphaned-skill-files` | Files in skill `scripts/` not referenced from `SKILL.md` | Both | error |
+| S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content | Both | error |
+| S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | Both | error |
+| S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no `##` headings | Plugin | off |
+| S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Both | off |
+| S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin | off |
 
 ## Agent Rules (A)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| A001 | `agents-dir-missing` | `agents/` directory is missing | Plugin |
-| A002 | `agent-frontmatter-malformed` | Agent `.md` has malformed frontmatter | Plugin |
-| A003 | `agent-field-missing` | Agent `.md` missing required field (`name` or `description`) | Plugin |
-| A004 | `no-agent-files` | `agents/` has no `.md` files | Plugin |
-| A005 | `template-file-missing` | `skills/shared/reviewer-templates.md` is missing | Plugin |
-| A006 | `template-marker-missing` | Agent `.md` missing "Derived from" marker | Plugin |
-| A007 | `template-count-mismatch` | Agent-template count mismatch | Plugin |
-| A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Plugin |
-| A009 | `agent-desc-short` | Agent description under 20 characters | Plugin |
-| A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Plugin |
-| A011 | `agent-desc-redundant` | Agent description too similar to agent name | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| A001 | `agents-dir-missing` | `agents/` directory is missing | Plugin | error |
+| A002 | `agent-frontmatter-malformed` | Agent `.md` has malformed frontmatter | Plugin | error |
+| A003 | `agent-field-missing` | Agent `.md` missing required field (`name` or `description`) | Plugin | error |
+| A004 | `no-agent-files` | `agents/` has no `.md` files | Plugin | error |
+| A005 | `template-file-missing` | `skills/shared/reviewer-templates.md` is missing | Plugin | off |
+| A006 | `template-marker-missing` | Agent `.md` missing "Derived from" marker | Plugin | off |
+| A007 | `template-count-mismatch` | Agent-template count mismatch | Plugin | off |
+| A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Plugin | error |
+| A009 | `agent-desc-short` | Agent description under 20 characters | Plugin | error |
+| A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Plugin | error |
+| A011 | `agent-desc-redundant` | Agent description too similar to agent name | Plugin | error |
 
 ## Hygiene / Scripts Rules (G)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| G001 | `pwd-in-skill` | `SKILL.md` uses `$PWD/` or hardcoded path instead of `${CLAUDE_PLUGIN_ROOT}/` | Plugin |
-| G002 | `script-ref-missing` | Script reference missing on disk | Both |
-| G003 | `script-not-executable` | Script file not executable | Both |
-| G004 | `dead-script` | Dead script with no structured invocation reference | Plugin |
-| G005 | `security-md-missing` | `SECURITY.md` is missing from repo root | Plugin |
-| G006 | `todo-in-skill` | `TODO`/`FIXME`/`HACK`/`XXX` marker in published skill body | Plugin |
-| G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| G001 | `pwd-in-skill` | `SKILL.md` uses `$PWD/` or hardcoded path instead of `${CLAUDE_PLUGIN_ROOT}/` | Plugin | error |
+| G002 | `script-ref-missing` | Script reference missing on disk | Both | error |
+| G003 | `script-not-executable` | Script file not executable | Both | error |
+| G004 | `dead-script` | Dead script with no structured invocation reference | Plugin | error |
+| G005 | `security-md-missing` | `SECURITY.md` is missing from repo root | Plugin | off |
+| G006 | `todo-in-skill` | `TODO`/`FIXME`/`HACK`/`XXX` marker in published skill body | Plugin | off |
+| G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin | off |
 
 ## Email Rules (E)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| E001 | `invalid-email-format` | Email address is not a valid format | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| E001 | `invalid-email-format` | Email address is not a valid format | Plugin | error |
 
 ## User Config Rules (U)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| U001 | `userconfig-not-object` | `userConfig` in `.claude/settings.json` must be an object | Plugin |
-| U002 | `userconfig-desc-missing` | `userConfig` entry missing or invalid description | Plugin |
-| U003 | `userconfig-env-missing` | `userConfig` key has no corresponding env var reference in `scripts/` | Plugin |
-| U004 | `userconfig-sensitive-type` | `userConfig` `sensitive` field must be a boolean | Plugin |
-| U005 | `userconfig-title-missing` | `userConfig` entry missing or invalid title | Plugin |
-| U006 | `userconfig-type-missing` | `userConfig` entry missing or invalid type | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| U001 | `userconfig-not-object` | `userConfig` in `.claude/settings.json` must be an object | Plugin | error |
+| U002 | `userconfig-desc-missing` | `userConfig` entry missing or invalid description | Plugin | error |
+| U003 | `userconfig-env-missing` | `userConfig` key has no corresponding env var reference in `scripts/` | Plugin | error |
+| U004 | `userconfig-sensitive-type` | `userConfig` `sensitive` field must be a boolean | Plugin | error |
+| U005 | `userconfig-title-missing` | `userConfig` entry missing or invalid title | Plugin | error |
+| U006 | `userconfig-type-missing` | `userConfig` entry missing or invalid type | Plugin | error |
 
 ## Slack Rules (K)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| K001 | `slack-fallback-mismatch` | Slack fallback variable without corresponding `CLAUDE_PLUGIN_OPTION_` reference | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| K001 | `slack-fallback-mismatch` | Slack fallback variable without corresponding `CLAUDE_PLUGIN_OPTION_` reference | Plugin | off |
 
 ## Docs Rules (D)
 
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin |
-| D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin |
-| D003 | `todo-in-docs` | `TODO`/`FIXME`/`HACK`/`XXX` marker in `CLAUDE.md` (outside code fences) | Plugin |
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin | error |
+| D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin | off |
+| D003 | `todo-in-docs` | `TODO`/`FIXME`/`HACK`/`XXX` marker in `CLAUDE.md` (outside code fences) | Plugin | off |

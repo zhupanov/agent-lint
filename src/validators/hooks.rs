@@ -150,7 +150,7 @@ mod tests {
     fn test_v3_valid_hooks_json() {
         let val = json!({"hooks": [{"command": "echo test"}]});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -158,7 +158,7 @@ mod tests {
     #[test]
     fn test_v3_missing_hooks_json() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("is missing"));
@@ -170,7 +170,7 @@ mod tests {
             ManifestState::Invalid("bad json".to_string()),
             ManifestState::Missing,
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("bad json"));
@@ -180,7 +180,7 @@ mod tests {
     fn test_v3_missing_hooks_key() {
         let val = json!({"other": "stuff"});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("hooks"));
@@ -190,7 +190,7 @@ mod tests {
     fn test_v3_empty_hooks_array() {
         let val = json!({"hooks": []});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("empty"));
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn test_v4_missing_settings_silent_pass() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_hooks(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -211,7 +211,7 @@ mod tests {
             ManifestState::Missing,
             ManifestState::Invalid("bad settings".to_string()),
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_hooks(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("bad settings"));
@@ -221,7 +221,7 @@ mod tests {
     fn test_v4_valid_settings_no_hooks() {
         let val = json!({"permissions": {}});
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_hooks(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -237,7 +237,7 @@ mod tests {
         let val = json!({
             "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/nonexistent.sh"}]
         });
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hook_command_paths(
             &val,
             "test",
@@ -268,7 +268,7 @@ mod tests {
         let val = json!({
             "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/test.sh arg1"}]
         });
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hook_command_paths(
             &val,
             "test",
@@ -297,7 +297,7 @@ mod tests {
         let val = json!({
             "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/noexec.sh"}]
         });
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hook_command_paths(
             &val,
             "test",

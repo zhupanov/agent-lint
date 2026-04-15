@@ -36,7 +36,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_pwd_hygiene(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -55,7 +55,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_pwd_hygiene(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("$PWD"));
@@ -75,7 +75,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_pwd_hygiene(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("hardcoded path"));
@@ -96,7 +96,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_executability(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -115,7 +115,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_executability(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
@@ -135,7 +135,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_private_executability(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -154,7 +154,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_private_executability(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
@@ -170,7 +170,7 @@ mod tests {
 
         std::fs::write("SECURITY.md", "# Security Policy\n").unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_security_md(&mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -182,7 +182,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_security_md(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("SECURITY.md"));
@@ -205,7 +205,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -224,7 +224,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
@@ -245,7 +245,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_private_script_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -264,7 +264,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_private_script_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
@@ -295,7 +295,7 @@ mod tests {
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
         };
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -318,7 +318,7 @@ mod tests {
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
         };
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("dead script"));
@@ -345,7 +345,7 @@ mod tests {
             hooks_json: crate::context::ManifestState::Parsed(hooks_val),
             settings_json: crate::context::ManifestState::Missing,
         };
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(
             diag.error_count(),
@@ -375,7 +375,7 @@ mod tests {
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Parsed(settings_val),
         };
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(
             diag.error_count(),
@@ -529,7 +529,7 @@ mod tests {
             "---\nname: my-skill\ndescription: desc\n---\nTODO: implement this\n",
         )
         .unwrap();
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_todo_in_skills(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("TODO")));
     }
@@ -546,7 +546,7 @@ mod tests {
             "---\nname: my-skill\ndescription: desc\n---\n\n```bash\n# TODO: this is fine\n```\n",
         )
         .unwrap();
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_todo_in_skills(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("TODO")));
     }
@@ -563,7 +563,7 @@ mod tests {
             "---\nname: my-skill\ndescription: desc\n---\n\n````\n```\n# TODO: nested\n```\n````\n",
         )
         .unwrap();
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_todo_in_skills(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("TODO")),
@@ -584,7 +584,7 @@ mod tests {
             "---\nname: general\ndescription: desc\n---\nFIXME: this needs work\n",
         )
         .unwrap();
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_todo_in_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("FIXME")));
     }
@@ -601,7 +601,7 @@ mod tests {
             "---\nname: general\ndescription: desc\n---\n\n```\n# FIXME: inside fence\n```\n",
         )
         .unwrap();
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_todo_in_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("FIXME")));
     }
@@ -618,7 +618,7 @@ mod tests {
             "---\nname: general\ndescription: desc\n---\n\n````\n```\n# FIXME: nested\n```\n````\n",
         )
         .unwrap();
-        let mut diag = crate::diagnostic::DiagnosticCollector::new();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_todo_in_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("FIXME")),

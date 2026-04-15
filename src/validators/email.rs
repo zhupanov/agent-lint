@@ -76,7 +76,7 @@ mod tests {
             ManifestState::Parsed(json!({"author": {"email": "user@example.com"}})),
             ManifestState::Parsed(json!({"owner": {"email": "admin@test.org"}})),
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -87,7 +87,7 @@ mod tests {
             ManifestState::Missing,
             ManifestState::Parsed(json!({"owner": {"email": "not-an-email"}})),
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("marketplace.json"));
@@ -99,7 +99,7 @@ mod tests {
             ManifestState::Parsed(json!({"author": {"email": "bad"}})),
             ManifestState::Missing,
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("plugin.json"));
@@ -111,7 +111,7 @@ mod tests {
             ManifestState::Parsed(json!({"author": {"email": ""}})),
             ManifestState::Parsed(json!({"owner": {"email": ""}})),
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
@@ -122,7 +122,7 @@ mod tests {
             ManifestState::Missing,
             ManifestState::Parsed(json!({"owner": {"email": 42}})),
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not a string"));
@@ -134,7 +134,7 @@ mod tests {
             ManifestState::Parsed(json!({"author": {"email": true}})),
             ManifestState::Missing,
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not a string"));
@@ -146,7 +146,7 @@ mod tests {
             ManifestState::Parsed(json!({"author": {"email": null}})),
             ManifestState::Parsed(json!({"owner": {"email": null}})),
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 2);
     }
@@ -157,7 +157,7 @@ mod tests {
             ManifestState::Parsed(json!({"author": {"email": ["a@b.com"]}})),
             ManifestState::Missing,
         );
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not a string"));
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn test_v17_skips_when_not_parsed() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_email_format(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }

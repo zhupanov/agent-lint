@@ -1,7 +1,17 @@
-/// Central rule registry for agent-lint.
-///
-/// Every lint diagnostic has a unique code (e.g., "M001") and human-readable
-/// name (e.g., "plugin-json-missing"). Rules are grouped by category prefix.
+//! Central rule registry for agent-lint.
+//!
+//! Every lint diagnostic has a unique code (e.g., "M001") and human-readable
+//! name (e.g., "plugin-json-missing"). Rules are grouped by category prefix.
+
+/// Compiled-in default severity for a rule. Used as fallback when the user's
+/// config does not mention the rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefaultSeverity {
+    /// Rule fires as an error by default.
+    Error,
+    /// Rule is silently skipped by default (not reported, not counted).
+    Suppressed,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LintRule {
@@ -477,6 +487,47 @@ impl LintRule {
             .find(|r| r.code() == s || r.name() == s)
             .copied()
     }
+
+    /// Compiled-in default severity. Rules not mentioned in the user's config
+    /// fall back to this. Style, quality, and niche rules default to
+    /// `Suppressed`; structural and correctness rules default to `Error`.
+    pub fn default_severity(self) -> DefaultSeverity {
+        match self {
+            // ── Default-suppressed: enriched metadata ────────────────
+            Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
+
+            // ── Default-suppressed: style / quality (skills) ─────────
+            Self::DescTruncated | Self::BodyTooLong | Self::ConsecutiveBash |
+            Self::NameVague | Self::DescTooShort | Self::BodyNoRefs |
+            Self::BodyNoWorkflow | Self::BodyNoExamples | Self::RefNameGeneric |
+            Self::NameNotGerund | Self::DescVagueContent | Self::ScriptDepsMissing |
+            Self::ScriptVerifyMissing | Self::TerminologyInconsistent |
+            Self::DescBodyMisalign | Self::ScriptErrhandMissing |
+            Self::BodyNoDefault | Self::MagicNumberUndoc |
+
+            // ── Default-suppressed: niche (skills) ───────────────────
+            Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
+            Self::TimeSensitive | Self::ToolsUnknown |
+            Self::McpToolUnqualified | Self::ToolsListSyntax |
+
+            // ── Default-suppressed: template rules (agents) ──────────
+            Self::TemplateFileMissing | Self::TemplateMarkerMissing |
+            Self::TemplateCountMismatch |
+
+            // ── Default-suppressed: hygiene ───────────────────────────
+            Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
+
+            // ── Default-suppressed: Slack ─────────────────────────────
+            Self::SlackFallbackMismatch |
+
+            // ── Default-suppressed: docs ──────────────────────────────
+            Self::ClaudemdTooLarge | Self::TodoInDocs
+                => DefaultSeverity::Suppressed,
+
+            // Everything else defaults to error.
+            _ => DefaultSeverity::Error,
+        }
+    }
 }
 
 /// Every variant of [`LintRule`], for iteration and exhaustiveness checks.
@@ -656,5 +707,33 @@ mod tests {
             assert_eq!(LintRule::from_code_or_name(rule.code()), Some(*rule));
             assert_eq!(LintRule::from_code_or_name(rule.name()), Some(*rule));
         }
+    }
+
+    #[test]
+    fn default_suppressed_count() {
+        let suppressed: Vec<_> = ALL_RULES
+            .iter()
+            .filter(|r| r.default_severity() == DefaultSeverity::Suppressed)
+            .collect();
+        assert_eq!(
+            suppressed.len(),
+            36,
+            "Expected 36 default-suppressed rules, got {}",
+            suppressed.len()
+        );
+    }
+
+    #[test]
+    fn default_error_count() {
+        let errors: Vec<_> = ALL_RULES
+            .iter()
+            .filter(|r| r.default_severity() == DefaultSeverity::Error)
+            .collect();
+        assert_eq!(
+            errors.len(),
+            68,
+            "Expected 68 default-error rules, got {}",
+            errors.len()
+        );
     }
 }

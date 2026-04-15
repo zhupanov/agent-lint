@@ -74,7 +74,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_slack_fallback_consistency(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -93,7 +93,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_slack_fallback_consistency(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
@@ -113,7 +113,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_slack_fallback_consistency(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -132,7 +132,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_slack_fallback_consistency(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 2);
     }

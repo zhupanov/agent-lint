@@ -139,7 +139,7 @@ mod tests {
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
         };
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
         // Basic mode with valid .claude/ structure should pass
         assert_eq!(diag.error_count(), 0);
@@ -191,7 +191,7 @@ mod tests {
             hooks_json: ManifestState::Parsed(hooks_val),
             settings_json: ManifestState::Missing,
         };
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
 
         // There may be some errors (e.g., V16 template file missing, V21 count mismatch)
@@ -222,7 +222,7 @@ mod tests {
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
         };
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
         // Basic mode should not report errors about plugin.json, marketplace.json, etc.
         let errors = diag.errors();
@@ -264,7 +264,7 @@ mod tests {
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
         };
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
         assert!(
             diag.errors().iter().any(|e| e.contains("no content")),
@@ -290,6 +290,7 @@ mod tests {
         // Suppress S020 via config
         let config = crate::config::LintConfig {
             ignore: std::collections::HashSet::from([crate::rules::LintRule::BodyEmpty]),
+            error: std::collections::HashSet::new(),
             warn: std::collections::HashSet::new(),
             exclude: vec![],
         };
@@ -352,7 +353,7 @@ mod tests {
             hooks_json: ManifestState::Parsed(hooks_val),
             settings_json: ManifestState::Missing,
         };
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
         assert!(
             diag.errors()
@@ -395,7 +396,7 @@ mod tests {
         };
 
         // Without exclusion: both skills produce errors
-        let mut diag_all = DiagnosticCollector::new();
+        let mut diag_all = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag_all, &ExcludeSet::default());
         let all_errors = diag_all.errors();
         assert!(
@@ -409,7 +410,7 @@ mod tests {
 
         // With exclusion: excluded-skill is suppressed
         let exclude = ExcludeSet::new(&[".claude/skills/excluded-skill/**".to_string()]).unwrap();
-        let mut diag_excl = DiagnosticCollector::new();
+        let mut diag_excl = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag_excl, &exclude);
         let excl_errors = diag_excl.errors();
         assert!(
@@ -451,7 +452,7 @@ mod tests {
 
         // Exclude test-* skills
         let exclude = ExcludeSet::new(&[".claude/skills/test-*/SKILL.md".to_string()]).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &exclude);
         let errors = diag.errors();
         assert!(
@@ -521,7 +522,7 @@ mod tests {
 
         // Exclude agents/excluded.md
         let exclude = ExcludeSet::new(&["agents/excluded.md".to_string()]).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &exclude);
         let errors = diag.errors();
         // excluded.md should produce no diagnostics
@@ -557,7 +558,7 @@ mod tests {
         // Even if we exclude everything, fixed-path validators should still work
         // (settings.json hooks validator runs in basic mode but has no effect without settings.json)
         let exclude = ExcludeSet::new(&["**/*".to_string()]).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &exclude);
         // Should run without panic — fixed-path validators are unaffected
         // No errors expected since .claude/ exists but no skills

@@ -169,7 +169,7 @@ This should not be included\n\
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_docs_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -202,7 +202,7 @@ Should not be here\n\
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_docs_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -220,7 +220,7 @@ Should not be here\n\
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_docs_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not found on disk"));
@@ -233,7 +233,7 @@ Should not be here\n\
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_docs_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -247,7 +247,7 @@ Should not be here\n\
         std::env::set_current_dir(tmp.path()).unwrap();
         let content = "line\n".repeat(501);
         std::fs::write("CLAUDE.md", &content).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_claudemd_size(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 500")));
     }
@@ -260,7 +260,7 @@ Should not be here\n\
         std::env::set_current_dir(tmp.path()).unwrap();
         let content = "line\n".repeat(500);
         std::fs::write("CLAUDE.md", &content).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_claudemd_size(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("exceeds 500")));
     }
@@ -273,7 +273,7 @@ Should not be here\n\
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::write("CLAUDE.md", "# Docs\nTODO: finish this section\n").unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("TODO")));
     }
@@ -289,7 +289,7 @@ Should not be here\n\
             "# Docs\n\n```bash\n# TODO: this is in a code block\n```\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("TODO")));
     }
@@ -306,7 +306,7 @@ Should not be here\n\
             "# Docs\n\n````\n```\n# TODO: nested fence content\n```\n````\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("TODO")),
@@ -320,7 +320,7 @@ Should not be here\n\
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }

@@ -324,7 +324,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write("skills/my-skill/SKILL.md", "---\nname: my-skill\n---\n").unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skills_layout(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -336,7 +336,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skills_layout(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -351,7 +351,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         // No SKILL.md file
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skills_layout(&mut diag, &crate::config::ExcludeSet::default());
         // Missing SKILL.md + no skills found = 2 errors
         assert!(diag.error_count() >= 1);
@@ -369,7 +369,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write("skills/my-skill/SKILL.md", "---\nname: my-skill\n---\n").unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skills_layout(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -389,7 +389,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -408,7 +408,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("name")));
@@ -428,7 +428,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("does not match")));
@@ -444,7 +444,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write("skills/my-skill/SKILL.md", "no frontmatter\n").unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("malformed")));
@@ -465,7 +465,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -484,7 +484,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("description")));
@@ -497,7 +497,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -519,7 +519,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -538,7 +538,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
@@ -560,7 +560,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -579,7 +579,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));

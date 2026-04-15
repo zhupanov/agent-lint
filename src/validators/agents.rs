@@ -315,7 +315,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -327,7 +327,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("agents/ directory is missing"));
@@ -342,7 +342,7 @@ mod tests {
 
         std::fs::create_dir_all("agents").unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("no .md files"));
@@ -362,7 +362,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("name")));
@@ -385,7 +385,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agent_template_alignment(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -406,7 +406,7 @@ mod tests {
         )
         .unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agent_template_alignment(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing"));
@@ -430,7 +430,7 @@ mod tests {
         std::fs::write("agents/one.md", "---\nname: one\n---\n").unwrap();
         std::fs::write("agents/two.md", "---\nname: two\n---\n").unwrap();
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agent_template_count(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
@@ -452,7 +452,7 @@ mod tests {
         std::fs::write("agents/one.md", "---\nname: one\n---\n").unwrap();
         // Only 1 agent but 2 templates
 
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agent_template_count(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("mismatch"));
@@ -472,7 +472,7 @@ mod tests {
             format!("---\nname: general\ndescription: {long_desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 1024")));
     }
@@ -490,7 +490,7 @@ mod tests {
             "---\nname: general\ndescription: Short\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("under 20")));
     }
@@ -509,7 +509,7 @@ mod tests {
             format!("---\nname: general\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("exceeds 1024")));
     }
@@ -530,7 +530,7 @@ mod tests {
             format!("---\nname: general\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 1024")));
     }
@@ -549,7 +549,7 @@ mod tests {
             format!("---\nname: general\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("under 20")));
     }
@@ -570,7 +570,7 @@ mod tests {
             format!("---\nname: general\ndescription: {desc}\n---\nBody\n"),
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("under 20")));
     }
@@ -588,7 +588,7 @@ mod tests {
             "---\nname: My_Agent\ndescription: A valid agent description here\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -609,7 +609,7 @@ mod tests {
             "---\nname: general-reviewer\ndescription: A valid agent description here\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -724,7 +724,7 @@ mod tests {
             "---\nname: code-analyzer\ndescription: A code analyzer agent\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.errors()
@@ -745,7 +745,7 @@ mod tests {
             "---\nname: security-reviewer\ndescription: Reviews code for security vulnerabilities including injection and XSS flaws\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag
@@ -767,7 +767,7 @@ mod tests {
             "---\nname: general\ndescription: General reviewer for code quality analysis\n---\nBody\n",
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new();
+        let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag

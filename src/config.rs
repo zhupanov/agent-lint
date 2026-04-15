@@ -17,17 +17,21 @@ struct RawLintSection {
     #[serde(default)]
     ignore: Vec<String>,
     #[serde(default)]
+    error: Vec<String>,
+    #[serde(default)]
     warn: Vec<String>,
     #[serde(default)]
     exclude: Vec<String>,
 }
 
 /// Resolved lint configuration. Rules in `ignore` are completely suppressed.
-/// Rules in `warn` are downgraded from errors to warnings. If a rule appears
-/// in both, `ignore` wins.
+/// Rules in `error` are promoted to errors (overriding default severity).
+/// Rules in `warn` are downgraded to warnings. Priority: ignore > error > warn.
+/// Rules not in any set fall back to `LintRule::default_severity()`.
 #[derive(Debug, Default)]
 pub struct LintConfig {
     pub ignore: HashSet<LintRule>,
+    pub error: HashSet<LintRule>,
     pub warn: HashSet<LintRule>,
     pub exclude: Vec<String>,
 }
@@ -109,17 +113,19 @@ impl LintConfig {
 
         let section = raw.lint.unwrap_or_default();
 
-        let mut ignore = HashSet::new();
-        for entry in &section.ignore {
+        // Parse error list first (user-explicit error promotions).
+        let mut error = HashSet::new();
+        for entry in &section.error {
             let rule = LintRule::from_code_or_name(entry).ok_or_else(|| {
                 format!(
-                    "{}: unknown rule in ignore list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
+                    "{}: unknown rule in error list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
                     path.display()
                 )
             })?;
-            ignore.insert(rule);
+            error.insert(rule);
         }
 
+        // Parse warn list. error wins over warn.
         let mut warn = HashSet::new();
         for entry in &section.warn {
             let rule = LintRule::from_code_or_name(entry).ok_or_else(|| {
@@ -128,10 +134,23 @@ impl LintConfig {
                     path.display()
                 )
             })?;
-            // ignore wins over warn
-            if !ignore.contains(&rule) {
+            if !error.contains(&rule) {
                 warn.insert(rule);
             }
+        }
+
+        // Parse ignore list. ignore wins over error and warn.
+        let mut ignore = HashSet::new();
+        for entry in &section.ignore {
+            let rule = LintRule::from_code_or_name(entry).ok_or_else(|| {
+                format!(
+                    "{}: unknown rule in ignore list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
+                    path.display()
+                )
+            })?;
+            error.remove(&rule);
+            warn.remove(&rule);
+            ignore.insert(rule);
         }
 
         // Validate exclude patterns at load time (compile a throwaway GlobSet).
@@ -139,6 +158,7 @@ impl LintConfig {
 
         Ok(Self {
             ignore,
+            error,
             warn,
             exclude: section.exclude,
         })
@@ -162,6 +182,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
+        assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
 
@@ -240,6 +261,7 @@ mod tests {
         std::fs::write(tmp.path().join("agent-lint.toml"), "[lint]\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
+        assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
 
@@ -250,6 +272,7 @@ mod tests {
         std::fs::write(tmp.path().join("agent-lint.toml"), "# empty config\n").unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.ignore.is_empty());
+        assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
     }
 
@@ -283,6 +306,108 @@ mod tests {
             err.contains("unknown field"),
             "Expected unknown field error, got: {err}"
         );
+    }
+
+    // ── Error list ──────────────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn error_list_parsed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nerror = [\"S033\", \"G005\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert!(config.error.contains(&LintRule::NameVague));
+        assert!(config.error.contains(&LintRule::SecurityMdMissing));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn error_list_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nerror = [\"name-vague\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert!(config.error.contains(&LintRule::NameVague));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unknown_error_code_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nerror = [\"X999\"]\n",
+        )
+        .unwrap();
+        let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(
+            err.contains("unknown rule"),
+            "Expected unknown rule error, got: {err}"
+        );
+        assert!(err.contains("X999"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn error_wins_over_warn() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nerror = [\"S033\"]\nwarn = [\"S033\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert!(config.error.contains(&LintRule::NameVague));
+        assert!(!config.warn.contains(&LintRule::NameVague));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ignore_wins_over_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nignore = [\"S033\"]\nerror = [\"S033\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert!(config.ignore.contains(&LintRule::NameVague));
+        assert!(!config.error.contains(&LintRule::NameVague));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ignore_wins_over_error_and_warn() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nignore = [\"S033\"]\nerror = [\"S033\"]\nwarn = [\"S033\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert!(config.ignore.contains(&LintRule::NameVague));
+        assert!(!config.error.contains(&LintRule::NameVague));
+        assert!(!config.warn.contains(&LintRule::NameVague));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn missing_error_defaults_to_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nignore = [\"M001\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert!(config.error.is_empty());
     }
 
     // ── Exclude patterns ────────────────────────────────────────────
