@@ -94,7 +94,7 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     user_config::validate_userconfig_title(ctx, diag);
     // V25: userConfig type field
     user_config::validate_userconfig_type(ctx, diag);
-    // Skill content checks (all 29 rules including plugin-only)
+    // Skill content checks (all 57 S-family rules including plugin-only)
     skill_content::validate_skill_content(diag, exclude);
     // Private skill content checks (both-mode subset)
     skill_content::validate_private_skill_content(diag, exclude);
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(diag.error_count(), 0);
     }
 
-    // Integration test: Plugin mode dispatches all 25 validators
+    // Integration test: Plugin mode dispatches all validators
     #[test]
     #[serial_test::serial]
     fn test_run_all_plugin_mode() {

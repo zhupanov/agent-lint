@@ -52,7 +52,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Both |
 | S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin |
 
-### Name Validation (S009--S013, S033)
+### Name Validation (S009--S013, S033, S049)
 
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
@@ -62,6 +62,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S012 | `name-reserved-word` | Skill name contains reserved word (`anthropic` or `claude`) | Both |
 | S013 | `name-has-xml` | Skill name contains XML/HTML tags | Both |
 | S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin |
+| S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin |
 
 ### Description Validation (S014--S018, S034, S050)
 
@@ -117,7 +118,7 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Both |
 | S045 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Both |
 
-### Cross-Field and Structural (S028--S032, S036, S053--S054)
+### Cross-Field and Structural (S028--S032, S036, S048, S054)
 
 | Code | Name | Description | Mode |
 |------|------|-------------|------|
@@ -127,13 +128,8 @@ Either form can be used in `claude-lint.toml` to ignore or downgrade a rule.
 | S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content | Both |
 | S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | Both |
 | S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no `##` headings | Plugin |
+| S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Both |
 | S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin |
-
-### MCP Tool References (S044)
-
-| Code | Name | Description | Mode |
-|------|------|-------------|------|
-| S044 | `mcp-tool-unqualified` | Backtick-quoted MCP tool reference without `ServerName:` prefix | Both |
 
 ## Agent Rules (A)
 

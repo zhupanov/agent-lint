@@ -2867,11 +2867,11 @@ mod tests {
         );
     }
 
-    // ── S044: tools-list-syntax ────────────────────────────────────
+    // ── S045: tools-list-syntax ────────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_s044_yaml_list_triggers() {
+    fn test_s045_yaml_list_triggers() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -2892,7 +2892,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_s044_scalar_ok() {
+    fn test_s045_scalar_ok() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();

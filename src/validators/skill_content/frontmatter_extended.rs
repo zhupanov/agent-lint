@@ -72,7 +72,7 @@ pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut Diagnostic
         }
     }
 
-    // S044: allowed-tools uses YAML list syntax
+    // S045: allowed-tools uses YAML list syntax
     if frontmatter::field_exists(&info.fm_lines, "allowed-tools")
         && frontmatter::get_field(&info.fm_lines, "allowed-tools").is_none()
     {
