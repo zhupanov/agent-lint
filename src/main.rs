@@ -29,8 +29,12 @@ fn main() {
                 println!("  --help, -h         Print this help message");
                 println!("  --version          Print version information");
                 println!("  --list-scripts     List discovered script paths and exit");
-                println!("  --pedantic         Promote all enabled rules to errors (except too-long rules)");
-                println!("  --all              Force every rule to error, ignoring config overrides");
+                println!(
+                    "  --pedantic         Promote all enabled rules to errors (except too-long rules)"
+                );
+                println!(
+                    "  --all              Force every rule to error, ignoring config overrides"
+                );
                 std::process::exit(0);
             }
             "--version" => {
@@ -48,7 +52,9 @@ fn main() {
             }
             flag if flag.starts_with('-') => {
                 eprintln!("Unknown flag: {arg}");
-                eprintln!("Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [PATH]");
+                eprintln!(
+                    "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [PATH]"
+                );
                 std::process::exit(2);
             }
             _ => {
@@ -71,7 +77,9 @@ fn main() {
     };
 
     if positional.len() > 1 {
-        eprintln!("Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [PATH]");
+        eprintln!(
+            "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [PATH]"
+        );
         std::process::exit(2);
     }
 

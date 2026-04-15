@@ -1,4 +1,4 @@
-use crate::rules::{LintRule, ALL_RULES};
+use crate::rules::{ALL_RULES, LintRule};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::HashSet;

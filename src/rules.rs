@@ -734,10 +734,7 @@ mod tests {
 
     #[test]
     fn is_too_long_matches_exactly_four() {
-        let too_long: Vec<_> = ALL_RULES
-            .iter()
-            .filter(|r| r.is_too_long())
-            .collect();
+        let too_long: Vec<_> = ALL_RULES.iter().filter(|r| r.is_too_long()).collect();
         assert_eq!(
             too_long.len(),
             4,
