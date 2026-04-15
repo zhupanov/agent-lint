@@ -5,11 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.0.39] - 2026-04-14
+## [2.0.0] - 2026-04-14
 
 ### Changed
 
-- Renamed project from `claude-lint` to `agent-lint`: binary, config file (`agent-lint.toml`),
+- **BREAKING**: Renamed project from `claude-lint` to `agent-lint`: binary, config file (`agent-lint.toml`),
   GitHub Action (`zhupanov/agent-lint@v1`), Marketplace listing, and all documentation updated
 - Legacy `claude-lint.toml` files are detected with a warning to rename
 
