@@ -115,7 +115,7 @@ fn main() {
         if matches!(ctx.mode, LintMode::Plugin) {
             println!("Plugin structure OK");
         } else {
-            println!("Claude config OK");
+            println!("Config OK");
         }
         if suppressed > 0 {
             eprintln!("({suppressed} suppressed)");

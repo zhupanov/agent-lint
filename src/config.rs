@@ -92,6 +92,12 @@ impl LintConfig {
     pub fn load(repo_root: &str) -> Result<Self, String> {
         let path = Path::new(repo_root).join("agent-lint.toml");
         if !path.is_file() {
+            let legacy = Path::new(repo_root).join("claude-lint.toml");
+            if legacy.is_file() {
+                eprintln!(
+                    "warning: found 'claude-lint.toml' which is no longer read; rename it to 'agent-lint.toml'"
+                );
+            }
             return Ok(Self::default());
         }
 

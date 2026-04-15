@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [1.0.39] - 2026-04-14
 
+### Changed
+
+- Renamed project from `claude-lint` to `agent-lint`: binary, config file (`agent-lint.toml`),
+  GitHub Action (`zhupanov/agent-lint@v1`), Marketplace listing, and all documentation updated
+- Legacy `claude-lint.toml` files are detected with a warning to rename
+
 ### Fixed
 
 - Added missing S048 `ref-name-generic` and S049 `name-not-gerund` entries to `docs/rules.md`
