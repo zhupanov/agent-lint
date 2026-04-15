@@ -19,7 +19,7 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-/// Validate skill content for public skills (skills/). Runs all S009-S056 rules.
+/// Validate skill content for public skills (skills/). Runs all S009-S057 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
@@ -33,7 +33,7 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056).
+/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056, S057).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
@@ -1296,7 +1296,7 @@ mod tests {
     #[test]
     fn test_new_rules_lookup_by_code_and_name() {
         use crate::rules::LintRule;
-        // Verify S009-S056 rules round-trip via code and name lookups
+        // Verify S009-S057 rules round-trip via code and name lookups
         let new_rules = [
             ("S009", "name-too-long"),
             ("S010", "name-invalid-chars"),
@@ -1346,6 +1346,7 @@ mod tests {
             ("S054", "desc-body-misalign"),
             ("S055", "script-errhand-missing"),
             ("S056", "body-no-default"),
+            ("S057", "magic-number-undoc"),
         ];
         for (code, name) in &new_rules {
             assert!(
@@ -4207,6 +4208,216 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("alternatives without stating a default")),
             "S056 should fire when 'if' is mid-line (not at start)"
+        );
+    }
+
+    // ── S057: magic-number-undoc ───────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_magic_number_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nTIMEOUT = 47\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let errors = diag.errors();
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("undocumented magic number") && e.contains("TIMEOUT = 47")),
+            "S057 should fire for undocumented magic number, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_well_known_value_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nPORT = 443\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire for well-known value 443"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_zero_one_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nFLAG = 0\nCOUNT = 1\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire for 0 or 1"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_same_line_comment_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nTIMEOUT = 47 # slow network tolerance\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire when same-line comment exists"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_preceding_line_comment_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\n# Timeout for slow networks\nTIMEOUT = 47\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire when preceding line is a comment"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_outside_fence_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\nTIMEOUT = 47\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire outside code fences"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_private_mode_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```bash\nTIMEOUT = 47\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire in private mode"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_float_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```python\nRATIO = 3.14\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire for float values like 3.14"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_comment_line_with_number_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```python\n# TIMEOUT = 47\nx = 1\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire on comment lines containing assignment patterns"
         );
     }
 }

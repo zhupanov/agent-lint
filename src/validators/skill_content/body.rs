@@ -102,6 +102,18 @@ static RE_ALTERNATIVES_SUPPRESS: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+// S057: Magic number assignment pattern (identifier = digits)
+static RE_MAGIC_ASSIGN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*(\d+)").unwrap());
+
+// S057: Preceding-line comment detection (anchored to line start)
+static RE_COMMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*(?:#|//|--)").unwrap());
+
+// S057: Well-known values that don't need documentation
+const WELL_KNOWN_VALUES: &[u64] = &[
+    0, 1, 80, 443, 8080, 8443, 3000, 30, 60, 120, 300, 1024, 2048, 4096,
+];
+
 // S021: Consecutive bash
 static RE_BASH_FENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
@@ -292,6 +304,11 @@ pub(super) fn check_body_content(
             }
         }
     }
+
+    // S057: magic-number-undoc (plugin-only) — undocumented magic numbers in code blocks
+    if plugin_mode {
+        check_magic_numbers(info, diag);
+    }
 }
 
 /// A skill is "script-backed" if it has a non-empty `scripts/` subdirectory
@@ -443,6 +460,80 @@ fn check_script_error_handling(
                     info.path, file_name
                 ),
             );
+        }
+    }
+}
+
+/// S057: Check for undocumented magic numbers in code blocks.
+/// Iterates lines inside code fences, looking for identifier assignments
+/// with numeric literals that are not in the well-known values list and
+/// lack a justification comment on the same or preceding line.
+fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
+    use crate::fence::{CodeFenceTracker, LineClass};
+
+    let mut tracker = CodeFenceTracker::new();
+    let mut prev_is_comment = false;
+
+    for line in info.body.lines() {
+        let class = tracker.process_line(line);
+
+        match class {
+            LineClass::Delimiter => {
+                prev_is_comment = false;
+            }
+            LineClass::Outside => {
+                prev_is_comment = false;
+            }
+            LineClass::Inside => {
+                let trimmed = line.trim();
+
+                // Skip comment lines — they can't contain undocumented assignments
+                if RE_COMMENT_LINE.is_match(trimmed) {
+                    prev_is_comment = true;
+                    continue;
+                }
+
+                if let Some(caps) = RE_MAGIC_ASSIGN.captures(trimmed) {
+                    if let Some(num_match) = caps.get(1) {
+                        // Float guard: skip if the character after the digits is '.' or 'e'/'E'
+                        let after_pos = num_match.end();
+                        if after_pos < trimmed.len() {
+                            let next_char = trimmed.as_bytes()[after_pos];
+                            if next_char == b'.' || next_char == b'e' || next_char == b'E' {
+                                prev_is_comment = false;
+                                continue;
+                            }
+                        }
+
+                        // Parse the number and check against allowlist
+                        if let Ok(value) = num_match.as_str().parse::<u64>() {
+                            if !WELL_KNOWN_VALUES.contains(&value) {
+                                // Check for same-line trailing comment
+                                let rest = trimmed[after_pos..].trim_start();
+                                let has_trailing_comment = rest.starts_with('#')
+                                    || rest.starts_with("//")
+                                    || rest.starts_with("--");
+
+                                if !has_trailing_comment && !prev_is_comment {
+                                    // Extract the matched assignment for the diagnostic
+                                    let assign_match = caps.get(0).unwrap().as_str();
+                                    diag.report(
+                                        LintRule::MagicNumberUndoc,
+                                        &format!(
+                                            "{}: undocumented magic number in code block: `{}`; \
+                                             add a comment explaining why this value was chosen",
+                                            info.path, assign_match
+                                        ),
+                                    );
+                                    return; // Report once per file
+                                }
+                            }
+                        }
+                    }
+                }
+
+                prev_is_comment = false;
+            }
         }
     }
 }

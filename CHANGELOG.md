@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.38] - 2026-04-14
+
+### Added
+
+- Added S057 `magic-number-undoc` rule: detects undocumented magic numbers in code blocks within SKILL.md files, flagging identifier assignments with numeric literals that lack a justification comment on the same or preceding line, with a well-known values allowlist for common ports, timeouts, and sizes (plugin-only)
+
 ## [1.0.37] - 2026-04-14
 
 ### Added

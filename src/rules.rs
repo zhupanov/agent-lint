@@ -158,6 +158,8 @@ pub enum LintRule {
     ScriptErrhandMissing,
     /// S056: body lists alternatives without stating a default
     BodyNoDefault,
+    /// S057: undocumented magic number in code block
+    MagicNumberUndoc,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -310,6 +312,7 @@ impl LintRule {
             Self::DescBodyMisalign => "S054",
             Self::ScriptErrhandMissing => "S055",
             Self::BodyNoDefault => "S056",
+            Self::MagicNumberUndoc => "S057",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -427,6 +430,7 @@ impl LintRule {
             Self::DescBodyMisalign => "desc-body-misalign",
             Self::ScriptErrhandMissing => "script-errhand-missing",
             Self::BodyNoDefault => "body-no-default",
+            Self::MagicNumberUndoc => "magic-number-undoc",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -551,6 +555,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::DescBodyMisalign,
     LintRule::ScriptErrhandMissing,
     LintRule::BodyNoDefault,
+    LintRule::MagicNumberUndoc,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -593,7 +598,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            103,
+            104,
             "ALL_RULES length must match enum variant count"
         );
     }
