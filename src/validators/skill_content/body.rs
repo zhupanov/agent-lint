@@ -487,8 +487,11 @@ fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
             LineClass::Inside => {
                 let trimmed = line.trim();
 
-                // Check if this line is a comment line (for next iteration)
-                let this_is_comment = RE_COMMENT_LINE.is_match(trimmed);
+                // Skip comment lines — they can't contain undocumented assignments
+                if RE_COMMENT_LINE.is_match(trimmed) {
+                    prev_is_comment = true;
+                    continue;
+                }
 
                 if let Some(caps) = RE_MAGIC_ASSIGN.captures(trimmed) {
                     if let Some(num_match) = caps.get(1) {
@@ -497,7 +500,7 @@ fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                         if after_pos < trimmed.len() {
                             let next_char = trimmed.as_bytes()[after_pos];
                             if next_char == b'.' || next_char == b'e' || next_char == b'E' {
-                                prev_is_comment = this_is_comment;
+                                prev_is_comment = false;
                                 continue;
                             }
                         }
@@ -506,10 +509,10 @@ fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                         if let Ok(value) = num_match.as_str().parse::<u64>() {
                             if !WELL_KNOWN_VALUES.contains(&value) {
                                 // Check for same-line trailing comment
-                                let after_num = &trimmed[after_pos..];
-                                let has_trailing_comment = after_num.contains('#')
-                                    || after_num.contains("//")
-                                    || after_num.contains("--");
+                                let rest = trimmed[after_pos..].trim_start();
+                                let has_trailing_comment = rest.starts_with('#')
+                                    || rest.starts_with("//")
+                                    || rest.starts_with("--");
 
                                 if !has_trailing_comment && !prev_is_comment {
                                     // Extract the matched assignment for the diagnostic
@@ -529,7 +532,7 @@ fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                     }
                 }
 
-                prev_is_comment = this_is_comment;
+                prev_is_comment = false;
             }
         }
     }

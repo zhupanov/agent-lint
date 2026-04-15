@@ -4397,4 +4397,27 @@ mod tests {
             "S057 should NOT fire for float values like 3.14"
         );
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_comment_line_with_number_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n```python\n# TIMEOUT = 47\nx = 1\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("undocumented magic number")),
+            "S057 should NOT fire on comment lines containing assignment patterns"
+        );
+    }
 }

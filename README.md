@@ -7,7 +7,7 @@ configuration and plugins.
 
 ## Features
 
-- **103 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
+- **104 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
   Hygiene, Email, User Config, Slack, Docs)
 - **Two lint modes**:
   - **Basic mode** -- validates `.claude/` contents (settings, hooks, private
