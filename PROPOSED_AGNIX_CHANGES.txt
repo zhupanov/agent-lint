@@ -1,0 +1,201 @@
+⏺ Proposed agnix Contributions — Port from agent-lint
+
+  Context: agnix at /Users/zhupanov/agnix1 branch main@cb3acbe, 399 rules. agent-lint at /Users/zhupanov/agent-lint1, 104 rules. Every proposal grep-verified against
+   agnix to eliminate duplicates.
+
+  Cross-cutting conventions (apply to every issue):
+  - Each new rule requires entries in both knowledge-base/rules.json AND knowledge-base/VALIDATION-RULES.md (CI parity gate).
+  - Heuristic rules without upstream specs use evidence.source_type: convention, normative_level: recommended.
+  - Ported opinionated rules default to warn, not error, pending Issue #8 (suppressed tier).
+  - Rules that only make sense for Claude plugins gate on .claude-plugin/ presence (follow existing CC-PL-* FileType-based activation).
+  - Every rule ships with fixtures under tests/fixtures/.
+
+  ---
+  Issue #1 — Fix CLAUDE.md line-limit text drift in rules.json
+
+  Why: agnix's implementation enforces 200 lines (CC-MEM-014 in claude_md.rs) but knowledge-base/rules.json description says "500+ lines". Per user direction: change
+   rules.json to 200 to match implementation.
+
+  What: Update knowledge-base/rules.json CC-MEM-014 description/good_example/bad_example to reference 200 lines consistently. Update
+  knowledge-base/VALIDATION-RULES.md accordingly. No code change required.
+
+  Why first: Pure doc fix, small, good warm-up PR to establish workflow with maintainers.
+
+  ---
+  Issue #2 — Agent description quality rules
+
+  Why: agnix has CC-AG-001 (missing name), CC-AG-002 (missing description), and many other CC-AG-* rules, but does not check agent description length bounds or
+  name-description redundancy. Grep verified: redundant|similar.*name zero hits.
+
+  What: Extend crates/agnix-core/src/rules/agent.rs:
+  - A008 → CC-AG-0XX agent description exceeds 1024 characters — error.
+  - A009 → CC-AG-0XX agent description under 20 characters — warn. (Verify no overlap with CC-AG-002 "missing".)
+  - A011 → CC-AG-0XX agent description too similar to agent name (Jaccard similarity >0.5 over tokenized words) — warn.
+
+  Pre-merge audit: Re-grep CC-AG-* before implementing. If CC-AG-013 (Invalid Skill Name Format) also constrains agent's own name, A010 (agent-name-invalid charset)
+  may already be covered — confirm and drop A010 from scope if so.
+
+  ---
+  Issue #3 — CLAUDE.md canonical doc references (D001)
+
+  Why: agnix has REF-002 (broken markdown link) and CC-MEM-004 (invalid command reference). agent-lint D001 is narrower and semantically distinct: it validates that
+  files listed under CLAUDE.md's canonical-sources section exist. Grep verified: no docs.ref|canonical rule in agnix.
+
+  What: Extend crates/agnix-core/src/rules/claude_md.rs:
+  - CC-MEM-0XX CLAUDE.md canonical-docs reference missing on disk — warn. Parses CLAUDE.md for structured "Sources"/"Canonical docs"/"References" sections and
+  verifies each listed path exists. Distinct from REF-002 (any markdown link) and CC-MEM-004 (command references).
+
+  Design note: Decide the section heading pattern to recognize (## References? ## Sources?) — start with fixed patterns mirroring agent-lint's implementation, add
+  .agnix.toml configurability if maintainers request.
+
+  ---
+  Issue #4 — Complete userConfig validation in plugin.json
+
+  Why: agnix has only CC-PL-012 "Invalid UserConfig Key". agent-lint validates the full userConfig object shape (U001-U006). Verified: only one rule matches
+  userconfig in agnix rules.json.
+
+  What: Extend crates/agnix-core/src/rules/plugin.rs (or split into rules/plugin_userconfig.rs submodule). Add 6 rules:
+  - CC-PL-0XX userConfig not an object (U001) — error.
+  - CC-PL-0XX userConfig entry missing/invalid description field (U002) — error.
+  - CC-PL-0XX userConfig key has no corresponding env-var reference under scripts/ (U003) — error. Cross-file grounding check; requires reading scripts/**/*.sh for
+  $CLAUDE_PLUGIN_OPTION_<KEY> references. Follow schemas::agents_md / schemas::cross_platform pattern for cross-file rules.
+  - CC-PL-0XX userConfig sensitive field must be boolean (U004) — error.
+  - CC-PL-0XX userConfig entry missing/invalid title (U005) — error.
+  - CC-PL-0XX userConfig entry missing/invalid type (U006) — error.
+
+  ---
+  Issue #5 — Add marketplace.json validator
+
+  Why: agnix has full .claude-plugin/plugin.json coverage (CC-PL-*) but zero coverage of .claude-plugin/marketplace.json, a first-class manifest in the Claude plugin
+   spec. Verified: grep -i marketplace on agnix rules.json returns zero hits.
+
+  What:
+  - Register new FileType::ClaudeMarketplace in crates/agnix-core/src/file_types/, detected at path .claude-plugin/marketplace.json. Ensure pipeline.rs [files]
+  overrides (include_as_memory, include_as_generic, exclude) interact correctly.
+  - Add crates/agnix-core/src/rules/marketplace.rs (new module, registered in ValidatorRegistry).
+  - 6 rules ported from M005-M010:
+    - CC-MP-001 marketplace.json missing (when .claude-plugin/ present) — warn (defer final severity to maintainer; agent-lint uses error).
+    - CC-MP-002 marketplace.json invalid JSON — error.
+    - CC-MP-003 marketplace field missing (name or owner.name) — error.
+    - CC-MP-004 marketplace plugins array empty — error.
+    - CC-MP-005 marketplace plugin entry invalid (name or source) — error.
+    - CC-MP-006 marketplace enriched metadata missing (owner.email, plugin category) — warn.
+  - Plus 1 rule to fill the narrowed M011 gap: CC-PL-0XX Plugin Enriched Metadata Missing — checks author.email + non-empty keywords. Description already covered by
+  CC-PL-004; author object already covered by CC-PL-009; do NOT duplicate those.
+
+  Risk: New FileType activation must be tested against repos without a plugin directory to ensure zero noise.
+
+  ---
+  Issue #6 — Plugin hygiene bundle
+
+  Why: agent-lint has a cohesive hygiene bundle for Claude plugin repos — path hygiene, script existence/executability, dead-script detection, SECURITY.md, TODO
+  markers, email format, empty-hooks-array. Individually verified absent from agnix (grep: pwd|claude_plugin_root, security.md, dead.script|orphan, todo|fixme, email
+   all return zero relevant hits).
+
+  What: Add crates/agnix-core/src/rules/plugin_hygiene.rs (project-level), activated only when .claude-plugin/ is detected:
+  - G001 → CC-PH-001 skill content uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/ — error. Regex scan of SKILL.md body and scripts/ for $PWD/
+  patterns.
+  - G002 → CC-PH-002 script referenced from SKILL.md missing on disk — error. Note: hook script refs already covered by CC-HK-008; scope this strictly to
+  skill-directory references to avoid duplication.
+  - G003 → CC-PH-003 script file not executable (Unix-only, skip on Windows) — error.
+  - G004 → CC-PH-004 dead script (exists in scripts/ but no structured reference anywhere) — warn.
+  - G005 → CC-PH-005 SECURITY.md missing at repo root — warn.
+  - G006 → CC-PH-006 TODO/FIXME/HACK/XXX marker in published skill body (outside code fences) — warn.
+  - G007 → CC-PH-007 TODO/FIXME/HACK/XXX marker in agent .md body — warn.
+  - D003 → CC-MEM-0XX TODO/FIXME/HACK/XXX marker in CLAUDE.md body (extend rules/claude_md.rs) — warn.
+  - E001 → CC-PH-008 invalid email format in plugin/marketplace JSON strings — error. Only fires on known email fields (author.email, owner.email).
+  - H007 → CC-HK-0XX empty hooks array in legacy hooks/hooks.json file — error. Distinct from modern settings hooks; agnix already handles settings schema correctly
+  (per test_empty_hooks_ok).
+
+  Risk: Fence handling must align with agnix's existing markdown parser to avoid false positives inside code blocks.
+
+  Total: 10 rules.
+
+  ---
+  Issue #7 — Skill content heuristics (the big bundle)
+
+  Why: agent-lint's S-cluster is its main differentiator — 20+ skill-body and frontmatter heuristics beyond structural validation. Each one grep-verified as absent
+  from agnix. Gated behind .claude-plugin/ presence.
+
+  What: Add crates/agnix-core/src/rules/skill_content/ submodule (mirroring agent-lint's src/validators/skill_content/ layout). Each rule defaults to warn with
+  source_type: convention / normative_level: recommended unless noted.
+
+  Frontmatter / structural (4 rules):
+  - S028 → CC-SK-0XX non-indexed $ARGUMENTS in body without argument-hint frontmatter. CC-SK-012 covers hint-without-args; CC-SK-016 covers indexed $ARGUMENTS[n]
+  without hint; plain $ARGUMENTS without hint is the remaining gap — error.
+  - S039 → CC-SK-0XX metadata map values must be strings — error.
+  - S044 → CC-SK-0XX MCP tool reference in allowed-tools without server prefix — warn.
+  - S045 → CC-SK-0XX allowed-tools uses YAML list syntax instead of comma-separated scalar — warn.
+
+  Body content (13 rules):
+  - S021 consecutive bash code fences that could be combined — warn.
+  - S029 shared .md referenced by another shared .md (skill-context nested ref depth > 1; distinct from CC-MEM-003 which covers CLAUDE.md @imports) — warn.
+  - S030 files in a skill's scripts/ directory not referenced from SKILL.md — error.
+  - S031 non-HTTPS URL (http://) in skill body (distinct from MCP-017 which covers MCP remote server URLs) — error.
+  - S032 hardcoded-secret heuristic in skill body. Agnix has secret-detection in MCP env, Codex config, Kiro, OpenCode — but NOT for SKILL.md content — error.
+  - S036 referenced .md file exceeds 100 lines with no ## headings — warn.
+  - S037 body exceeds 300 lines with no file references — warn.
+  - S038 body contains time-sensitive year/date patterns — warn.
+  - S046 body exceeds 300 lines without workflow structure markers — warn.
+  - S047 body exceeds 200 lines without examples/templates — warn, default-suppressed (depends on Issue #8).
+  - S048 non-descriptive reference filename in skill directory (notes.md, misc.md) — warn.
+  - S056 body lists alternatives without stating a default recommendation — warn.
+  - S057 undocumented magic number in code block — warn.
+
+  Script-backed skill quality (3 rules):
+  - S051 script-backed skill lacks dependency/package documentation — warn.
+  - S052 script-backed skill lacks verification/validation step — warn.
+  - S055 script file lacks error-handling pattern (set -e/trap for shell, try/except for Python) — warn.
+
+  Description heuristics (2 rules):
+  - S050 skill description content is too vague/generic (distinct from AS-019 which covers vague names) — warn.
+  - S054 skill description keywords not reflected in body — warn.
+
+  Semantic naming (2 rules):
+  - S053 terminology inconsistency — 3+ variants from same synonym group — warn.
+  - S049 skill name not in gerund (verb+ing) form — default-suppressed (depends on Issue #8; very opinionated).
+
+  Risk: Heuristic rules need calibrated thresholds + false-positive budgets. Each rule needs a fixture covering at least one TP and one TN.
+
+  Total: 24 rules.
+
+  ---
+  Issue #8 — Add default-suppressed rule tier
+
+  Why: Several rules in Issue #7 (S049 name-not-gerund, S047 body-no-examples) are too opinionated to ship as default-warn. agent-lint has 3 tiers
+  (error/warn/suppressed); agnix currently has 2. Without a suppressed tier, these rules either spam by default or need manual disabling after port.
+
+  What: Extend severity model in crates/agnix-core/src/config.rs:
+  - Add Severity::Suppressed variant (rule is defined and loadable but does not fire unless explicitly enabled in .agnix.toml).
+  - Update rule loading from rules.json to respect a new "default_state": "suppressed" field.
+  - Update .agnix.toml [rules] to allow enabling suppressed rules (e.g., enabled = ["CC-SK-049", ...]).
+  - Update crates/agnix-lsp to respect the new state on config change.
+
+  Risk: Touches config model; requires maintainer design input. Open as an RFC-shaped issue first.
+
+  Dependency: S047 and S049 in Issue #7 ship at default-warn until #8 lands; re-classify as suppressed after.
+
+  ---
+  Summary
+
+  8 issues spanning 49 confirmed-gap rules + 1 config-model feature + 1 doc drift fix.
+
+  ┌─────┬────────────────────────────┬─────────────┬────────────┬─────────────────────────────┐
+  │  #  │           Title            │    Rules    │ Difficulty │        Dependencies         │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 1   │ rules.json line-limit fix  │ 0 (text)    │ XS         │ none                        │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 2   │ Agent desc quality         │ 3           │ S          │ pre-merge CC-AG-* audit     │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 3   │ CLAUDE.md canonical refs   │ 1           │ S          │ none                        │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 4   │ userConfig depth           │ 6           │ M          │ extends CC-PL-012           │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 5   │ marketplace.json validator │ 7           │ M          │ new FileType                │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 6   │ Plugin hygiene bundle      │ 10          │ M          │ new project-level validator │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 7   │ Skill content heuristics   │ 24          │ L          │ #8 for S047/S049 defaults   │
+  ├─────┼────────────────────────────┼─────────────┼────────────┼─────────────────────────────┤
+  │ 8   │ Default-suppressed tier    │ 0 (feature) │ L          │ maintainer RFC              │
+  └─────┴────────────────────────────┴─────────────┴────────────┴─────────────────────────────┘

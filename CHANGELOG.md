@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.3.3] - 2026-04-18
+
+### Added
+
+- Added `PROPOSED_AGNIX_CHANGES.txt` with a list of yet-to-be-verified candidate issues to file
+
 ## [2.3.2] - 2026-04-15
 
 ### Added
