@@ -2,10 +2,56 @@ use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use regex::Regex;
+use serde_json::Value;
+use std::path::Path;
 use std::sync::LazyLock;
 
 static RE_SEMVER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+$").unwrap());
+
+/// Windows drive-letter path prefix, e.g. `C:\` or `c:/`.
+static RE_WIN_DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[\\/]").unwrap());
+
+/// http(s) URL with a non-empty host.
+static RE_HTTP_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^https?://[^\s/?#]+[^\s]*$").unwrap());
+
+/// The plugin manifest directory. Components must never live under it.
+const PLUGIN_DIR: &str = ".claude-plugin";
+
+/// plugin.json fields that point at plugin components.
+const COMPONENT_FIELDS: &[&str] = &["commands", "agents", "skills", "hooks"];
+
+/// Split a manifest path on POSIX and Windows separators, dropping empty and
+/// `.` segments so `./foo` and `foo` agree.
+fn path_segments(p: &str) -> impl Iterator<Item = &str> {
+    p.split(['/', '\\']).filter(|s| !s.is_empty() && *s != ".")
+}
+
+/// Whether a manifest path is absolute rather than plugin-root-relative.
+fn is_absolute_path(p: &str) -> bool {
+    p.starts_with('/') || p.starts_with('\\') || RE_WIN_DRIVE.is_match(p)
+}
+
+/// Whether an optional JSON value is a string with non-whitespace content.
+fn is_non_empty_string(v: Option<&Value>) -> bool {
+    v.and_then(Value::as_str)
+        .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// Collect the declared paths of a plugin.json component field, which may hold
+/// a single path or an array of paths. Non-path shapes (such as an inline
+/// `hooks` object) yield nothing.
+fn component_paths(val: &Value, field: &str) -> Vec<String> {
+    match val.get(field) {
+        Some(Value::String(s)) => vec![s.clone()],
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
 
 /// V1: Validate .claude-plugin/plugin.json
 pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
@@ -25,7 +71,8 @@ pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
 
-    if name.is_empty() {
+    // An absent, empty, or whitespace-only name all mean "no name".
+    if name.trim().is_empty() {
         diag.report(
             LintRule::PluginFieldMissing,
             &format!("{f} missing required field: name"),
@@ -181,6 +228,144 @@ pub fn validate_plugin_enriched(ctx: &LintContext, diag: &mut DiagnosticCollecto
             diag.report(
                 LintRule::PluginEnrichedMissing,
                 &format!("{f} keywords must be a non-empty array"),
+            );
+        }
+    }
+}
+
+/// V29: Validate plugin component paths — both the on-disk layout (M012) and
+/// the paths declared in plugin.json (M012, M013).
+pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    let f = ".claude-plugin/plugin.json";
+
+    // M012: components must not physically live under the manifest directory.
+    for field in COMPONENT_FIELDS {
+        if Path::new(PLUGIN_DIR).join(field).is_dir() {
+            diag.report(
+                LintRule::ComponentPathNested,
+                &format!("{PLUGIN_DIR}/{field}/ must not live inside {PLUGIN_DIR}/"),
+            );
+        }
+    }
+
+    let val = match &ctx.plugin_json {
+        ManifestState::Parsed(v) => v,
+        _ => return, // Missing/invalid already reported by V1
+    };
+
+    for field in COMPONENT_FIELDS {
+        for p in component_paths(val, field) {
+            // M013: an absolute or escaping path is rejected outright — where it
+            // would land is not meaningful, so M012 is not also evaluated.
+            if is_absolute_path(&p) {
+                diag.report(
+                    LintRule::ComponentPathUnsafe,
+                    &format!("{f} {field} path '{p}' must be relative, not absolute"),
+                );
+            } else if path_segments(&p).any(|s| s == "..") {
+                diag.report(
+                    LintRule::ComponentPathUnsafe,
+                    &format!("{f} {field} path '{p}' must not use '..' traversal"),
+                );
+            } else if path_segments(&p).next() == Some(PLUGIN_DIR) {
+                diag.report(
+                    LintRule::ComponentPathNested,
+                    &format!("{f} {field} path '{p}' must not point inside {PLUGIN_DIR}/"),
+                );
+            }
+        }
+    }
+}
+
+/// V30: Validate optional plugin.json metadata (M014, M015).
+pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    let f = ".claude-plugin/plugin.json";
+    let val = match &ctx.plugin_json {
+        ManifestState::Parsed(v) => v,
+        _ => return, // Missing/invalid already reported by V1
+    };
+
+    // M014: an author object must name the author. A bare author string is a
+    // different, accepted shape and carries no name field to check.
+    if let Some(author) = val.get("author") {
+        if author.is_object() && !is_non_empty_string(author.get("name")) {
+            diag.report(
+                LintRule::AuthorNameMissing,
+                &format!("{f} author.name missing or invalid (must be a non-empty string)"),
+            );
+        }
+    }
+
+    // M015: homepage is optional, but must be a usable http(s) URL when set.
+    if let Some(homepage) = val.get("homepage") {
+        let url = homepage.as_str().unwrap_or("");
+        if !RE_HTTP_URL.is_match(url) {
+            diag.report(
+                LintRule::HomepageUrlInvalid,
+                &format!("{f} homepage '{url}' is not a valid http(s) URL"),
+            );
+        }
+    }
+}
+
+/// V31: Validate plugin.json lspServers entries (M016).
+pub fn validate_lsp_servers(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    let f = ".claude-plugin/plugin.json";
+    let val = match &ctx.plugin_json {
+        ManifestState::Parsed(v) => v,
+        _ => return, // Missing/invalid already reported by V1
+    };
+
+    let servers = match val.get("lspServers").and_then(|v| v.as_object()) {
+        Some(m) => m,
+        None => return,
+    };
+
+    for (name, entry) in servers {
+        let has_command = is_non_empty_string(entry.get("command"));
+        let has_extensions = entry
+            .get("extensionToLanguage")
+            .is_some_and(|v| v.is_object());
+        if !has_command || !has_extensions {
+            diag.report(
+                LintRule::LspServerInvalid,
+                &format!(
+                    "{f} lspServers.{name} has missing/invalid command or extensionToLanguage"
+                ),
+            );
+        }
+    }
+}
+
+/// V32: Validate plugin.json channels entries (M017).
+///
+/// `channels` is accepted both as an object keyed by channel name and as an
+/// array of entries; either way every entry must name a `server`.
+pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    let f = ".claude-plugin/plugin.json";
+    let val = match &ctx.plugin_json {
+        ManifestState::Parsed(v) => v,
+        _ => return, // Missing/invalid already reported by V1
+    };
+
+    let entries: Vec<(String, &Value)> = match val.get("channels") {
+        Some(Value::Object(map)) => map
+            .iter()
+            .map(|(k, v)| (format!("channels.{k}"), v))
+            .collect(),
+        Some(Value::Array(arr)) => arr
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (format!("channels[{i}]"), v))
+            .collect(),
+        _ => return,
+    };
+
+    for (label, entry) in entries {
+        if !is_non_empty_string(entry.get("server")) {
+            diag.report(
+                LintRule::ChannelServerMissing,
+                &format!("{f} {label} missing required field: server"),
             );
         }
     }
@@ -461,6 +646,431 @@ mod tests {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // ── M003: empty and whitespace-only name ────────────────────────
+
+    #[test]
+    fn test_m003_empty_string_name_fires() {
+        let val = json!({"name": "", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing required field: name"));
+    }
+
+    #[test]
+    fn test_m003_whitespace_only_name_fires() {
+        let val = json!({"name": "   ", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing required field: name"));
+    }
+
+    #[test]
+    fn test_m003_non_string_name_fires() {
+        let val = json!({"name": 42, "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing required field: name"));
+    }
+
+    // ── M013: component-path-unsafe ─────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m013_absolute_path_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let val = json!({"name": "p", "version": "1.0.0", "commands": "/etc/commands"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("must be relative"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m013_windows_drive_path_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let val = json!({"name": "p", "version": "1.0.0", "agents": "C:\\agents"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("must be relative"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m013_traversal_escape_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // Acceptance-criteria edge case: a path that escapes the plugin root.
+        let val = json!({"name": "p", "version": "1.0.0", "skills": "foo/../../etc"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("'..' traversal"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m013_inner_traversal_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // Resolves back inside the root, but '..' is still rejected: write "bar".
+        let val = json!({"name": "p", "version": "1.0.0", "skills": "foo/../bar"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("'..' traversal"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m013_array_paths_checked_individually() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let val = json!({"name": "p", "version": "1.0.0", "agents": ["agents", "/abs", "../up"]});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 2);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m013_relative_paths_pass() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let val = json!({
+            "name": "p",
+            "version": "1.0.0",
+            "commands": "./commands",
+            "agents": ["agents", "extra/agents"],
+            "skills": "skills"
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // ── M012: component-path-nested ─────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_manifest_path_inside_plugin_dir_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let val = json!({"name": "p", "version": "1.0.0", "skills": ".claude-plugin/skills"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("must not point inside .claude-plugin/"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_dot_slash_prefix_still_detected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let val = json!({"name": "p", "version": "1.0.0", "agents": "./.claude-plugin/agents"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("must not point inside .claude-plugin/"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_physical_layout_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude-plugin/skills").unwrap();
+        let val = json!({"name": "p", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains(".claude-plugin/skills/ must not live inside"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_physical_layout_reported_without_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude-plugin/agents").unwrap();
+        // The on-disk layout is checked even when plugin.json is unusable.
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains(".claude-plugin/agents/ must not live inside"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_manifests_beside_components_pass() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // A correct layout: manifests inside .claude-plugin/, components outside.
+        std::fs::create_dir_all(".claude-plugin").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(".claude-plugin/plugin.json", "{}").unwrap();
+        let val = json!({"name": "p", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_inline_hooks_object_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // An inline hooks object declares no path, so there is nothing to check.
+        let val = json!({"name": "p", "version": "1.0.0", "hooks": {"PreToolUse": []}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // ── M014: author-name-missing ───────────────────────────────────
+
+    #[test]
+    fn test_m014_author_object_without_name_fires() {
+        let val = json!({"name": "p", "version": "1.0.0", "author": {"email": "a@b.com"}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_metadata(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("author.name"));
+    }
+
+    #[test]
+    fn test_m014_author_object_with_name_passes() {
+        let val = json!({"name": "p", "author": {"name": "Ada", "email": "a@b.com"}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_metadata(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_m014_blank_and_non_string_name_fire() {
+        for author in [json!({"name": "   "}), json!({"name": 42})] {
+            let val = json!({"name": "p", "author": author});
+            let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_metadata(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 1);
+        }
+    }
+
+    #[test]
+    fn test_m014_author_string_and_absent_pass() {
+        for val in [
+            json!({"name": "p", "author": "Ada Lovelace"}),
+            json!({"name": "p"}),
+        ] {
+            let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_metadata(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 0);
+        }
+    }
+
+    // ── M015: homepage-url-invalid ──────────────────────────────────
+
+    #[test]
+    fn test_m015_valid_urls_pass() {
+        for url in [
+            "https://example.com",
+            "http://example.com",
+            "https://example.com/a/b?c=d#e",
+        ] {
+            let val = json!({"name": "p", "homepage": url});
+            let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_metadata(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 0, "expected {url} to be accepted");
+        }
+    }
+
+    #[test]
+    fn test_m015_invalid_urls_fire() {
+        for url in [
+            json!("ftp://example.com"),
+            json!("example.com"),
+            json!("https://"),
+            json!("not a url"),
+            json!(""),
+            json!(42),
+        ] {
+            let val = json!({"name": "p", "homepage": url});
+            let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_metadata(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 1, "expected {url} to be rejected");
+        }
+    }
+
+    #[test]
+    fn test_m015_absent_homepage_passes() {
+        let val = json!({"name": "p", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_metadata(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // ── M016: lsp-server-invalid ────────────────────────────────────
+
+    #[test]
+    fn test_m016_valid_lsp_server_passes() {
+        let val = json!({
+            "lspServers": {
+                "rust-analyzer": {
+                    "command": "rust-analyzer",
+                    "extensionToLanguage": {".rs": "rust"}
+                }
+            }
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_lsp_servers(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_m016_missing_command_fires() {
+        let val = json!({
+            "lspServers": {"pyright": {"extensionToLanguage": {".py": "python"}}}
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_lsp_servers(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("lspServers.pyright"));
+    }
+
+    #[test]
+    fn test_m016_missing_extension_map_fires() {
+        let val = json!({"lspServers": {"pyright": {"command": "pyright-langserver"}}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_lsp_servers(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("extensionToLanguage"));
+    }
+
+    #[test]
+    fn test_m016_one_report_per_entry() {
+        // Both fields bad in one entry still reports once; a valid sibling is quiet.
+        let val = json!({
+            "lspServers": {
+                "bad": {"command": "  ", "extensionToLanguage": []},
+                "good": {"command": "ok", "extensionToLanguage": {".x": "x"}}
+            }
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_lsp_servers(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("lspServers.bad"));
+    }
+
+    #[test]
+    fn test_m016_absent_lsp_servers_passes() {
+        let val = json!({"name": "p", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_lsp_servers(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // ── M017: channel-server-missing ────────────────────────────────
+
+    #[test]
+    fn test_m017_object_channels() {
+        let val = json!({"channels": {"alerts": {"server": "my-server"}}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_channels(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+
+        let val = json!({"channels": {"alerts": {"topic": "x"}}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_channels(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("channels.alerts"));
+    }
+
+    #[test]
+    fn test_m017_array_channels() {
+        let val = json!({"channels": [{"server": "s"}, {"name": "no-server"}]});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_channels(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("channels[1]"));
+    }
+
+    #[test]
+    fn test_m017_blank_server_fires() {
+        let val = json!({"channels": {"alerts": {"server": "   "}}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_channels(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+    }
+
+    #[test]
+    fn test_m017_absent_channels_passes() {
+        let val = json!({"name": "p", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_channels(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_new_validators_skip_when_not_parsed() {
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_metadata(&ctx, &mut diag);
+        validate_lsp_servers(&ctx, &mut diag);
+        validate_channels(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
     }
 }

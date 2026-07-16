@@ -1,0 +1,5 @@
+### [Code Review] Self-review
+
+- **M015 diagnostic text for a non-string `homepage` is cosmetically misleading** — `src/validators/manifest.rs` `validate_plugin_metadata` does `homepage.as_str().unwrap_or("")`, so `"homepage": 42` reports `homepage '' is not a valid http(s) URL`, showing an empty string rather than the offending value. Rejected as low priority: the rule fires correctly (a non-string homepage is genuinely invalid), the rule name and field name already point the author at the right line, the case is covered by `test_m015_invalid_urls_fire`, and the leniency matches how sibling rules M010/M011 treat non-string values. Restructuring the message logic is not worth the churn.
+
+- **M012 manifest-path check only inspects the first path segment** — `path_segments(&p).next() == Some(PLUGIN_DIR)` means `foo/.claude-plugin/skills` does not fire M012. Rejected as correct-as-written rather than a defect: `.claude-plugin/` at the plugin root is the manifest directory the rule protects; a nested `foo/.claude-plugin/` is an unrelated directory, so flagging it would be a false positive. Noted only because the narrow check is deliberate and worth preserving.

@@ -1,8 +1,16 @@
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use regex::Regex;
 use std::path::Path;
+use std::sync::LazyLock;
 use walkdir::WalkDir;
+
+/// A valid userConfig key: an identifier starting with a letter or underscore.
+/// `-` and `.` are accepted because `to_upper_snake_case` maps both to `_` when
+/// deriving the `CLAUDE_PLUGIN_OPTION_` env var name (U003).
+static RE_CONFIG_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_.-]*$").unwrap());
 
 fn get_user_config<'a>(
     ctx: &'a LintContext,
@@ -200,6 +208,29 @@ pub fn validate_userconfig_type(ctx: &LintContext, diag: &mut DiagnosticCollecto
     }
 }
 
+/// V33: userConfig key format
+pub fn validate_userconfig_key_format(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    let f = ".claude-plugin/plugin.json";
+    let val = match &ctx.plugin_json {
+        ManifestState::Parsed(v) => v,
+        _ => return,
+    };
+
+    let user_config = match val.get("userConfig").and_then(|v| v.as_object()) {
+        Some(m) => m,
+        None => return,
+    };
+
+    for key in user_config.keys() {
+        if !RE_CONFIG_KEY.is_match(key) {
+            diag.report(
+                LintRule::UserconfigKeyInvalid,
+                &format!("{f} userConfig key '{key}' is not a valid identifier"),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +413,46 @@ mod tests {
         validate_userconfig_type(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("type"));
+    }
+
+    // ── U007: userconfig-key-invalid ────────────────────────────────
+
+    #[test]
+    fn test_u007_valid_keys_pass() {
+        // The shapes to_upper_snake_case already maps to env var names.
+        let val = serde_json::json!({
+            "userConfig": {
+                "slackBotToken": {},
+                "slack-channel-id": {},
+                "slack.user.id": {},
+                "_private": {},
+                "simple": {}
+            }
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_userconfig_key_format(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_u007_invalid_keys_fire() {
+        for key in ["has space", "9lives", "a$b", "", "with/slash"] {
+            let val = serde_json::json!({"userConfig": {key: {}}});
+            let ctx = make_ctx(ManifestState::Parsed(val));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_userconfig_key_format(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 1, "expected key '{key}' to be rejected");
+            assert!(diag.errors()[0].contains("not a valid identifier"));
+        }
+    }
+
+    #[test]
+    fn test_u007_no_userconfig_silent() {
+        let val = serde_json::json!({"name": "p", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_userconfig_key_format(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
     }
 }

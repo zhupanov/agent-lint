@@ -120,6 +120,16 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     user_config::validate_userconfig_title(ctx, diag);
     // V25: userConfig type field
     user_config::validate_userconfig_type(ctx, diag);
+    // V29: component path safety and layout
+    manifest::validate_component_paths(ctx, diag);
+    // V30: plugin.json optional metadata (author.name, homepage)
+    manifest::validate_plugin_metadata(ctx, diag);
+    // V31: plugin.json lspServers entries
+    manifest::validate_lsp_servers(ctx, diag);
+    // V32: plugin.json channels entries
+    manifest::validate_channels(ctx, diag);
+    // V33: userConfig key format
+    user_config::validate_userconfig_key_format(ctx, diag);
     // Original skill content checks (S009-S057, including plugin-only rules)
     skill_content::validate_skill_content(diag, exclude);
     // Private skill content checks (both-mode subset)

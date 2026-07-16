@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 217 rules across 14 categories. Every rule has a unique
+Agent Lint ships 225 rules across 14 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -29,7 +29,7 @@ every rule to error regardless of config. See
 |------|------|-------------|------|---------|
 | M001 | `plugin-json-missing` | `.claude-plugin/plugin.json` is missing | Plugin | error |
 | M002 | `plugin-json-invalid` | `plugin.json` is not valid JSON | Plugin | error |
-| M003 | `plugin-field-missing` | `plugin.json` missing required field (`name` or `version`) | Plugin | error |
+| M003 | `plugin-field-missing` | `plugin.json` missing required field (`name` or `version`). A `name` that is absent, empty, or whitespace-only all count as missing | Plugin | error |
 | M004 | `plugin-version-format` | `plugin.json` version is not strict `MAJOR.MINOR.PATCH` semver | Plugin | error |
 | M005 | `marketplace-json-missing` | `marketplace.json` is missing | Plugin | error |
 | M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON | Plugin | error |
@@ -38,6 +38,12 @@ every rule to error regardless of config. See
 | M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name` or `source` | Plugin | error |
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | warn |
+| M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`) lives inside `.claude-plugin/`, or a manifest path points there | Plugin | error |
+| M013 | `component-path-unsafe` | Manifest component path is absolute (`/…`, `C:\…`) or uses `..` traversal | Plugin | error |
+| M014 | `author-name-missing` | `plugin.json` `author` object present but `author.name` is missing or not a non-empty string | Plugin | warn |
+| M015 | `homepage-url-invalid` | `plugin.json` `homepage` is present but is not a valid http(s) URL | Plugin | warn |
+| M016 | `lsp-server-invalid` | `plugin.json` `lspServers` entry missing `command` or `extensionToLanguage` | Plugin | error |
+| M017 | `channel-server-missing` | `plugin.json` `channels` entry does not reference a `server` | Plugin | warn |
 
 ## Hooks Rules (H)
 
@@ -244,6 +250,7 @@ requires structured YAML frontmatter parsing.
 | A025 | `agent-background-invalid` | Agent `background` is not a boolean | Always | warn |
 | A026 | `agent-maxturns-invalid` | Agent `maxTurns` is not a positive integer | Always | error |
 | A027 | `agent-field-unknown` | Unrecognized agent frontmatter field (possible typo) | Always | warn |
+| A028 | `agent-field-unsupported` | Agent frontmatter uses `hooks`, `mcpServers`, or `permissionMode`, which are unsupported for plugin agents | Plugin | warn |
 
 > **Agent field-value rules (A014-A027).** These spec-grounded checks run on
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
@@ -335,6 +342,7 @@ schema and are covered by the unknown-key rules.
 | U004 | `userconfig-sensitive-type` | `userConfig` `sensitive` field must be a boolean | Plugin | error |
 | U005 | `userconfig-title-missing` | `userConfig` entry missing or invalid title | Plugin | error |
 | U006 | `userconfig-type-missing` | `userConfig` entry missing or invalid type | Plugin | error |
+| U007 | `userconfig-key-invalid` | `userConfig` key is not a valid identifier (letters, digits, `_`, `-`, `.`; must start with a letter or `_`) | Plugin | warn |
 
 ## MCP Configuration Rules (P)
 
@@ -381,7 +389,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 217):**
+**Auto-fixable rules (12 of 225):**
 
 | Rule | Code | Fix |
 |------|------|-----|
