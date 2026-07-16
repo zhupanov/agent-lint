@@ -6,10 +6,17 @@ use regex::Regex;
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
+use walkdir::WalkDir;
 
 static RE_SHARED_MD_REF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._/-]+\.md").unwrap()
 });
+
+/// Relative markdown link targets nested deeper than one directory level.
+static RE_RELATIVE_MD_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\]\((?:\./)?([^)]+\.md)\)").unwrap());
+
+const SKILL_DIR_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// Pre-parsed data for a single SKILL.md file.
 #[allow(dead_code)]
@@ -126,7 +133,7 @@ pub fn validate_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &Excl
 
 /// V6-adapted: Validate SKILL.md frontmatter for private skills (.claude/skills/*/SKILL.md).
 pub fn validate_private_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_skill_frontmatter_in_dir(".claude/skills", false, diag, exclude);
+    validate_skill_frontmatter_in_dir(".claude/skills", true, diag, exclude);
 }
 
 fn validate_skill_frontmatter_in_dir(
@@ -184,6 +191,34 @@ fn validate_skill_frontmatter_in_dir(
                 continue;
             }
         };
+
+        // X001: strict YAML parse; CC-SK-010: hooks schema when present.
+        match frontmatter::parse_yaml_strict(&fm_lines) {
+            Ok(yaml) => {
+                if let Some(hooks) = yaml.get("hooks") {
+                    super::hook_schema::validate_frontmatter_hooks(
+                        hooks,
+                        &format!("{skill_path} frontmatter"),
+                        diag,
+                    );
+                }
+            }
+            Err((line, msg)) => {
+                diag.report(
+                    LintRule::FrontmatterYamlInvalid,
+                    &format!("{skill_path}:{line}: frontmatter is not valid YAML: {msg}"),
+                );
+            }
+        }
+
+        // X002–X005: fence / XML structure on the full file.
+        super::markdown_structure::check_markdown_structure(&skill_path, &content, diag);
+
+        // S072: skill directory size limit.
+        check_skill_dir_size(&path, &skill_path, diag);
+
+        // S073: relative .md refs nested deeper than one level.
+        check_skill_ref_depth(&skill_path, &content, diag);
 
         let name = frontmatter::get_field(&fm_lines, "name");
         let desc = frontmatter::get_field(&fm_lines, "description");
@@ -248,6 +283,52 @@ fn validate_skill_frontmatter_in_dir(
                     );
                 }
             }
+        }
+    }
+}
+
+fn check_skill_dir_size(dir: &Path, skill_path: &str, diag: &mut DiagnosticCollector) {
+    let mut total = 0u64;
+    for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
+        if entry.file_type().is_file() {
+            if let Ok(meta) = entry.metadata() {
+                total = total.saturating_add(meta.len());
+            }
+        }
+    }
+    if total > SKILL_DIR_SIZE_LIMIT {
+        diag.report(
+            LintRule::SkillDirOversized,
+            &format!(
+                "{skill_path}: skill directory exceeds 8MB platform upload limit ({total} bytes)"
+            ),
+        );
+    }
+}
+
+fn check_skill_ref_depth(skill_path: &str, content: &str, diag: &mut DiagnosticCollector) {
+    let body = frontmatter::extract_body(content);
+    for caps in RE_RELATIVE_MD_LINK.captures_iter(body) {
+        let target = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        if target.starts_with("http://")
+            || target.starts_with("https://")
+            || target.starts_with('/')
+            || target.contains("${CLAUDE_PLUGIN_ROOT}")
+        {
+            continue;
+        }
+        let depth = target
+            .split('/')
+            .filter(|p| !p.is_empty() && *p != ".")
+            .count();
+        // One nesting level = dir/file.md (2 components). Deeper is flagged.
+        if depth > 2 {
+            diag.report(
+                LintRule::SkillRefNested,
+                &format!(
+                    "{skill_path}: skill file reference '{target}' is nested deeper than one level"
+                ),
+            );
         }
     }
 }
@@ -584,5 +665,131 @@ mod tests {
         validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_x001_invalid_yaml_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // Tab indentation is invalid YAML.
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n\tdescription: bad\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::FrontmatterYamlInvalid),
+            "expected X001: {:?}",
+            diag.diagnostics()
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_cc_sk_010_skill_hooks_schema() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill for testing hooks\nhooks:\n  NotAnEvent:\n    - hooks:\n        - type: command\n          command: echo hi\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::HookEventInvalid && d.message.contains("frontmatter")),
+            "expected H008 on skill frontmatter: {:?}",
+            diag.diagnostics()
+                .iter()
+                .map(|d| format!("{}:{}", d.rule.code(), d.message))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_x002_unclosed_fence_in_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill for fence testing\n---\n```bash\necho hi\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::UnclosedCodeFence)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s073_deep_relative_md_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill for depth testing\n---\nSee [deep](refs/deep/nested/file.md)\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::SkillRefNested)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s006_private_skill_name_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: other-name\ndescription: A skill for basic mode\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::FrontmatterNameMismatch)
+        );
     }
 }

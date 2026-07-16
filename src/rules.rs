@@ -105,6 +105,18 @@ pub enum LintRule {
     /// H025: .claude/settings.local.json is not valid JSON
     SettingsLocalInvalid,
 
+    // ── Markdown structure (X) ────────────────────────────────────
+    /// X001: skill/agent frontmatter is not valid YAML
+    FrontmatterYamlInvalid,
+    /// X002: unclosed code fence in a linted markdown file
+    UnclosedCodeFence,
+    /// X003: unclosed XML tag in markdown body
+    XmlTagUnclosed,
+    /// X004: mismatched closing XML tag in markdown body
+    XmlTagMismatched,
+    /// X005: closing XML tag with no opening tag
+    XmlTagOrphan,
+
     // ── Skills (S) ────────────────────────────────────────────────
     /// S001: skills/ directory is missing
     SkillsDirMissing,
@@ -248,6 +260,10 @@ pub enum LintRule {
     UnknownFmField,
     /// S071: paths field present but empty
     PathsEmpty,
+    /// S072: skill directory exceeds 8MB (platform upload limit)
+    SkillDirOversized,
+    /// S073: skill file reference nested deeper than one level
+    SkillRefNested,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -640,6 +656,12 @@ impl LintRule {
             Self::HookHeadersInterpolated => "H024",
             Self::SettingsLocalInvalid => "H025",
 
+            Self::FrontmatterYamlInvalid => "X001",
+            Self::UnclosedCodeFence => "X002",
+            Self::XmlTagUnclosed => "X003",
+            Self::XmlTagMismatched => "X004",
+            Self::XmlTagOrphan => "X005",
+
             Self::SkillsDirMissing => "S001",
             Self::SkillMdMissing => "S002",
             Self::NoExportedSkills => "S003",
@@ -711,6 +733,8 @@ impl LintRule {
             Self::HintNoArgs => "S069",
             Self::UnknownFmField => "S070",
             Self::PathsEmpty => "S071",
+            Self::SkillDirOversized => "S072",
+            Self::SkillRefNested => "S073",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -932,6 +956,12 @@ impl LintRule {
             Self::HookHeadersInterpolated => "hook-headers-interpolated",
             Self::SettingsLocalInvalid => "settings-local-invalid",
 
+            Self::FrontmatterYamlInvalid => "frontmatter-yaml-invalid",
+            Self::UnclosedCodeFence => "unclosed-code-fence",
+            Self::XmlTagUnclosed => "xml-tag-unclosed",
+            Self::XmlTagMismatched => "xml-tag-mismatched",
+            Self::XmlTagOrphan => "xml-tag-orphan",
+
             Self::SkillsDirMissing => "skills-dir-missing",
             Self::SkillMdMissing => "skill-md-missing",
             Self::NoExportedSkills => "no-exported-skills",
@@ -1003,6 +1033,8 @@ impl LintRule {
             Self::HintNoArgs => "hint-no-args",
             Self::UnknownFmField => "unknown-fm-field",
             Self::PathsEmpty => "paths-empty",
+            Self::SkillDirOversized => "skill-dir-oversized",
+            Self::SkillRefNested => "skill-ref-nested",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -1227,7 +1259,8 @@ impl LintRule {
             Self::CodexWindowsSandbox | Self::CodexAgentsGenericGuidance |
             Self::CodexAgentsMissingStructure | Self::CodexAgentsConfigConflict |
             Self::PromptNegativeOnly | Self::PromptWeakCritical |
-            Self::ClaudeReadmeDuplicate | Self::CursorPromptHookModelInvalid
+            Self::ClaudeReadmeDuplicate | Self::CursorPromptHookModelInvalid |
+            Self::SkillRefNested
                 => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
@@ -1307,6 +1340,10 @@ impl LintRule {
             Self::ClaudeImportLarge | Self::InlinePathMissing
             | Self::McpSseDeprecated | Self::McpEnvSecretLiteral
             | Self::McpCommandDangerous | Self::McpAlwaysLoadInvalid
+
+            // ── Default-warning: markdown structure ──────────────────
+            | Self::XmlTagUnclosed | Self::XmlTagMismatched | Self::XmlTagOrphan
+            | Self::SkillDirOversized
                 => DefaultSeverity::Warning,
 
             // Everything else defaults to error.
@@ -1359,6 +1396,11 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::HookCommandDangerous,
     LintRule::HookHeadersInterpolated,
     LintRule::SettingsLocalInvalid,
+    LintRule::FrontmatterYamlInvalid,
+    LintRule::UnclosedCodeFence,
+    LintRule::XmlTagUnclosed,
+    LintRule::XmlTagMismatched,
+    LintRule::XmlTagOrphan,
     LintRule::SkillsDirMissing,
     LintRule::SkillMdMissing,
     LintRule::NoExportedSkills,
@@ -1430,6 +1472,8 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::HintNoArgs,
     LintRule::UnknownFmField,
     LintRule::PathsEmpty,
+    LintRule::SkillDirOversized,
+    LintRule::SkillRefNested,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -1603,7 +1647,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            273,
+            280,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1671,8 +1715,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            14,
-            "Expected 14 default-suppressed rules, got {}",
+            15,
+            "Expected 15 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1685,8 +1729,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            104,
-            "Expected 104 default-warning rules, got {}",
+            108,
+            "Expected 108 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1734,8 +1778,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            155,
-            "Expected 155 default-error rules, got {}",
+            157,
+            "Expected 157 default-error rules, got {}",
             errors.len()
         );
     }

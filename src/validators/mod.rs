@@ -12,6 +12,7 @@ mod hook_schema;
 mod hooks;
 pub mod hygiene;
 mod manifest;
+mod markdown_structure;
 mod mcp;
 mod prompt_content;
 pub(crate) mod skill_content;
@@ -79,6 +80,8 @@ fn run_basic(
         cursor::validate(diag, exclude);
     }
     prompt_content::validate_claude_md(diag, exclude);
+    // X002–X005: CLAUDE.md structure (when present)
+    docs::validate_claudemd_structure(diag, exclude);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -179,6 +182,8 @@ fn run_plugin(
     docs::validate_claudemd_size(diag, exclude);
     // D003: TODO/FIXME in CLAUDE.md
     docs::validate_claudemd_todos(diag, exclude);
+    // X002–X005: CLAUDE.md fence / XML structure
+    docs::validate_claudemd_structure(diag, exclude);
     // G006: TODO/FIXME in published skills
     hygiene::validate_todo_in_skills(diag, exclude);
     // G007: TODO/FIXME in agents

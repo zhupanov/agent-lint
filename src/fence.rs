@@ -221,6 +221,22 @@ fn fence_body(fence: &MarkdownFence) -> String {
         .join("\n")
 }
 
+/// Return the 1-based line number of an unclosed fence opener, if any.
+pub fn find_unclosed_fence_line(content: &str) -> Option<usize> {
+    let mut tracker = CodeFenceTracker::new();
+    let mut opener: Option<usize> = None;
+    for (idx, line) in content.lines().enumerate() {
+        let was_inside = tracker.in_fence();
+        let class = tracker.process_line(line);
+        if class == LineClass::Delimiter && tracker.in_fence() && !was_inside {
+            opener = Some(idx + 1);
+        } else if class == LineClass::Delimiter && !tracker.in_fence() {
+            opener = None;
+        }
+    }
+    if tracker.in_fence() { opener } else { None }
+}
+
 /// Tracks code fence state while iterating over lines.
 pub struct CodeFenceTracker {
     fence_char: Option<char>,

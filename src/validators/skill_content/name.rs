@@ -56,13 +56,14 @@ pub(super) fn check_name_format(
         );
     }
 
-    // S012: reserved words
+    // S012: reserved words — contains-match for anthropic/claude; exact
+    // match for the literal name `skill` (agnix AS-style split).
     let lower = name.to_lowercase();
-    if lower.contains("anthropic") || lower.contains("claude") {
+    if lower.contains("anthropic") || lower.contains("claude") || lower == "skill" {
         diag.report(
             LintRule::NameReservedWord,
             &format!(
-                "{}: name '{}' contains reserved word ('anthropic' or 'claude')",
+                "{}: name '{}' contains reserved word ('anthropic', 'claude', or exact 'skill')",
                 info.path, name
             ),
         );

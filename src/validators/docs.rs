@@ -99,6 +99,22 @@ pub fn validate_claudemd_todos(diag: &mut DiagnosticCollector, exclude: &Exclude
     }
 }
 
+/// X002–X005: fence / XML structure checks for CLAUDE.md.
+pub fn validate_claudemd_structure(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    if exclude.is_excluded("CLAUDE.md") {
+        return;
+    }
+    let claude_md = Path::new("CLAUDE.md");
+    if !claude_md.is_file() {
+        return;
+    }
+    let content = match fs::read_to_string(claude_md) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    super::markdown_structure::check_markdown_structure("CLAUDE.md", &content, diag);
+}
+
 fn extract_canonical_sources_section(content: &str) -> String {
     let mut in_section = false;
     let mut result = Vec::new();
