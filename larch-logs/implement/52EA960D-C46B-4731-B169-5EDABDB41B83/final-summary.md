@@ -7,7 +7,7 @@ No review rounds completed.
 - **Outcome**: shipping
 - Force: true
 - **Duration**: 00:31:50
-- **Cost**: 💰 TOTAL ~$0.33: Claude/GLM-5.2 token $2.78 (estimated $0.19), Codex-5.6 $0.00, Codex-mini $0.00, Cursor $0.00, Claude (subprocess) $0.14  |  Tokens: 8720k
+- **Cost**: 💰 TOTAL ~$0.33: Claude/GLM-5.2 token $2.91 (estimated $0.19), Codex-5.6 $0.00, Codex-mini $0.00, Cursor $0.00, Claude (subprocess) $0.14  |  Tokens: 9174k
 - **Cost note**: Token is API-equivalent GLM-5.2 pricing; estimated is plan cost (token ÷ 15).
 - **Issue**: #108: https://github.com/zhupanov/agent-lint/issues/108
 - **Plan review**: N/A
