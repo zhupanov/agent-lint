@@ -88,6 +88,17 @@ const NO_MATCHER_EVENTS: &[&str] = &[
 /// Recognized handler types (H011).
 const VALID_HOOK_TYPES: &[&str] = &["command", "prompt", "agent", "http", "mcp_tool"];
 
+/// Events on which the `if` field is evaluated. On every other event Claude
+/// Code accepts the field but never runs the handler, so H021 reports it as a
+/// configuration error rather than silently accepting a no-op condition.
+const TOOL_EVENTS_WITH_IF: &[&str] = &[
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PermissionRequest",
+    "PermissionDenied",
+];
+
 /// H023: destructive patterns in hook commands.
 static DANGEROUS_COMMAND_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
@@ -260,12 +271,18 @@ fn validate_hook_object(
         }
     }
 
-    // H021: if must be a non-empty string.
+    // H021: `if` must be a non-empty string and is only evaluated on tool
+    // events. On every other event it is accepted but ignored by Claude Code.
     if let Some(cond) = hook.get("if") {
         if cond.as_str().is_none_or(|s| s.trim().is_empty()) {
             diag.report(
                 LintRule::HookIfInvalid,
                 &format!("{ctx} has 'if' {cond}, must be a non-empty string"),
+            );
+        } else if !TOOL_EVENTS_WITH_IF.contains(&event) {
+            diag.report(
+                LintRule::HookIfInvalid,
+                &format!("{ctx} sets 'if', which is only evaluated on tool events"),
             );
         }
     }
@@ -724,6 +741,27 @@ mod tests {
             json!({"type": "command", "command": "x", "if": "$FOO == 1"}),
         ));
         assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn h021_if_on_non_tool_event_fires() {
+        let errors = check(wrap(
+            "Stop",
+            json!({"type": "command", "command": "x", "if": "Bash(git *)"}),
+        ));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("only evaluated on tool events"));
+    }
+
+    #[test]
+    fn h021_if_on_every_tool_event_passes() {
+        for event in TOOL_EVENTS_WITH_IF {
+            let errors = check(wrap(
+                event,
+                json!({"type": "command", "command": "x", "if": "Bash(git *)"}),
+            ));
+            assert!(errors.is_empty(), "{event} must support 'if': {errors:?}");
+        }
     }
 
     #[test]

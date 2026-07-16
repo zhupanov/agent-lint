@@ -82,7 +82,7 @@ pub enum LintRule {
     HookModelInvalid,
     /// H020: hook 'once' is not a boolean
     HookOnceInvalid,
-    /// H021: hook 'if' is not a non-empty string
+    /// H021: hook 'if' is invalid or used outside a tool event
     HookIfInvalid,
     /// H022: hook 'shell' value is not bash/powershell
     HookShellInvalid,
