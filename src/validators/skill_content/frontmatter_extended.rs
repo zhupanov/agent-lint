@@ -106,40 +106,21 @@ pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut Diagnostic
 
     // S040: allowed-tools unknown
     if let Some(tools_str) = frontmatter::get_field(&info.fm_lines, "allowed-tools") {
-        let known_tools = [
-            "AskUserQuestion",
-            "Bash",
-            "Read",
-            "Edit",
-            "Write",
-            "Grep",
-            "Glob",
-            "Agent",
-            "Task",
-            "WebFetch",
-            "WebSearch",
-            "Skill",
-            "NotebookEdit",
-            "LSP",
-            "TaskCreate",
-            "TaskUpdate",
-            "TaskList",
-            "TaskGet",
-            "TaskStop",
-            "TaskOutput",
-        ];
         for tool in tools_str.split(',') {
             let tool = tool.trim();
-            // Skip tool patterns like "Bash(git *)" -- extract base name
-            let base_name = if let Some(paren) = tool.find('(') {
-                tool[..paren].trim()
-            } else {
-                tool
+            if tool.is_empty() {
+                continue;
+            }
+            // Reuse the shared known-tool checker (also used by agent tools rules).
+            // Base name is reported (argument-restriction suffix like "Bash(git *)" stripped).
+            let base_name = match tool.find('(') {
+                Some(paren) => tool[..paren].trim(),
+                None => tool,
             };
             if base_name.is_empty() {
                 continue;
             }
-            if !known_tools.contains(&base_name) {
+            if !crate::validators::common::is_known_tool_name(tool) {
                 diag.report(
                     LintRule::ToolsUnknown,
                     &format!(

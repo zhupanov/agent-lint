@@ -10,8 +10,9 @@
 - **139 lint rules** across 10 categories (Manifest, Hooks, Skills, Agents,
   Hygiene, Email, User Config, MCP, Slack, Docs)
 - **Two lint modes**:
-  - **Basic mode** -- validates `.claude/` and standalone MCP configuration
-    (settings, hooks, private skill frontmatter, script references, executability)
+  - **Basic mode** -- validates `.claude/` contents and standalone MCP
+    configuration (settings, hooks, private skill frontmatter, private agents,
+    script references, executability)
   - **Plugin mode** -- runs the full rule suite when `.claude-plugin/` is
     present
 - **Configurable** -- suppress or downgrade rules via `agent-lint.toml`
@@ -105,7 +106,7 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 
 | Mode | Trigger | Scope |
 |------|---------|-------|
-| **Basic** | `.claude/` directory or any `*.mcp.json` file exists | Settings hooks, MCP configuration, private skill frontmatter, script refs, executability, always-mode S-rules |
+| **Basic** | `.claude/` directory or any `*.mcp.json` file exists | Settings hooks, MCP configuration, private skill frontmatter, private agents (A002-A003, A008-A025), script refs, executability, always-mode S-rules |
 | **Plugin** | `.claude-plugin/` directory exists | All 139 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
 
 If no Claude or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.

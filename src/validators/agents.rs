@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use super::common::RE_NAME_INVALID;
+use super::common::{RE_NAME_INVALID, is_known_tool_name};
 
 /// Jaccard similarity threshold (strict greater-than).
 const JACCARD_THRESHOLD: f64 = 0.8;
@@ -106,83 +106,456 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             Err(_) => continue,
         };
 
-        let fm_lines = match frontmatter::extract_frontmatter(&content) {
-            Some(lines) => lines,
-            None => {
-                diag.report(
-                    LintRule::AgentFrontmatterMalformed,
-                    &format!(
-                        "{agent_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
-                    ),
-                );
-                continue;
-            }
+        validate_agent_file(diag, &agent_path, &content);
+    }
+
+    if found == 0 && excluded_count == 0 {
+        diag.report(LintRule::NoAgentFiles, "agents/ has no .md files");
+    }
+}
+
+/// V7-adapted: Validate `.claude/agents/*.md` (private agents) in Basic mode.
+/// Runs the same per-file frontmatter and field-value checks as `agents/`
+/// (A002/A003, A008-A011, A014-A027). Does not report A001/A004 (the
+/// `.claude/agents/` directory is optional) nor the larch-specific
+/// template rules A005-A007.
+pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let agents_dir = Path::new(".claude/agents");
+    if !agents_dir.is_dir() {
+        return;
+    }
+    let entries = match fs::read_dir(agents_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.ends_with(".md") => n.to_string(),
+            _ => continue,
         };
 
-        let fm_name = frontmatter::get_field(&fm_lines, "name");
-        let fm_desc = frontmatter::get_field(&fm_lines, "description");
-
-        if fm_name.is_none() {
-            diag.report(
-                LintRule::AgentFieldMissing,
-                &format!("{agent_path}: missing required frontmatter field 'name'"),
-            );
-        }
-        if fm_desc.is_none() {
-            diag.report(
-                LintRule::AgentFieldMissing,
-                &format!("{agent_path}: missing required frontmatter field 'description'"),
-            );
+        let agent_path = format!(".claude/agents/{name}");
+        if exclude.is_excluded(&agent_path) {
+            continue;
         }
 
-        // A008: agent description too long
-        // A009: agent description too short
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        validate_agent_file(diag, &agent_path, &content);
+    }
+}
+
+/// Run all per-file agent frontmatter checks (used for both `agents/` and
+/// `.claude/agents/`). Covers A002, A003, A008-A011, and the field-value
+/// rules A014-A027.
+fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content: &str) {
+    let fm_lines = match frontmatter::extract_frontmatter(content) {
+        Some(lines) => lines,
+        None => {
+            diag.report(
+                LintRule::AgentFrontmatterMalformed,
+                &format!(
+                    "{agent_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
+                ),
+            );
+            return;
+        }
+    };
+
+    let fm_name = frontmatter::get_field(&fm_lines, "name");
+    let fm_desc = frontmatter::get_field(&fm_lines, "description");
+
+    if fm_name.is_none() {
+        diag.report(
+            LintRule::AgentFieldMissing,
+            &format!("{agent_path}: missing required frontmatter field 'name'"),
+        );
+    }
+    if fm_desc.is_none() {
+        diag.report(
+            LintRule::AgentFieldMissing,
+            &format!("{agent_path}: missing required frontmatter field 'description'"),
+        );
+    }
+
+    // A008: agent description too long
+    // A009: agent description too short
+    if let Some(ref desc) = fm_desc {
+        let char_count = desc.chars().count();
+        if char_count > 1024 {
+            diag.report(
+                LintRule::AgentDescLong,
+                &format!("{agent_path}: description exceeds 1024 characters ({char_count})"),
+            );
+        }
+        if char_count < 20 {
+            diag.report(
+                LintRule::AgentDescShort,
+                &format!("{agent_path}: description is under 20 characters ({char_count})"),
+            );
+        }
+    }
+
+    // A011: agent description too similar to agent name
+    if let Some(ref n) = fm_name {
         if let Some(ref desc) = fm_desc {
-            let char_count = desc.chars().count();
-            if char_count > 1024 {
+            if is_desc_redundant(n, desc) {
                 diag.report(
-                    LintRule::AgentDescLong,
-                    &format!("{agent_path}: description exceeds 1024 characters ({char_count})"),
-                );
-            }
-            if char_count < 20 {
-                diag.report(
-                    LintRule::AgentDescShort,
-                    &format!("{agent_path}: description is under 20 characters ({char_count})"),
-                );
-            }
-        }
-
-        // A011: agent description too similar to agent name
-        if let Some(ref n) = fm_name {
-            if let Some(ref desc) = fm_desc {
-                if is_desc_redundant(n, desc) {
-                    diag.report(
-                        LintRule::AgentDescRedundant,
-                        &format!(
-                            "{agent_path}: description is too similar to the agent name '{n}'"
-                        ),
-                    );
-                }
-            }
-        }
-
-        // A010: agent name invalid characters
-        if let Some(ref n) = fm_name {
-            if RE_NAME_INVALID.is_match(n) {
-                diag.report(
-                    LintRule::AgentNameInvalid,
-                    &format!(
-                        "{agent_path}: name '{}' contains characters outside [a-z0-9-]",
-                        n
-                    ),
+                    LintRule::AgentDescRedundant,
+                    &format!("{agent_path}: description is too similar to the agent name '{n}'"),
                 );
             }
         }
     }
 
-    if found == 0 && excluded_count == 0 {
-        diag.report(LintRule::NoAgentFiles, "agents/ has no .md files");
+    // A010: agent name invalid characters
+    if let Some(ref n) = fm_name {
+        if RE_NAME_INVALID.is_match(n) {
+            diag.report(
+                LintRule::AgentNameInvalid,
+                &format!(
+                    "{agent_path}: name '{}' contains characters outside [a-z0-9-]",
+                    n
+                ),
+            );
+        }
+    }
+
+    check_agent_field_values(diag, agent_path, &fm_lines);
+}
+
+/// Recognized agent frontmatter fields. Any other top-level key triggers A027
+/// (agent-field-unknown) as a typo catcher. Matches the field set validated by
+/// A002/A003 and A014-A026 plus the standard Claude Code agent schema.
+const KNOWN_AGENT_FIELDS: &[&str] = &[
+    "name",
+    "description",
+    "tools",
+    "disallowedTools",
+    "model",
+    "permissionMode",
+    "maxTurns",
+    "isolation",
+    "background",
+    "skills",
+    "memory",
+    "effort",
+];
+
+/// Allowed `permissionMode` values (CC-AG-004).
+const VALID_PERMISSION_MODES: &[&str] = &[
+    "default",
+    "acceptEdits",
+    "dontAsk",
+    "bypassPermissions",
+    "plan",
+    "delegate",
+];
+
+/// Allowed `memory` values (CC-AG-008).
+const VALID_MEMORY: &[&str] = &["user", "project", "local"];
+
+/// Allowed `effort` values (CC-AG-014; superset of the skill S025 set).
+const VALID_EFFORT: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+/// Strip one layer of matching outer quotes (double or single) from a value.
+fn strip_outer_quotes(s: &str) -> &str {
+    let s = s.trim();
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
+    {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// Whether a string is kebab-case: non-empty, `[a-z0-9-]` only, no leading /
+/// trailing hyphen, no consecutive hyphens.
+fn is_kebab_case(s: &str) -> bool {
+    if s.is_empty() || s.starts_with('-') || s.ends_with('-') || s.contains("--") {
+        return false;
+    }
+    !RE_NAME_INVALID.is_match(s)
+}
+
+/// Whether a `model:` value is a recognized Claude Code model.
+///
+/// Accepts the aliases `sonnet`/`opus`/`haiku`/`inherit`/`default`, full model
+/// IDs of the form `claude-<family>-<version>` (family in sonnet/opus/haiku),
+/// and an optional `[1m]`/`[2m]` context-window suffix on any of the above.
+fn is_valid_model(value: &str) -> bool {
+    let v = value.trim();
+    let base = v
+        .strip_suffix("[1m]")
+        .or_else(|| v.strip_suffix("[2m]"))
+        .unwrap_or(v);
+    match base {
+        "sonnet" | "opus" | "haiku" | "inherit" | "default" => true,
+        other => {
+            for family in ["claude-sonnet-", "claude-opus-", "claude-haiku-"] {
+                if let Some(rest) = other.strip_prefix(family) {
+                    return !rest.is_empty() && !rest.ends_with('-');
+                }
+            }
+            false
+        }
+    }
+}
+
+/// Extract items from a frontmatter field that is either a comma-separated
+/// scalar (`tools: Bash, Read`) or a YAML list (`tools:\n  - Bash\n  - Read`).
+/// Returns trimmed, quote-stripped, non-empty items.
+fn get_field_items(fm_lines: &[String], key: &str) -> Vec<String> {
+    let prefix = format!("{key}:");
+    let mut items = Vec::new();
+    let mut key_idx: Option<usize> = None;
+
+    for (i, line) in fm_lines.iter().enumerate() {
+        if line.starts_with(&prefix) {
+            key_idx = Some(i);
+            let raw = strip_outer_quotes(line[prefix.len()..].trim_start());
+            // YAML flow sequence: `tools: [Bash, Read]` — strip the brackets
+            // before comma-splitting so each item is parsed as a scalar entry.
+            let inline = if raw.starts_with('[') && raw.ends_with(']') && raw.len() >= 2 {
+                &raw[1..raw.len() - 1]
+            } else {
+                raw
+            };
+            if !inline.is_empty() {
+                for part in inline.split(',') {
+                    let p = strip_outer_quotes(part.trim());
+                    if !p.is_empty() {
+                        items.push(p.to_string());
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    if let Some(idx) = key_idx {
+        for line in fm_lines.iter().skip(idx + 1) {
+            if line.is_empty() {
+                continue;
+            }
+            if !(line.starts_with(' ') || line.starts_with('\t')) {
+                break; // End of this key's block.
+            }
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("- ") {
+                let item = strip_outer_quotes(rest.trim());
+                if !item.is_empty() {
+                    items.push(item.to_string());
+                }
+            }
+        }
+    }
+
+    items
+}
+
+/// Collect top-level (non-indented, non-list) frontmatter keys.
+fn collect_top_level_keys(fm_lines: &[String]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for line in fm_lines {
+        if line.starts_with(' ') || line.starts_with('\t') || line.trim_start().starts_with('-') {
+            continue;
+        }
+        if let Some(pos) = line.find(':') {
+            let key = line[..pos].trim();
+            if !key.is_empty() {
+                keys.push(key.to_string());
+            }
+        }
+    }
+    keys
+}
+
+/// Whether a referenced skill name resolves to a SKILL.md on disk under either
+/// the public (`skills/`) or private (`.claude/skills/`) layout.
+fn skill_exists_on_disk(skill: &str) -> bool {
+    Path::new(&format!("skills/{skill}/SKILL.md")).is_file()
+        || Path::new(&format!(".claude/skills/{skill}/SKILL.md")).is_file()
+}
+
+/// A014-A027: field-value validation for agent frontmatter.
+fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm_lines: &[String]) {
+    // A014: model must be a recognized value (CC-AG-003).
+    if let Some(model) = frontmatter::get_field(fm_lines, "model") {
+        if !is_valid_model(&model) {
+            diag.report(
+                LintRule::AgentModelInvalid,
+                &format!(
+                    "{agent_path}: model '{}' is not a recognized Claude Code model (use sonnet/opus/haiku/inherit, a claude-<family>-<id> full ID, with optional [1m] suffix)",
+                    model
+                ),
+            );
+        }
+    }
+
+    // A015 + A021: permissionMode enum (CC-AG-004) and bypass warning (CC-AG-012).
+    if let Some(mode) = frontmatter::get_field(fm_lines, "permissionMode") {
+        if !VALID_PERMISSION_MODES.contains(&mode.as_str()) {
+            diag.report(
+                LintRule::AgentPermissionInvalid,
+                &format!(
+                    "{agent_path}: permissionMode '{}' is not one of [default, acceptEdits, dontAsk, bypassPermissions, plan, delegate]",
+                    mode
+                ),
+            );
+        } else if mode == "bypassPermissions" {
+            diag.report(
+                LintRule::AgentBypassPermissions,
+                &format!(
+                    "{agent_path}: permissionMode 'bypassPermissions' disables safety checks",
+                ),
+            );
+        }
+    }
+
+    // A018: memory must be user/project/local (CC-AG-008).
+    if let Some(mem) = frontmatter::get_field(fm_lines, "memory") {
+        if !VALID_MEMORY.contains(&mem.as_str()) {
+            diag.report(
+                LintRule::AgentMemoryInvalid,
+                &format!(
+                    "{agent_path}: memory '{}' is not one of [user, project, local]",
+                    mem
+                ),
+            );
+        }
+    }
+
+    // A023: effort must be low/medium/high/xhigh/max (CC-AG-014).
+    if let Some(eff) = frontmatter::get_field(fm_lines, "effort") {
+        if !VALID_EFFORT.contains(&eff.as_str()) {
+            diag.report(
+                LintRule::AgentEffortInvalid,
+                &format!(
+                    "{agent_path}: effort '{}' is not one of [low, medium, high, xhigh, max]",
+                    eff
+                ),
+            );
+        }
+    }
+
+    // A024: isolation must be worktree (CC-AG-015).
+    if let Some(iso) = frontmatter::get_field(fm_lines, "isolation") {
+        if iso != "worktree" {
+            diag.report(
+                LintRule::AgentIsolationInvalid,
+                &format!(
+                    "{agent_path}: isolation '{}' is not 'worktree' (the only supported value)",
+                    iso
+                ),
+            );
+        }
+    }
+
+    // A025: background must be a boolean (CC-AG-016).
+    if let Some(bg) = frontmatter::get_field(fm_lines, "background") {
+        if bg != "true" && bg != "false" {
+            diag.report(
+                LintRule::AgentBackgroundInvalid,
+                &format!(
+                    "{agent_path}: background '{}' is not a boolean (use true or false)",
+                    bg
+                ),
+            );
+        }
+    }
+
+    // A026: maxTurns must be a positive integer (CC-AG-017).
+    if let Some(turns) = frontmatter::get_field(fm_lines, "maxTurns") {
+        let ok =
+            turns.chars().all(|c| c.is_ascii_digit()) && turns.parse::<u64>().is_ok_and(|n| n >= 1);
+        if !ok {
+            diag.report(
+                LintRule::AgentMaxturnsInvalid,
+                &format!(
+                    "{agent_path}: maxTurns '{}' is not a positive integer",
+                    turns
+                ),
+            );
+        }
+    }
+
+    let tools = get_field_items(fm_lines, "tools");
+    let disallowed = get_field_items(fm_lines, "disallowedTools");
+
+    // A019: tools must be known (CC-AG-009).
+    for tool in &tools {
+        if !is_known_tool_name(tool) {
+            diag.report(
+                LintRule::AgentToolsUnknown,
+                &format!(
+                    "{agent_path}: tools lists unrecognized tool '{tool}' (case-sensitive PascalCase; mcp__<server>__<tool> is accepted)",
+                ),
+            );
+        }
+    }
+
+    // A020: disallowedTools must be known (CC-AG-010).
+    for tool in &disallowed {
+        if !is_known_tool_name(tool) {
+            diag.report(
+                LintRule::AgentDisallowedUnknown,
+                &format!(
+                    "{agent_path}: disallowedTools lists unrecognized tool '{tool}' (case-sensitive PascalCase; mcp__<server>__<tool> is accepted)",
+                ),
+            );
+        }
+    }
+
+    // A017: no tool in both tools and disallowedTools (CC-AG-006).
+    let disallowed_set: HashSet<&str> = disallowed.iter().map(String::as_str).collect();
+    for tool in &tools {
+        if disallowed_set.contains(tool.as_str()) {
+            diag.report(
+                LintRule::AgentToolsOverlap,
+                &format!("{agent_path}: tool '{tool}' appears in both tools and disallowedTools",),
+            );
+        }
+    }
+
+    // A016 + A022: skills must exist on disk (CC-AG-005) and be kebab-case (CC-AG-013).
+    let skills = get_field_items(fm_lines, "skills");
+    for skill in &skills {
+        if !is_kebab_case(skill) {
+            diag.report(
+                LintRule::AgentSkillKebab,
+                &format!(
+                    "{agent_path}: skills entry '{skill}' is not kebab-case ([a-z0-9-], no leading/trailing/double hyphen)",
+                ),
+            );
+        }
+        if !skill_exists_on_disk(skill) {
+            diag.report(
+                LintRule::AgentSkillMissing,
+                &format!(
+                    "{agent_path}: skills entry '{skill}' has no matching skills/{skill}/SKILL.md or .claude/skills/{skill}/SKILL.md",
+                ),
+            );
+        }
+    }
+
+    // A027: unknown frontmatter field (CC-AG-019, typo catcher).
+    for key in collect_top_level_keys(fm_lines) {
+        if !KNOWN_AGENT_FIELDS.contains(&key.as_str()) {
+            diag.report(
+                LintRule::AgentFieldUnknown,
+                &format!("{agent_path}: unrecognized frontmatter field '{key}' (possible typo)",),
+            );
+        }
     }
 }
 
@@ -776,5 +1149,578 @@ mod tests {
                 .any(|e| e.contains("too similar to the agent name")),
             "Existing fixture should not trigger A011"
         );
+    }
+
+    // ── A014-A027: agent field-value validation ──────────────────────
+
+    /// Run `validate_agents` against a single `agents/general.md` with the given
+    /// frontmatter/body and return the resulting error messages (all rules
+    /// promoted to errors via `new_all_enabled`). Temp dir + cwd are scoped to
+    /// the closure so disk-backed checks (A016) see an empty skills layout.
+    fn run_agent<F: FnOnce(&mut DiagnosticCollector)>(content: &str, f: F) {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write("agents/general.md", content).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        f(&mut diag);
+    }
+
+    const GOOD_DESC: &str = "A general-purpose code review assistant";
+
+    // ── A014: agent-model-invalid ────────────────────────────────────
+
+    #[test]
+    fn test_is_valid_model_aliases_and_ids() {
+        for ok in [
+            "sonnet",
+            "opus",
+            "haiku",
+            "inherit",
+            "default",
+            "claude-sonnet-5",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-20250514",
+            "claude-opus-4-1",
+            "claude-haiku-4-5",
+            "sonnet[1m]",
+            "claude-sonnet-5[1m]",
+            "claude-opus-4-1[2m]",
+        ] {
+            assert!(is_valid_model(ok), "expected '{ok}' to be valid");
+        }
+        for bad in [
+            "sonet",
+            "olus",
+            "gpt-4",
+            "claude-",
+            "claude-sonnet-",
+            "claude-sonnet",
+            "",
+        ] {
+            assert!(!is_valid_model(bad), "expected '{bad}' to be invalid");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH14PH_invalid_model_fires() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonet\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("not a recognized Claude Code model"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH14PH_valid_model_no_fire() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nmodel: claude-sonnet-5[1m]\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("model")));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH14PH_missing_model_no_fire() {
+        let content = format!("---\nname: general\ndescription: {GOOD_DESC}\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("model")));
+        });
+    }
+
+    // ── A015: agent-permission-invalid ───────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH15PH_invalid_permission_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: yolo\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("permissionMode 'yolo'"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH15PH_valid_permission_no_fire() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: acceptEdits\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("permissionMode")));
+        });
+    }
+
+    // ── A016: agent-skill-missing ────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH16PH_missing_skill_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nskills:\n  - missing-skill\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("no matching skills/missing-skill"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH16PH_existing_skill_no_fire() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write("skills/my-skill/SKILL.md", "---\nname: my-skill\n---\n").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nskills:\n  - my-skill\n---\nBody\n"
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("no matching skills"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH16PH_existing_private_skill_no_fire() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "agents/general.md",
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nskills: my-skill\n---\nBody\n"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("no matching skills"))
+        );
+    }
+
+    // ── A017: agent-tools-overlap ────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH17PH_overlap_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Read\ndisallowedTools: Read\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("appears in both tools and disallowedTools"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH17PH_disjoint_no_fire() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Read\ndisallowedTools: Write\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("appears in both")));
+        });
+    }
+
+    // ── A018: agent-memory-invalid ───────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH18PH_invalid_memory_fires() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nmemory: global\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(diag.errors().iter().any(|e| e.contains("memory 'global'")));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH18PH_valid_memory_no_fire() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nmemory: project\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("memory")));
+        });
+    }
+
+    // ── A019/A020: agent-tools-unknown / agent-disallowed-unknown ────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_unknown_tool_fires() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Bsh\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("tools lists unrecognized tool 'Bsh'"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_known_and_mcp_no_fire() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, mcp__github__create_pr\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag
+                    .errors()
+                    .iter()
+                    .any(|e| e.contains("unrecognized tool"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH20PH_unknown_disallowed_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ndisallowedTools: Bsh\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("disallowedTools lists unrecognized tool 'Bsh'"))
+            );
+        });
+    }
+
+    // ── A021: agent-bypass-permissions (warn) ────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH21PH_bypass_fires_as_warning() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: bypassPermissions\n---\nBody\n"
+        );
+        // Under default config A021 is a warning and A015 (enum) must NOT fire.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write("agents/general.md", content).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+        assert!(
+            diag.warnings()
+                .iter()
+                .any(|w| w.contains("bypassPermissions"))
+        );
+    }
+
+    // ── A022: agent-skill-kebab (warn) ───────────────────────────────
+
+    #[test]
+    fn test_is_kebab_case() {
+        for ok in ["my-skill", "a", "skill-1", "abc-def-ghi"] {
+            assert!(is_kebab_case(ok), "expected '{ok}' kebab-case");
+        }
+        for bad in ["", "My_Skill", "my_skill", "-x", "x-", "a--b", "Camel"] {
+            assert!(!is_kebab_case(bad), "expected '{bad}' not kebab-case");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH22PH_non_kebab_skill_fires() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nskills: My_Skill\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("'My_Skill' is not kebab-case"))
+            );
+        });
+    }
+
+    // ── A023: agent-effort-invalid ───────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH23PH_invalid_effort_fires() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\neffort: turbo\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(diag.errors().iter().any(|e| e.contains("effort 'turbo'")));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH23PH_valid_effort_xhigh_no_fire() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\neffort: xhigh\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("effort")));
+        });
+    }
+
+    // ── A024: agent-isolation-invalid ────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH24PH_invalid_isolation_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nisolation: container\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("isolation 'container'"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH24PH_valid_isolation_no_fire() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nisolation: worktree\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("isolation")));
+        });
+    }
+
+    // ── A025: agent-background-invalid (warn) ────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH25PH_invalid_background_fires() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nbackground: yes\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(diag.errors().iter().any(|e| e.contains("background 'yes'")));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH25PH_valid_background_no_fire() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nbackground: false\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("background")));
+        });
+    }
+
+    // ── A026: agent-maxturns-invalid ─────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH26PH_invalid_maxturns_fires() {
+        for val in ["0", "-5", "abc", "3.5"] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nmaxTurns: {val}\n---\nBody\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(
+                    diag.errors()
+                        .iter()
+                        .any(|e| e.contains("maxTurns") && e.contains("positive integer")),
+                    "expected maxTurns '{val}' to fire"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH26PH_valid_maxturns_no_fire() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nmaxTurns: 5\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(!diag.errors().iter().any(|e| e.contains("maxTurns")));
+        });
+    }
+
+    // ── A027: agent-field-unknown (warn) ─────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH27PH_unknown_field_fires() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nmode: plan\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("unrecognized frontmatter field 'mode'"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH27PH_known_fields_no_fire() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonnet\neffort: high\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag
+                    .errors()
+                    .iter()
+                    .any(|e| e.contains("unrecognized frontmatter field"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH27PH_warns_under_default_config() {
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\ntypoField: 1\n---\nBody\n");
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write("agents/general.md", content).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+        assert!(
+            diag.warnings()
+                .iter()
+                .any(|w| w.contains("unrecognized frontmatter field"))
+        );
+    }
+
+    // ── get_field_items helper ───────────────────────────────────────
+
+    #[test]
+    fn test_get_field_items_scalar_and_list() {
+        let scalar = "---\ntools: Bash, Read , Write\n---\n";
+        let fm = frontmatter::extract_frontmatter(scalar).unwrap();
+        assert_eq!(get_field_items(&fm, "tools"), vec!["Bash", "Read", "Write"]);
+
+        let list = "---\ntools:\n  - Bash\n  - \"Read\"\n  - Write\n---\n";
+        let fm = frontmatter::extract_frontmatter(list).unwrap();
+        assert_eq!(get_field_items(&fm, "tools"), vec!["Bash", "Read", "Write"]);
+
+        let empty = "---\ntools:\n---\n";
+        let fm = frontmatter::extract_frontmatter(empty).unwrap();
+        assert!(get_field_items(&fm, "tools").is_empty());
+
+        // YAML flow sequence: `tools: [Bash, Read]` must parse as two items,
+        // not as the literal strings "[Bash" and "Read]".
+        let flow = "---\ntools: [Bash, Read]\n---\n";
+        let fm = frontmatter::extract_frontmatter(flow).unwrap();
+        assert_eq!(get_field_items(&fm, "tools"), vec!["Bash", "Read"]);
+
+        // Single-item flow sequence with a quoted entry.
+        let flow_one = "---\nskills: [\"my-skill\"]\n---\n";
+        let fm = frontmatter::extract_frontmatter(flow_one).unwrap();
+        assert_eq!(get_field_items(&fm, "skills"), vec!["my-skill"]);
+
+        // Empty flow sequence.
+        let flow_empty = "---\ntools: []\n---\n";
+        let fm = frontmatter::extract_frontmatter(flow_empty).unwrap();
+        assert!(get_field_items(&fm, "tools").is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_flow_sequence_no_false_positive() {
+        // Flow-sequence tools must not be falsely flagged as unknown.
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: [Bash, Read]\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag
+                    .errors()
+                    .iter()
+                    .any(|e| e.contains("unrecognized tool")),
+                "flow-sequence tools should not fire A019: {:?}",
+                diag.errors()
+            );
+        });
+    }
+
+    // ── Private agents (Basic mode) ──────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_private_agents_validates_claude_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            ".claude/agents/general.md",
+            format!("---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonet\n---\nBody\n"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains(".claude/agents/general.md") && e.contains("model"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_private_agents_missing_dir_no_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
     }
 }

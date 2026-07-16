@@ -1,0 +1,27 @@
+{
+  "attempt": 1,
+  "effort": "max",
+  "flags": {},
+  "issue_number": 108,
+  "larch_version": "53.1.20",
+  "model_roster": {
+    "main": "glm-5.2"
+  },
+  "operator_cwd": "<OPERATOR_CWD>",
+  "operator_repo_root": "<REPO_ROOT>",
+  "parent_skill": null,
+  "pr_number": 126,
+  "run_id": "52EA960D-C46B-4731-B169-5EDABDB41B83",
+  "schema_version": 2,
+  "skill": "implement",
+  "stalled_at_step": null,
+  "started_at": "2026-07-16T17:52:54Z",
+  "status": "in-progress",
+  "steps_ran": {
+    "step7a": true,
+    "step8": true,
+    "step9a1": true
+  },
+  "superseded_by": null,
+  "updated_at": "2026-07-16T19:33:49Z"
+}

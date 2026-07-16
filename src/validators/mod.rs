@@ -38,7 +38,8 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclud
     hygiene::validate_private_executability(diag, exclude);
     // Skill content checks (both-mode subset: excludes S016, S017, S029, S033)
     skill_content::validate_private_skill_content(diag, exclude);
-    contracts::validate_contracts(diag, exclude, false);
+    // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
+    agents::validate_private_agents(diag, exclude);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -47,6 +48,8 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     skills::validate_private_skill_frontmatter(diag, exclude);
     hygiene::validate_private_script_references(diag, exclude);
     hygiene::validate_private_executability(diag, exclude);
+    // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
+    agents::validate_private_agents(diag, exclude);
 
     // V1: plugin.json
     manifest::validate_plugin_json(ctx, diag);
@@ -209,6 +212,72 @@ mod tests {
         assert!(
             errors.iter().any(|e| e.contains("reviewer-templates.md")),
             "Expected V16 error for missing reviewer-templates.md, got: {errors:?}"
+        );
+    }
+
+    // Integration test: Plugin mode also lints .claude/agents/ (A014-A027 are "Always")
+    #[test]
+    #[serial_test::serial]
+    fn test_plugin_mode_lints_private_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need a skill that does useful things for developers\n---\nBody content here\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: General reviewer for code quality analysis\n---\nDerived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
+        // Private agent with an invalid model — must be caught in Plugin mode too.
+        std::fs::write(
+            ".claude/agents/private.md",
+            format!(
+                "---\nname: private\ndescription: {}\nmodel: sonet\n---\nBody\n",
+                "A general-purpose code review assistant"
+            ),
+        )
+        .unwrap();
+        std::fs::write("SECURITY.md", "# Security\n").unwrap();
+
+        let plugin_val = json!({
+            "name": "test-plugin",
+            "version": "1.0.0",
+            "description": "Test",
+            "author": {"email": "a@b.com"},
+            "keywords": ["test"]
+        });
+        let marketplace_val = json!({
+            "name": "test-mp",
+            "owner": {"name": "owner", "email": "a@b.com"},
+            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+        });
+        let hooks_val = json!({"hooks": [{"command": "echo test"}]});
+
+        let ctx = LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: LintMode::Plugin,
+            plugin_json: ManifestState::Parsed(plugin_val),
+            marketplace_json: ManifestState::Parsed(marketplace_val),
+            hooks_json: ManifestState::Parsed(hooks_val),
+            settings_json: ManifestState::Missing,
+        };
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_all(&ctx, &mut diag, &ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains(".claude/agents/private.md") && e.contains("model")),
+            "Plugin mode should lint .claude/agents/ via validate_private_agents, got: {:?}",
+            diag.errors()
         );
     }
 

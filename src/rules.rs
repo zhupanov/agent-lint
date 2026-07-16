@@ -228,6 +228,34 @@ pub enum LintRule {
     AgentReadMismatch,
     /// A013: machine-only agent output lacks fail-closed evidence handling
     AgentOutputUnsafe,
+    /// A014: agent `model` is not a recognized Claude Code model
+    AgentModelInvalid,
+    /// A015: agent `permissionMode` is not one of the allowed enum values
+    AgentPermissionInvalid,
+    /// A016: agent `skills` entry does not exist on disk
+    AgentSkillMissing,
+    /// A017: a tool appears in both `tools` and `disallowedTools`
+    AgentToolsOverlap,
+    /// A018: agent `memory` is not `user`/`project`/`local`
+    AgentMemoryInvalid,
+    /// A019: agent `tools` lists an unrecognized tool name
+    AgentToolsUnknown,
+    /// A020: agent `disallowedTools` lists an unrecognized tool name
+    AgentDisallowedUnknown,
+    /// A021: agent `permissionMode: bypassPermissions` disables safety checks
+    AgentBypassPermissions,
+    /// A022: agent `skills` entry is not kebab-case
+    AgentSkillKebab,
+    /// A023: agent `effort` is not `low`/`medium`/`high`/`xhigh`/`max`
+    AgentEffortInvalid,
+    /// A024: agent `isolation` is not `worktree`
+    AgentIsolationInvalid,
+    /// A025: agent `background` is not a boolean
+    AgentBackgroundInvalid,
+    /// A026: agent `maxTurns` is not a positive integer
+    AgentMaxturnsInvalid,
+    /// A027: unrecognized agent frontmatter field (possible typo)
+    AgentFieldUnknown,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
@@ -425,6 +453,20 @@ impl LintRule {
             Self::AgentDescRedundant => "A011",
             Self::AgentReadMismatch => "A012",
             Self::AgentOutputUnsafe => "A013",
+            Self::AgentModelInvalid => "A014",
+            Self::AgentPermissionInvalid => "A015",
+            Self::AgentSkillMissing => "A016",
+            Self::AgentToolsOverlap => "A017",
+            Self::AgentMemoryInvalid => "A018",
+            Self::AgentToolsUnknown => "A019",
+            Self::AgentDisallowedUnknown => "A020",
+            Self::AgentBypassPermissions => "A021",
+            Self::AgentSkillKebab => "A022",
+            Self::AgentEffortInvalid => "A023",
+            Self::AgentIsolationInvalid => "A024",
+            Self::AgentBackgroundInvalid => "A025",
+            Self::AgentMaxturnsInvalid => "A026",
+            Self::AgentFieldUnknown => "A027",
 
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
@@ -579,6 +621,20 @@ impl LintRule {
             Self::AgentDescRedundant => "agent-desc-redundant",
             Self::AgentReadMismatch => "agent-read-mismatch",
             Self::AgentOutputUnsafe => "agent-output-unsafe",
+            Self::AgentModelInvalid => "agent-model-invalid",
+            Self::AgentPermissionInvalid => "agent-permission-invalid",
+            Self::AgentSkillMissing => "agent-skill-missing",
+            Self::AgentToolsOverlap => "agent-tools-overlap",
+            Self::AgentMemoryInvalid => "agent-memory-invalid",
+            Self::AgentToolsUnknown => "agent-tools-unknown",
+            Self::AgentDisallowedUnknown => "agent-disallowed-unknown",
+            Self::AgentBypassPermissions => "agent-bypass-permissions",
+            Self::AgentSkillKebab => "agent-skill-kebab",
+            Self::AgentEffortInvalid => "agent-effort-invalid",
+            Self::AgentIsolationInvalid => "agent-isolation-invalid",
+            Self::AgentBackgroundInvalid => "agent-background-invalid",
+            Self::AgentMaxturnsInvalid => "agent-maxturns-invalid",
+            Self::AgentFieldUnknown => "agent-field-unknown",
 
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
@@ -697,6 +753,10 @@ impl LintRule {
             // ── Default-warning: template rules (agents) ─────────────
             Self::TemplateFileMissing | Self::TemplateMarkerMissing |
             Self::TemplateCountMismatch |
+
+            // ── Default-warning: agent field-value (advisory) ────────
+            Self::AgentBypassPermissions | Self::AgentSkillKebab |
+            Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
@@ -822,6 +882,20 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AgentDescRedundant,
     LintRule::AgentReadMismatch,
     LintRule::AgentOutputUnsafe,
+    LintRule::AgentModelInvalid,
+    LintRule::AgentPermissionInvalid,
+    LintRule::AgentSkillMissing,
+    LintRule::AgentToolsOverlap,
+    LintRule::AgentMemoryInvalid,
+    LintRule::AgentToolsUnknown,
+    LintRule::AgentDisallowedUnknown,
+    LintRule::AgentBypassPermissions,
+    LintRule::AgentSkillKebab,
+    LintRule::AgentEffortInvalid,
+    LintRule::AgentIsolationInvalid,
+    LintRule::AgentBackgroundInvalid,
+    LintRule::AgentMaxturnsInvalid,
+    LintRule::AgentFieldUnknown,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
@@ -872,7 +946,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            139,
+            153,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -954,8 +1028,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            47,
-            "Expected 47 default-warning rules, got {}",
+            51,
+            "Expected 51 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1003,8 +1077,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            87,
-            "Expected 87 default-error rules, got {}",
+            97,
+            "Expected 97 default-error rules, got {}",
             errors.len()
         );
     }

@@ -43,6 +43,62 @@ pub(crate) fn is_valid_model_value(value: &str) -> bool {
     value.starts_with("claude-")
 }
 
+/// Built-in Claude Code tool names (PascalCase). Shared by S040
+/// (skill `allowed-tools`) and A019/A020 (agent `tools`/`disallowedTools`).
+pub(crate) const KNOWN_TOOLS: &[&str] = &[
+    "AskUserQuestion",
+    "Bash",
+    "Read",
+    "Edit",
+    "Write",
+    "Grep",
+    "Glob",
+    "Agent",
+    "Task",
+    "WebFetch",
+    "WebSearch",
+    "Skill",
+    "NotebookEdit",
+    "LSP",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskList",
+    "TaskGet",
+    "TaskStop",
+    "TaskOutput",
+];
+
+/// Whether a single tool entry is recognized by Claude Code.
+///
+/// Accepts:
+/// - Built-in tool names (see [`KNOWN_TOOLS`]), case-sensitive PascalCase.
+/// - Tool-restricted forms like `Bash(git *)` — the `(...)` suffix is ignored.
+/// - MCP tools written as `mcp__<server>__<tool>` (server and tool both required).
+///
+/// Returns `false` for empty input so callers can skip blank entries.
+pub(crate) fn is_known_tool_name(tool: &str) -> bool {
+    let tool = tool.trim();
+    if tool.is_empty() {
+        return false;
+    }
+    // Strip a trailing argument-restriction suffix, e.g. "Bash(git *)" -> "Bash".
+    let base_name = match tool.find('(') {
+        Some(paren) => tool[..paren].trim(),
+        None => tool,
+    };
+    if base_name.is_empty() {
+        return false;
+    }
+    // MCP tools: mcp__<server>__<tool> — both parts must be non-empty.
+    if let Some(rest) = base_name.strip_prefix("mcp__") {
+        return !rest.is_empty()
+            && !rest.starts_with("__")
+            && !rest.ends_with("__")
+            && rest.contains("__");
+    }
+    KNOWN_TOOLS.contains(&base_name)
+}
+
 #[cfg(test)]
 mod model_tests {
     use super::is_valid_model_value;
@@ -61,5 +117,42 @@ mod model_tests {
         assert!(!is_valid_model_value("sonet"));
         assert!(!is_valid_model_value(""));
         assert!(!is_valid_model_value("gpt-4"));
+    }
+}
+
+#[cfg(test)]
+mod tool_tests {
+    use super::is_known_tool_name;
+
+    #[test]
+    fn accepts_builtin_tools() {
+        assert!(is_known_tool_name("Bash"));
+        assert!(is_known_tool_name("Read"));
+        assert!(is_known_tool_name("Agent"));
+    }
+
+    #[test]
+    fn accepts_restricted_form() {
+        assert!(is_known_tool_name("Bash(git *)"));
+        assert!(is_known_tool_name("Grep(pat)"));
+    }
+
+    #[test]
+    fn accepts_mcp_tools() {
+        assert!(is_known_tool_name("mcp__server__tool"));
+        assert!(is_known_tool_name("mcp__my_server__my_tool"));
+    }
+
+    #[test]
+    fn rejects_mcp_malformed() {
+        assert!(!is_known_tool_name("mcp__"));
+        assert!(!is_known_tool_name("mcp__tool"));
+        assert!(!is_known_tool_name("mcp__server__"));
+    }
+
+    #[test]
+    fn rejects_unknown_tools() {
+        assert!(!is_known_tool_name("UnknownTool"));
+        assert!(!is_known_tool_name(""));
     }
 }
