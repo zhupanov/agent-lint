@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(diag.error_count(), 0);
     }
 
-    // S008: Makefile references validated for existence
+    // V9: Makefile references validated for existence
     #[test]
     #[serial_test::serial]
     fn test_v9_makefile_bare_reference_present() {

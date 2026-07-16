@@ -39,7 +39,7 @@ static RE_FULL_HASH_COMMENT: LazyLock<Regex> =
 /// Strip `#` comments from content that uses `#` as its comment character
 /// (YAML, Makefile, shell). Drops full-comment lines and trailing comments,
 /// respecting single/double quotes. Shared by the YAML-workflow and Makefile
-/// reference extraction in G004/S008.
+/// reference extraction in G004 (dead scripts) and V9 (script references).
 pub(super) fn strip_yaml_comments(content: &str) -> String {
     content
         .lines()
@@ -90,7 +90,7 @@ fn strip_trailing_yaml_comment(line: &str) -> String {
 }
 
 /// Read the repo-root `Makefile` and any root-level `*.mk` files and return
-/// their `#`-comment-stripped contents. Used by G004 (dead scripts) and S008
+/// their `#`-comment-stripped contents. Used by G004 (dead scripts) and V9
 /// (script references) so Make-target invocations like `bash scripts/foo.sh`
 /// and `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh` are recognised as references.
 pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<String> {
@@ -192,7 +192,7 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
     }
 
     // Also scan the Makefile and any *.mk so Make-target invocations are
-    // validated for existence (S008). Comments are stripped first so
+    // validated for existence (V9). Comments are stripped first so
     // commented-out references are not mistaken for live invocations.
     for content in collect_makefile_contents(exclude) {
         for cap in RE_SCRIPT_PUB.find_iter(&content) {
