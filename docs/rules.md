@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 139 rules across 10 categories. Every rule has a unique
+Agent Lint ships 163 rules across 13 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -203,6 +203,26 @@ every rule to error regardless of config. See
 > near-zero false-positive risk. The larch-specific template rules A005-A007
 > remain Plugin-only. The known-tool list is shared with S040
 > (`skill allowed-tools`); `mcp__<server>__<tool>` names are accepted.
+
+## Claude Configuration Rules (R/O/T)
+
+These optional rules scan `.claude/rules/`, `.claude/output-styles/`, and
+`.claude/settings.json` / `.claude/settings.local.json` in both Basic and
+Plugin modes. They are silent when the corresponding directories or files do
+not exist.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| R001 | `rules-glob-invalid` | A `.claude/rules/` frontmatter `paths` glob is invalid | Always | error |
+| R002 | `rules-field-unknown` | `.claude/rules/` frontmatter contains an unknown field | Always | warn |
+| O001 | `style-description-missing` | Output-style `description` is missing or whitespace-only | Always | warn |
+| O002 | `style-instructions-invalid` | Output-style `keep-coding-instructions` is not a YAML boolean | Always | error |
+| O003 | `style-field-unknown` | Output-style frontmatter contains an unknown field | Always | warn |
+| O004 | `style-body-empty` | Output style has no non-whitespace body after frontmatter | Always | warn |
+| O005 | `style-name-long` | Output-style `name` exceeds 64 characters | Always | warn |
+| O006 | `style-frontmatter-invalid` | Output-style frontmatter is missing or invalid YAML | Always | error |
+| T001 | `pr-template-invalid` | `prUrlTemplate` is not a non-empty string with a documented placeholder | Always | warn |
+| T002 | `channels-enabled-invalid` | `channelsEnabled` is not a boolean | Always | warn |
 
 ## Hygiene / Scripts Rules (G)
 
