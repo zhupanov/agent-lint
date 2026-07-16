@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 
 use super::scripts::{
     RE_SCRIPT_DIR_REF, RE_SCRIPT_PLACEHOLDER, RE_SCRIPTS_EXTRACT, RE_SCRIPTS_PATH,
+    collect_makefile_contents, strip_yaml_comments,
 };
 
 static RE_DEAD_SCRIPT_AB: LazyLock<Regex> = LazyLock::new(|| {
@@ -19,8 +20,6 @@ static RE_DEAD_SCRIPT_AB: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-static RE_YAML_FULL_COMMENT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[[:space:]]*#").unwrap());
 
 /// V11: Dead-script detection
 pub fn validate_dead_scripts(
@@ -147,6 +146,29 @@ pub fn validate_dead_scripts(
         }
     }
 
+    // Extract script references from the Makefile and any *.mk so scripts
+    // invoked only from Make targets (e.g. `bash scripts/foo.sh` or
+    // `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh`) are not false-flagged as dead.
+    // `#` comments are stripped first (shared with YAML-workflow scanning).
+    for stripped in collect_makefile_contents(exclude) {
+        for cap in RE_DEAD_SCRIPT_AB.find_iter(&stripped) {
+            let s = cap.as_str();
+            let rel = if s.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
+                s.replace("${CLAUDE_PLUGIN_ROOT}/", "")
+            } else if s.starts_with("$PWD/") {
+                s.replace("$PWD/", "")
+            } else {
+                continue;
+            };
+            references.insert(rel);
+        }
+        for cap in RE_SCRIPTS_PATH.find_iter(&stripped) {
+            if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
+                references.insert(m.as_str().to_string());
+            }
+        }
+    }
+
     // Extract bare scripts/...sh references from pre-parsed settings/hooks manifests.
     // Only re_d applies here for bare script references.
     for manifest in [&ctx.settings_json, &ctx.hooks_json] {
@@ -213,55 +235,6 @@ pub fn validate_dead_scripts(
             }
         }
     }
-}
-
-fn strip_yaml_comments(content: &str) -> String {
-    content
-        .lines()
-        .filter(|line| !RE_YAML_FULL_COMMENT.is_match(line))
-        .map(strip_trailing_yaml_comment)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn strip_trailing_yaml_comment(line: &str) -> String {
-    let mut in_quote: Option<char> = None;
-    let mut prev_was_ws = false;
-    let mut skip_next = false;
-
-    for (byte_pos, ch) in line.char_indices() {
-        if skip_next {
-            skip_next = false;
-            prev_was_ws = ch.is_whitespace();
-            continue;
-        }
-        match in_quote {
-            Some(q) => {
-                if q == '"' && ch == '\\' {
-                    skip_next = true;
-                } else if q == '\'' && ch == '\'' {
-                    let rest = &line[byte_pos + ch.len_utf8()..];
-                    if rest.starts_with('\'') {
-                        skip_next = true;
-                    } else {
-                        in_quote = None;
-                    }
-                } else if ch == q {
-                    in_quote = None;
-                }
-            }
-            None => {
-                if ch == '"' || ch == '\'' {
-                    in_quote = Some(ch);
-                } else if ch == '#' && prev_was_ws {
-                    return line[..byte_pos].trim_end().to_string();
-                }
-            }
-        }
-        prev_was_ws = ch.is_whitespace();
-    }
-
-    line.to_string()
 }
 
 fn extract_code_fences(content: &str) -> String {
