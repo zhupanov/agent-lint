@@ -148,6 +148,16 @@ pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut Diagnostic
                     ),
                 );
             }
+            // S067: unscoped Bash (no Bash(pattern) form)
+            if tool == "Bash" {
+                diag.report(
+                    LintRule::BashUnscoped,
+                    &format!(
+                        "{}: allowed-tools lists unscoped Bash; prefer scoped form like Bash(git:*)",
+                        info.path
+                    ),
+                );
+            }
         }
     }
 

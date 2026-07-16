@@ -215,7 +215,8 @@ fn validate_skill_frontmatter_in_dir(
         }
 
         // Optional scalar fields: if present, must be non-empty.
-        for field in &["argument-hint", "allowed-tools"] {
+        // List lives next to KNOWN_SKILL_FRONTMATTER_FIELDS in skill_content.
+        for field in super::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
             let prefix = format!("{field}:");
             let field_present = fm_lines.iter().any(|line| line.starts_with(&prefix));
             if field_present {

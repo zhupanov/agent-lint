@@ -182,6 +182,24 @@ pub enum LintRule {
     UnsafeGrepProbe,
     /// S062: always-loaded skill prompt closure exceeds configured budget
     SkillClosureLarge,
+    /// S063: model field value is not a recognized alias or model ID
+    ModelInvalid,
+    /// S064: agent field present without context: fork
+    AgentNoFork,
+    /// S065: agent value is not a built-in or existing custom agent
+    AgentUnknown,
+    /// S066: side-effect-named skill without disable-model-invocation: true
+    SideEffectAuto,
+    /// S067: allowed-tools lists unscoped Bash (suggest Bash(…)-style scoping)
+    BashUnscoped,
+    /// S068: more than 3 dynamic context injections in skill body
+    InjectionOverflow,
+    /// S069: argument-hint set but body never references $ARGUMENTS
+    HintNoArgs,
+    /// S070: unknown skill frontmatter field
+    UnknownFmField,
+    /// S071: paths field present but empty
+    PathsEmpty,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -356,6 +374,15 @@ impl LintRule {
             Self::AwkFieldRef => "S060",
             Self::UnsafeGrepProbe => "S061",
             Self::SkillClosureLarge => "S062",
+            Self::ModelInvalid => "S063",
+            Self::AgentNoFork => "S064",
+            Self::AgentUnknown => "S065",
+            Self::SideEffectAuto => "S066",
+            Self::BashUnscoped => "S067",
+            Self::InjectionOverflow => "S068",
+            Self::HintNoArgs => "S069",
+            Self::UnknownFmField => "S070",
+            Self::PathsEmpty => "S071",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -487,6 +514,15 @@ impl LintRule {
             Self::AwkFieldRef => "awk-field-ref",
             Self::UnsafeGrepProbe => "unsafe-grep-probe",
             Self::SkillClosureLarge => "skill-closure-large",
+            Self::ModelInvalid => "model-invalid",
+            Self::AgentNoFork => "agent-no-fork",
+            Self::AgentUnknown => "agent-unknown",
+            Self::SideEffectAuto => "side-effect-auto",
+            Self::BashUnscoped => "bash-unscoped",
+            Self::InjectionOverflow => "injection-overflow",
+            Self::HintNoArgs => "hint-no-args",
+            Self::UnknownFmField => "unknown-fm-field",
+            Self::PathsEmpty => "paths-empty",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -598,6 +634,9 @@ impl LintRule {
             Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
             Self::TimeSensitive | Self::ToolsUnknown |
             Self::McpToolUnqualified | Self::ToolsListSyntax |
+            Self::SideEffectAuto | Self::BashUnscoped |
+            Self::InjectionOverflow | Self::HintNoArgs |
+            Self::UnknownFmField | Self::PathsEmpty |
 
             // ── Default-warning: template rules (agents) ─────────────
             Self::TemplateFileMissing | Self::TemplateMarkerMissing |
@@ -703,6 +742,15 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AwkFieldRef,
     LintRule::UnsafeGrepProbe,
     LintRule::SkillClosureLarge,
+    LintRule::ModelInvalid,
+    LintRule::AgentNoFork,
+    LintRule::AgentUnknown,
+    LintRule::SideEffectAuto,
+    LintRule::BashUnscoped,
+    LintRule::InjectionOverflow,
+    LintRule::HintNoArgs,
+    LintRule::UnknownFmField,
+    LintRule::PathsEmpty,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -753,7 +801,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            117,
+            126,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -835,8 +883,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            37,
-            "Expected 37 default-warning rules, got {}",
+            43,
+            "Expected 43 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -884,8 +932,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            75,
-            "Expected 75 default-error rules, got {}",
+            78,
+            "Expected 78 default-error rules, got {}",
             errors.len()
         );
     }

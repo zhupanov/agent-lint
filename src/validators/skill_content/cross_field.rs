@@ -8,12 +8,19 @@ use std::sync::LazyLock;
 
 use super::description::{RE_TRIGGER, STOPWORDS};
 
-// S028: $ARGUMENTS
+// S028 / S069: $ARGUMENTS
 static RE_ARGS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$ARGUMENTS|\$\{ARGUMENTS\}").unwrap());
 
+// S068: inline dynamic injections — !`cmd` at line start or after whitespace
+static RE_INLINE_INJECT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)(?:^|[ \t])!`[^`]+`").unwrap());
+
 /// Minimum number of keywords required from description to run S053.
 const MIN_KEYWORDS: usize = 3;
+
+/// Warn when more than this many dynamic injections appear in the body.
+const MAX_DYNAMIC_INJECTIONS: usize = 3;
 
 pub(super) fn check_cross_field(
     info: &SkillInfo,
@@ -21,9 +28,9 @@ pub(super) fn check_cross_field(
     diag: &mut DiagnosticCollector,
 ) {
     // S028: $ARGUMENTS in body without argument-hint (only outside code fences)
-    if crate::fence::lines_outside_fences(&info.body).any(|line| RE_ARGS.is_match(line))
-        && !frontmatter::field_exists(&info.fm_lines, "argument-hint")
-    {
+    let body_has_args =
+        crate::fence::lines_outside_fences(&info.body).any(|line| RE_ARGS.is_match(line));
+    if body_has_args && !frontmatter::field_exists(&info.fm_lines, "argument-hint") {
         diag.report(
             LintRule::ArgsNoHint,
             &format!(
@@ -33,9 +40,47 @@ pub(super) fn check_cross_field(
         );
     }
 
+    // S069: argument-hint set but body never references $ARGUMENTS (smell; args also auto-append)
+    if frontmatter::field_exists(&info.fm_lines, "argument-hint") && !body_has_args {
+        // Also count $ARGUMENTS inside fences — presence anywhere in body is enough
+        if !RE_ARGS.is_match(&info.body) {
+            diag.report(
+                LintRule::HintNoArgs,
+                &format!(
+                    "{}: 'argument-hint' is set but body never references $ARGUMENTS",
+                    info.path
+                ),
+            );
+        }
+    }
+
+    check_injection_overflow(info, diag);
+
     // S053: description/body keyword alignment (plugin-only)
     if plugin_mode {
         check_desc_body_alignment(info, diag);
+    }
+}
+
+fn count_dynamic_injections(body: &str) -> usize {
+    let inline = RE_INLINE_INJECT.find_iter(body).count();
+    let fenced = body
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```!"))
+        .count();
+    inline + fenced
+}
+
+fn check_injection_overflow(info: &SkillInfo, diag: &mut DiagnosticCollector) {
+    let count = count_dynamic_injections(&info.body);
+    if count > MAX_DYNAMIC_INJECTIONS {
+        diag.report(
+            LintRule::InjectionOverflow,
+            &format!(
+                "{}: body has {count} dynamic injections (!`…` / ```!); prefer at most {MAX_DYNAMIC_INJECTIONS}",
+                info.path
+            ),
+        );
     }
 }
 

@@ -6,7 +6,7 @@ mod email;
 mod hooks;
 pub mod hygiene;
 mod manifest;
-mod skill_content;
+pub(crate) mod skill_content;
 pub(crate) mod skills;
 mod slack;
 mod user_config;
