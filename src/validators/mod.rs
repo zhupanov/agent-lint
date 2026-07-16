@@ -11,6 +11,7 @@ mod email;
 mod hook_schema;
 mod hooks;
 pub mod hygiene;
+mod instruction_files;
 mod manifest;
 mod markdown_structure;
 mod mcp;
@@ -24,26 +25,26 @@ mod walk;
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, LintMode};
 use crate::diagnostic::DiagnosticCollector;
-use crate::platforms::ActivePlatforms;
+use crate::platforms::ValidationTargets;
 
 /// Run all validators appropriate for the current lint mode.
 #[cfg(test)]
 pub fn run_all(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let platforms = crate::platforms::PlatformDetection::discover(&ExcludeSet::default())
-        .activate(crate::config::PlatformOverrides::default());
-    run_all_with_platforms(ctx, diag, exclude, platforms);
+    let targets = crate::platforms::DetectedSurfaces::discover(&ExcludeSet::default())
+        .resolve(crate::config::PlatformOverrides::default());
+    run_all_with_targets(ctx, diag, exclude, targets);
 }
 
-/// Run all validators using the explicitly resolved platform activation.
-pub fn run_all_with_platforms(
+/// Run all validators using the explicitly resolved validation targets.
+pub fn run_all_with_targets(
     ctx: &LintContext,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
-    platforms: ActivePlatforms,
+    targets: ValidationTargets,
 ) {
     match ctx.mode {
-        LintMode::Basic => run_basic(ctx, diag, exclude, platforms),
-        LintMode::Plugin => run_plugin(ctx, diag, exclude, platforms),
+        LintMode::Basic => run_basic(ctx, diag, exclude, targets),
+        LintMode::Plugin => run_plugin(ctx, diag, exclude, targets),
     }
 }
 
@@ -52,7 +53,7 @@ fn run_basic(
     ctx: &LintContext,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
-    platforms: ActivePlatforms,
+    targets: ValidationTargets,
 ) {
     // V4: settings.json hook paths
     hooks::validate_settings_hooks(ctx, diag);
@@ -72,13 +73,7 @@ fn run_basic(
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents(diag, exclude);
     claude_config::validate_private_config(diag, exclude);
-    if platforms.codex {
-        codex_config::validate_config(diag, exclude);
-        codex_surfaces::validate(diag, exclude);
-    }
-    if platforms.cursor {
-        cursor::validate(diag, exclude);
-    }
+    validate_optional_surfaces(diag, exclude, targets);
     prompt_content::validate_claude_md(diag, exclude);
     // X002–X005: CLAUDE.md structure (when present)
     docs::validate_claudemd_structure(diag, exclude);
@@ -89,7 +84,7 @@ fn run_plugin(
     ctx: &LintContext,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
-    platforms: ActivePlatforms,
+    targets: ValidationTargets,
 ) {
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag, exclude);
@@ -98,13 +93,7 @@ fn run_plugin(
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents(diag, exclude);
     claude_config::validate_private_config(diag, exclude);
-    if platforms.codex {
-        codex_config::validate_config(diag, exclude);
-        codex_surfaces::validate(diag, exclude);
-    }
-    if platforms.cursor {
-        cursor::validate(diag, exclude);
-    }
+    validate_optional_surfaces(diag, exclude, targets);
     prompt_content::validate_claude_md(diag, exclude);
 
     // V1: plugin.json
@@ -192,10 +181,30 @@ fn run_plugin(
     contracts::validate_contracts(diag, exclude, true);
 }
 
+fn validate_optional_surfaces(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    targets: ValidationTargets,
+) {
+    if targets.agents_md {
+        instruction_files::validate_agents_files(diag, exclude, targets.codex);
+    }
+    if targets.agent_skills {
+        skills::validate_agent_skill_frontmatter(diag, exclude);
+    }
+    if targets.codex {
+        codex_config::validate_config(diag, exclude);
+        codex_surfaces::validate(diag, exclude);
+    }
+    if targets.cursor {
+        cursor::validate(diag, exclude);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ExcludeSet;
+    use crate::config::{ExcludeSet, PlatformOverrides};
     use crate::context::ManifestState;
     use serde_json::json;
 
@@ -251,11 +260,11 @@ mod tests {
             settings_local_json: ManifestState::Missing,
         };
         let mut disabled = DiagnosticCollector::new_all_enabled();
-        run_all_with_platforms(
+        run_all_with_targets(
             &ctx,
             &mut disabled,
             &ExcludeSet::default(),
-            ActivePlatforms::default(),
+            ValidationTargets::default(),
         );
         assert!(
             !disabled
@@ -268,13 +277,15 @@ mod tests {
         }));
 
         let mut enabled = DiagnosticCollector::new_all_enabled();
-        run_all_with_platforms(
+        run_all_with_targets(
             &ctx,
             &mut enabled,
             &ExcludeSet::default(),
-            ActivePlatforms {
+            ValidationTargets {
                 cursor: false,
                 codex: true,
+                agents_md: false,
+                agent_skills: false,
             },
         );
         assert!(
@@ -288,13 +299,15 @@ mod tests {
         }));
 
         let mut cursor_enabled = DiagnosticCollector::new_all_enabled();
-        run_all_with_platforms(
+        run_all_with_targets(
             &ctx,
             &mut cursor_enabled,
             &ExcludeSet::default(),
-            ActivePlatforms {
+            ValidationTargets {
                 cursor: true,
                 codex: false,
+                agents_md: false,
+                agent_skills: false,
             },
         );
         assert!(cursor_enabled.diagnostics().iter().any(|diagnostic| {
@@ -306,6 +319,178 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.rule == crate::rules::LintRule::CodexTomlInvalid)
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn shared_agents_surface_does_not_imply_codex() {
+        struct Case {
+            name: &'static str,
+            cursor_surface: bool,
+            codex_surface: bool,
+            codex_override: Option<bool>,
+            expected_cursor: bool,
+            expected_codex: bool,
+        }
+
+        let cases = [
+            Case {
+                name: "agents only",
+                cursor_surface: false,
+                codex_surface: false,
+                codex_override: None,
+                expected_cursor: false,
+                expected_codex: false,
+            },
+            Case {
+                name: "agents and cursor",
+                cursor_surface: true,
+                codex_surface: false,
+                codex_override: None,
+                expected_cursor: true,
+                expected_codex: false,
+            },
+            Case {
+                name: "agents and codex",
+                cursor_surface: false,
+                codex_surface: true,
+                codex_override: None,
+                expected_cursor: false,
+                expected_codex: true,
+            },
+            Case {
+                name: "agents with codex enabled",
+                cursor_surface: false,
+                codex_surface: false,
+                codex_override: Some(true),
+                expected_cursor: false,
+                expected_codex: true,
+            },
+            Case {
+                name: "agents with codex disabled",
+                cursor_surface: false,
+                codex_surface: false,
+                codex_override: Some(false),
+                expected_cursor: false,
+                expected_codex: false,
+            },
+        ];
+
+        for case in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::write(
+                "AGENTS.md",
+                format!(
+                    "# Project instructions\ntoken = sk-12345678901234567890\n{}",
+                    "x".repeat(32_769)
+                ),
+            )
+            .unwrap();
+            if case.cursor_surface {
+                std::fs::create_dir(".cursor").unwrap();
+                std::fs::write(".cursor/hooks.json", "not valid JSON").unwrap();
+            }
+            if case.codex_surface {
+                std::fs::create_dir(".codex").unwrap();
+                std::fs::write(".codex/config.toml", "model = 'gpt-5'\n").unwrap();
+            }
+
+            let exclude = ExcludeSet::default();
+            let targets =
+                crate::platforms::DetectedSurfaces::discover(&exclude).resolve(PlatformOverrides {
+                    cursor: None,
+                    codex: case.codex_override,
+                });
+            let ctx = LintContext {
+                base_path: tmp.path().to_path_buf(),
+                mode: LintMode::Basic,
+                plugin_json: ManifestState::Missing,
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            };
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            run_all_with_targets(&ctx, &mut diag, &exclude, targets);
+
+            assert!(targets.agents_md, "{}: shared surface missing", case.name);
+            assert_eq!(targets.cursor, case.expected_cursor, "{}", case.name);
+            assert_eq!(targets.codex, case.expected_codex, "{}", case.name);
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|item| item.rule == crate::rules::LintRule::InstructionFileSecret),
+                "{}: shared rule did not run",
+                case.name
+            );
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|item| item.rule == crate::rules::LintRule::CodexAgentsDocLimit),
+                case.expected_codex,
+                "{}: Codex rule dispatch mismatch",
+                case.name
+            );
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|item| { item.rule == crate::rules::LintRule::CursorHooksSchemaInvalid }),
+                case.expected_cursor,
+                "{}: Cursor rule dispatch mismatch",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn shared_agent_skills_do_not_imply_codex() {
+        for codex_surface in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::create_dir_all(".agents/skills/example").unwrap();
+            std::fs::write(
+                ".agents/skills/example/SKILL.md",
+                "---\nname: wrong-name\ndescription: Shared example skill\ncontext: fork\n---\nBody\n",
+            )
+            .unwrap();
+            if codex_surface {
+                std::fs::create_dir(".codex").unwrap();
+                std::fs::write(".codex/config.toml", "model = 'gpt-5'\n").unwrap();
+            }
+
+            let exclude = ExcludeSet::default();
+            let targets = crate::platforms::DetectedSurfaces::discover(&exclude)
+                .resolve(PlatformOverrides::default());
+            let ctx = LintContext {
+                base_path: tmp.path().to_path_buf(),
+                mode: LintMode::Basic,
+                plugin_json: ManifestState::Missing,
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            };
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            run_all_with_targets(&ctx, &mut diag, &exclude, targets);
+
+            assert!(targets.agent_skills);
+            assert_eq!(targets.codex, codex_surface);
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|item| item.rule == crate::rules::LintRule::FrontmatterNameMismatch)
+            );
+            assert_eq!(
+                diag.diagnostics().iter().any(|item| {
+                    item.rule == crate::rules::LintRule::CodexSkillUnsupportedFrontmatter
+                }),
+                codex_surface
+            );
+        }
     }
 
     // Integration test: Plugin mode dispatches all validators

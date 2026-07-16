@@ -318,6 +318,23 @@ not exist.
 | T001 | `pr-template-invalid` | `prUrlTemplate` is not a non-empty string with a documented placeholder | Always | warn |
 | T002 | `channels-enabled-invalid` | `channelsEnabled` is not a boolean | Always | warn |
 
+## Shared Instruction File Rules (I)
+
+These rules validate root and nested `AGENTS.md` files independently of any
+active platform. Discovery respects configured exclusions and skips repository
+metadata, dependencies, and conventional build output.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| I001 | `instruction-file-empty` | `AGENTS.md` is empty or whitespace-only | Always | error |
+| I002 | `instruction-file-secret` | `AGENTS.md` contains a potential hardcoded credential | Always | error |
+| I003 | `instruction-file-path` | Backtick-quoted path in `AGENTS.md` is missing | Always | warn |
+| I004 | `instruction-file-generic` | `AGENTS.md` is generic-only | Always | suppressed |
+| I005 | `instruction-file-structure` | `AGENTS.md` lacks project-specific structure | Always | suppressed |
+
+The former CX037, CX038, CX041, CX043, and CX044 identifiers and names remain
+accepted as configuration aliases for these shared rules.
+
 ## Codex Configuration Rules (CX)
 
 These optional rules validate a project-local `.codex/config.toml` in Basic
@@ -348,22 +365,17 @@ schema and are covered by the unknown-key rules.
 | CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | suppressed |
 | CX036 | `codex-windows-sandbox` | Invalid Windows sandbox mode | Always | suppressed |
 
-### Codex Instruction, Plugin, and Skill Rules (CX037--CX060)
+### Codex Instruction, Plugin, and Skill Rules (CX)
 
 These optional rules run in Basic and Plugin modes whenever the corresponding
-Codex surface exists. `AGENTS.md` is discovered recursively because Codex
-applies nested instruction files to their subtrees.
+Codex surface exists. Codex-specific `AGENTS.md` policy runs only when Codex is
+active; the shared instruction rules above run independently.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| CX037 | `codex-agents-empty` | `AGENTS.md` is empty or whitespace-only | Always | error |
-| CX038 | `codex-agents-secret` | `AGENTS.md` contains a potential hardcoded credential | Always | error |
 | CX039 | `codex-agents-large` | `AGENTS.md` exceeds 100,000 bytes | Always | warn |
 | CX040 | `codex-agents-limit` | `AGENTS.md` exceeds the effective Codex document limit | Always | warn |
-| CX041 | `codex-agents-path` | Backtick-quoted path in `AGENTS.md` is missing | Always | warn |
 | CX042 | `codex-agents-override` | Root `AGENTS.override.md` is tracked by Git | Always | warn |
-| CX043 | `codex-agents-generic` | `AGENTS.md` is generic-only | Always | suppressed |
-| CX044 | `codex-agents-structure` | `AGENTS.md` lacks project-specific structure | Always | suppressed |
 | CX045 | `codex-agents-conflict` | Explicit `AGENTS.md` setting conflicts with `.codex/config.toml` | Always | suppressed |
 | CX046 | `codex-plugin-path` | Codex plugin manifest is not at `.codex-plugin/plugin.json` | Always | error |
 | CX047 | `codex-plugin-invalid` | `.codex-plugin/plugin.json` is invalid JSON | Always | error |

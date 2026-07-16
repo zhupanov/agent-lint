@@ -13,7 +13,7 @@ mod validators;
 use config::{CliMode, LintConfig};
 use context::{LintContext, LintMode};
 use diagnostic::DiagnosticCollector;
-use platforms::{ActivePlatforms, PlatformDetection};
+use platforms::{DetectedSurfaces, ValidationTargets};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -130,8 +130,8 @@ fn main() {
     lint_config.apply_cli_mode(cli_mode);
 
     let exclude = lint_config.build_exclude_set();
-    let platforms = PlatformDetection::discover(&exclude).activate(lint_config.platforms);
-    let mode = match detect_mode_for_platforms(platforms) {
+    let targets = DetectedSurfaces::discover(&exclude).resolve(lint_config.platforms);
+    let mode = match detect_mode_for_targets(targets) {
         Some(mode) => mode,
         None => {
             if list_scripts {
@@ -152,9 +152,9 @@ fn main() {
     }
 
     if autofix {
-        run_autofix(&repo_root, mode, lint_config, &exclude, platforms);
+        run_autofix(&repo_root, mode, lint_config, &exclude, targets);
     } else {
-        run_lint(&repo_root, mode, lint_config, &exclude, platforms);
+        run_lint(&repo_root, mode, lint_config, &exclude, targets);
     }
 }
 
@@ -163,12 +163,12 @@ fn run_lint(
     mode: LintMode,
     lint_config: LintConfig,
     exclude: &config::ExcludeSet,
-    platforms: ActivePlatforms,
+    targets: ValidationTargets,
 ) {
     let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
     let mut diag = DiagnosticCollector::with_config(lint_config);
 
-    validators::run_all_with_platforms(&ctx, &mut diag, exclude, platforms);
+    validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
 
     let errors = diag.error_count();
     let warnings = diag.warning_count();
@@ -206,13 +206,13 @@ fn run_autofix(
     mode: LintMode,
     lint_config: LintConfig,
     exclude: &config::ExcludeSet,
-    platforms: ActivePlatforms,
+    targets: ValidationTargets,
 ) {
     // Autofix loop: silently re-validate, fix one rule at a time
     for _ in 0..MAX_FIX_ITERATIONS {
         let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
         let mut diag = DiagnosticCollector::with_config_silent(lint_config.clone());
-        validators::run_all_with_platforms(&ctx, &mut diag, exclude, platforms);
+        validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
 
         // Collect unique auto-fixable rules that have violations
         let fixable_rules: Vec<rules::LintRule> = {
@@ -242,20 +242,20 @@ fn run_autofix(
     }
 
     // Final validation pass with normal stderr output
-    run_lint(repo_root, mode, lint_config, exclude, platforms);
+    run_lint(repo_root, mode, lint_config, exclude, targets);
 }
 
 /// Detect lint mode based on Claude, Codex, Cursor, or MCP configuration.
 fn detect_mode() -> Option<LintMode> {
-    let platforms = PlatformDetection::discover(&config::ExcludeSet::default())
-        .activate(config::PlatformOverrides::default());
-    detect_mode_for_platforms(platforms)
+    let targets = DetectedSurfaces::discover(&config::ExcludeSet::default())
+        .resolve(config::PlatformOverrides::default());
+    detect_mode_for_targets(targets)
 }
 
-fn detect_mode_for_platforms(platforms: ActivePlatforms) -> Option<LintMode> {
+fn detect_mode_for_targets(targets: ValidationTargets) -> Option<LintMode> {
     if std::path::Path::new(".claude-plugin").is_dir() {
         Some(LintMode::Plugin)
-    } else if std::path::Path::new(".claude").is_dir() || platforms.any() {
+    } else if std::path::Path::new(".claude").is_dir() || targets.has_work() {
         Some(LintMode::Basic)
     } else if has_mcp_config() {
         // A standalone MCP configuration is a Basic configuration project.
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn detect_mode_codex_surfaces_return_basic() {
+    fn detect_mode_shared_and_codex_surfaces_return_basic() {
         let _guard = test_helpers::CwdGuard::new();
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();

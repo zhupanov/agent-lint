@@ -34,7 +34,7 @@ struct RawPlatformsSection {
 }
 
 /// Optional per-platform activation overrides from `[platforms]`.
-/// `None` means activate only when a platform surface is discovered.
+/// `None` means activate only when a unique platform surface is discovered.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlatformOverrides {
     pub cursor: Option<bool>,
