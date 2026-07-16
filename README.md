@@ -2,16 +2,16 @@
 
 - A linter for [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
   configuration and plugins.
-- Validates `.claude/` and `.claude-plugin/`.
+- Validates `.claude/`, `.claude-plugin/`, and MCP configuration.
 - Implemented in Rust, and fully configurable.
 
 ## Features
 
-- **126 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
-  Hygiene, Email, User Config, Slack, Docs)
+- **139 lint rules** across 10 categories (Manifest, Hooks, Skills, Agents,
+  Hygiene, Email, User Config, MCP, Slack, Docs)
 - **Two lint modes**:
-  - **Basic mode** -- validates `.claude/` contents (settings, hooks, private
-    skill frontmatter, script references, executability)
+  - **Basic mode** -- validates `.claude/` and standalone MCP configuration
+    (settings, hooks, private skill frontmatter, script references, executability)
   - **Plugin mode** -- runs the full rule suite when `.claude-plugin/` is
     present
 - **Configurable** -- suppress or downgrade rules via `agent-lint.toml`
@@ -77,13 +77,13 @@ agent-lint [OPTIONS] [PATH]
 
 If `PATH` is omitted, the current directory is used. The tool detects the
 repo root and selects Basic or Plugin mode automatically based on the
-presence of `.claude-plugin/`.
+configuration it finds.
 
 See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **126 rules** organized into 9 categories:
+Agent Lint ships **139 rules** organized into 10 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
@@ -94,6 +94,7 @@ Agent Lint ships **126 rules** organized into 9 categories:
 | Hygiene | G | 11 | `$PWD` hygiene, script integrity, portability, GitHub payload safety, TODO detection |
 | Email | E | 1 | Email format validation |
 | User Config | U | 6 | `userConfig` structure and env var mapping |
+| MCP | P | 13 | MCP server configuration, transport, security, and compatibility |
 | Slack | K | 1 | Slack fallback consistency |
 | Docs | D | 5 | Docs pointers, CLAUDE.md import closure and size, TODO detection |
 
@@ -104,10 +105,10 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 
 | Mode | Trigger | Scope |
 |------|---------|-------|
-| **Basic** | `.claude/` directory exists | Settings hooks, private skill frontmatter, script refs, executability, always-mode S-rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 126 rules including manifest, agents, hygiene, and plugin-only S-rules |
+| **Basic** | `.claude/` directory or any `*.mcp.json` file exists | Settings hooks, MCP configuration, private skill frontmatter, script refs, executability, always-mode S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 139 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
 
-If neither directory exists, the tool prints "Nothing to lint" and exits 0.
+If no Claude or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
 
 ## Configuration
 

@@ -80,9 +80,10 @@ default-warning rules) to errors, except too-long rules (`name-too-long`,
 stay suppressed.
 
 **`--all`**: Forces every rule to fire as an error. The `suppress` and `warn`
-lists are bypassed entirely -- all 126 rules are promoted to errors. File
+lists are bypassed entirely -- all 139 rules are promoted to errors. File
 exclusions (`exclude`) remain in effect. Note: `--all` applies to rules
-emittable by the detected lint mode. In Basic mode (`.claude/` only),
+emittable by the detected lint mode. In Basic mode (`.claude/` or standalone
+MCP configuration),
 plugin-only rules are not dispatched regardless of `--all`.
 
 ## Behavior Without Config
