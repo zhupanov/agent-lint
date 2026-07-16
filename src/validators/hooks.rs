@@ -84,20 +84,23 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         ManifestState::Parsed(v) => v,
     };
 
-    if val.get("hooks").is_none() {
-        diag.report(
+    match val.get("hooks") {
+        None => diag.report(
             LintRule::HooksKeyMissing,
             &format!("{f} missing top-level 'hooks' key"),
-        );
-    } else if val
-        .get("hooks")
-        .and_then(|v| v.as_array())
-        .is_some_and(|a| a.is_empty())
-    {
-        diag.report(
-            LintRule::HooksArrayEmpty,
-            &format!("{f} has empty 'hooks' array"),
-        );
+        ),
+        // Plugin hooks use an event-keyed object. Retain the legacy flat-array
+        // check so existing configurations continue to receive H007 as well.
+        Some(hooks)
+            if hooks.as_object().is_some_and(|events| events.is_empty())
+                || hooks.as_array().is_some_and(|entries| entries.is_empty()) =>
+        {
+            diag.report(
+                LintRule::HooksArrayEmpty,
+                &format!("{f} has empty 'hooks' collection"),
+            );
+        }
+        Some(_) => {}
     }
 
     validate_hook_command_paths(
@@ -178,7 +181,14 @@ mod tests {
     // V3: validate_hooks_json
     #[test]
     fn test_v3_valid_hooks_json() {
-        let val = json!({"hooks": [{"command": "echo test"}]});
+        let val = json!({
+            "hooks": {
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": "echo test"}]
+                }]
+            }
+        });
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
@@ -223,6 +233,18 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksArrayEmpty);
+        assert!(diag.errors()[0].contains("empty"));
+    }
+
+    #[test]
+    fn test_v3_empty_event_keyed_hooks_object() {
+        let val = json!({"hooks": {}});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksArrayEmpty);
         assert!(diag.errors()[0].contains("empty"));
     }
 
