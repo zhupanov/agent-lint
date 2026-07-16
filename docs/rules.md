@@ -169,18 +169,38 @@ every rule to error regardless of config. See
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | A001 | `agents-dir-missing` | `agents/` directory is missing | Plugin | error |
-| A002 | `agent-frontmatter-malformed` | Agent `.md` has malformed frontmatter | Plugin | error |
-| A003 | `agent-field-missing` | Agent `.md` missing required field (`name` or `description`) | Plugin | error |
+| A002 | `agent-frontmatter-malformed` | Agent `.md` has malformed frontmatter | Always | error |
+| A003 | `agent-field-missing` | Agent `.md` missing required field (`name` or `description`) | Always | error |
 | A004 | `no-agent-files` | `agents/` has no `.md` files | Plugin | error |
 | A005 | `template-file-missing` | `skills/shared/reviewer-templates.md` is missing | Plugin | warn |
 | A006 | `template-marker-missing` | Agent `.md` missing "Derived from" marker | Plugin | warn |
 | A007 | `template-count-mismatch` | Agent-template count mismatch | Plugin | warn |
-| A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Plugin | error |
-| A009 | `agent-desc-short` | Agent description under 20 characters | Plugin | error |
-| A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Plugin | error |
-| A011 | `agent-desc-redundant` | Agent description too similar to agent name | Plugin | error |
-| A012 | `agent-read-mismatch` | Explicit agent tools omit `Read` while its prompt instructs reading file-backed evidence | Always | error |
-| A013 | `agent-output-unsafe` | Machine-only evidence output lacks both an unreadable-evidence outcome and never-invent language | Always | error |
+| A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Always | error |
+| A009 | `agent-desc-short` | Agent description under 20 characters | Always | error |
+| A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Always | error |
+| A011 | `agent-desc-redundant` | Agent description too similar to agent name | Always | error |
+| A012 | `agent-model-invalid` | Agent `model` is not a recognized Claude Code model | Always | error |
+| A013 | `agent-permission-invalid` | Agent `permissionMode` is not one of the allowed enum values | Always | error |
+| A014 | `agent-skill-missing` | Agent `skills` entry has no matching `SKILL.md` on disk | Always | error |
+| A015 | `agent-tools-overlap` | A tool appears in both `tools` and `disallowedTools` | Always | error |
+| A016 | `agent-memory-invalid` | Agent `memory` is not `user`/`project`/`local` | Always | error |
+| A017 | `agent-tools-unknown` | Agent `tools` lists an unrecognized tool name | Always | error |
+| A018 | `agent-disallowed-unknown` | Agent `disallowedTools` lists an unrecognized tool name | Always | error |
+| A019 | `agent-bypass-permissions` | Agent `permissionMode: bypassPermissions` disables safety checks | Always | warn |
+| A020 | `agent-skill-kebab` | Agent `skills` entry is not kebab-case | Always | warn |
+| A021 | `agent-effort-invalid` | Agent `effort` is not `low`/`medium`/`high`/`xhigh`/`max` | Always | error |
+| A022 | `agent-isolation-invalid` | Agent `isolation` is not `worktree` | Always | error |
+| A023 | `agent-background-invalid` | Agent `background` is not a boolean | Always | warn |
+| A024 | `agent-maxturns-invalid` | Agent `maxTurns` is not a positive integer | Always | error |
+| A025 | `agent-field-unknown` | Unrecognized agent frontmatter field (possible typo) | Always | warn |
+
+> **Agent field-value rules (A012-A025).** These spec-grounded checks run on
+> agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
+> (Basic mode). They catch typos and invalid enum values (e.g. `model: sonet`,
+> `permissionMode: yolo`, `tools: [Bsh]`, dangling `skills:` references) with
+> near-zero false-positive risk. The larch-specific template rules A005-A007
+> remain Plugin-only. The known-tool list is shared with S040
+> (`skill allowed-tools`); `mcp__<server>__<tool>` names are accepted.
 
 ## Hygiene / Scripts Rules (G)
 

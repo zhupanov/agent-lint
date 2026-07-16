@@ -38,7 +38,8 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclud
     hygiene::validate_private_executability(diag, exclude);
     // Skill content checks (both-mode subset: excludes S016, S017, S029, S033)
     skill_content::validate_private_skill_content(diag, exclude);
-    contracts::validate_contracts(diag, exclude, false);
+    // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
+    agents::validate_private_agents(diag, exclude);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.

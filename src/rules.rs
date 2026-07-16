@@ -224,10 +224,34 @@ pub enum LintRule {
     AgentNameInvalid,
     /// A011: agent description too similar to agent name
     AgentDescRedundant,
-    /// A012: agent prompt asks to read evidence without the Read tool
-    AgentReadMismatch,
-    /// A013: machine-only agent output lacks fail-closed evidence handling
-    AgentOutputUnsafe,
+    /// A012: agent `model` is not a recognized Claude Code model
+    AgentModelInvalid,
+    /// A013: agent `permissionMode` is not one of the allowed enum values
+    AgentPermissionInvalid,
+    /// A014: agent `skills` entry does not exist on disk
+    AgentSkillMissing,
+    /// A015: a tool appears in both `tools` and `disallowedTools`
+    AgentToolsOverlap,
+    /// A016: agent `memory` is not `user`/`project`/`local`
+    AgentMemoryInvalid,
+    /// A017: agent `tools` lists an unrecognized tool name
+    AgentToolsUnknown,
+    /// A018: agent `disallowedTools` lists an unrecognized tool name
+    AgentDisallowedUnknown,
+    /// A019: agent `permissionMode: bypassPermissions` disables safety checks
+    AgentBypassPermissions,
+    /// A020: agent `skills` entry is not kebab-case
+    AgentSkillKebab,
+    /// A021: agent `effort` is not `low`/`medium`/`high`/`xhigh`/`max`
+    AgentEffortInvalid,
+    /// A022: agent `isolation` is not `worktree`
+    AgentIsolationInvalid,
+    /// A023: agent `background` is not a boolean
+    AgentBackgroundInvalid,
+    /// A024: agent `maxTurns` is not a positive integer
+    AgentMaxturnsInvalid,
+    /// A025: unrecognized agent frontmatter field (possible typo)
+    AgentFieldUnknown,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
@@ -423,8 +447,20 @@ impl LintRule {
             Self::AgentDescShort => "A009",
             Self::AgentNameInvalid => "A010",
             Self::AgentDescRedundant => "A011",
-            Self::AgentReadMismatch => "A012",
-            Self::AgentOutputUnsafe => "A013",
+            Self::AgentModelInvalid => "A012",
+            Self::AgentPermissionInvalid => "A013",
+            Self::AgentSkillMissing => "A014",
+            Self::AgentToolsOverlap => "A015",
+            Self::AgentMemoryInvalid => "A016",
+            Self::AgentToolsUnknown => "A017",
+            Self::AgentDisallowedUnknown => "A018",
+            Self::AgentBypassPermissions => "A019",
+            Self::AgentSkillKebab => "A020",
+            Self::AgentEffortInvalid => "A021",
+            Self::AgentIsolationInvalid => "A022",
+            Self::AgentBackgroundInvalid => "A023",
+            Self::AgentMaxturnsInvalid => "A024",
+            Self::AgentFieldUnknown => "A025",
 
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
@@ -577,8 +613,20 @@ impl LintRule {
             Self::AgentDescShort => "agent-desc-short",
             Self::AgentNameInvalid => "agent-name-invalid",
             Self::AgentDescRedundant => "agent-desc-redundant",
-            Self::AgentReadMismatch => "agent-read-mismatch",
-            Self::AgentOutputUnsafe => "agent-output-unsafe",
+            Self::AgentModelInvalid => "agent-model-invalid",
+            Self::AgentPermissionInvalid => "agent-permission-invalid",
+            Self::AgentSkillMissing => "agent-skill-missing",
+            Self::AgentToolsOverlap => "agent-tools-overlap",
+            Self::AgentMemoryInvalid => "agent-memory-invalid",
+            Self::AgentToolsUnknown => "agent-tools-unknown",
+            Self::AgentDisallowedUnknown => "agent-disallowed-unknown",
+            Self::AgentBypassPermissions => "agent-bypass-permissions",
+            Self::AgentSkillKebab => "agent-skill-kebab",
+            Self::AgentEffortInvalid => "agent-effort-invalid",
+            Self::AgentIsolationInvalid => "agent-isolation-invalid",
+            Self::AgentBackgroundInvalid => "agent-background-invalid",
+            Self::AgentMaxturnsInvalid => "agent-maxturns-invalid",
+            Self::AgentFieldUnknown => "agent-field-unknown",
 
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
@@ -697,6 +745,10 @@ impl LintRule {
             // ── Default-warning: template rules (agents) ─────────────
             Self::TemplateFileMissing | Self::TemplateMarkerMissing |
             Self::TemplateCountMismatch |
+
+            // ── Default-warning: agent field-value (advisory) ────────
+            Self::AgentBypassPermissions | Self::AgentSkillKebab |
+            Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
@@ -820,8 +872,20 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AgentDescShort,
     LintRule::AgentNameInvalid,
     LintRule::AgentDescRedundant,
-    LintRule::AgentReadMismatch,
-    LintRule::AgentOutputUnsafe,
+    LintRule::AgentModelInvalid,
+    LintRule::AgentPermissionInvalid,
+    LintRule::AgentSkillMissing,
+    LintRule::AgentToolsOverlap,
+    LintRule::AgentMemoryInvalid,
+    LintRule::AgentToolsUnknown,
+    LintRule::AgentDisallowedUnknown,
+    LintRule::AgentBypassPermissions,
+    LintRule::AgentSkillKebab,
+    LintRule::AgentEffortInvalid,
+    LintRule::AgentIsolationInvalid,
+    LintRule::AgentBackgroundInvalid,
+    LintRule::AgentMaxturnsInvalid,
+    LintRule::AgentFieldUnknown,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
