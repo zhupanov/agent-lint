@@ -23,6 +23,22 @@ pub enum CliMode {
 #[serde(deny_unknown_fields)]
 struct RawConfig {
     lint: Option<RawLintSection>,
+    platforms: Option<RawPlatformsSection>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RawPlatformsSection {
+    cursor: Option<bool>,
+    codex: Option<bool>,
+}
+
+/// Optional per-platform activation overrides from `[platforms]`.
+/// `None` means activate only when a platform surface is discovered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlatformOverrides {
+    pub cursor: Option<bool>,
+    pub codex: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -114,6 +130,7 @@ pub struct LintConfig {
     pub claude_import_total_max_lines: Option<usize>,
     pub instruction_files: Vec<String>,
     pub inline_path_prefixes: Vec<String>,
+    pub platforms: PlatformOverrides,
 }
 
 impl Default for LintConfig {
@@ -129,6 +146,7 @@ impl Default for LintConfig {
             claude_import_total_max_lines: None,
             instruction_files: default_instruction_files(),
             inline_path_prefixes: default_inline_path_prefixes(),
+            platforms: PlatformOverrides::default(),
         }
     }
 }
@@ -209,6 +227,7 @@ impl LintConfig {
             toml::from_str(&content).map_err(|e| format!("{}: {e}", path.display()))?;
 
         let section = raw.lint.unwrap_or_default();
+        let platforms = raw.platforms.unwrap_or_default();
 
         if section.desc_truncated_max_chars == 0 {
             return Err(format!(
@@ -290,6 +309,10 @@ impl LintConfig {
             claude_import_total_max_lines: section.claude_import_total_max_lines,
             instruction_files: section.instruction_files,
             inline_path_prefixes: section.inline_path_prefixes,
+            platforms: PlatformOverrides {
+                cursor: platforms.cursor,
+                codex: platforms.codex,
+            },
         })
     }
 
@@ -477,6 +500,33 @@ mod tests {
         assert!(config.suppress.is_empty());
         assert!(config.error.is_empty());
         assert!(config.warn.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn platform_overrides_are_parsed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[platforms]\ncursor = true\ncodex = false\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.platforms.cursor, Some(true));
+        assert_eq!(config.platforms.codex, Some(false));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unknown_platform_key_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[platforms]\nother = true\n",
+        )
+        .unwrap();
+        let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(err.contains("unknown field"), "unexpected error: {err}");
     }
 
     #[test]

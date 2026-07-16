@@ -4,6 +4,7 @@ mod context;
 mod diagnostic;
 mod fence;
 mod frontmatter;
+mod platforms;
 mod rules;
 #[cfg(test)]
 mod test_helpers;
@@ -12,6 +13,7 @@ mod validators;
 use config::{CliMode, LintConfig};
 use context::{LintContext, LintMode};
 use diagnostic::DiagnosticCollector;
+use platforms::{ActivePlatforms, PlatformDetection};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -105,23 +107,18 @@ fn main() {
         std::process::exit(2);
     }
 
-    // Detect lint mode.
-    let mode = match detect_mode() {
-        Some(m) => m,
-        None => {
-            if list_scripts {
-                // Silent exit — no stdout contamination for pipe consumers.
-                std::process::exit(0);
-            }
-            println!(
-                "Nothing to lint (no supported agent configuration or MCP configuration found)."
-            );
+    // A config file can force-enable a platform with no detected surface, so
+    // it participates in deciding whether this repository has work to lint.
+    // Repositories with neither a surface nor a config retain the silent
+    // no-work behavior before configuration is parsed.
+    if detect_mode().is_none() && !std::path::Path::new("agent-lint.toml").is_file() {
+        if list_scripts {
             std::process::exit(0);
         }
-    };
+        println!("Nothing to lint (no supported agent configuration or MCP configuration found).");
+        std::process::exit(0);
+    }
 
-    // Load configuration AFTER mode detection (so "Nothing to lint" repos
-    // are not affected by malformed config files).
     let mut lint_config = match LintConfig::load(&repo_root) {
         Ok(cfg) => cfg,
         Err(msg) => {
@@ -133,6 +130,17 @@ fn main() {
     lint_config.apply_cli_mode(cli_mode);
 
     let exclude = lint_config.build_exclude_set();
+    let platforms = PlatformDetection::discover(&exclude).activate(lint_config.platforms);
+    let mode = match detect_mode_for_platforms(platforms) {
+        Some(mode) => mode,
+        None => {
+            if list_scripts {
+                std::process::exit(0);
+            }
+            println!("Nothing to lint (no Claude, Cursor, Codex, or MCP configuration found).");
+            std::process::exit(0);
+        }
+    };
 
     // --list-scripts: print discovered script paths and exit.
     if list_scripts {
@@ -144,9 +152,9 @@ fn main() {
     }
 
     if autofix {
-        run_autofix(&repo_root, mode, lint_config, &exclude);
+        run_autofix(&repo_root, mode, lint_config, &exclude, platforms);
     } else {
-        run_lint(&repo_root, mode, lint_config, &exclude);
+        run_lint(&repo_root, mode, lint_config, &exclude, platforms);
     }
 }
 
@@ -155,11 +163,12 @@ fn run_lint(
     mode: LintMode,
     lint_config: LintConfig,
     exclude: &config::ExcludeSet,
+    platforms: ActivePlatforms,
 ) {
     let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
     let mut diag = DiagnosticCollector::with_config(lint_config);
 
-    validators::run_all(&ctx, &mut diag, exclude);
+    validators::run_all_with_platforms(&ctx, &mut diag, exclude, platforms);
 
     let errors = diag.error_count();
     let warnings = diag.warning_count();
@@ -197,12 +206,13 @@ fn run_autofix(
     mode: LintMode,
     lint_config: LintConfig,
     exclude: &config::ExcludeSet,
+    platforms: ActivePlatforms,
 ) {
     // Autofix loop: silently re-validate, fix one rule at a time
     for _ in 0..MAX_FIX_ITERATIONS {
         let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
         let mut diag = DiagnosticCollector::with_config_silent(lint_config.clone());
-        validators::run_all(&ctx, &mut diag, exclude);
+        validators::run_all_with_platforms(&ctx, &mut diag, exclude, platforms);
 
         // Collect unique auto-fixable rules that have violations
         let fixable_rules: Vec<rules::LintRule> = {
@@ -232,21 +242,20 @@ fn run_autofix(
     }
 
     // Final validation pass with normal stderr output
-    run_lint(repo_root, mode, lint_config, exclude);
+    run_lint(repo_root, mode, lint_config, exclude, platforms);
 }
 
 /// Detect lint mode based on Claude, Codex, Cursor, or MCP configuration.
 fn detect_mode() -> Option<LintMode> {
+    let platforms = PlatformDetection::discover(&config::ExcludeSet::default())
+        .activate(config::PlatformOverrides::default());
+    detect_mode_for_platforms(platforms)
+}
+
+fn detect_mode_for_platforms(platforms: ActivePlatforms) -> Option<LintMode> {
     if std::path::Path::new(".claude-plugin").is_dir() {
         Some(LintMode::Plugin)
-    } else if std::path::Path::new(".claude").is_dir()
-        || std::path::Path::new(".codex/config.toml").is_file()
-        || std::path::Path::new(".codex-plugin/plugin.json").is_file()
-        || has_agents_file()
-        || std::path::Path::new(".agents/skills").is_dir()
-        || std::path::Path::new(".cursor").is_dir()
-        || std::path::Path::new(".cursorrules").is_file()
-    {
+    } else if std::path::Path::new(".claude").is_dir() || platforms.any() {
         Some(LintMode::Basic)
     } else if has_mcp_config() {
         // A standalone MCP configuration is a Basic configuration project.
@@ -265,14 +274,6 @@ fn has_mcp_config() -> bool {
             entry.file_type().is_file()
                 && entry.file_name().to_string_lossy().ends_with(".mcp.json")
         })
-}
-
-fn has_agents_file() -> bool {
-    walkdir::WalkDir::new(".")
-        .into_iter()
-        .filter_entry(|entry| entry.file_name() != ".git")
-        .flatten()
-        .any(|entry| entry.file_type().is_file() && entry.file_name() == "AGENTS.md")
 }
 
 fn resolve_repo_root(target: &str) -> Result<String, String> {
@@ -353,7 +354,8 @@ mod tests {
         assert_eq!(detect_mode(), Some(context::LintMode::Basic));
 
         std::fs::remove_dir_all(".codex-plugin").unwrap();
-        std::fs::create_dir_all(".agents/skills").unwrap();
+        std::fs::create_dir_all(".agents/skills/example").unwrap();
+        std::fs::write(".agents/skills/example/SKILL.md", "# Skill\n").unwrap();
         assert_eq!(detect_mode(), Some(context::LintMode::Basic));
     }
 
@@ -363,7 +365,8 @@ mod tests {
         let _guard = test_helpers::CwdGuard::new();
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir(".cursor").unwrap();
+        std::fs::create_dir_all(".cursor/rules").unwrap();
+        std::fs::write(".cursor/rules/project.mdc", "# Rule\n").unwrap();
         assert_eq!(detect_mode(), Some(context::LintMode::Basic));
     }
 

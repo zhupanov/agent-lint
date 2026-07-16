@@ -23,6 +23,13 @@ every rule to error regardless of config. See
 - **Plugin** -- runs only when `.claude-plugin/` is present
 - **Always** -- runs in both Basic (any detected supported configuration) and Plugin modes
 
+## Platform Rule Namespaces
+
+`CU` is reserved for Cursor rules and `CX` is reserved for Codex rules.
+Platform-specific rules are activated independently of Basic/Plugin mode: they
+run only when their platform is auto-detected or force-enabled in
+`[platforms]`. See [configuration](configuration.md#platform-activation).
+
 ## Manifest Rules (M)
 
 | Code | Name | Description | Mode | Default |

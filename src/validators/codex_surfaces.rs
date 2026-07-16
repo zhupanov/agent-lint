@@ -10,7 +10,7 @@ use crate::rules::LintRule;
 use crate::validators::skill_content::security::has_hardcoded_secret;
 use serde_json::Value;
 use std::path::{Component, Path};
-use walkdir::{DirEntry, WalkDir};
+use walkdir::WalkDir;
 
 const AGENTS_DEFAULT_MAX_BYTES: usize = 32_768;
 const AGENTS_HARD_MAX_BYTES: usize = 100_000;
@@ -27,10 +27,6 @@ pub fn validate(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     validate_codex_skill_frontmatter(diag, exclude);
 }
 
-fn skip_git(entry: &DirEntry) -> bool {
-    entry.file_name() != ".git"
-}
-
 fn relative_display(path: &Path) -> String {
     path.strip_prefix(".")
         .unwrap_or(path)
@@ -42,7 +38,7 @@ fn validate_agents_files(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let max_bytes = project_doc_max_bytes();
     for entry in WalkDir::new(".")
         .into_iter()
-        .filter_entry(skip_git)
+        .filter_entry(crate::platforms::should_descend)
         .flatten()
     {
         if !entry.file_type().is_file() || entry.file_name() != "AGENTS.md" {
@@ -223,7 +219,7 @@ fn validate_plugin_manifests(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
     let canonical = ".codex-plugin/plugin.json";
     for entry in WalkDir::new(".")
         .into_iter()
-        .filter_entry(skip_git)
+        .filter_entry(crate::platforms::should_descend)
         .flatten()
     {
         let path = entry.path();
