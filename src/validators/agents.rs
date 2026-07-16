@@ -322,7 +322,14 @@ fn get_field_items(fm_lines: &[String], key: &str) -> Vec<String> {
     for (i, line) in fm_lines.iter().enumerate() {
         if line.starts_with(&prefix) {
             key_idx = Some(i);
-            let inline = strip_outer_quotes(line[prefix.len()..].trim_start());
+            let raw = strip_outer_quotes(line[prefix.len()..].trim_start());
+            // YAML flow sequence: `tools: [Bash, Read]` — strip the brackets
+            // before comma-splitting so each item is parsed as a scalar entry.
+            let inline = if raw.starts_with('[') && raw.ends_with(']') && raw.len() >= 2 {
+                &raw[1..raw.len() - 1]
+            } else {
+                raw
+            };
             if !inline.is_empty() {
                 for part in inline.split(',') {
                     let p = strip_outer_quotes(part.trim());
@@ -1646,6 +1653,41 @@ mod tests {
         let empty = "---\ntools:\n---\n";
         let fm = frontmatter::extract_frontmatter(empty).unwrap();
         assert!(get_field_items(&fm, "tools").is_empty());
+
+        // YAML flow sequence: `tools: [Bash, Read]` must parse as two items,
+        // not as the literal strings "[Bash" and "Read]".
+        let flow = "---\ntools: [Bash, Read]\n---\n";
+        let fm = frontmatter::extract_frontmatter(flow).unwrap();
+        assert_eq!(get_field_items(&fm, "tools"), vec!["Bash", "Read"]);
+
+        // Single-item flow sequence with a quoted entry.
+        let flow_one = "---\nskills: [\"my-skill\"]\n---\n";
+        let fm = frontmatter::extract_frontmatter(flow_one).unwrap();
+        assert_eq!(get_field_items(&fm, "skills"), vec!["my-skill"]);
+
+        // Empty flow sequence.
+        let flow_empty = "---\ntools: []\n---\n";
+        let fm = frontmatter::extract_frontmatter(flow_empty).unwrap();
+        assert!(get_field_items(&fm, "tools").is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a017_flow_sequence_no_false_positive() {
+        // Flow-sequence tools must not be falsely flagged as unknown.
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: [Bash, Read]\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag
+                    .errors()
+                    .iter()
+                    .any(|e| e.contains("unrecognized tool")),
+                "flow-sequence tools should not fire A017: {:?}",
+                diag.errors()
+            );
+        });
     }
 
     // ── Private agents (Basic mode) ──────────────────────────────────
