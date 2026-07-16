@@ -6,7 +6,7 @@ mod frontmatter_extended;
 mod frontmatter_fields;
 mod mcp;
 mod name;
-mod security;
+pub(crate) mod security;
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;

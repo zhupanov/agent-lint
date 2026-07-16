@@ -49,13 +49,15 @@ pub(super) fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticColl
     }
 
     // S032: hardcoded secrets
-    for re in SECRET_PATTERNS.iter() {
-        if re.is_match(&info.body) {
-            diag.report(
-                LintRule::HardcodedSecret,
-                &format!("{}: potential hardcoded secret/API key detected", info.path),
-            );
-            return; // Report once per file
-        }
+    if has_hardcoded_secret(&info.body) {
+        diag.report(
+            LintRule::HardcodedSecret,
+            &format!("{}: potential hardcoded secret/API key detected", info.path),
+        );
     }
+}
+
+/// Shared conservative secret heuristic for configuration values.
+pub(crate) fn has_hardcoded_secret(content: &str) -> bool {
+    SECRET_PATTERNS.iter().any(|re| re.is_match(content))
 }

@@ -237,7 +237,9 @@ fn run_autofix(
 fn detect_mode() -> Option<LintMode> {
     if std::path::Path::new(".claude-plugin").is_dir() {
         Some(LintMode::Plugin)
-    } else if std::path::Path::new(".claude").is_dir() {
+    } else if std::path::Path::new(".claude").is_dir()
+        || std::path::Path::new(".codex/config.toml").is_file()
+    {
         Some(LintMode::Basic)
     } else if has_mcp_config() {
         // A standalone MCP configuration is a Basic configuration project.
@@ -305,6 +307,17 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir(".claude").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+    }
+
+    #[test]
+    #[serial]
+    fn detect_mode_codex_config_returns_basic() {
+        let _guard = test_helpers::CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir(".codex").unwrap();
+        std::fs::write(".codex/config.toml", "model = 'gpt-5'\n").unwrap();
         assert_eq!(detect_mode(), Some(context::LintMode::Basic));
     }
 

@@ -224,6 +224,36 @@ not exist.
 | T001 | `pr-template-invalid` | `prUrlTemplate` is not a non-empty string with a documented placeholder | Always | warn |
 | T002 | `channels-enabled-invalid` | `channelsEnabled` is not a boolean | Always | warn |
 
+## Codex Configuration Rules (CX)
+
+These optional rules validate a project-local `.codex/config.toml` in Basic
+and Plugin modes. The allowlists were verified against the live Codex schema
+on 2026-07-16. Codex's legacy `approvalMode` and `fullAutoErrorMode` keys are
+not registered as standalone rules because they are absent from the current
+schema and are covered by the unknown-key rules.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| CX001 | `codex-toml-invalid` | `.codex/config.toml` is invalid TOML | Always | error |
+| CX002 | `codex-doc-bytes` | `project_doc_max_bytes` is not 1–65536 | Always | error |
+| CX003 | `codex-doc-names` | project documentation fallback names are invalid | Always | error |
+| CX004 | `codex-key-unknown` | Unknown supported nested configuration key | Always | warn |
+| CX005–CX009 | — | Invalid core approval, sandbox, model, or personality enum | Always | error |
+| CX010 | `codex-access-ack` | Full sandbox access lacks its explicit acknowledgement | Always | error |
+| CX011 | `codex-shell-inherit` | Invalid shell environment inheritance mode | Always | error |
+| CX012 | `codex-mcp-transport` | MCP server has neither a command nor URL | Always | error |
+| CX013 | `codex-secret-literal` | MCP configuration contains a hardcoded secret | Always | error |
+| CX014–CX015 | — | Invalid credential-store or workspace-write mode | Always | error |
+| CX016–CX024 | — | Invalid Codex scalar/table type or model token limit | Always | warn/error |
+| CX025–CX027 | — | Unknown granular approval field or invalid reviewer/tier | Always | warn |
+| CX028 | `codex-bearer-token` | Inline MCP bearer token is forbidden | Always | error |
+| CX029 | `codex-agent-threads` | `agents.max_threads` conflicts with `multi_agent_v2` | Always | error |
+| CX030–CX032 | — | Invalid app approval mode, skills table, or profile type | Always | error/warn |
+| CX033 | `codex-top-key` | Unknown top-level Codex key | Always | warn |
+| CX034 | `codex-feature-key` | Unknown Codex feature flag | Always | warn |
+| CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | suppressed |
+| CX036 | `codex-windows-sandbox` | Invalid Windows sandbox mode | Always | suppressed |
+
 ## Hygiene / Scripts Rules (G)
 
 | Code | Name | Description | Mode | Default |
