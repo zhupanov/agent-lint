@@ -129,8 +129,8 @@ git branch -d "release/v${NEW_VERSION}"
 ## Failed release recovery
 
 If the release workflow fails, stop publication and inspect the failed job log
-before retrying. Do not interpret a failed GitHub API request (including HTTP
-503) as evidence that a release or tag does not exist.
+before retrying. Treat a failed GitHub API request (including HTTP 503) as
+unknown state, then verify the release and tag explicitly before proceeding.
 
 Check the release state explicitly: the version tag, GitHub Release, uploaded
 artifacts, and floating major tag must all agree. A failure after GitHub Release
@@ -140,5 +140,5 @@ may exist while the floating `v2` tag remains on the previous release.
 Fix the workflow in a separate PR, wait for its checks, merge it according to
 repository policy, and only then explicitly re-dispatch the release workflow
 from `main`. Verify the successful recovery run and every expected release
-output before reporting completion. Never create a second version PR merely to
-recover a partial release.
+output before reporting completion. Reuse the existing release version when
+recovering a partial release.
