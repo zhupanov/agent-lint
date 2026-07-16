@@ -1,0 +1,2 @@
+{"body":"- q1: 109 is done and merged \u2014 use the merged #109 hook-object validator; implement CC-SK-010 and CC-AG-011 by calling it.\n","category":"Q/A","phase":"implement","source":"execution-issues.md pre-bump","source_sha256":"78709a6982dfd9d08fb873f9f45618d0f1894e721b6fdb1cd376ee47123c9036","step":"7a"}
+{"body":"- q2: (a) ship CC-AG-011 as error for plugin agents anyway.\n","category":"Q/A","phase":"implement","source":"execution-issues.md pre-bump","source_sha256":"6461880e0afe70df129fe7d747ee3711f9f33814107df2cf074baca4d97a3a6e","step":"7a"}

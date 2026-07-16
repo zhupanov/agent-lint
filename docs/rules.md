@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 273 rules across 17 categories. Every rule has a unique
+Agent Lint ships 280 rules across 18 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -110,8 +110,19 @@ session started), `SessionEnd` (exit reason), `PreCompact`/`PostCompact`
 (`manual`/`auto`), `SubagentStop` (agent type), and `InstructionsLoaded` (load
 reason) -- so a blanket "non-tool event" check would flag valid configs.
 
-Hook `hooks:` keys in skill and agent frontmatter are not yet validated; that
-requires structured YAML frontmatter parsing.
+Hook `hooks:` keys in skill and agent frontmatter are validated by the same
+engine once frontmatter parses as YAML (X001); schema findings still use
+H008--H024 codes with a `… frontmatter` path label.
+
+## Markdown Structure Rules (X)
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| X001 | `frontmatter-yaml-invalid` | Skill/agent frontmatter does not parse as valid YAML | Always | error |
+| X002 | `unclosed-code-fence` | Unclosed code fence in SKILL.md, agent `.md`, or CLAUDE.md | Always | error |
+| X003 | `xml-tag-unclosed` | Unclosed XML tag in markdown body (fence/inline-code aware) | Always | warn |
+| X004 | `xml-tag-mismatched` | Mismatched closing XML tag in markdown body | Always | warn |
+| X005 | `xml-tag-orphan` | Closing XML tag with no matching opener | Always | warn |
 
 ## Skills Rules (S)
 
@@ -124,7 +135,7 @@ requires structured YAML frontmatter parsing.
 | S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin | error |
 | S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Always | error |
 | S005 | `frontmatter-field-missing` | `SKILL.md` missing required field (`name` or `description`) | Always | error |
-| S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Plugin | error |
+| S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Always | error |
 | S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Always | error |
 | S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin | error |
 
@@ -135,7 +146,7 @@ requires structured YAML frontmatter parsing.
 | S009 | `name-too-long` | Skill name exceeds 64 characters | Always | error |
 | S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | Always | error |
 | S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | Always | error |
-| S012 | `name-reserved-word` | Skill name contains reserved word (`anthropic` or `claude`) | Always | error |
+| S012 | `name-reserved-word` | Skill name contains reserved word (`anthropic`/`claude` substring, or exact `skill`) | Always | error |
 | S013 | `name-has-xml` | Skill name contains XML/HTML tags | Always | error |
 | S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin | warn |
 | S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin | suppressed |
@@ -197,6 +208,8 @@ requires structured YAML frontmatter parsing.
 | S066 | `side-effect-auto` | Side-effect-named skill lacks `disable-model-invocation: true` | Always | warn |
 | S070 | `unknown-fm-field` | Unknown skill frontmatter field (typo catcher) | Always | warn |
 | S071 | `paths-empty` | `paths` field is present but empty | Always | warn |
+| S072 | `skill-dir-oversized` | Skill directory exceeds 8MB platform upload limit | Always | warn |
+| S073 | `skill-ref-nested` | Skill-relative `.md` link nested deeper than one directory level | Always | suppressed |
 
 ### Extended Frontmatter (S035, S039--S040, S042--S045, S067)
 
@@ -476,7 +489,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 273):**
+**Auto-fixable rules (12 of 280):**
 
 | Rule | Code | Fix |
 |------|------|-----|

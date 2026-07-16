@@ -8,9 +8,9 @@
 
 ## Features
 
-- **273 lint rules** across 17 categories (Manifest, Hooks, Skills, Agents,
+- **280 lint rules** across 18 categories (Manifest, Hooks, Skills, Agents,
   Prompt Content, Claude Rules, Output Styles, Settings, Cursor Rules, Cursor
-  Skills, Hygiene, Email, User Config, MCP, Codex, Slack, Docs)
+  Skills, Hygiene, Email, User Config, MCP, Codex, Slack, Docs, Markdown Structure)
 - **Two lint modes**:
   - **Basic mode** -- validates detected Claude, Cursor, Codex, and standalone
     MCP configuration
@@ -85,13 +85,13 @@ See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **273 rules** organized into 17 categories:
+Agent Lint ships **280 rules** organized into 18 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 17 | `plugin.json` and `marketplace.json` validation, component path safety |
 | Hooks | H | 25 | `hooks.json` / `settings.json` hook paths and hook object schema |
-| Skills | S | 71 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
+| Skills | S | 75 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
 | Agents | A | 28 | Agent frontmatter, field values, tool/evidence contracts, templates, description quality |
 | Prompt Content | Q | 4 | Fence-aware quality checks shared by Claude instructions, skill bodies, and agent bodies |
 | Claude Rules | R | 2 | `.claude/rules/` frontmatter `paths` globs and fields |
@@ -106,6 +106,7 @@ Agent Lint ships **273 rules** organized into 17 categories:
 | Cursor Skills | CR-SK | 1 | Unsupported Cursor skill frontmatter fields |
 | Slack | K | 1 | Slack fallback consistency |
 | Docs | D | 5 | Docs pointers, CLAUDE.md import closure and size, TODO detection |
+| Markdown Structure | X | 5 | Strict YAML frontmatter, unclosed fences, XML tag balance |
 
 For the complete rule table with codes, names, defaults, and auto-fixable
 rules, see **[docs/rules.md](docs/rules.md)**.
@@ -115,7 +116,7 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | Claude, Cursor, Codex, or MCP configuration is present | Detected platform configuration plus always-mode Claude rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 273 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 280 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
 
 If no supported agent or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
 

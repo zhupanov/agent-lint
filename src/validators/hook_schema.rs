@@ -141,6 +141,25 @@ pub(super) fn validate_hook_schema(val: &Value, label: &str, diag: &mut Diagnost
     }
 }
 
+/// Validate a skill/agent frontmatter `hooks:` value via the shared engine.
+///
+/// `hooks_yaml` is the raw YAML value of the `hooks` key. It is wrapped as
+/// `{"hooks": ...}` so the JSON-surface walker can apply H008–H024 unchanged.
+pub(super) fn validate_frontmatter_hooks(
+    hooks_yaml: &serde_yaml::Value,
+    label: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(hooks_json) = crate::frontmatter::yaml_to_json(hooks_yaml) else {
+        return;
+    };
+    let wrapper = Value::Object(serde_json::Map::from_iter([(
+        "hooks".to_string(),
+        hooks_json,
+    )]));
+    validate_hook_schema(&wrapper, label, diag);
+}
+
 /// Validate one matcher group: its `matcher` against the event, then each hook
 /// object in its nested `hooks` array.
 fn validate_matcher_group(group: &Value, event: &str, label: &str, diag: &mut DiagnosticCollector) {

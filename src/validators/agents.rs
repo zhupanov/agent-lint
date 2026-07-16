@@ -195,9 +195,33 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
                     "{agent_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
                 ),
             );
+            // X002–X005 still apply when frontmatter is broken.
+            super::markdown_structure::check_markdown_structure(agent_path, content, diag);
             return;
         }
     };
+
+    // X001: strict YAML; CC-AG-011: hooks schema when present.
+    match frontmatter::parse_yaml_strict(&fm_lines) {
+        Ok(yaml) => {
+            if let Some(hooks) = yaml.get("hooks") {
+                super::hook_schema::validate_frontmatter_hooks(
+                    hooks,
+                    &format!("{agent_path} frontmatter"),
+                    diag,
+                );
+            }
+        }
+        Err((line, msg)) => {
+            diag.report(
+                LintRule::FrontmatterYamlInvalid,
+                &format!("{agent_path}:{line}: frontmatter is not valid YAML: {msg}"),
+            );
+        }
+    }
+
+    // X002–X005 on the full agent markdown file.
+    super::markdown_structure::check_markdown_structure(agent_path, content, diag);
 
     let fm_name = frontmatter::get_field(&fm_lines, "name");
     let fm_desc = frontmatter::get_field(&fm_lines, "description");
@@ -278,6 +302,7 @@ const KNOWN_AGENT_FIELDS: &[&str] = &[
     "skills",
     "memory",
     "effort",
+    "hooks",
 ];
 
 /// Allowed `permissionMode` values (CC-AG-004).
@@ -1834,5 +1859,38 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_cc_ag_011_agent_hooks_schema() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nhooks:\n  NotAnEvent:\n    - hooks:\n        - type: command\n          command: echo hi\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.diagnostics().iter().any(|d| {
+                    d.rule == LintRule::HookEventInvalid && d.message.contains("frontmatter")
+                }),
+                "expected H008 on agent frontmatter: {:?}",
+                diag.diagnostics()
+                    .iter()
+                    .map(|d| format!("{}:{}", d.rule.code(), d.message))
+                    .collect::<Vec<_>>()
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_x001_agent_invalid_yaml() {
+        let content = format!("---\nname: general\n\tdescription: {GOOD_DESC}\n---\nBody\n");
+        run_agent(&content, |diag| {
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::FrontmatterYamlInvalid)
+            );
+        });
     }
 }

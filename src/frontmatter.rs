@@ -144,6 +144,29 @@ pub fn get_field(fm_lines: &[String], key: &str) -> Option<String> {
     }
 }
 
+/// Strict YAML parse of frontmatter lines (AS-016 / X001).
+///
+/// On success returns the parsed document. On failure returns a 1-based line
+/// number within the **file** (accounting for the opening `---` on line 1) and
+/// a short error message.
+pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<serde_yaml::Value, (usize, String)> {
+    let text = fm_lines.join("\n");
+    match serde_yaml::from_str::<serde_yaml::Value>(&text) {
+        Ok(value) => Ok(value),
+        Err(err) => {
+            // YAML text starts on file line 2 (after the opening ---).
+            let yaml_line = err.location().map(|loc| loc.line()).unwrap_or(1);
+            let file_line = yaml_line.saturating_add(1);
+            Err((file_line, err.to_string()))
+        }
+    }
+}
+
+/// Convert a YAML value to JSON for reuse by JSON-shaped validators (e.g. hooks).
+pub fn yaml_to_json(value: &serde_yaml::Value) -> Option<serde_json::Value> {
+    serde_json::to_value(value).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,6 +328,21 @@ mod tests {
         let body = extract_body(content);
         assert_eq!(body, "Line 1\nLine 2\nLine 3\n");
         assert_eq!(body.lines().count(), 3);
+    }
+
+    #[test]
+    fn test_parse_yaml_strict_ok() {
+        let fm = extract_frontmatter("---\nname: foo\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: echo\n---\n").unwrap();
+        let yaml = parse_yaml_strict(&fm).unwrap();
+        assert!(yaml.get("hooks").is_some());
+        assert!(yaml_to_json(yaml.get("hooks").unwrap()).is_some());
+    }
+
+    #[test]
+    fn test_parse_yaml_strict_reports_file_line() {
+        let fm = extract_frontmatter("---\nname: foo\n\tbad: tab\n---\n").unwrap();
+        let (line, _msg) = parse_yaml_strict(&fm).unwrap_err();
+        assert!(line >= 2, "file line should account for opening ---");
     }
 
     #[test]
