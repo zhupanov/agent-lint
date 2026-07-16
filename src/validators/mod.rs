@@ -2,6 +2,7 @@ mod agents;
 mod claude_config;
 mod codex_config;
 mod codex_constants;
+mod codex_surfaces;
 mod common;
 mod contracts;
 mod docs;
@@ -50,6 +51,7 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclud
     agents::validate_private_agents(diag, exclude);
     claude_config::validate_private_config(diag, exclude);
     codex_config::validate_config(diag, exclude);
+    codex_surfaces::validate(diag, exclude);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -62,6 +64,7 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     agents::validate_private_agents(diag, exclude);
     claude_config::validate_private_config(diag, exclude);
     codex_config::validate_config(diag, exclude);
+    codex_surfaces::validate(diag, exclude);
 
     // V1: plugin.json
     manifest::validate_plugin_json(ctx, diag);
