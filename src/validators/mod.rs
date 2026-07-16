@@ -6,6 +6,7 @@ mod common;
 mod contracts;
 mod docs;
 mod email;
+mod hook_schema;
 mod hooks;
 pub mod hygiene;
 mod manifest;
@@ -32,6 +33,10 @@ pub fn run_all(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Excl
 fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     // V4: settings.json hook paths
     hooks::validate_settings_hooks(ctx, diag);
+    // V27: settings.json hook schema
+    hooks::validate_settings_schema(ctx, diag);
+    // V28: settings.local.json validity + hook schema
+    hooks::validate_settings_local(ctx, diag);
     mcp::validate_mcp_configs(ctx, diag, exclude);
     // V6-adapted: private SKILL.md frontmatter for .claude/skills/
     skills::validate_private_skill_frontmatter(diag, exclude);
@@ -66,6 +71,12 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     hooks::validate_hooks_json(ctx, diag);
     // V4: settings.json hook paths
     hooks::validate_settings_hooks(ctx, diag);
+    // V26: hooks.json hook schema
+    hooks::validate_hooks_json_schema(ctx, diag);
+    // V27: settings.json hook schema
+    hooks::validate_settings_schema(ctx, diag);
+    // V28: settings.local.json validity + hook schema
+    hooks::validate_settings_local(ctx, diag);
     mcp::validate_mcp_configs(ctx, diag, exclude);
     // V5: skills layout
     skills::validate_skills_layout(diag, exclude);
@@ -155,6 +166,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
         let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
@@ -207,6 +219,7 @@ mod tests {
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
         let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
@@ -276,6 +289,7 @@ mod tests {
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
         let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
@@ -304,6 +318,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
         let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
@@ -346,6 +361,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
         let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
@@ -386,6 +402,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
         let mut diag = DiagnosticCollector::with_config(config);
         run_all(&ctx, &mut diag, &ExcludeSet::default());
@@ -436,6 +453,7 @@ mod tests {
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
         let mut diag = DiagnosticCollector::new_all_enabled();
         run_all(&ctx, &mut diag, &ExcludeSet::default());
@@ -477,6 +495,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
 
         // Without exclusion: both skills produce errors
@@ -532,6 +551,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
 
         // Exclude test-* skills
@@ -602,6 +622,7 @@ mod tests {
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
 
         // Exclude agents/excluded.md
@@ -637,6 +658,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         };
 
         // Even if we exclude everything, fixed-path validators should still work

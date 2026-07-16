@@ -220,6 +220,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         }
     }
 

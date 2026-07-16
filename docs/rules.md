@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 163 rules across 13 categories. Every rule has a unique
+Agent Lint ships 217 rules across 14 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -50,6 +50,55 @@ every rule to error regardless of config. See
 | H005 | `hook-not-executable` | Hook command script not executable | Always | error |
 | H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Always | error |
 | H007 | `hooks-array-empty` | `hooks.json` has empty `hooks` array | Plugin | error |
+| H008 | `hook-event-invalid` | Hook event name is not a recognized Claude Code event | Always | error |
+| H009 | `hook-matcher-invalid` | `matcher` present on an event that takes no matcher | Always | error |
+| H010 | `hook-type-missing` | Hook object missing required `type` field | Always | error |
+| H011 | `hook-type-unknown` | Hook `type` is not `command`/`prompt`/`agent`/`http`/`mcp_tool` | Always | error |
+| H012 | `hook-command-required` | `type: command` hook missing `command` | Always | error |
+| H013 | `hook-prompt-required` | `type: prompt` or `type: agent` hook missing `prompt` | Always | error |
+| H014 | `hook-url-required` | `type: http` hook missing `url` | Always | error |
+| H015 | `hook-server-required` | `type: mcp_tool` hook missing `server` | Always | error |
+| H016 | `hook-tool-required` | `type: mcp_tool` hook missing `tool` | Always | error |
+| H017 | `hook-timeout-invalid` | Hook `timeout` is not a positive integer | Always | error |
+| H018 | `hook-async-invalid` | `async: true` on a non-`command` hook | Always | error |
+| H019 | `hook-model-invalid` | `model` on a hook other than `prompt`/`agent` | Always | error |
+| H020 | `hook-once-invalid` | Hook `once` is not a boolean | Always | error |
+| H021 | `hook-if-invalid` | Hook `if` is not a non-empty string | Always | warn |
+| H022 | `hook-shell-invalid` | Hook `shell` is not `bash`/`powershell` | Always | warn |
+| H023 | `hook-command-dangerous` | Dangerous command pattern in hook command (`rm -rf`, `git reset --hard`, `curl \| sh`, ...) | Always | warn |
+| H024 | `hook-headers-interpolated` | HTTP hook headers interpolate `$VAR` without `allowedEnvVars` | Always | warn |
+| H025 | `settings-local-invalid` | `.claude/settings.local.json` is not valid JSON | Always | error |
+
+### Hook schema validation (H008--H024)
+
+H008--H024 share one hook-object validation engine, applied to
+`hooks/hooks.json`, `.claude/settings.json`, and `.claude/settings.local.json`.
+The engine walks the event-keyed shape:
+
+```json
+{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "..."}]}]}}
+```
+
+`hooks` object -> event name key -> matcher groups -> each group's nested
+`hooks` array -> hook objects. A file whose `hooks` key is a flat array carries
+no event context, so the schema engine skips it; only H001--H007 apply there.
+
+The valid event list and handler-type table live in
+`src/validators/hook_schema.rs` and track the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks.md);
+expect them to change with Claude Code releases.
+
+H009 uses an explicit list of the events the hooks reference marks "no matcher
+support": `UserPromptSubmit`, `PostToolBatch`, `Stop`, `TeammateIdle`,
+`TaskCreated`, `TaskCompleted`, `CwdChanged`, `MessageDisplay`,
+`WorktreeCreate`, and `WorktreeRemove`. Every other event filters on some
+documented field -- not just the tool events, but also `SessionStart` (how the
+session started), `SessionEnd` (exit reason), `PreCompact`/`PostCompact`
+(`manual`/`auto`), `SubagentStop` (agent type), and `InstructionsLoaded` (load
+reason) -- so a blanket "non-tool event" check would flag valid configs.
+
+Hook `hooks:` keys in skill and agent frontmatter are not yet validated; that
+requires structured YAML frontmatter parsing.
 
 ## Skills Rules (S)
 
@@ -332,7 +381,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 139):**
+**Auto-fixable rules (12 of 217):**
 
 | Rule | Code | Fix |
 |------|------|-----|

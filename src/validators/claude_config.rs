@@ -467,6 +467,7 @@ mod tests {
                     marketplace_json: crate::context::ManifestState::Missing,
                     hooks_json: crate::context::ManifestState::Missing,
                     settings_json: crate::context::ManifestState::Missing,
+                    settings_local_json: crate::context::ManifestState::Missing,
                 };
                 let mut diag = DiagnosticCollector::new_all_enabled();
                 super::super::run_all(&ctx, &mut diag, &ExcludeSet::default());

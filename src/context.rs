@@ -65,13 +65,17 @@ pub struct LintContext {
     pub marketplace_json: ManifestState,
     pub hooks_json: ManifestState,
     pub settings_json: ManifestState,
+    pub settings_local_json: ManifestState,
 }
 
 impl LintContext {
     pub fn new(base_path: &Path, mode: LintMode) -> Self {
-        // hooks_json and settings_json are always loaded regardless of mode.
+        // hooks_json, settings_json, and settings_local_json are always loaded
+        // regardless of mode.
         let hooks_json = ManifestState::load(&base_path.join("hooks/hooks.json"));
         let settings_json = ManifestState::load(&base_path.join(".claude/settings.json"));
+        let settings_local_json =
+            ManifestState::load(&base_path.join(".claude/settings.local.json"));
 
         // plugin_json and marketplace_json are only loaded in Plugin mode.
         // In Basic mode, they are set to Missing since run_basic never accesses them.
@@ -91,6 +95,7 @@ impl LintContext {
             marketplace_json,
             hooks_json,
             settings_json,
+            settings_local_json,
         }
     }
 }

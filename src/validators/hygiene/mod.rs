@@ -294,6 +294,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
@@ -317,6 +318,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
@@ -344,6 +346,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Parsed(hooks_val),
             settings_json: crate::context::ManifestState::Missing,
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
@@ -374,6 +377,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Parsed(settings_val),
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
@@ -403,6 +407,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
@@ -435,6 +440,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
@@ -460,6 +466,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
@@ -488,6 +495,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             settings_json: crate::context::ManifestState::Missing,
+            settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
