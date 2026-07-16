@@ -606,6 +606,20 @@ pub enum LintRule {
     McpAlwaysLoadInvalid,
     /// P026: MCP server name is reserved by Claude Code
     McpServerReserved,
+
+    // ── Link/import integrity (L) ────────────────────────────────
+    /// L001: @import target markdown file does not exist
+    ImportPathMissing,
+    /// L002: circular @import chain detected
+    CircularImport,
+    /// L003: @import chain depth exceeds 5 hops
+    ImportDepthExceeded,
+    /// L004: duplicate @import of the same file
+    DuplicateImport,
+    /// L005: broken relative markdown link target
+    BrokenMarkdownLink,
+    /// L006: npm run script not defined in package.json
+    NpmScriptMissing,
 }
 
 impl LintRule {
@@ -906,6 +920,13 @@ impl LintRule {
             Self::McpServerEmpty => "P024",
             Self::McpAlwaysLoadInvalid => "P025",
             Self::McpServerReserved => "P026",
+
+            Self::ImportPathMissing => "L001",
+            Self::CircularImport => "L002",
+            Self::ImportDepthExceeded => "L003",
+            Self::DuplicateImport => "L004",
+            Self::BrokenMarkdownLink => "L005",
+            Self::NpmScriptMissing => "L006",
         }
     }
 
@@ -1206,6 +1227,13 @@ impl LintRule {
             Self::McpServerEmpty => "mcp-server-empty",
             Self::McpAlwaysLoadInvalid => "mcp-alwaysload-invalid",
             Self::McpServerReserved => "mcp-server-reserved",
+
+            Self::ImportPathMissing => "import-path-missing",
+            Self::CircularImport => "circular-import",
+            Self::ImportDepthExceeded => "import-depth-exceeded",
+            Self::DuplicateImport => "duplicate-import",
+            Self::BrokenMarkdownLink => "broken-markdown-link",
+            Self::NpmScriptMissing => "npm-script-missing",
         }
     }
 
@@ -1339,11 +1367,15 @@ impl LintRule {
             Self::ClaudemdTooLarge | Self::TodoInDocs |
             Self::ClaudeImportLarge | Self::InlinePathMissing
             | Self::McpSseDeprecated | Self::McpEnvSecretLiteral
-            | Self::McpCommandDangerous | Self::McpAlwaysLoadInvalid
+            | Self::McpCommandDangerous | Self::McpAlwaysLoadInvalid |
 
             // ── Default-warning: markdown structure ──────────────────
-            | Self::XmlTagUnclosed | Self::XmlTagMismatched | Self::XmlTagOrphan
-            | Self::SkillDirOversized
+            Self::XmlTagUnclosed | Self::XmlTagMismatched | Self::XmlTagOrphan |
+            Self::SkillDirOversized |
+
+            // ── Default-warning: link/import integrity ───────────────
+            Self::DuplicateImport | Self::BrokenMarkdownLink |
+            Self::NpmScriptMissing
                 => DefaultSeverity::Warning,
 
             // Everything else defaults to error.
@@ -1634,6 +1666,12 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::McpServerEmpty,
     LintRule::McpAlwaysLoadInvalid,
     LintRule::McpServerReserved,
+    LintRule::ImportPathMissing,
+    LintRule::CircularImport,
+    LintRule::ImportDepthExceeded,
+    LintRule::DuplicateImport,
+    LintRule::BrokenMarkdownLink,
+    LintRule::NpmScriptMissing,
 ];
 
 #[cfg(test)]
@@ -1647,7 +1685,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            280,
+            286,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1729,8 +1767,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            108,
-            "Expected 108 default-warning rules, got {}",
+            111,
+            "Expected 111 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1778,8 +1816,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            157,
-            "Expected 157 default-error rules, got {}",
+            160,
+            "Expected 160 default-error rules, got {}",
             errors.len()
         );
     }

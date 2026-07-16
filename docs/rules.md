@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 280 rules across 18 categories. Every rule has a unique
+Agent Lint ships 286 rules across 19 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -482,6 +482,25 @@ present. These rules run in both Basic and Plugin modes.
 | D004 | `claude-import-large` | Recursive `CLAUDE.md` `@`-import closure exceeds a configured per-file or total line budget | Always | warn |
 | D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
 
+## Link/import integrity Rules (L)
+
+These rules validate the `@import` graph and relative markdown-link
+integrity of each configured instruction file (see `instruction-files` in
+[configuration](configuration.md); default `AGENTS.md`, `SECURITY.md`,
+`CLAUDE.md`). `@import` traversal is fence-aware (imports inside code
+fences are ignored), bounded to one visit per file per root, and reports
+the offending chain for cycles and depth violations. Non-markdown
+imports are legitimate in Claude Code and are not flagged.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| L001 | `import-path-missing` | `@import` target markdown file does not exist on disk | Plugin | error |
+| L002 | `circular-import` | Circular `@import` chain detected (the offending chain is reported) | Plugin | error |
+| L003 | `import-depth-exceeded` | `@import` chain depth exceeds 5 hops (Claude Code's documented limit) | Plugin | error |
+| L004 | `duplicate-import` | Duplicate `@import` of the same file within one instruction file (`./` prefixes normalized) | Plugin | warn |
+| L005 | `broken-markdown-link` | Broken relative `[text](path.md)` link target in a configured instruction file; external URLs, anchors, and links inside code fences are skipped | Plugin | warn |
+| L006 | `npm-script-missing` | `npm run <script>` referenced from a configured instruction file is not defined in `package.json` `scripts` (silently skipped when there is no `package.json` or no `scripts` object) | Plugin | warn |
+
 ## Auto-Fixable Rules
 
 When `--autofix` is provided, agent-lint attempts to automatically fix
@@ -489,7 +508,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 280):**
+**Auto-fixable rules (12 of 286):**
 
 | Rule | Code | Fix |
 |------|------|-----|
