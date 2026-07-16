@@ -1,12 +1,12 @@
 ---
-name: release
+name: release-agent-lint
 description: Create and publish an agent-lint release through a version pull request and a manually dispatched release workflow.
 argument-hint: "[--dry-run] [--bump major|minor|patch]"
 allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Read
 disable-model-invocation: true
 ---
 
-# Release
+# Release agent-lint
 
 Run this operator-only skill from the repository root to publish one
 agent-lint release. A merge to `main` never publishes automatically: this
