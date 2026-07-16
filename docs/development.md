@@ -83,7 +83,7 @@ Runs on pull requests to `main` and `workflow_dispatch`:
 ### Release (`.github/workflows/release.yml`)
 
 Triggered only by `workflow_dispatch`, normally by the repository-local
-`/release` skill after its version PR merges:
+`/release-agent-lint` skill after its version PR merges:
 
 1. **build** -- cross-compiles for Linux (x86_64, aarch64 musl) and macOS
    (aarch64)
