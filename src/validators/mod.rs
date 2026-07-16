@@ -22,17 +22,36 @@ mod walk;
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, LintMode};
 use crate::diagnostic::DiagnosticCollector;
+use crate::platforms::ActivePlatforms;
 
 /// Run all validators appropriate for the current lint mode.
+#[cfg(test)]
 pub fn run_all(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let platforms = crate::platforms::PlatformDetection::discover(&ExcludeSet::default())
+        .activate(crate::config::PlatformOverrides::default());
+    run_all_with_platforms(ctx, diag, exclude, platforms);
+}
+
+/// Run all validators using the explicitly resolved platform activation.
+pub fn run_all_with_platforms(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    platforms: ActivePlatforms,
+) {
     match ctx.mode {
-        LintMode::Basic => run_basic(ctx, diag, exclude),
-        LintMode::Plugin => run_plugin(ctx, diag, exclude),
+        LintMode::Basic => run_basic(ctx, diag, exclude, platforms),
+        LintMode::Plugin => run_plugin(ctx, diag, exclude, platforms),
     }
 }
 
 /// Basic mode: validate .claude/ contents only.
-fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn run_basic(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    platforms: ActivePlatforms,
+) {
     // V4: settings.json hook paths
     hooks::validate_settings_hooks(ctx, diag);
     // V27: settings.json hook schema
@@ -51,13 +70,22 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclud
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents(diag, exclude);
     claude_config::validate_private_config(diag, exclude);
-    codex_config::validate_config(diag, exclude);
-    codex_surfaces::validate(diag, exclude);
-    cursor::validate(diag, exclude);
+    if platforms.codex {
+        codex_config::validate_config(diag, exclude);
+        codex_surfaces::validate(diag, exclude);
+    }
+    if platforms.cursor {
+        cursor::validate(diag, exclude);
+    }
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
-fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn run_plugin(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    platforms: ActivePlatforms,
+) {
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag, exclude);
     hygiene::validate_private_script_references(diag, exclude);
@@ -65,9 +93,13 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents(diag, exclude);
     claude_config::validate_private_config(diag, exclude);
-    codex_config::validate_config(diag, exclude);
-    codex_surfaces::validate(diag, exclude);
-    cursor::validate(diag, exclude);
+    if platforms.codex {
+        codex_config::validate_config(diag, exclude);
+        codex_surfaces::validate(diag, exclude);
+    }
+    if platforms.cursor {
+        cursor::validate(diag, exclude);
+    }
 
     // V1: plugin.json
     manifest::validate_plugin_json(ctx, diag);
@@ -188,6 +220,56 @@ mod tests {
         run_all(&ctx, &mut diag, &ExcludeSet::default());
         // Basic mode with valid .claude/ structure should pass
         assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn platform_override_gates_codex_validators() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir(".codex").unwrap();
+        std::fs::write(".codex/config.toml", "not = [valid").unwrap();
+
+        let ctx = LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: LintMode::Basic,
+            plugin_json: ManifestState::Missing,
+            marketplace_json: ManifestState::Missing,
+            hooks_json: ManifestState::Missing,
+            settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
+        };
+        let mut disabled = DiagnosticCollector::new_all_enabled();
+        run_all_with_platforms(
+            &ctx,
+            &mut disabled,
+            &ExcludeSet::default(),
+            ActivePlatforms::default(),
+        );
+        assert!(
+            !disabled
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == crate::rules::LintRule::CodexTomlInvalid)
+        );
+
+        let mut enabled = DiagnosticCollector::new_all_enabled();
+        run_all_with_platforms(
+            &ctx,
+            &mut enabled,
+            &ExcludeSet::default(),
+            ActivePlatforms {
+                cursor: false,
+                codex: true,
+            },
+        );
+        assert!(
+            enabled
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == crate::rules::LintRule::CodexTomlInvalid)
+        );
     }
 
     // Integration test: Plugin mode dispatches all validators

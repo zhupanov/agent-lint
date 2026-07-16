@@ -17,6 +17,10 @@ claude-import-max-lines = 120               # enable D004 per-import budget
 claude-import-total-max-lines = 400          # enable D004 total budget
 instruction-files = ["AGENTS.md", "SECURITY.md", "CLAUDE.md"]
 inline-path-prefixes = ["src/", "docs/", "skills/", "scripts/"]
+
+[platforms]
+cursor = true   # force-enable Cursor checks; false disables them
+codex = false   # disable Codex checks even when Codex files exist
 ```
 
 ## Options
@@ -37,6 +41,27 @@ inline-path-prefixes = ["src/", "docs/", "skills/", "scripts/"]
 Closure limits are disabled when omitted. The two D004 limits may be used
 independently. Import and Markdown-reference traversal is recursive, bounded,
 and counts each file once.
+
+## Platform Activation
+
+Cursor and Codex surfaces are detected automatically. Platform-specific
+validators run in both Basic and Plugin modes when their platform has a
+recognized surface. Basic/Plugin mode therefore controls the existing Claude
+rule set; it does not disable detected platform checks.
+
+Use the optional `[platforms]` section to override detection per platform.
+Each value is a boolean: `true` force-enables that platform (including in a
+repository with no platform files), and `false` disables its platform-specific
+validators. Omit a key to use auto-detection. Only `cursor` and `codex` are
+accepted.
+
+Cursor surfaces are `.cursorrules`, `.cursor/rules/**/*.{md,mdc}`,
+`.cursor/hooks.json`, `.cursor/agents/**/*.md`, `.cursor/environment.json`,
+and `.cursor/skills/*/SKILL.md`. Codex surfaces are `.codex/config.toml`,
+`.codex-plugin/plugin.json`, root `AGENTS.override.md`, any nested
+`AGENTS.md`, and `.agents/skills/*/SKILL.md`. Discovery skips `.git` and
+conventional dependency/build directories (`node_modules`, `vendor`, `target`,
+`dist`, and `build`), and respects `[lint].exclude`.
 
 ## Rule Identifiers
 
