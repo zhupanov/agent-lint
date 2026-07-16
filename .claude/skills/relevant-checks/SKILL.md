@@ -1,7 +1,7 @@
 ---
 name: relevant-checks
 description: Run repo-specific validation checks based on modified files. Use when you need to validate code quality after implementation, after code review fixes, or when fixing CI failures.
-allowed-tools: Bash
+allowed-tools: Bash(.claude/skills/relevant-checks/scripts/run-checks.sh:*)
 ---
 
 # Relevant Checks
