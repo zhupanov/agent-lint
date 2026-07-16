@@ -1,4 +1,5 @@
 mod agents;
+mod claude_config;
 mod common;
 mod contracts;
 mod docs;
@@ -40,6 +41,7 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclud
     skill_content::validate_private_skill_content(diag, exclude);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents(diag, exclude);
+    claude_config::validate_private_config(diag, exclude);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -50,6 +52,7 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     hygiene::validate_private_executability(diag, exclude);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents(diag, exclude);
+    claude_config::validate_private_config(diag, exclude);
 
     // V1: plugin.json
     manifest::validate_plugin_json(ctx, diag);

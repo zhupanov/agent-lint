@@ -669,6 +669,7 @@ pub fn validate_agent_template_count(diag: &mut DiagnosticCollector, exclude: &E
 }
 
 #[cfg(test)]
+#[allow(non_snake_case)] // Preserve stable test names that embed rule identifiers.
 mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCollector;

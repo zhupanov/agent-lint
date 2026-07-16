@@ -257,6 +257,28 @@ pub enum LintRule {
     /// A027: unrecognized agent frontmatter field (possible typo)
     AgentFieldUnknown,
 
+    // ── Claude configuration (R/O/T) ─────────────────────────────
+    /// R001: .claude/rules frontmatter paths contains an invalid glob
+    RulesGlobInvalid,
+    /// R002: .claude/rules frontmatter contains an unrecognized field
+    RulesFieldUnknown,
+    /// O001: output style description is missing or blank
+    OutputStyleDescriptionMissing,
+    /// O002: output style keep-coding-instructions is not a boolean
+    OutputStyleKeepCodingInstructionsInvalid,
+    /// O003: output style frontmatter contains an unrecognized field
+    OutputStyleFieldUnknown,
+    /// O004: output style has no body after frontmatter
+    OutputStyleBodyEmpty,
+    /// O005: output style name exceeds 64 characters
+    OutputStyleNameTooLong,
+    /// O006: output style frontmatter is missing or invalid YAML
+    OutputStyleFrontmatterInvalid,
+    /// T001: settings prUrlTemplate is not a usable template string
+    SettingsPrUrlTemplateInvalid,
+    /// T002: settings channelsEnabled is not a boolean
+    SettingsChannelsEnabledInvalid,
+
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
     PwdInSkill,
@@ -468,6 +490,17 @@ impl LintRule {
             Self::AgentMaxturnsInvalid => "A026",
             Self::AgentFieldUnknown => "A027",
 
+            Self::RulesGlobInvalid => "R001",
+            Self::RulesFieldUnknown => "R002",
+            Self::OutputStyleDescriptionMissing => "O001",
+            Self::OutputStyleKeepCodingInstructionsInvalid => "O002",
+            Self::OutputStyleFieldUnknown => "O003",
+            Self::OutputStyleBodyEmpty => "O004",
+            Self::OutputStyleNameTooLong => "O005",
+            Self::OutputStyleFrontmatterInvalid => "O006",
+            Self::SettingsPrUrlTemplateInvalid => "T001",
+            Self::SettingsChannelsEnabledInvalid => "T002",
+
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
             Self::ScriptNotExecutable => "G003",
@@ -636,6 +669,17 @@ impl LintRule {
             Self::AgentMaxturnsInvalid => "agent-maxturns-invalid",
             Self::AgentFieldUnknown => "agent-field-unknown",
 
+            Self::RulesGlobInvalid => "rules-glob-invalid",
+            Self::RulesFieldUnknown => "rules-field-unknown",
+            Self::OutputStyleDescriptionMissing => "style-description-missing",
+            Self::OutputStyleKeepCodingInstructionsInvalid => "style-instructions-invalid",
+            Self::OutputStyleFieldUnknown => "style-field-unknown",
+            Self::OutputStyleBodyEmpty => "style-body-empty",
+            Self::OutputStyleNameTooLong => "style-name-long",
+            Self::OutputStyleFrontmatterInvalid => "style-frontmatter-invalid",
+            Self::SettingsPrUrlTemplateInvalid => "pr-template-invalid",
+            Self::SettingsChannelsEnabledInvalid => "channels-enabled-invalid",
+
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
             Self::ScriptNotExecutable => "script-not-executable",
@@ -757,6 +801,12 @@ impl LintRule {
             // ── Default-warning: agent field-value (advisory) ────────
             Self::AgentBypassPermissions | Self::AgentSkillKebab |
             Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
+
+            // ── Default-warning: Claude configuration (advisory) ──
+            Self::RulesFieldUnknown | Self::OutputStyleDescriptionMissing |
+            Self::OutputStyleFieldUnknown | Self::OutputStyleBodyEmpty |
+            Self::OutputStyleNameTooLong | Self::SettingsPrUrlTemplateInvalid |
+            Self::SettingsChannelsEnabledInvalid |
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
@@ -896,6 +946,16 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AgentBackgroundInvalid,
     LintRule::AgentMaxturnsInvalid,
     LintRule::AgentFieldUnknown,
+    LintRule::RulesGlobInvalid,
+    LintRule::RulesFieldUnknown,
+    LintRule::OutputStyleDescriptionMissing,
+    LintRule::OutputStyleKeepCodingInstructionsInvalid,
+    LintRule::OutputStyleFieldUnknown,
+    LintRule::OutputStyleBodyEmpty,
+    LintRule::OutputStyleNameTooLong,
+    LintRule::OutputStyleFrontmatterInvalid,
+    LintRule::SettingsPrUrlTemplateInvalid,
+    LintRule::SettingsChannelsEnabledInvalid,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
@@ -946,7 +1006,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            153,
+            163,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1028,8 +1088,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            51,
-            "Expected 51 default-warning rules, got {}",
+            58,
+            "Expected 58 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1077,8 +1137,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            97,
-            "Expected 97 default-error rules, got {}",
+            100,
+            "Expected 100 default-error rules, got {}",
             errors.len()
         );
     }
