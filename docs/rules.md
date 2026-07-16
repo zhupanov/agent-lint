@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 126 rules across 9 categories. Every rule has a unique
+Agent Lint ships 139 rules across 10 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -21,7 +21,7 @@ every rule to error regardless of config. See
 **Mode column key:**
 
 - **Plugin** -- runs only when `.claude-plugin/` is present
-- **Always** -- runs in both Basic (`.claude/` only) and Plugin modes
+- **Always** -- runs in both Basic (`.claude/` or MCP configuration) and Plugin modes
 
 ## Manifest Rules (M)
 
@@ -215,6 +215,28 @@ every rule to error regardless of config. See
 | U005 | `userconfig-title-missing` | `userConfig` entry missing or invalid title | Plugin | error |
 | U006 | `userconfig-type-missing` | `userConfig` entry missing or invalid type | Plugin | error |
 
+## MCP Configuration Rules (P)
+
+MCP configuration is validated in root and nested `*.mcp.json` files and in
+`.claude/settings.json` / `.claude/settings.local.json` when those files are
+present. These rules run in both Basic and Plugin modes.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| P001 | `mcp-json-invalid` | MCP configuration is not valid JSON | Always | error |
+| P009 | `mcp-stdio-command` | `stdio` server (including omitted type) has no non-empty `command` | Always | error |
+| P010 | `mcp-http-url` | `http` or `sse` server has no non-empty `url` | Always | error |
+| P011 | `mcp-type-invalid` | Server `type` is not `stdio`, `http`, or `sse` | Always | error |
+| P012 | `mcp-sse-deprecated` | `sse` transport is deprecated; use Streamable HTTP | Always | warn |
+| P017 | `mcp-insecure-url` | Non-local `http://` server URL is not HTTPS | Always | error |
+| P018 | `mcp-env-secret` | Secret-like environment variable contains a literal plaintext value | Always | warn |
+| P019 | `mcp-command-dangerous` | Server command contains a dangerous shell pattern | Always | warn |
+| P022 | `mcp-args-invalid` | `args` is not an array of strings | Always | error |
+| P023 | `mcp-duplicate-server` | `mcpServers` contains a duplicate server name | Always | error |
+| P024 | `mcp-server-empty` | Server configuration is an empty object | Always | error |
+| P025 | `mcp-alwaysload-invalid` | `alwaysLoad` is not a boolean | Always | warn |
+| P026 | `mcp-server-reserved` | Server name is reserved by Claude Code | Always | error |
+
 ## Slack Rules (K)
 
 | Code | Name | Description | Mode | Default |
@@ -238,7 +260,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 126):**
+**Auto-fixable rules (12 of 139):**
 
 | Rule | Code | Fix |
 |------|------|-----|

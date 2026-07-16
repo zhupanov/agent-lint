@@ -113,7 +113,7 @@ fn main() {
                 // Silent exit — no stdout contamination for pipe consumers.
                 std::process::exit(0);
             }
-            println!("Nothing to lint (no .claude/ or .claude-plugin/ directory found).");
+            println!("Nothing to lint (no Claude configuration or MCP configuration found).");
             std::process::exit(0);
         }
     };
@@ -233,15 +233,29 @@ fn run_autofix(
     run_lint(repo_root, mode, lint_config, exclude);
 }
 
-/// Detect lint mode based on directory presence.
+/// Detect lint mode based on directory or MCP configuration presence.
 fn detect_mode() -> Option<LintMode> {
     if std::path::Path::new(".claude-plugin").is_dir() {
         Some(LintMode::Plugin)
     } else if std::path::Path::new(".claude").is_dir() {
         Some(LintMode::Basic)
+    } else if has_mcp_config() {
+        // A standalone MCP configuration is a Basic configuration project.
+        Some(LintMode::Basic)
     } else {
         None
     }
+}
+
+fn has_mcp_config() -> bool {
+    walkdir::WalkDir::new(".")
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .flatten()
+        .any(|entry| {
+            entry.file_type().is_file()
+                && entry.file_name().to_string_lossy().ends_with(".mcp.json")
+        })
 }
 
 fn resolve_repo_root(target: &str) -> Result<String, String> {
@@ -314,6 +328,29 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
 
         assert_eq!(detect_mode(), None);
+    }
+
+    #[test]
+    #[serial]
+    fn detect_mode_root_mcp_config_returns_basic() {
+        let _guard = test_helpers::CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::write(".mcp.json", "{}").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+    }
+
+    #[test]
+    #[serial]
+    fn detect_mode_nested_mcp_config_returns_basic() {
+        let _guard = test_helpers::CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir("config").unwrap();
+        std::fs::write("config/development.mcp.json", "{}").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
     }
 
     // ── resolve_repo_root ────────────────────────────────────────────

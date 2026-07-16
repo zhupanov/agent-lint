@@ -286,6 +286,34 @@ pub enum LintRule {
     ClaudeImportLarge,
     /// D005: inline-code repository path does not exist
     InlinePathMissing,
+
+    // ── MCP configuration (P) ──────────────────────────────────────
+    /// P001: MCP configuration is not valid JSON
+    McpJsonInvalid,
+    /// P009: stdio MCP server is missing its command
+    McpStdioCommandMissing,
+    /// P010: HTTP/SSE MCP server is missing its URL
+    McpHttpUrlMissing,
+    /// P011: MCP server type is not supported
+    McpTypeInvalid,
+    /// P012: SSE transport is deprecated
+    McpSseDeprecated,
+    /// P017: non-local HTTP MCP URL is not HTTPS
+    McpUrlNotHttps,
+    /// P018: MCP environment contains a literal secret
+    McpEnvSecretLiteral,
+    /// P019: MCP command contains a dangerous shell pattern
+    McpCommandDangerous,
+    /// P022: MCP args is not an array of strings
+    McpArgsInvalid,
+    /// P023: mcpServers has duplicate server names
+    McpDuplicateServer,
+    /// P024: MCP server configuration is empty
+    McpServerEmpty,
+    /// P025: MCP alwaysLoad is not a boolean
+    McpAlwaysLoadInvalid,
+    /// P026: MCP server name is reserved by Claude Code
+    McpServerReserved,
 }
 
 impl LintRule {
@@ -426,6 +454,20 @@ impl LintRule {
             Self::TodoInDocs => "D003",
             Self::ClaudeImportLarge => "D004",
             Self::InlinePathMissing => "D005",
+
+            Self::McpJsonInvalid => "P001",
+            Self::McpStdioCommandMissing => "P009",
+            Self::McpHttpUrlMissing => "P010",
+            Self::McpTypeInvalid => "P011",
+            Self::McpSseDeprecated => "P012",
+            Self::McpUrlNotHttps => "P017",
+            Self::McpEnvSecretLiteral => "P018",
+            Self::McpCommandDangerous => "P019",
+            Self::McpArgsInvalid => "P022",
+            Self::McpDuplicateServer => "P023",
+            Self::McpServerEmpty => "P024",
+            Self::McpAlwaysLoadInvalid => "P025",
+            Self::McpServerReserved => "P026",
         }
     }
 
@@ -566,6 +608,20 @@ impl LintRule {
             Self::TodoInDocs => "todo-in-docs",
             Self::ClaudeImportLarge => "claude-import-large",
             Self::InlinePathMissing => "inline-path-missing",
+
+            Self::McpJsonInvalid => "mcp-json-invalid",
+            Self::McpStdioCommandMissing => "mcp-stdio-command",
+            Self::McpHttpUrlMissing => "mcp-http-url",
+            Self::McpTypeInvalid => "mcp-type-invalid",
+            Self::McpSseDeprecated => "mcp-sse-deprecated",
+            Self::McpUrlNotHttps => "mcp-insecure-url",
+            Self::McpEnvSecretLiteral => "mcp-env-secret",
+            Self::McpCommandDangerous => "mcp-command-dangerous",
+            Self::McpArgsInvalid => "mcp-args-invalid",
+            Self::McpDuplicateServer => "mcp-duplicate-server",
+            Self::McpServerEmpty => "mcp-server-empty",
+            Self::McpAlwaysLoadInvalid => "mcp-alwaysload-invalid",
+            Self::McpServerReserved => "mcp-server-reserved",
         }
     }
 
@@ -652,6 +708,8 @@ impl LintRule {
             // ── Default-warning: docs ────────────────────────────────
             Self::ClaudemdTooLarge | Self::TodoInDocs |
             Self::ClaudeImportLarge | Self::InlinePathMissing
+            | Self::McpSseDeprecated | Self::McpEnvSecretLiteral
+            | Self::McpCommandDangerous | Self::McpAlwaysLoadInvalid
                 => DefaultSeverity::Warning,
 
             // Everything else defaults to error.
@@ -788,6 +846,19 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::TodoInDocs,
     LintRule::ClaudeImportLarge,
     LintRule::InlinePathMissing,
+    LintRule::McpJsonInvalid,
+    LintRule::McpStdioCommandMissing,
+    LintRule::McpHttpUrlMissing,
+    LintRule::McpTypeInvalid,
+    LintRule::McpSseDeprecated,
+    LintRule::McpUrlNotHttps,
+    LintRule::McpEnvSecretLiteral,
+    LintRule::McpCommandDangerous,
+    LintRule::McpArgsInvalid,
+    LintRule::McpDuplicateServer,
+    LintRule::McpServerEmpty,
+    LintRule::McpAlwaysLoadInvalid,
+    LintRule::McpServerReserved,
 ];
 
 #[cfg(test)]
@@ -801,7 +872,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            126,
+            139,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -883,8 +954,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            43,
-            "Expected 43 default-warning rules, got {}",
+            47,
+            "Expected 47 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -932,8 +1003,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            78,
-            "Expected 78 default-error rules, got {}",
+            87,
+            "Expected 87 default-error rules, got {}",
             errors.len()
         );
     }

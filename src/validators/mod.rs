@@ -6,6 +6,7 @@ mod email;
 mod hooks;
 pub mod hygiene;
 mod manifest;
+mod mcp;
 pub(crate) mod skill_content;
 pub(crate) mod skills;
 mod slack;
@@ -28,6 +29,7 @@ pub fn run_all(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Excl
 fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     // V4: settings.json hook paths
     hooks::validate_settings_hooks(ctx, diag);
+    mcp::validate_mcp_configs(ctx, diag, exclude);
     // V6-adapted: private SKILL.md frontmatter for .claude/skills/
     skills::validate_private_skill_frontmatter(diag, exclude);
     // V9-adapted: script ref integrity for $PWD/.claude/skills/ refs
@@ -54,6 +56,7 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     hooks::validate_hooks_json(ctx, diag);
     // V4: settings.json hook paths
     hooks::validate_settings_hooks(ctx, diag);
+    mcp::validate_mcp_configs(ctx, diag, exclude);
     // V5: skills layout
     skills::validate_skills_layout(diag, exclude);
     // V6: SKILL.md frontmatter (public)
