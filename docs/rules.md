@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 269 rules across 16 categories. Every rule has a unique
+Agent Lint ships 273 rules across 17 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -267,6 +267,24 @@ requires structured YAML frontmatter parsing.
 > remain Plugin-only. The known-tool list is shared with S040
 > (`skill allowed-tools`); `mcp__<server>__<tool>` names are accepted.
 
+## Prompt Content Rules (Q)
+
+These shared, fence-aware checks run on `CLAUDE.md`, skill bodies, and agent
+bodies in both Basic and Plugin modes. They skip code examples. Q004 applies
+only when both root `CLAUDE.md` and `README.md` exist.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| Q001 | `prompt-generic-filler` | Generic instruction that adds no actionable guidance | Always | warn |
+| Q002 | `prompt-negative-only` | `don't`/`do not`/`never`/`avoid` without `instead`/`rather`/`prefer` within three prose lines | Always | suppressed |
+| Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | suppressed |
+| Q004 | `claude-readme-duplicate` | More than 40% of normalized `CLAUDE.md` prose lines also occur in `README.md` (at least three shared lines) | Always | suppressed |
+
+Q001 recognizes: `be helpful`, `be accurate`, `be concise`, `follow
+instructions`, `do your best`, `be professional`, `use best judgment`, and
+`provide high-quality`. Prefer a concrete project-specific requirement over
+these phrases.
+
 ## Claude Configuration Rules (R/O/T)
 
 These optional rules scan `.claude/rules/`, `.claude/output-styles/`, and
@@ -458,7 +476,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 269):**
+**Auto-fixable rules (12 of 273):**
 
 | Rule | Code | Fix |
 |------|------|-----|

@@ -8,9 +8,9 @@
 
 ## Features
 
-- **269 lint rules** across 16 categories (Manifest, Hooks, Skills, Agents,
-  Claude Rules, Output Styles, Settings, Cursor Rules, Cursor Skills, Hygiene,
-  Email, User Config, MCP, Codex, Slack, Docs)
+- **273 lint rules** across 17 categories (Manifest, Hooks, Skills, Agents,
+  Prompt Content, Claude Rules, Output Styles, Settings, Cursor Rules, Cursor
+  Skills, Hygiene, Email, User Config, MCP, Codex, Slack, Docs)
 - **Two lint modes**:
   - **Basic mode** -- validates detected Claude, Cursor, Codex, and standalone
     MCP configuration
@@ -85,7 +85,7 @@ See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **269 rules** organized into 16 categories:
+Agent Lint ships **273 rules** organized into 17 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
@@ -93,6 +93,7 @@ Agent Lint ships **269 rules** organized into 16 categories:
 | Hooks | H | 25 | `hooks.json` / `settings.json` hook paths and hook object schema |
 | Skills | S | 71 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
 | Agents | A | 28 | Agent frontmatter, field values, tool/evidence contracts, templates, description quality |
+| Prompt Content | Q | 4 | Fence-aware quality checks shared by Claude instructions, skill bodies, and agent bodies |
 | Claude Rules | R | 2 | `.claude/rules/` frontmatter `paths` globs and fields |
 | Output Styles | O | 6 | `.claude/output-styles/` frontmatter, body, and naming |
 | Settings | T | 2 | `.claude/settings.json` / `settings.local.json` field values |
@@ -114,7 +115,7 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | Claude, Cursor, Codex, or MCP configuration is present | Detected platform configuration plus always-mode Claude rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 269 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 273 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
 
 If no supported agent or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
 
