@@ -80,6 +80,7 @@ fn run_content_checks(
     name::check_name_format(info, plugin_mode, diag);
     description::check_description_quality(info, plugin_mode, diag);
     body::check_body_content(info, plugin_mode, diag, exclude);
+    super::prompt_content::validate_body(&info.path, &info.body, diag);
     frontmatter_fields::check_frontmatter_fields(info, diag);
     frontmatter_extended::check_frontmatter_extended(info, diag);
     cross_field::check_cross_field(info, plugin_mode, diag);

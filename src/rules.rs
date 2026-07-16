@@ -307,6 +307,16 @@ pub enum LintRule {
     /// A028: agent frontmatter uses a field unsupported for plugin agents
     AgentFieldUnsupported,
 
+    // ── Prompt content (Q) ───────────────────────────────────────
+    /// Q001: generic filler instruction that provides no actionable guidance
+    PromptGenericFiller,
+    /// Q002: negative instruction without a nearby positive alternative
+    PromptNegativeOnly,
+    /// Q003: weak language inside a critical or important section
+    PromptWeakCritical,
+    /// Q004: CLAUDE.md substantially duplicates README.md
+    ClaudeReadmeDuplicate,
+
     // ── Claude configuration (R/O/T) ─────────────────────────────
     /// R001: .claude/rules frontmatter paths contains an invalid glob
     RulesGlobInvalid,
@@ -731,6 +741,11 @@ impl LintRule {
             Self::AgentFieldUnknown => "A027",
             Self::AgentFieldUnsupported => "A028",
 
+            Self::PromptGenericFiller => "Q001",
+            Self::PromptNegativeOnly => "Q002",
+            Self::PromptWeakCritical => "Q003",
+            Self::ClaudeReadmeDuplicate => "Q004",
+
             Self::RulesGlobInvalid => "R001",
             Self::RulesFieldUnknown => "R002",
             Self::OutputStyleDescriptionMissing => "O001",
@@ -1018,6 +1033,11 @@ impl LintRule {
             Self::AgentFieldUnknown => "agent-field-unknown",
             Self::AgentFieldUnsupported => "agent-field-unsupported",
 
+            Self::PromptGenericFiller => "prompt-generic-filler",
+            Self::PromptNegativeOnly => "prompt-negative-only",
+            Self::PromptWeakCritical => "prompt-weak-critical",
+            Self::ClaudeReadmeDuplicate => "claude-readme-duplicate",
+
             Self::RulesGlobInvalid => "rules-glob-invalid",
             Self::RulesFieldUnknown => "rules-field-unknown",
             Self::OutputStyleDescriptionMissing => "style-description-missing",
@@ -1206,7 +1226,8 @@ impl LintRule {
             Self::AwkRegexNonascii | Self::CodexNetworkPermissionField |
             Self::CodexWindowsSandbox | Self::CodexAgentsGenericGuidance |
             Self::CodexAgentsMissingStructure | Self::CodexAgentsConfigConflict |
-            Self::CursorPromptHookModelInvalid
+            Self::PromptNegativeOnly | Self::PromptWeakCritical |
+            Self::ClaudeReadmeDuplicate | Self::CursorPromptHookModelInvalid
                 => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
@@ -1228,7 +1249,7 @@ impl LintRule {
             Self::ScriptVerifyMissing | Self::TerminologyInconsistent |
             Self::DescBodyMisalign | Self::ScriptErrhandMissing |
             Self::BodyNoDefault | Self::MagicNumberUndoc |
-            Self::SkillClosureLarge |
+            Self::SkillClosureLarge | Self::PromptGenericFiller |
 
             // ── Default-warning: niche (skills) ──────────────────────
             Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
@@ -1437,6 +1458,10 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AgentMaxturnsInvalid,
     LintRule::AgentFieldUnknown,
     LintRule::AgentFieldUnsupported,
+    LintRule::PromptGenericFiller,
+    LintRule::PromptNegativeOnly,
+    LintRule::PromptWeakCritical,
+    LintRule::ClaudeReadmeDuplicate,
     LintRule::RulesGlobInvalid,
     LintRule::RulesFieldUnknown,
     LintRule::OutputStyleDescriptionMissing,
@@ -1578,7 +1603,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            269,
+            273,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1646,8 +1671,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            11,
-            "Expected 11 default-suppressed rules, got {}",
+            14,
+            "Expected 14 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1660,8 +1685,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            103,
-            "Expected 103 default-warning rules, got {}",
+            104,
+            "Expected 104 default-warning rules, got {}",
             warnings.len()
         );
     }

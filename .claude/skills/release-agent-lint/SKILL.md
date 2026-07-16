@@ -9,7 +9,8 @@ disable-model-invocation: true
 # Release agent-lint
 
 Run this operator-only skill from the repository root to publish one
-agent-lint release. A merge to `main` never publishes automatically: this
+agent-lint release. A merge to `main` requires an explicit release trigger;
+prefer keeping publication under the release workflow's explicit control. This
 skill creates a version PR, waits for it to pass CI, merges it, and explicitly
 dispatches the release workflow.
 
@@ -27,7 +28,8 @@ missing or invalid value for `--bump`. All flags default to false or unset.
 
 Before making any change, require that the current branch is `main` and the
 working tree is clean. Refuse to continue if local `main` has unpublished
-commits or diverges from `origin/main`; never rebase it automatically. Fetch
+commits or diverges from `origin/main`; rather than rebasing it automatically,
+preserve its branch state. Fetch
 and fast-forward only when local `main` is behind.
 
 ```bash
@@ -54,7 +56,7 @@ any remote state.
 
 Create `release/v<new-version>` from the synchronized `main`. Run the existing
 version classifier, read its reasoning file, and apply the highest justified
-bump. `--bump` may only escalate the classifier result; do not downgrade it.
+bump. `--bump` may only escalate the classifier result; otherwise, preserve it.
 
 ```bash
 CLASSIFIER_OUTPUT=$("$PWD/.claude/skills/bump-version/scripts/classify-bump.sh")
@@ -82,8 +84,8 @@ rm -f "$RELEASE_BODY"
 
 Create a pull request titled `Release v<new-version>`. Write its body to a
 temporary file, including the classifier reasoning and the commits since the
-baseline tag, then pass that file with `gh pr create --body-file`. Do not pass
-release notes inline.
+baseline tag, then pass that file with `gh pr create --body-file` rather than
+passing release notes inline.
 
 ## 3. Verify and merge
 

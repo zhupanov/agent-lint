@@ -259,6 +259,7 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
     }
 
     check_agent_field_values(diag, agent_path, &fm_lines);
+    super::prompt_content::validate_body(agent_path, frontmatter::extract_body(content), diag);
 }
 
 /// Recognized agent frontmatter fields. Any other top-level key triggers A027

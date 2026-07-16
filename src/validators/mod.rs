@@ -13,6 +13,7 @@ mod hooks;
 pub mod hygiene;
 mod manifest;
 mod mcp;
+mod prompt_content;
 pub(crate) mod skill_content;
 pub(crate) mod skills;
 mod slack;
@@ -77,6 +78,7 @@ fn run_basic(
     if platforms.cursor {
         cursor::validate(diag, exclude);
     }
+    prompt_content::validate_claude_md(diag, exclude);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -100,6 +102,7 @@ fn run_plugin(
     if platforms.cursor {
         cursor::validate(diag, exclude);
     }
+    prompt_content::validate_claude_md(diag, exclude);
 
     // V1: plugin.json
     manifest::validate_plugin_json(ctx, diag);
