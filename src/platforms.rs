@@ -1,9 +1,8 @@
-//! Detection and activation for optional agent platforms.
+//! Detection and activation for platform-specific and shared agent surfaces.
 //!
-//! A platform is observed from its on-disk surfaces, then independently
-//! activated by its optional `agent-lint.toml` override. Keeping those two
-//! operations separate lets configuration change validator policy without
-//! changing what the repository contains.
+//! Unique platform and shared surfaces are observed independently. Optional
+//! `agent-lint.toml` overrides resolve only platform activation, leaving shared
+//! observations intact.
 
 use crate::config::{ExcludeSet, PlatformOverrides};
 use std::path::Path;
@@ -13,37 +12,45 @@ const IGNORED_DIRECTORY_NAMES: &[&str] =
     &[".git", "node_modules", "vendor", "target", "dist", "build"];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PlatformDetection {
+pub struct DetectedSurfaces {
     pub cursor: bool,
     pub codex: bool,
+    pub agents_md: bool,
+    pub agent_skills: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ActivePlatforms {
+pub struct ValidationTargets {
     pub cursor: bool,
     pub codex: bool,
+    pub agents_md: bool,
+    pub agent_skills: bool,
 }
 
-impl PlatformDetection {
-    /// Discover supported platform surfaces in the current repository.
+impl DetectedSurfaces {
+    /// Discover supported platform-specific and shared surfaces.
     pub fn discover(exclude: &ExcludeSet) -> Self {
         Self {
             cursor: cursor_surface_exists(exclude),
             codex: codex_surface_exists(exclude),
+            agents_md: agents_md_surface_exists(exclude),
+            agent_skills: agent_skills_surface_exists(exclude),
         }
     }
 
-    pub fn activate(self, overrides: PlatformOverrides) -> ActivePlatforms {
-        ActivePlatforms {
+    pub fn resolve(self, overrides: PlatformOverrides) -> ValidationTargets {
+        ValidationTargets {
             cursor: overrides.cursor.unwrap_or(self.cursor),
             codex: overrides.codex.unwrap_or(self.codex),
+            agents_md: self.agents_md,
+            agent_skills: self.agent_skills,
         }
     }
 }
 
-impl ActivePlatforms {
-    pub fn any(self) -> bool {
-        self.cursor || self.codex
+impl ValidationTargets {
+    pub fn has_work(self) -> bool {
+        self.cursor || self.codex || self.agents_md || self.agent_skills
     }
 }
 
@@ -69,12 +76,18 @@ fn codex_surface_exists(exclude: &ExcludeSet) -> bool {
     is_included_file(".codex/config.toml", exclude)
         || is_included_file(".codex-plugin/plugin.json", exclude)
         || is_included_file("AGENTS.override.md", exclude)
-        || has_matching_file(".", exclude, |path| {
-            path.file_name().and_then(|name| name.to_str()) == Some("AGENTS.md")
-        })
-        || has_matching_file(".agents/skills", exclude, |path| {
-            path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
-        })
+}
+
+fn agents_md_surface_exists(exclude: &ExcludeSet) -> bool {
+    has_matching_file(".", exclude, |path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("AGENTS.md")
+    })
+}
+
+fn agent_skills_surface_exists(exclude: &ExcludeSet) -> bool {
+    has_matching_file(".agents/skills", exclude, |path| {
+        path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+    })
 }
 
 fn is_included_file(path: &str, exclude: &ExcludeSet) -> bool {
@@ -114,22 +127,34 @@ mod tests {
     #[serial_test::serial]
     fn discovers_every_supported_surface() {
         let cases = [
-            (".cursorrules", true, false),
-            (".cursor/rules/project.md", true, false),
-            (".cursor/rules/project.mdc", true, false),
-            (".cursor/hooks.json", true, false),
-            (".cursor/agents/reviewer.md", true, false),
-            (".cursor/environment.json", true, false),
-            (".cursor/skills/reviewer/SKILL.md", true, false),
-            (".codex/config.toml", false, true),
-            (".codex-plugin/plugin.json", false, true),
-            ("AGENTS.md", false, true),
-            ("nested/AGENTS.md", false, true),
-            ("AGENTS.override.md", false, true),
-            (".agents/skills/reviewer/SKILL.md", false, true),
+            (".cursorrules", true, false, false, false),
+            (".cursor/rules/project.md", true, false, false, false),
+            (".cursor/rules/project.mdc", true, false, false, false),
+            (".cursor/hooks.json", true, false, false, false),
+            (".cursor/agents/reviewer.md", true, false, false, false),
+            (".cursor/environment.json", true, false, false, false),
+            (
+                ".cursor/skills/reviewer/SKILL.md",
+                true,
+                false,
+                false,
+                false,
+            ),
+            (".codex/config.toml", false, true, false, false),
+            (".codex-plugin/plugin.json", false, true, false, false),
+            ("AGENTS.md", false, false, true, false),
+            ("nested/AGENTS.md", false, false, true, false),
+            ("AGENTS.override.md", false, true, false, false),
+            (
+                ".agents/skills/reviewer/SKILL.md",
+                false,
+                false,
+                false,
+                true,
+            ),
         ];
 
-        for (path, cursor, codex) in cases {
+        for (path, cursor, codex, agents_md, agent_skills) in cases {
             let _guard = CwdGuard::new();
             let tmp = tempfile::tempdir().unwrap();
             std::env::set_current_dir(tmp.path()).unwrap();
@@ -138,8 +163,13 @@ mod tests {
             std::fs::write(path, "surface").unwrap();
 
             assert_eq!(
-                PlatformDetection::discover(&ExcludeSet::default()),
-                PlatformDetection { cursor, codex },
+                DetectedSurfaces::discover(&ExcludeSet::default()),
+                DetectedSurfaces {
+                    cursor,
+                    codex,
+                    agents_md,
+                    agent_skills,
+                },
                 "failed to detect {}",
                 path.display()
             );
@@ -155,48 +185,54 @@ mod tests {
         std::fs::create_dir_all(".git/vendor").unwrap();
         std::fs::write(".git/vendor/AGENTS.md", "ignored").unwrap();
         assert_eq!(
-            PlatformDetection::discover(&ExcludeSet::default()),
-            PlatformDetection::default()
+            DetectedSurfaces::discover(&ExcludeSet::default()),
+            DetectedSurfaces::default()
         );
 
         std::fs::create_dir_all("vendor").unwrap();
         std::fs::write("vendor/AGENTS.md", "ignored dependency").unwrap();
         assert_eq!(
-            PlatformDetection::discover(&ExcludeSet::default()),
-            PlatformDetection::default()
+            DetectedSurfaces::discover(&ExcludeSet::default()),
+            DetectedSurfaces::default()
         );
 
         std::fs::create_dir_all("generated").unwrap();
         std::fs::write("generated/AGENTS.md", "excluded generated file").unwrap();
         let exclude = ExcludeSet::new(&["generated/**".into()]).unwrap();
         assert_eq!(
-            PlatformDetection::discover(&exclude),
-            PlatformDetection::default()
+            DetectedSurfaces::discover(&exclude),
+            DetectedSurfaces::default()
         );
     }
 
     #[test]
     fn overrides_change_activation_without_changing_observation() {
-        let detected = PlatformDetection {
+        let detected = DetectedSurfaces {
             cursor: true,
             codex: true,
+            agents_md: true,
+            agent_skills: true,
         };
-        let active = detected.activate(PlatformOverrides {
+        let active = detected.resolve(PlatformOverrides {
             cursor: Some(false),
             codex: Some(true),
         });
         assert_eq!(
             detected,
-            PlatformDetection {
+            DetectedSurfaces {
                 cursor: true,
-                codex: true
+                codex: true,
+                agents_md: true,
+                agent_skills: true,
             }
         );
         assert_eq!(
             active,
-            ActivePlatforms {
+            ValidationTargets {
                 cursor: false,
-                codex: true
+                codex: true,
+                agents_md: true,
+                agent_skills: true,
             }
         );
     }

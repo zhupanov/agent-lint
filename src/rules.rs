@@ -355,6 +355,18 @@ pub enum LintRule {
     /// T002: settings channelsEnabled is not a boolean
     SettingsChannelsEnabledInvalid,
 
+    // ── Shared instruction files (I) ──────────────────────────────
+    /// I001: an AGENTS.md file is empty or whitespace-only
+    InstructionFileEmpty,
+    /// I002: an AGENTS.md file contains a potential hardcoded secret
+    InstructionFileSecret,
+    /// I003: an AGENTS.md file references a missing inline-code path
+    InstructionFilePathMissing,
+    /// I004: an AGENTS.md file contains only generic guidance
+    InstructionFileGenericGuidance,
+    /// I005: an AGENTS.md file lacks project-specific structure
+    InstructionFileMissingStructure,
+
     // ── Codex configuration (CX) ─────────────────────────────────
     /// CX001: .codex/config.toml is not valid TOML
     CodexTomlInvalid,
@@ -428,22 +440,12 @@ pub enum LintRule {
     CodexNetworkPermissionField,
     /// CX036: windows.sandbox is invalid
     CodexWindowsSandbox,
-    /// CX037: AGENTS.md is empty or whitespace-only
-    CodexAgentsEmpty,
-    /// CX038: AGENTS.md contains a potential hardcoded secret
-    CodexAgentsSecret,
     /// CX039: AGENTS.md exceeds Codex's hard size limit
     CodexAgentsTooLarge,
     /// CX040: AGENTS.md exceeds the configured Codex document budget
     CodexAgentsDocLimit,
-    /// CX041: AGENTS.md references a missing inline-code path
-    CodexAgentsInlinePathMissing,
     /// CX042: AGENTS.override.md is tracked by Git
     CodexAgentsOverrideTracked,
-    /// CX043: AGENTS.md contains only generic guidance
-    CodexAgentsGenericGuidance,
-    /// CX044: AGENTS.md lacks project-specific structure
-    CodexAgentsMissingStructure,
     /// CX045: AGENTS.md explicitly contradicts a Codex config value
     CodexAgentsConfigConflict,
     /// CX046: a Codex plugin manifest is not at the repository root
@@ -795,6 +797,12 @@ impl LintRule {
             Self::SettingsPrUrlTemplateInvalid => "T001",
             Self::SettingsChannelsEnabledInvalid => "T002",
 
+            Self::InstructionFileEmpty => "I001",
+            Self::InstructionFileSecret => "I002",
+            Self::InstructionFilePathMissing => "I003",
+            Self::InstructionFileGenericGuidance => "I004",
+            Self::InstructionFileMissingStructure => "I005",
+
             Self::CodexTomlInvalid => "CX001",
             Self::CodexProjectDocMaxBytes => "CX002",
             Self::CodexProjectDocFallbackNames => "CX003",
@@ -831,14 +839,9 @@ impl LintRule {
             Self::CodexFeatureKey => "CX034",
             Self::CodexNetworkPermissionField => "CX035",
             Self::CodexWindowsSandbox => "CX036",
-            Self::CodexAgentsEmpty => "CX037",
-            Self::CodexAgentsSecret => "CX038",
             Self::CodexAgentsTooLarge => "CX039",
             Self::CodexAgentsDocLimit => "CX040",
-            Self::CodexAgentsInlinePathMissing => "CX041",
             Self::CodexAgentsOverrideTracked => "CX042",
-            Self::CodexAgentsGenericGuidance => "CX043",
-            Self::CodexAgentsMissingStructure => "CX044",
             Self::CodexAgentsConfigConflict => "CX045",
             Self::CodexPluginManifestPath => "CX046",
             Self::CodexPluginManifestInvalid => "CX047",
@@ -1102,6 +1105,12 @@ impl LintRule {
             Self::SettingsPrUrlTemplateInvalid => "pr-template-invalid",
             Self::SettingsChannelsEnabledInvalid => "channels-enabled-invalid",
 
+            Self::InstructionFileEmpty => "instruction-file-empty",
+            Self::InstructionFileSecret => "instruction-file-secret",
+            Self::InstructionFilePathMissing => "instruction-file-path",
+            Self::InstructionFileGenericGuidance => "instruction-file-generic",
+            Self::InstructionFileMissingStructure => "instruction-file-structure",
+
             Self::CodexTomlInvalid => "codex-toml-invalid",
             Self::CodexProjectDocMaxBytes => "codex-doc-bytes",
             Self::CodexProjectDocFallbackNames => "codex-doc-names",
@@ -1138,14 +1147,9 @@ impl LintRule {
             Self::CodexFeatureKey => "codex-feature-key",
             Self::CodexNetworkPermissionField => "codex-network-field",
             Self::CodexWindowsSandbox => "codex-windows-sandbox",
-            Self::CodexAgentsEmpty => "codex-agents-empty",
-            Self::CodexAgentsSecret => "codex-agents-secret",
             Self::CodexAgentsTooLarge => "codex-agents-large",
             Self::CodexAgentsDocLimit => "codex-agents-limit",
-            Self::CodexAgentsInlinePathMissing => "codex-agents-path",
             Self::CodexAgentsOverrideTracked => "codex-agents-override",
-            Self::CodexAgentsGenericGuidance => "codex-agents-generic",
-            Self::CodexAgentsMissingStructure => "codex-agents-structure",
             Self::CodexAgentsConfigConflict => "codex-agents-conflict",
             Self::CodexPluginManifestPath => "codex-plugin-path",
             Self::CodexPluginManifestInvalid => "codex-plugin-invalid",
@@ -1249,6 +1253,17 @@ impl LintRule {
     /// Look up a rule by its code (e.g. `"M001"`) or human-readable name
     /// (e.g. `"plugin-json-missing"`).
     pub fn from_code_or_name(s: &str) -> Option<Self> {
+        let migrated = match s {
+            "CX037" | "codex-agents-empty" => Some(Self::InstructionFileEmpty),
+            "CX038" | "codex-agents-secret" => Some(Self::InstructionFileSecret),
+            "CX041" | "codex-agents-path" => Some(Self::InstructionFilePathMissing),
+            "CX043" | "codex-agents-generic" => Some(Self::InstructionFileGenericGuidance),
+            "CX044" | "codex-agents-structure" => Some(Self::InstructionFileMissingStructure),
+            _ => None,
+        };
+        if migrated.is_some() {
+            return migrated;
+        }
         ALL_RULES
             .iter()
             .find(|r| r.code() == s || r.name() == s)
@@ -1284,8 +1299,8 @@ impl LintRule {
             Self::NameNotGerund | Self::BodyNoExamples |
             Self::BodyTooLong | Self::Bash32Incompatible |
             Self::AwkRegexNonascii | Self::CodexNetworkPermissionField |
-            Self::CodexWindowsSandbox | Self::CodexAgentsGenericGuidance |
-            Self::CodexAgentsMissingStructure | Self::CodexAgentsConfigConflict |
+            Self::CodexWindowsSandbox | Self::InstructionFileGenericGuidance |
+            Self::InstructionFileMissingStructure | Self::CodexAgentsConfigConflict |
             Self::PromptNegativeOnly | Self::PromptWeakCritical |
             Self::ClaudeReadmeDuplicate | Self::CursorPromptHookModelInvalid |
             Self::SkillRefNested
@@ -1342,7 +1357,7 @@ impl LintRule {
             Self::CodexServiceTier | Self::CodexSkillsType | Self::CodexProfileType |
             Self::CodexTopLevelKey | Self::CodexFeatureKey |
             Self::CodexAgentsTooLarge | Self::CodexAgentsDocLimit |
-            Self::CodexAgentsInlinePathMissing | Self::CodexAgentsOverrideTracked |
+            Self::InstructionFilePathMissing | Self::CodexAgentsOverrideTracked |
             Self::CodexPluginDefaultPromptCount | Self::CodexPluginDefaultPromptLength |
             Self::CodexPluginDefaultPromptEmpty | Self::CodexPluginInterfaceUrl |
             Self::CodexPluginHooksUnsupported | Self::CodexPluginDescriptionMissing |
@@ -1548,6 +1563,11 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::OutputStyleFrontmatterInvalid,
     LintRule::SettingsPrUrlTemplateInvalid,
     LintRule::SettingsChannelsEnabledInvalid,
+    LintRule::InstructionFileEmpty,
+    LintRule::InstructionFileSecret,
+    LintRule::InstructionFilePathMissing,
+    LintRule::InstructionFileGenericGuidance,
+    LintRule::InstructionFileMissingStructure,
     LintRule::CodexTomlInvalid,
     LintRule::CodexProjectDocMaxBytes,
     LintRule::CodexProjectDocFallbackNames,
@@ -1584,14 +1604,9 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::CodexFeatureKey,
     LintRule::CodexNetworkPermissionField,
     LintRule::CodexWindowsSandbox,
-    LintRule::CodexAgentsEmpty,
-    LintRule::CodexAgentsSecret,
     LintRule::CodexAgentsTooLarge,
     LintRule::CodexAgentsDocLimit,
-    LintRule::CodexAgentsInlinePathMissing,
     LintRule::CodexAgentsOverrideTracked,
-    LintRule::CodexAgentsGenericGuidance,
-    LintRule::CodexAgentsMissingStructure,
     LintRule::CodexAgentsConfigConflict,
     LintRule::CodexPluginManifestPath,
     LintRule::CodexPluginManifestInvalid,
@@ -1735,6 +1750,22 @@ mod tests {
         // Unknown
         assert_eq!(LintRule::from_code_or_name("X999"), None);
         assert_eq!(LintRule::from_code_or_name("nonexistent"), None);
+    }
+
+    #[test]
+    fn migrated_codex_agents_identifiers_resolve_to_shared_rules() {
+        for (identifier, expected) in [
+            ("CX037", LintRule::InstructionFileEmpty),
+            ("codex-agents-secret", LintRule::InstructionFileSecret),
+            ("CX041", LintRule::InstructionFilePathMissing),
+            (
+                "codex-agents-generic",
+                LintRule::InstructionFileGenericGuidance,
+            ),
+            ("CX044", LintRule::InstructionFileMissingStructure),
+        ] {
+            assert_eq!(LintRule::from_code_or_name(identifier), Some(expected));
+        }
     }
 
     #[test]

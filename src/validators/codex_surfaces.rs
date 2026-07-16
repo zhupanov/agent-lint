@@ -1,19 +1,13 @@
-//! Validation for Codex instruction files, plugin manifests, and skills.
-//!
-//! These files are optional. When present, Codex discovers nested `AGENTS.md`
-//! files hierarchically, so every discovered instruction file is validated.
+//! Validation for Codex override files, plugin manifests, and skills.
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
-use crate::validators::skill_content::security::has_hardcoded_secret;
 use serde_json::Value;
 use std::path::{Component, Path};
 use walkdir::WalkDir;
 
-const AGENTS_DEFAULT_MAX_BYTES: usize = 32_768;
-const AGENTS_HARD_MAX_BYTES: usize = 100_000;
 // Verified against openai/codex commit 18110b810f0a328147f6cd85e6f1ab6414927366
 // (`codex-rs/core-plugins/src/manifest.rs`) on 2026-07-16.
 const MAX_DEFAULT_PROMPT_COUNT: usize = 3;
@@ -21,7 +15,6 @@ const MAX_DEFAULT_PROMPT_LEN: usize = 128;
 const CODEX_SKILL_UNSUPPORTED_FIELDS: &[&str] = &["context", "agent", "hooks"];
 
 pub fn validate(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_agents_files(diag, exclude);
     validate_override_tracking(diag, exclude);
     validate_plugin_manifests(diag, exclude);
     validate_codex_skill_frontmatter(diag, exclude);
@@ -32,172 +25,6 @@ fn relative_display(path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
-}
-
-fn validate_agents_files(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let max_bytes = project_doc_max_bytes();
-    for entry in WalkDir::new(".")
-        .into_iter()
-        .filter_entry(crate::platforms::should_descend)
-        .flatten()
-    {
-        if !entry.file_type().is_file() || entry.file_name() != "AGENTS.md" {
-            continue;
-        }
-        let path = entry.path();
-        let display = relative_display(path);
-        if exclude.is_excluded(&display) {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        if content.trim().is_empty() {
-            diag.report(
-                LintRule::CodexAgentsEmpty,
-                &format!("{display} is empty or whitespace-only"),
-            );
-        }
-        if has_hardcoded_secret(&content) {
-            diag.report(
-                LintRule::CodexAgentsSecret,
-                &format!("{display} contains a potential hardcoded secret/API key"),
-            );
-        }
-        if content.len() > AGENTS_HARD_MAX_BYTES {
-            diag.report(
-                LintRule::CodexAgentsTooLarge,
-                &format!(
-                    "{display} exceeds Codex's {AGENTS_HARD_MAX_BYTES}-byte hard limit ({} bytes)",
-                    content.len()
-                ),
-            );
-        }
-        if content.len() > max_bytes {
-            diag.report(LintRule::CodexAgentsDocLimit, &format!("{display} exceeds Codex's effective project document limit of {max_bytes} bytes ({} bytes)", content.len()));
-        }
-        validate_agents_inline_paths(diag, path, &display, &content);
-        if is_generic_guidance(&content) {
-            diag.report(LintRule::CodexAgentsGenericGuidance, &format!("{display} contains only generic guidance; add project-specific commands, paths, or constraints"));
-        }
-        if lacks_project_structure(&content) {
-            diag.report(LintRule::CodexAgentsMissingStructure, &format!("{display} lacks project-specific headings, commands, paths, or sufficient detail"));
-        }
-        if agents_conflicts_with_config(&content) {
-            diag.report(
-                LintRule::CodexAgentsConfigConflict,
-                &format!("{display} explicitly contradicts a value in .codex/config.toml"),
-            );
-        }
-    }
-}
-
-fn project_doc_max_bytes() -> usize {
-    std::fs::read_to_string(".codex/config.toml")
-        .ok()
-        .and_then(|content| content.parse::<toml::Value>().ok())
-        .and_then(|value| {
-            value
-                .get("project_doc_max_bytes")
-                .and_then(toml::Value::as_integer)
-        })
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(AGENTS_DEFAULT_MAX_BYTES)
-}
-
-fn validate_agents_inline_paths(
-    diag: &mut DiagnosticCollector,
-    agents_path: &Path,
-    display: &str,
-    content: &str,
-) {
-    for reference in backtick_tokens(content) {
-        if !looks_like_path(reference) {
-            continue;
-        }
-        let candidate = agents_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(reference);
-        if !candidate.is_file() && !candidate.is_dir() {
-            diag.report(
-                LintRule::CodexAgentsInlinePathMissing,
-                &format!("{display} references missing inline-code path `{reference}`"),
-            );
-            break;
-        }
-    }
-}
-
-fn backtick_tokens(content: &str) -> Vec<&str> {
-    let mut result = Vec::new();
-    let mut rest = content;
-    while let Some(start) = rest.find('`') {
-        let after = &rest[start + 1..];
-        let Some(end) = after.find('`') else { break };
-        let token = after[..end].trim();
-        if !token.is_empty() && !token.contains(char::is_whitespace) {
-            result.push(token);
-        }
-        rest = &after[end + 1..];
-    }
-    result
-}
-
-fn looks_like_path(token: &str) -> bool {
-    !["http://", "https://", "$", "<"]
-        .iter()
-        .any(|prefix| token.starts_with(prefix))
-        && (token.starts_with('.') || token.contains('/') || token.rsplit_once('.').is_some())
-}
-
-fn is_generic_guidance(content: &str) -> bool {
-    let normalized = content.trim().to_ascii_lowercase();
-    normalized.len() < 120
-        && !normalized.contains(['`', '/', '\\'])
-        && [
-            "be helpful",
-            "be accurate",
-            "write good code",
-            "follow best practices",
-        ]
-        .iter()
-        .any(|phrase| normalized.contains(phrase))
-}
-
-fn lacks_project_structure(content: &str) -> bool {
-    let trimmed = content.trim();
-    !trimmed.is_empty()
-        && trimmed.len() < 200
-        && !trimmed.contains("# ")
-        && !trimmed.contains('`')
-        && !trimmed.contains(['/', '\\'])
-}
-
-fn agents_conflicts_with_config(content: &str) -> bool {
-    let Ok(config) = std::fs::read_to_string(".codex/config.toml") else {
-        return false;
-    };
-    let Ok(value) = config.parse::<toml::Value>() else {
-        return false;
-    };
-    for key in ["approval_policy", "sandbox_mode", "project_doc_max_bytes"] {
-        let Some(config_value) = value.get(key) else {
-            continue;
-        };
-        let config_value = config_value.to_string().trim_matches('"').to_string();
-        for line in content.lines() {
-            let normalized = line.replace(['`', '"', '\''], "");
-            let Some((mentioned_key, mentioned_value)) = normalized.split_once('=') else {
-                continue;
-            };
-            if mentioned_key.trim() == key && mentioned_value.trim() != config_value {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 fn validate_override_tracking(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -480,48 +307,10 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn validates_nested_agents_files_and_the_effective_doc_limit() {
+    fn validates_tracked_agents_override() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("nested/.codex").unwrap();
-        std::fs::write("nested/AGENTS.md", "x".repeat(32_769)).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate(&mut diag, &ExcludeSet::default());
-        assert!(
-            diag.errors()
-                .iter()
-                .any(|error| error.contains("nested/AGENTS.md")
-                    && error.contains("effective project document limit"))
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn validates_all_agents_surface_rules() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all(".codex").unwrap();
-        std::fs::create_dir_all("nested/deeper").unwrap();
-        std::fs::create_dir_all("nested/secret").unwrap();
-        std::fs::create_dir_all("nested/generic").unwrap();
-        std::fs::write(".codex/config.toml", "approval_policy = \"never\"\n").unwrap();
-        std::fs::write(
-            "AGENTS.md",
-            "Be helpful and write good code.\napproval_policy = \"on-request\"\nCheck `missing.md`.\n",
-        )
-        .unwrap();
-        std::fs::write("nested/AGENTS.md", " \n\t").unwrap();
-        std::fs::write("nested/secret/AGENTS.md", "token = sk-12345678901234567890").unwrap();
-        std::fs::write(
-            "nested/generic/AGENTS.md",
-            "Be helpful and write good code.",
-        )
-        .unwrap();
-        std::fs::write("nested/large.md", "present").unwrap();
-        std::fs::write("nested/deeper/large.txt", "x".repeat(100_001)).unwrap();
-        std::fs::write("nested/deeper/AGENTS.md", "x".repeat(100_001)).unwrap();
         std::fs::write("AGENTS.override.md", "personal settings\n").unwrap();
         assert!(
             std::process::Command::new("git")
@@ -540,25 +329,11 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate(&mut diag, &ExcludeSet::default());
-        for rule in [
-            LintRule::CodexAgentsEmpty,
-            LintRule::CodexAgentsSecret,
-            LintRule::CodexAgentsTooLarge,
-            LintRule::CodexAgentsInlinePathMissing,
-            LintRule::CodexAgentsOverrideTracked,
-            LintRule::CodexAgentsGenericGuidance,
-            LintRule::CodexAgentsMissingStructure,
-            LintRule::CodexAgentsConfigConflict,
-        ] {
-            assert!(
-                diag.diagnostics()
-                    .iter()
-                    .any(|diagnostic| diagnostic.rule == rule),
-                "missing {}: {:?}",
-                rule.code(),
-                diag.errors()
-            );
-        }
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::CodexAgentsOverrideTracked)
+        );
     }
 
     #[test]

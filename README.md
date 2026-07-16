@@ -8,10 +8,10 @@
 
 ## Features
 
-- **286 lint rules** across 19 categories (Manifest, Hooks, Skills, Agents,
+- **286 lint rules** across 20 categories (Manifest, Hooks, Skills, Agents,
   Prompt Content, Claude Rules, Output Styles, Settings, Cursor Rules, Cursor
-  Skills, Hygiene, Email, User Config, MCP, Codex, Slack, Docs, Markdown
-  Structure, Link/import integrity)
+  Skills, Instruction Files, Hygiene, Email, User Config, MCP, Codex, Slack,
+  Docs, Markdown Structure, Link/import integrity)
 - **Two lint modes**:
   - **Basic mode** -- validates detected Claude, Cursor, Codex, and standalone
     MCP configuration

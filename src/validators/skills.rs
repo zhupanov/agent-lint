@@ -128,17 +128,23 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 
 /// V6: Validate SKILL.md frontmatter for public skills (skills/*/SKILL.md).
 pub fn validate_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_skill_frontmatter_in_dir("skills", true, diag, exclude);
+    validate_skill_frontmatter_in_dir("skills", true, false, diag, exclude);
 }
 
 /// V6-adapted: Validate SKILL.md frontmatter for private skills (.claude/skills/*/SKILL.md).
 pub fn validate_private_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_skill_frontmatter_in_dir(".claude/skills", true, diag, exclude);
+    validate_skill_frontmatter_in_dir(".claude/skills", true, false, diag, exclude);
+}
+
+/// Validate frontmatter for cross-client skills in `.agents/skills/`.
+pub fn validate_agent_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    validate_skill_frontmatter_in_dir(".agents/skills", true, true, diag, exclude);
 }
 
 fn validate_skill_frontmatter_in_dir(
     base_dir: &str,
     check_name_match: bool,
+    platform_neutral: bool,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
 ) {
@@ -197,7 +203,7 @@ fn validate_skill_frontmatter_in_dir(
         // X001: strict YAML parse; CC-SK-010: hooks schema when present.
         match frontmatter::parse_yaml_strict(&fm_lines) {
             Ok(yaml) => {
-                if let Some(hooks) = yaml.get("hooks") {
+                if !platform_neutral && let Some(hooks) = yaml.get("hooks") {
                     super::hook_schema::validate_frontmatter_hooks(
                         hooks,
                         &format!("{skill_path} frontmatter"),
@@ -216,11 +222,13 @@ fn validate_skill_frontmatter_in_dir(
         // X002–X005: fence / XML structure on the full file.
         super::markdown_structure::check_markdown_structure(&skill_path, &content, diag);
 
-        // S072: skill directory size limit.
-        check_skill_dir_size(&path, &skill_path, diag);
+        if !platform_neutral {
+            // S072: skill directory size limit.
+            check_skill_dir_size(&path, &skill_path, diag);
 
-        // S073: relative .md refs nested deeper than one level.
-        check_skill_ref_depth(&skill_path, &content, diag);
+            // S073: relative .md refs nested deeper than one level.
+            check_skill_ref_depth(&skill_path, &content, diag);
+        }
 
         let name = frontmatter::get_field(&fm_lines, "name");
         let desc = frontmatter::get_field(&fm_lines, "description");
@@ -253,6 +261,9 @@ fn validate_skill_frontmatter_in_dir(
 
         // Optional scalar fields: if present, must be non-empty.
         // List lives next to KNOWN_SKILL_FRONTMATTER_FIELDS in skill_content.
+        if platform_neutral {
+            continue;
+        }
         for field in super::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
             let prefix = format!("{field}:");
             let field_present = fm_lines.iter().any(|line| line.starts_with(&prefix));

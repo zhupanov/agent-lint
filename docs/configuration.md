@@ -44,10 +44,12 @@ and counts each file once.
 
 ## Platform Activation
 
-Cursor and Codex surfaces are detected automatically. Platform-specific
-validators run in both Basic and Plugin modes when their platform has a
-recognized surface. Basic/Plugin mode therefore controls the existing Claude
-rule set; it does not disable detected platform checks.
+Cursor and Codex surfaces are detected automatically. Shared `AGENTS.md` and
+`.agents/skills/` surfaces are observed independently and do not imply either
+platform. Platform-specific validators run in both Basic and Plugin modes when
+their platform has a recognized unique surface. Basic/Plugin mode therefore
+controls the existing Claude rule set; it does not disable detected platform
+or shared-surface checks.
 
 Use the optional `[platforms]` section to override detection per platform.
 Each value is a boolean: `true` force-enables that platform (including in a
@@ -57,9 +59,10 @@ accepted.
 
 Cursor surfaces are `.cursorrules`, `.cursor/rules/**/*.{md,mdc}`,
 `.cursor/hooks.json`, `.cursor/agents/**/*.md`, `.cursor/environment.json`,
-and `.cursor/skills/*/SKILL.md`. Codex surfaces are `.codex/config.toml`,
-`.codex-plugin/plugin.json`, root `AGENTS.override.md`, any nested
-`AGENTS.md`, and `.agents/skills/*/SKILL.md`. Discovery skips `.git` and
+and `.cursor/skills/*/SKILL.md`. Unique Codex surfaces are
+`.codex/config.toml`, `.codex-plugin/plugin.json`, and root
+`AGENTS.override.md`. Root or nested `AGENTS.md` and
+`.agents/skills/*/SKILL.md` are shared surfaces. Discovery skips `.git` and
 conventional dependency/build directories (`node_modules`, `vendor`, `target`,
 `dist`, and `build`), and respects `[lint].exclude`.
 
