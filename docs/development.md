@@ -40,21 +40,25 @@ src/
 +-- context.rs           # LintContext, ManifestState, LintMode
 +-- diagnostic.rs        # DiagnosticCollector, Severity, config-aware filtering
 +-- frontmatter.rs       # YAML frontmatter extraction
-+-- rules.rs             # Central LintRule enum (217 rules, codes, names)
++-- rules.rs             # Central LintRule enum (225 rules, codes, names)
 +-- test_helpers.rs      # Shared test utilities
 +-- validators/
     +-- mod.rs           # run_all -> run_basic / run_plugin dispatch
-    +-- manifest.rs      # M001-M011: plugin.json & marketplace.json
+    +-- manifest.rs      # M001-M017: plugin.json & marketplace.json, component paths
     +-- hooks.rs         # H001-H007, H025: hooks.json, settings.json, settings.local.json
     +-- hook_schema.rs   # H008-H024: shared hook object schema engine
     +-- skills.rs        # S001-S008: skills layout & frontmatter
     +-- skill_content/   # S009-S057, S063-S071: name, description, body, MCP, execution fields, security
     +-- contracts.rs     # A012-A013, S058-S062, G008-G011, D004-D005
-    +-- agents.rs        # A001-A011: agent frontmatter, templates, description quality
+    +-- agents.rs        # A001-A011, A014-A028: agent frontmatter, field values, templates, description quality
     +-- hygiene.rs       # G001-G007: PWD hygiene, scripts, executability, TODO detection
     +-- docs.rs          # D001-D003: docs file references, CLAUDE.md size, TODO detection
     +-- email.rs         # E001: email format
-    +-- user_config.rs   # U001-U006: userConfig validation
+    +-- user_config.rs   # U001-U007: userConfig validation
+    +-- mcp.rs           # P001, P009-P012, P017-P019, P022-P026: MCP configuration
+    +-- claude_config.rs # R001-R002, O001-O006, T001-T002: .claude/ rules, output styles, settings
+    +-- codex_config.rs  # CX001-CX036: .codex/config.toml validation
+    +-- codex_constants.rs # Codex config key/enum tables
     +-- slack.rs         # K001: Slack fallback consistency
 docs/
 +-- rules.md             # Complete lint rules reference table

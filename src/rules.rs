@@ -40,6 +40,18 @@ pub enum LintRule {
     MarketplaceEnrichedMissing,
     /// M011: plugin.json enriched metadata missing (description, author.email, or keywords)
     PluginEnrichedMissing,
+    /// M012: plugin component lives inside or is declared inside .claude-plugin/
+    ComponentPathNested,
+    /// M013: plugin.json component path is absolute or uses '..' traversal
+    ComponentPathUnsafe,
+    /// M014: plugin.json author object present but author.name missing/invalid
+    AuthorNameMissing,
+    /// M015: plugin.json homepage is not a valid http(s) URL
+    HomepageUrlInvalid,
+    /// M016: plugin.json lspServers entry missing command or extensionToLanguage
+    LspServerInvalid,
+    /// M017: plugin.json channels entry does not reference a server
+    ChannelServerMissing,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
     /// H001: hooks/hooks.json is missing
@@ -292,6 +304,8 @@ pub enum LintRule {
     AgentMaxturnsInvalid,
     /// A027: unrecognized agent frontmatter field (possible typo)
     AgentFieldUnknown,
+    /// A028: agent frontmatter uses a field unsupported for plugin agents
+    AgentFieldUnsupported,
 
     // ── Claude configuration (R/O/T) ─────────────────────────────
     /// R001: .claude/rules frontmatter paths contains an invalid glob
@@ -430,6 +444,8 @@ pub enum LintRule {
     UserconfigTitleMissing,
     /// U006: userConfig entry missing or invalid type
     UserconfigTypeMissing,
+    /// U007: userConfig key is not a valid identifier
+    UserconfigKeyInvalid,
 
     // ── Slack (K) ─────────────────────────────────────────────────
     /// K001: Slack fallback variable without corresponding CLAUDE_PLUGIN_OPTION_ reference
@@ -491,6 +507,12 @@ impl LintRule {
             Self::MarketplacePluginInvalid => "M009",
             Self::MarketplaceEnrichedMissing => "M010",
             Self::PluginEnrichedMissing => "M011",
+            Self::ComponentPathNested => "M012",
+            Self::ComponentPathUnsafe => "M013",
+            Self::AuthorNameMissing => "M014",
+            Self::HomepageUrlInvalid => "M015",
+            Self::LspServerInvalid => "M016",
+            Self::ChannelServerMissing => "M017",
 
             Self::HooksJsonMissing => "H001",
             Self::HooksJsonInvalid => "H002",
@@ -617,6 +639,7 @@ impl LintRule {
             Self::AgentBackgroundInvalid => "A025",
             Self::AgentMaxturnsInvalid => "A026",
             Self::AgentFieldUnknown => "A027",
+            Self::AgentFieldUnsupported => "A028",
 
             Self::RulesGlobInvalid => "R001",
             Self::RulesFieldUnknown => "R002",
@@ -686,6 +709,7 @@ impl LintRule {
             Self::UserconfigSensitiveType => "U004",
             Self::UserconfigTitleMissing => "U005",
             Self::UserconfigTypeMissing => "U006",
+            Self::UserconfigKeyInvalid => "U007",
 
             Self::SlackFallbackMismatch => "K001",
 
@@ -725,6 +749,12 @@ impl LintRule {
             Self::MarketplacePluginInvalid => "marketplace-plugin-invalid",
             Self::MarketplaceEnrichedMissing => "marketplace-enriched-missing",
             Self::PluginEnrichedMissing => "plugin-enriched-missing",
+            Self::ComponentPathNested => "component-path-nested",
+            Self::ComponentPathUnsafe => "component-path-unsafe",
+            Self::AuthorNameMissing => "author-name-missing",
+            Self::HomepageUrlInvalid => "homepage-url-invalid",
+            Self::LspServerInvalid => "lsp-server-invalid",
+            Self::ChannelServerMissing => "channel-server-missing",
 
             Self::HooksJsonMissing => "hooks-json-missing",
             Self::HooksJsonInvalid => "hooks-json-invalid",
@@ -851,6 +881,7 @@ impl LintRule {
             Self::AgentBackgroundInvalid => "agent-background-invalid",
             Self::AgentMaxturnsInvalid => "agent-maxturns-invalid",
             Self::AgentFieldUnknown => "agent-field-unknown",
+            Self::AgentFieldUnsupported => "agent-field-unsupported",
 
             Self::RulesGlobInvalid => "rules-glob-invalid",
             Self::RulesFieldUnknown => "rules-field-unknown",
@@ -920,6 +951,7 @@ impl LintRule {
             Self::UserconfigSensitiveType => "userconfig-sensitive-type",
             Self::UserconfigTitleMissing => "userconfig-title-missing",
             Self::UserconfigTypeMissing => "userconfig-type-missing",
+            Self::UserconfigKeyInvalid => "userconfig-key-invalid",
 
             Self::SlackFallbackMismatch => "slack-fallback-mismatch",
 
@@ -1001,6 +1033,10 @@ impl LintRule {
             Self::HookIfInvalid | Self::HookShellInvalid |
             Self::HookCommandDangerous | Self::HookHeadersInterpolated |
 
+            // ── Default-warning: optional manifest sections ──────────
+            Self::AuthorNameMissing | Self::HomepageUrlInvalid |
+            Self::ChannelServerMissing |
+
             // ── Default-warning: style / quality (skills) ────────────
             Self::DescTruncated | Self::ConsecutiveBash |
             Self::NameVague | Self::DescTooShort | Self::BodyNoRefs |
@@ -1026,6 +1062,7 @@ impl LintRule {
             // ── Default-warning: agent field-value (advisory) ────────
             Self::AgentBypassPermissions | Self::AgentSkillKebab |
             Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
+            Self::AgentFieldUnsupported |
 
             // ── Default-warning: Claude configuration (advisory) ──
             Self::RulesFieldUnknown | Self::OutputStyleDescriptionMissing |
@@ -1039,6 +1076,9 @@ impl LintRule {
             Self::CodexApprovalPolicyField | Self::CodexApprovalsReviewer |
             Self::CodexServiceTier | Self::CodexSkillsType | Self::CodexProfileType |
             Self::CodexTopLevelKey | Self::CodexFeatureKey |
+
+            // ── Default-warning: user config ─────────────────────────
+            Self::UserconfigKeyInvalid |
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
@@ -1073,6 +1113,12 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::MarketplacePluginInvalid,
     LintRule::MarketplaceEnrichedMissing,
     LintRule::PluginEnrichedMissing,
+    LintRule::ComponentPathNested,
+    LintRule::ComponentPathUnsafe,
+    LintRule::AuthorNameMissing,
+    LintRule::HomepageUrlInvalid,
+    LintRule::LspServerInvalid,
+    LintRule::ChannelServerMissing,
     LintRule::HooksJsonMissing,
     LintRule::HooksJsonInvalid,
     LintRule::HooksKeyMissing,
@@ -1196,6 +1242,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AgentBackgroundInvalid,
     LintRule::AgentMaxturnsInvalid,
     LintRule::AgentFieldUnknown,
+    LintRule::AgentFieldUnsupported,
     LintRule::RulesGlobInvalid,
     LintRule::RulesFieldUnknown,
     LintRule::OutputStyleDescriptionMissing,
@@ -1260,6 +1307,7 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::UserconfigSensitiveType,
     LintRule::UserconfigTitleMissing,
     LintRule::UserconfigTypeMissing,
+    LintRule::UserconfigKeyInvalid,
     LintRule::SlackFallbackMismatch,
     LintRule::DocsRefMissing,
     LintRule::ClaudemdTooLarge,
@@ -1292,7 +1340,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            217,
+            225,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1374,8 +1422,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            77,
-            "Expected 77 default-warning rules, got {}",
+            82,
+            "Expected 82 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1423,8 +1471,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            133,
-            "Expected 133 default-error rules, got {}",
+            136,
+            "Expected 136 default-error rules, got {}",
             errors.len()
         );
     }

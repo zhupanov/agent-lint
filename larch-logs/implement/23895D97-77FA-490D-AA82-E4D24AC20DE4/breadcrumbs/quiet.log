@@ -1,0 +1,52 @@
+=== larch-quiet-append-execution-issue.sh-80998.log ===
+=== larch-quiet-cli.py-92652.log ===
+=== larch-quiet-cli.py-94025.log ===
+=== larch-quiet-scout-plan-archetypes-wrapper.sh-92158.log ===
+=== larch-quiet-sessionstart-health.sh-27701.log ===
+=== larch-quiet-sessionstart-health.sh-29661.log ===
+=== larch-quiet-sessionstart-health.sh-30491.log ===
+=== larch-quiet-sessionstart-health.sh-81992.log ===
+=== larch-quiet-sessionstart-health.sh-82647.log ===
+=== larch-quiet-ship.py-31891.log ===
+ship.py: post-ensure-pr: Push
+ci_monitor: CI status query #1 in progress after 0s
+ci_monitor: poll 1/180 pending after 3s; sleeping 10s
+ci_monitor: CI status query #2 in progress after 13s
+ci_monitor: poll 2/180 pending after 17s; sleeping 10s
+ci_monitor: CI status query #3 in progress after 27s
+ci_monitor: poll 3/180 pending after 31s; sleeping 10s
+ci_monitor: CI status query #4 in progress after 41s
+ci_monitor: poll 4/180 pending after 45s; sleeping 10s
+ci_monitor: CI status query #5 in progress after 55s
+ci_monitor: poll 5/180 pending after 58s; sleeping 10s
+ci_monitor: CI status query #6 in progress after 68s
+ci_monitor: poll 6/180 pending after 72s; sleeping 10s
+ci_monitor: CI status query #7 in progress after 82s
+ci_monitor: poll 7/180 pending after 85s; sleeping 10s
+ci_monitor: CI status query #8 in progress after 95s
+ci_monitor: CI pass after 99s -> merge
+ship.py: merge
+ship.py: finalize-state-written: path=<TMPDIR>/finalize-state.sh outcome=STALLED step=main-ci
+=== larch-quiet-ship.py-55849.log ===
+ship.py: pr-create: PR
+ship.py: post-ensure-pr: Push
+ci_monitor: CI status query #1 in progress after 0s
+ci_monitor: poll 1/180 pending after 5s; sleeping 10s
+ci_monitor: CI status query #2 in progress after 15s
+ci_monitor: poll 2/180 pending after 18s; sleeping 10s
+ci_monitor: CI status query #3 in progress after 28s
+ci_monitor: poll 3/180 pending after 32s; sleeping 10s
+ci_monitor: CI status query #4 in progress after 42s
+ci_monitor: poll 4/180 pending after 46s; sleeping 10s
+ci_monitor: CI status query #5 in progress after 56s
+ci_monitor: poll 5/180 pending after 60s; sleeping 10s
+ci_monitor: CI status query #6 in progress after 70s
+ci_monitor: poll 6/180 pending after 74s; sleeping 10s
+ci_monitor: CI status query #7 in progress after 84s
+ci_monitor: poll 7/180 pending after 87s; sleeping 10s
+ci_monitor: CI status query #8 in progress after 97s
+ci_monitor: poll 8/180 pending after 101s; sleeping 10s
+ci_monitor: CI status query #9 in progress after 111s
+ci_monitor: CI pass after 115s -> merge
+ship.py: merge
+ship.py: finalize-state-written: path=<TMPDIR>/finalize-state.sh outcome=STALLED step=main-ci

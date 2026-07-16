@@ -17,6 +17,10 @@ const STOPWORDS: &[&str] = &[
     "a", "an", "the", "is", "for", "and", "of", "to", "that", "which",
 ];
 
+/// Agent frontmatter fields that Claude Code does not honor for agents shipped
+/// by a plugin. Revisit as plugin agent support matures.
+const UNSUPPORTED_PLUGIN_FIELDS: &[&str] = &["hooks", "mcpServers", "permissionMode"];
+
 /// Check whether an agent description is too similar to the agent name.
 ///
 /// Returns `true` when the description adds no meaningful information beyond
@@ -107,10 +111,35 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         };
 
         validate_agent_file(diag, &agent_path, &content);
+        check_unsupported_plugin_fields(diag, &agent_path, &content);
     }
 
     if found == 0 && excluded_count == 0 {
         diag.report(LintRule::NoAgentFiles, "agents/ has no .md files");
+    }
+}
+
+/// A028: frontmatter fields unsupported for plugin agents. Plugin-mode only —
+/// private `.claude/agents/` files may legitimately set these fields, so this
+/// is called from `validate_agents` rather than `validate_agent_file`.
+fn check_unsupported_plugin_fields(
+    diag: &mut DiagnosticCollector,
+    agent_path: &str,
+    content: &str,
+) {
+    let fm_lines = match frontmatter::extract_frontmatter(content) {
+        Some(lines) => lines,
+        None => return,
+    };
+    for field in UNSUPPORTED_PLUGIN_FIELDS {
+        if frontmatter::field_exists(&fm_lines, field) {
+            diag.report(
+                LintRule::AgentFieldUnsupported,
+                &format!(
+                    "{agent_path}: frontmatter field '{field}' is not supported for plugin agents"
+                ),
+            );
+        }
     }
 }
 
@@ -1129,6 +1158,79 @@ mod tests {
         );
     }
 
+    // ── A028: agent-field-unsupported ───────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a028_unsupported_fields_fire() {
+        for field in ["hooks", "mcpServers", "permissionMode"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::create_dir_all("agents").unwrap();
+            std::fs::write(
+                "agents/general.md",
+                format!(
+                    "---\nname: general\ndescription: General reviewer for code quality analysis\n{field}: something\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains(&format!("'{field}' is not supported"))),
+                "expected A028 for field '{field}', got: {:?}",
+                diag.errors()
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a028_supported_fields_pass() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: General reviewer for code quality analysis\ntools: Read, Grep\nmodel: sonnet\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("not supported")),
+            "supported frontmatter should not trigger A028, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    /// A028 is Plugin-mode only: private `.claude/agents/` files may legitimately
+    /// set `hooks`/`mcpServers`/`permissionMode`, so the rule must not fire there.
+    #[test]
+    #[serial_test::serial]
+    fn test_a028_not_reported_for_private_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            ".claude/agents/private.md",
+            "---\nname: private\ndescription: General reviewer for code quality analysis\npermissionMode: acceptEdits\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("not supported")),
+            "A028 must not fire for private .claude/agents/, got: {:?}",
+            diag.errors()
+        );
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_a011_existing_fixture_no_false_positive() {
@@ -1263,7 +1365,15 @@ mod tests {
             "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: acceptEdits\n---\nBody\n"
         );
         run_agent(&content, |diag| {
-            assert!(!diag.errors().iter().any(|e| e.contains("permissionMode")));
+            // A015 must not flag a valid enum value. Match the A015 message for
+            // this value rather than the bare field name: A028 legitimately
+            // reports `permissionMode` as unsupported for plugin agents.
+            assert!(
+                !diag
+                    .errors()
+                    .iter()
+                    .any(|e| e.contains("permissionMode 'acceptEdits'"))
+            );
         });
     }
 

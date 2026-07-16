@@ -18,7 +18,7 @@ either lacks entirely or has inferior implementation.
 | 5 | **Structured Output Formats** | Machine-parseable output (JSON, SARIF, etc.) for CI pipelines, SonarQube, etc. Agent-lint outputs only human-readable `error[CODE/name]: msg` to stderr; summary to stdout. No `--format` flag. | cli-agent-lint (JSON), ai-context-kit (structured reports), seojoonkim/agentlinter (`--format github`), skills-check (JSON report) |
 | 6 | **Scoring/Grading Systems** | Numeric quality scores (0-100) across weighted dimensions. | seojoonkim/agentlinter (8-dimension weighted 0-100), lintlang (HERM v1.1 scoring, H1-H7), xiaolai/nlpm-for-claude (NL-artifact scoring) |
 | 7 | **Token Counting/Budget Analysis** | Token measurement, waste detection, budget limits. | skills-lint (Rust, token budgets), skills-check (token budgets), cli-agent-lint (token waste), ai-context-kit (token measurement + task-budget `select()`) |
-| 8 | **Plugin/Extension System** | User-authored rules without recompiling. Agent-lint's 126 rules are a closed Rust enum in `src/rules.rs`. | claudelint (custom Python rule files), ctxlint (extensible framework), seojoonkim/agentlinter (`.agentlinterrc` custom rules) |
+| 8 | **Plugin/Extension System** | User-authored rules without recompiling. Agent-lint's 225 rules are a closed Rust enum in `src/rules.rs`. | claudelint (custom Python rule files), ctxlint (extensible framework), seojoonkim/agentlinter (`.agentlinterrc` custom rules) |
 | 9 | **Multi-Platform Linting** | Lint configs for Cursor, Copilot, Codex, Gemini, Kiro, Cline, etc. Agent-lint is Claude Code-only (`.claude/` and `.claude-plugin/`). | agnix (9+ platforms), ai-context-kit (Cursor+Claude+Copilot), skilllint (Claude+Cursor+Codex), crag (14 agent formats) |
 | 10 | **Init/Scaffolding Commands** | Generate starter config files, templates. | seojoonkim/agentlinter (`init` templates), ai-context-kit (`init`), samilozturk/agentlint (`init`/`scan`/`score`), claudelint (`--init`) |
 | 11 | **Watch Mode** | File system watchers for incremental re-lint on save. LSP-based tools provide this inherently. | agnix (via LSP), plankton (Claude Code hooks on each edit) |
@@ -42,7 +42,7 @@ either lacks entirely or has inferior implementation.
 
 | # | Feature | Agent-Lint Status | Competitor Advantage |
 |---|---------|-------------------|---------------------|
-| 27 | **Autofix Coverage** | 12/126 rules, intentionally limited to purely mechanical fixes (chmod, string replacement). Autofix infrastructure is sound (iterative loop, re-validation). | agnix claims broader auto-fix across 399 rules (unverified). seojoonkim/agentlinter has rename-aware fixes. |
+| 27 | **Autofix Coverage** | 12/225 rules, intentionally limited to purely mechanical fixes (chmod, string replacement). Autofix infrastructure is sound (iterative loop, re-validation). | agnix claims broader auto-fix across 399 rules (unverified). seojoonkim/agentlinter has rename-aware fixes. |
 | 28 | **Semantic/Codebase Grounding** | Substantial: dead script detection (G004), path validation (G002), script executability (G003), userConfig-to-env-var mapping (U003), shared markdown refs (S008, S029), agent/template count alignment (A005-A007), CLAUDE.md docs refs (D001), Slack fallback consistency (K001), orphaned skill files (S030). | ctxlint, agents-lint, seojoonkim/agentlinter go deeper: npm script verification against `package.json`, cross-file conflict analysis, maintenance workflows driven by local change signals. |
 | 29 | **CI Annotations** | GH Action runs `agent-lint` and passes stderr through. The Diagnostic struct has no file/line/column fields, so there are no GitHub workflow annotations (`::error file=...,line=...::`), no inline PR comments. | seojoonkim/agentlinter has `--format github` for native CI annotations. Pulser has GitHub Actions Marketplace entry. |
 | 30 | **Inline Suppression** | Global suppression via `agent-lint.toml` (`suppress = [...]`) and file-level exclusion via `exclude` globs. No inline comment-based suppression within linted files (e.g., `<!-- agent-lint-disable S001 -->`). | ESLint-style per-line/block suppression is a standard pattern. |
@@ -67,7 +67,7 @@ CI/CD use cases.
 - `src/main.rs` -- CLI entry point, flag parsing, mode detection
 - `src/diagnostic.rs` -- Diagnostic struct (no file/line fields),
   stderr-only output formatting
-- `src/rules.rs` -- Closed LintRule enum (126 variants), severity
+- `src/rules.rs` -- Closed LintRule enum (225 variants), severity
   defaults, autofix registry
 - `src/config.rs` -- Flat TOML loading, suppress/error/warn/exclude, no
   inheritance
