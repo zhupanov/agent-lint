@@ -154,11 +154,11 @@ jobs:
           fi
 
       - name: Update major version tag
-        if: steps.create_release.outputs.created == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           MAJOR=$(echo "$VERSION" | cut -d. -f1)
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin "refs/tags/v${VERSION}:refs/tags/v${VERSION}" --force
           git tag -fa "v${MAJOR}" "v${VERSION}" -m "Update v${MAJOR} to v${VERSION}"
           git push origin "v${MAJOR}" --force
