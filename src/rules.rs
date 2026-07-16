@@ -54,7 +54,7 @@ pub enum LintRule {
     HookNotExecutable,
     /// H006: .claude/settings.json is not valid JSON
     SettingsJsonInvalid,
-    /// H007: hooks.json hooks array is empty
+    /// H007: hooks.json hooks collection is empty
     HooksArrayEmpty,
     /// H008: hook event name is not a recognized Claude Code event
     HookEventInvalid,
