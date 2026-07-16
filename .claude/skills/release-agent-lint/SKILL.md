@@ -44,7 +44,7 @@ when no commits have landed since that tag, unless the operator explicitly
 confirms an empty release window.
 
 ```bash
-BASELINE_TAG=$(git describe --tags --match 'v[0-9]*' --abbrev=0 origin/main)
+BASELINE_TAG=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --abbrev=0 origin/main)
 git log --oneline "${BASELINE_TAG}..origin/main"
 ```
 
