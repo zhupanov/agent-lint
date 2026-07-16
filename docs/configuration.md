@@ -11,6 +11,12 @@ suppress = ["M001"]                        # suppress entirely (by code)
 error    = ["S033", "G005"]                # promote to error (by code or name)
 warn     = ["plugin-json-invalid"]         # downgrade to warning (by name)
 exclude  = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
+desc-truncated-max-chars = 200              # tighten S015 (default: 250)
+skill-closure-max-lines = 700               # enable S062 budget
+claude-import-max-lines = 120               # enable D004 per-import budget
+claude-import-total-max-lines = 400          # enable D004 total budget
+instruction-files = ["AGENTS.md", "SECURITY.md", "CLAUDE.md"]
+inline-path-prefixes = ["src/", "docs/", "skills/", "scripts/"]
 ```
 
 ## Options
@@ -21,6 +27,16 @@ exclude  = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
 | `error` | string array | Rules to promote to error (overrides default severity) |
 | `warn` | string array | Rules to downgrade to warning (printed, but exit 0) |
 | `exclude` | string array | File glob patterns -- matching files are skipped entirely |
+| `desc-truncated-max-chars` | positive integer | S015 listing threshold; defaults to 250 |
+| `skill-closure-max-lines` | positive integer | Enables S062 with a transitive Markdown prompt-source line budget |
+| `claude-import-max-lines` | positive integer | Enables D004 with a per-import line budget |
+| `claude-import-total-max-lines` | positive integer | Enables D004 with a total recursive `@`-import closure budget |
+| `instruction-files` | string array | Repository-relative Markdown files scanned by D005 |
+| `inline-path-prefixes` | string array | Repository-relative prefixes, each ending in `/`, recognized by D005 |
+
+Closure limits are disabled when omitted. The two D004 limits may be used
+independently. Import and Markdown-reference traversal is recursive, bounded,
+and counts each file once.
 
 ## Rule Identifiers
 
@@ -64,7 +80,7 @@ default-warning rules) to errors, except too-long rules (`name-too-long`,
 stay suppressed.
 
 **`--all`**: Forces every rule to fire as an error. The `suppress` and `warn`
-lists are bypassed entirely -- all 104 rules are promoted to errors. File
+lists are bypassed entirely -- all 117 rules are promoted to errors. File
 exclusions (`exclude`) remain in effect. Note: `--all` applies to rules
 emittable by the detected lint mode. In Basic mode (`.claude/` only),
 plugin-only rules are not dispatched regardless of `--all`.

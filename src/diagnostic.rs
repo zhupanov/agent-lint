@@ -32,6 +32,9 @@ pub struct DiagnosticCollector {
 }
 
 impl DiagnosticCollector {
+    pub fn config(&self) -> &LintConfig {
+        &self.config
+    }
     /// Create a collector with default config. Rules fall through to their
     /// compiled-in `default_severity()`: default-error rules fire as errors,
     /// default-warning rules fire as warnings, default-suppressed rules are
@@ -211,6 +214,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         diag.report(LintRule::PluginJsonMissing, "test message");
@@ -226,6 +230,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
+            ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         // SecurityMdMissing is default-warning; user warn still takes priority.
@@ -251,6 +256,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
+            ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         diag.report(LintRule::PluginJsonMissing, "suppressed");
@@ -268,6 +274,7 @@ mod tests {
             error: HashSet::from([LintRule::NameVague]),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         // NameVague is default-warning; user error overrides to error.
@@ -284,6 +291,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         // NameNotGerund is default-suppressed — silently skipped, no count.
@@ -300,6 +308,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         // NameVague is default-warning — fires as warning without config.
@@ -316,6 +325,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         // PluginJsonMissing is default-error — fires as error.

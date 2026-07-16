@@ -7,7 +7,7 @@
 
 ## Features
 
-- **104 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
+- **117 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
   Hygiene, Email, User Config, Slack, Docs)
 - **Two lint modes**:
   - **Basic mode** -- validates `.claude/` contents (settings, hooks, private
@@ -28,7 +28,7 @@ The recommended ways to use agent-lint are via
 ```yaml
 - uses: zhupanov/agent-lint@v2
   with:
-    version: "2.3.5"
+    version: "2.4.0"
     path: "."
 ```
 
@@ -42,12 +42,12 @@ Add to your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/zhupanov/agent-lint
-    rev: v2.3.5  # pin to exact version
+    rev: v2.4.0  # pin to exact version
     hooks:
       - id: agent-lint
 ```
 
-> **Pin to an exact version** (e.g., `rev: v2.3.5`) to protect your
+> **Pin to an exact version** (e.g., `rev: v2.4.0`) to protect your
 > workflow from breaking changes. agent-lint is under active development
 > and minor/patch releases may change lint behavior. Run
 > `pre-commit autoupdate` when you are ready to upgrade.
@@ -83,19 +83,19 @@ See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **104 rules** organized into 9 categories:
+Agent Lint ships **117 rules** organized into 9 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 11 | `plugin.json` and `marketplace.json` validation |
 | Hooks | H | 7 | `hooks.json` and `settings.json` hook paths |
-| Skills | S | 57 | Skill frontmatter, naming, descriptions, body content, security |
-| Agents | A | 11 | Agent frontmatter, templates, description quality, name format |
-| Hygiene | G | 7 | `$PWD` hygiene, script integrity, executability, dead scripts, TODO detection |
+| Skills | S | 62 | Skill frontmatter, prompt contracts, descriptions, shell fences, security |
+| Agents | A | 13 | Agent frontmatter, tool/evidence contracts, templates, description quality |
+| Hygiene | G | 11 | `$PWD` hygiene, script integrity, portability, GitHub payload safety, TODO detection |
 | Email | E | 1 | Email format validation |
 | User Config | U | 6 | `userConfig` structure and env var mapping |
 | Slack | K | 1 | Slack fallback consistency |
-| Docs | D | 3 | Docs file references, CLAUDE.md size, TODO detection |
+| Docs | D | 5 | Docs pointers, CLAUDE.md import closure and size, TODO detection |
 
 For the complete rule table with codes, names, defaults, and auto-fixable
 rules, see **[docs/rules.md](docs/rules.md)**.
@@ -105,7 +105,7 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | `.claude/` directory exists | Settings hooks, private skill frontmatter, script refs, executability, always-mode S-rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 104 rules including manifest, agents, hygiene, and plugin-only S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 117 rules including manifest, agents, hygiene, and plugin-only S-rules |
 
 If neither directory exists, the tool prints "Nothing to lint" and exits 0.
 

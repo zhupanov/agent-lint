@@ -9,7 +9,6 @@ use super::name::RE_XML_TAG;
 
 const MAX_DESC_CHARS: usize = 1024;
 const MIN_DESC_CHARS: usize = 20;
-const DESC_TRUNCATE_LEN: usize = 250;
 
 // S050: vague description content (plugin-only)
 #[rustfmt::skip]
@@ -105,13 +104,14 @@ pub(super) fn check_description_quality(
         );
     }
 
-    // S015: description truncated in listing (plugin-only)
-    if plugin_mode && char_count > DESC_TRUNCATE_LEN {
+    // S015: description truncated in listings (public and private skills)
+    let truncate_len = diag.config().desc_truncated_max_chars;
+    if char_count > truncate_len {
         diag.report(
             LintRule::DescTruncated,
             &format!(
-                "{}: description exceeds 250 characters ({}) and will be truncated in skill listing",
-                info.path, char_count
+                "{}: description exceeds configured listing threshold of {} characters ({}) and will be truncated in skill listing",
+                info.path, truncate_len, char_count
             ),
         );
     }

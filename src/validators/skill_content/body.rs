@@ -114,10 +114,6 @@ const WELL_KNOWN_VALUES: &[u64] = &[
     0, 1, 80, 443, 8080, 8443, 3000, 30, 60, 120, 300, 1024, 2048, 4096,
 ];
 
-// S021: Consecutive bash
-static RE_BASH_FENCE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
-
 pub(super) fn check_body_content(
     info: &SkillInfo,
     plugin_mode: bool,
@@ -349,53 +345,14 @@ fn check_terminology_consistency(info: &SkillInfo, diag: &mut DiagnosticCollecto
 }
 
 fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    use crate::fence::{CodeFenceTracker, LineClass};
-
-    let mut tracker = CodeFenceTracker::new();
-    let mut last_bash_end: Option<usize> = None;
-    let mut fence_is_bash = false;
-
-    for (i, line) in info.body.lines().enumerate() {
-        let trimmed = line.trim_start();
-        match tracker.process_line(line) {
-            LineClass::Delimiter => {
-                if !tracker.in_fence() {
-                    // This delimiter just closed a fence
-                    if fence_is_bash {
-                        last_bash_end = Some(i);
-                    }
-                    fence_is_bash = false;
-                } else {
-                    // This delimiter just opened a fence
-                    if RE_BASH_FENCE.is_match(trimmed) {
-                        // Opening a bash fence -- check for consecutive
-                        if let Some(prev_end) = last_bash_end {
-                            let between_lines: Vec<&str> = info
-                                .body
-                                .lines()
-                                .skip(prev_end + 1)
-                                .take(i - prev_end - 1)
-                                .collect();
-                            let only_blank = between_lines.iter().all(|l| l.trim().is_empty());
-                            if only_blank {
-                                diag.report(
-                                    LintRule::ConsecutiveBash,
-                                    &format!(
-                                        "{}: consecutive bash code blocks (lines {} and {}) could be combined into one",
-                                        info.path, prev_end + 1, i + 1
-                                    ),
-                                );
-                                return; // Report once per file
-                            }
-                        }
-                        fence_is_bash = true;
-                    } else {
-                        fence_is_bash = false;
-                    }
-                }
-            }
-            LineClass::Inside | LineClass::Outside => {}
-        }
+    if let Some((first, second)) = crate::fence::consecutive_bash_pairs(&info.body).first() {
+        diag.report(
+            LintRule::ConsecutiveBash,
+            &format!(
+                "{}: consecutive bash code blocks (lines {first} and {second}) could be combined into one",
+                info.path
+            ),
+        );
     }
 }
 
