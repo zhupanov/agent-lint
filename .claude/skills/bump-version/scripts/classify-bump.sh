@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # classify-bump.sh — Deterministic semver classifier for /bump-version skill.
 #
-# Scope: inspects public surface directories (currently skills/**, agents/**).
-# Since this repo has no top-level skills/ or agents/ directories yet, all
-# changes default to PATCH. Update the diff scope below when the repo grows
-# directories designated as public surface.
+# Scope: inspects agent-lint's public rule registry, CLI flags, and validator
+# modules, plus the existing skills/** and agents/** plugin surface.
 #
 # Rules (highest severity wins):
-#   MAJOR — deleted/renamed SKILL.md or agents/*.md, changed `name:` frontmatter,
-#           removed `--flag` in argument-hint
-#   MINOR — new SKILL.md or agents/*.md, new `--flag` in argument-hint
+#   MAJOR — removed public rule ID or CLI flag; deleted/renamed SKILL.md or
+#           agents/*.md; changed `name:` frontmatter; removed `--flag` in
+#           argument-hint
+#   MINOR — added public rule ID, validator module, or CLI flag; new SKILL.md or
+#           agents/*.md; new `--flag` in argument-hint
 #   PATCH — default (every PR bumps at least PATCH)
 #
 # Idempotent no-op: if HEAD is a commit matching
@@ -80,7 +80,7 @@ log() {
   echo ""
   echo "- **Base commit**: \`$(git rev-parse --short "$BASE")\` ($(git log -1 --format=%s "$BASE" 2>/dev/null || echo '?'))"
   echo "- **Current version**: \`$CURRENT_VERSION\`"
-  echo "- **Classification scope**: \`skills/**\` and \`agents/**\` (public surface — currently empty for this repo, so all changes default to PATCH)."
+  echo "- **Classification scope**: lint rule IDs (\`src/rules.rs\`), CLI flags (\`src/main.rs\`), validator modules (\`src/validators/**\`), \`skills/**\`, and \`agents/**\`."
   echo ""
 } > "$REASONING_FILE"
 
@@ -100,7 +100,7 @@ if [[ "$HEAD_SUBJECT" =~ ^Bump\ version\ to\ [0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 0
 fi
 
-# Collect file-level changes in public surface.
+# Collect file-level changes in the legacy plugin surface.
 # Use -M for rename detection.
 NAME_STATUS=$(git diff -M --name-status "$BASE" HEAD -- skills agents 2>/dev/null || true)
 
@@ -189,6 +189,79 @@ while IFS=$'\t' read -r status old new_or_blank; do
       ;;
   esac
 done <<< "$NAME_STATUS"
+
+# Compare the stable rule registry. Rule IDs are user-facing because users can
+# configure severities and exclusions by code, so removing one is breaking and
+# adding one expands the lint product's behavior.
+emit_lines() {
+  if [[ -n "$1" ]]; then
+    printf '%s\n' "$1"
+  fi
+}
+
+extract_lint_rules() {
+  awk '
+    /^[[:space:]]*pub enum LintRule[[:space:]]*\{/ { in_enum=1; next }
+    in_enum && /^[[:space:]]*\}/ { exit }
+    in_enum && /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*,[[:space:]]*$/ {
+      rule=$0
+      sub(/^[[:space:]]*/, "", rule)
+      sub(/,[[:space:]]*$/, "", rule)
+      print rule
+    }
+  '
+}
+
+OLD_RULES=$(git show "$BASE:src/rules.rs" 2>/dev/null | extract_lint_rules | sort -u || true)
+NEW_RULES=$(git show "HEAD:src/rules.rs" 2>/dev/null | extract_lint_rules | sort -u || true)
+REMOVED_RULES=$(comm -23 <(emit_lines "$OLD_RULES") <(emit_lines "$NEW_RULES") 2>/dev/null || true)
+ADDED_RULES=$(comm -13 <(emit_lines "$OLD_RULES") <(emit_lines "$NEW_RULES") 2>/dev/null || true)
+
+if [[ -n "$REMOVED_RULES" ]]; then
+  while IFS= read -r rule; do
+    [[ -n "$rule" ]] && MAJOR_REASONS+=("Removed lint rule \`$rule\`")
+  done <<< "$REMOVED_RULES"
+fi
+if [[ -n "$ADDED_RULES" ]]; then
+  while IFS= read -r rule; do
+    [[ -n "$rule" ]] && MINOR_REASONS+=("Added lint rule \`$rule\`")
+  done <<< "$ADDED_RULES"
+fi
+
+# CLI flags are part of the executable's public contract. Extract long flags
+# from the argument parser and help text so additions and removals are compared
+# as sets rather than as incidental source edits.
+extract_cli_flags() {
+  grep -oE '"--[A-Za-z0-9][A-Za-z0-9-]*"' | tr -d '"' | sort -u || true
+}
+
+OLD_FLAGS=$(git show "$BASE:src/main.rs" 2>/dev/null | extract_cli_flags || true)
+NEW_FLAGS=$(git show "HEAD:src/main.rs" 2>/dev/null | extract_cli_flags || true)
+REMOVED_FLAGS=$(comm -23 <(emit_lines "$OLD_FLAGS") <(emit_lines "$NEW_FLAGS") 2>/dev/null || true)
+ADDED_FLAGS=$(comm -13 <(emit_lines "$OLD_FLAGS") <(emit_lines "$NEW_FLAGS") 2>/dev/null || true)
+
+if [[ -n "$REMOVED_FLAGS" ]]; then
+  while IFS= read -r flag; do
+    [[ -n "$flag" ]] && MAJOR_REASONS+=("Removed CLI flag \`$flag\`")
+  done <<< "$REMOVED_FLAGS"
+fi
+if [[ -n "$ADDED_FLAGS" ]]; then
+  while IFS= read -r flag; do
+    [[ -n "$flag" ]] && MINOR_REASONS+=("Added CLI flag \`$flag\`")
+  done <<< "$ADDED_FLAGS"
+fi
+
+# A new validator module is a user-visible capability even before its rule ID
+# is wired into the registry. Existing module paths are implementation details.
+VALIDATOR_STATUS=$(git diff -M --name-status "$BASE" HEAD -- src/validators 2>/dev/null || true)
+while IFS=$'\t' read -r status old new_or_blank; do
+  [[ -z "${status:-}" ]] && continue
+  case "$status" in
+    A)
+      [[ "$old" == src/validators/*.rs ]] && MINOR_REASONS+=("Added validator module \`$old\`")
+      ;;
+  esac
+done <<< "$VALIDATOR_STATUS"
 
 # Determine bump type.
 if [[ ${#MAJOR_REASONS[@]} -gt 0 ]]; then
