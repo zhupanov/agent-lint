@@ -67,6 +67,7 @@ mod tests {
             marketplace_json: marketplace,
             hooks_json: ManifestState::Missing,
             settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
         }
     }
 

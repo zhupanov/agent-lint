@@ -90,7 +90,7 @@ pub(super) fn check_frontmatter_fields(info: &SkillInfo, diag: &mut DiagnosticCo
     // S026: shell field
     match frontmatter::get_field_state(&info.fm_lines, "shell") {
         frontmatter::FieldState::Value(val) => {
-            if !["bash", "powershell"].contains(&val.as_str()) {
+            if !crate::validators::common::VALID_SHELLS.contains(&val.as_str()) {
                 diag.report(
                     LintRule::ShellFieldInvalid,
                     &format!(

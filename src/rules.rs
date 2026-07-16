@@ -56,6 +56,42 @@ pub enum LintRule {
     SettingsJsonInvalid,
     /// H007: hooks.json hooks array is empty
     HooksArrayEmpty,
+    /// H008: hook event name is not a recognized Claude Code event
+    HookEventInvalid,
+    /// H009: matcher present on an event that takes no matcher
+    HookMatcherInvalid,
+    /// H010: hook object missing required 'type' field
+    HookTypeMissing,
+    /// H011: hook 'type' is not a recognized handler type
+    HookTypeUnknown,
+    /// H012: type: command hook missing 'command'
+    HookCommandRequired,
+    /// H013: type: prompt hook missing 'prompt'
+    HookPromptRequired,
+    /// H014: type: http hook missing 'url'
+    HookUrlRequired,
+    /// H015: type: mcp_tool hook missing 'server'
+    HookServerRequired,
+    /// H016: type: mcp_tool hook missing 'tool'
+    HookToolRequired,
+    /// H017: hook 'timeout' is not a positive integer
+    HookTimeoutInvalid,
+    /// H018: 'async: true' on a non-command hook
+    HookAsyncInvalid,
+    /// H019: 'model' on a non-prompt hook
+    HookModelInvalid,
+    /// H020: hook 'once' is not a boolean
+    HookOnceInvalid,
+    /// H021: hook 'if' is not a non-empty string
+    HookIfInvalid,
+    /// H022: hook 'shell' value is not bash/powershell
+    HookShellInvalid,
+    /// H023: dangerous command pattern in hook command
+    HookCommandDangerous,
+    /// H024: http hook headers interpolate $VAR without allowedEnvVars
+    HookHeadersInterpolated,
+    /// H025: .claude/settings.local.json is not valid JSON
+    SettingsLocalInvalid,
 
     // ── Skills (S) ────────────────────────────────────────────────
     /// S001: skills/ directory is missing
@@ -463,6 +499,24 @@ impl LintRule {
             Self::HookNotExecutable => "H005",
             Self::SettingsJsonInvalid => "H006",
             Self::HooksArrayEmpty => "H007",
+            Self::HookEventInvalid => "H008",
+            Self::HookMatcherInvalid => "H009",
+            Self::HookTypeMissing => "H010",
+            Self::HookTypeUnknown => "H011",
+            Self::HookCommandRequired => "H012",
+            Self::HookPromptRequired => "H013",
+            Self::HookUrlRequired => "H014",
+            Self::HookServerRequired => "H015",
+            Self::HookToolRequired => "H016",
+            Self::HookTimeoutInvalid => "H017",
+            Self::HookAsyncInvalid => "H018",
+            Self::HookModelInvalid => "H019",
+            Self::HookOnceInvalid => "H020",
+            Self::HookIfInvalid => "H021",
+            Self::HookShellInvalid => "H022",
+            Self::HookCommandDangerous => "H023",
+            Self::HookHeadersInterpolated => "H024",
+            Self::SettingsLocalInvalid => "H025",
 
             Self::SkillsDirMissing => "S001",
             Self::SkillMdMissing => "S002",
@@ -679,6 +733,24 @@ impl LintRule {
             Self::HookNotExecutable => "hook-not-executable",
             Self::SettingsJsonInvalid => "settings-json-invalid",
             Self::HooksArrayEmpty => "hooks-array-empty",
+            Self::HookEventInvalid => "hook-event-invalid",
+            Self::HookMatcherInvalid => "hook-matcher-invalid",
+            Self::HookTypeMissing => "hook-type-missing",
+            Self::HookTypeUnknown => "hook-type-unknown",
+            Self::HookCommandRequired => "hook-command-required",
+            Self::HookPromptRequired => "hook-prompt-required",
+            Self::HookUrlRequired => "hook-url-required",
+            Self::HookServerRequired => "hook-server-required",
+            Self::HookToolRequired => "hook-tool-required",
+            Self::HookTimeoutInvalid => "hook-timeout-invalid",
+            Self::HookAsyncInvalid => "hook-async-invalid",
+            Self::HookModelInvalid => "hook-model-invalid",
+            Self::HookOnceInvalid => "hook-once-invalid",
+            Self::HookIfInvalid => "hook-if-invalid",
+            Self::HookShellInvalid => "hook-shell-invalid",
+            Self::HookCommandDangerous => "hook-command-dangerous",
+            Self::HookHeadersInterpolated => "hook-headers-interpolated",
+            Self::SettingsLocalInvalid => "settings-local-invalid",
 
             Self::SkillsDirMissing => "skills-dir-missing",
             Self::SkillMdMissing => "skill-md-missing",
@@ -925,6 +997,10 @@ impl LintRule {
             // ── Default-warning: enriched metadata ───────────────────
             Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
 
+            // ── Default-warning: hook schema advisories ──────────────
+            Self::HookIfInvalid | Self::HookShellInvalid |
+            Self::HookCommandDangerous | Self::HookHeadersInterpolated |
+
             // ── Default-warning: style / quality (skills) ────────────
             Self::DescTruncated | Self::ConsecutiveBash |
             Self::NameVague | Self::DescTooShort | Self::BodyNoRefs |
@@ -1004,6 +1080,24 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::HookNotExecutable,
     LintRule::SettingsJsonInvalid,
     LintRule::HooksArrayEmpty,
+    LintRule::HookEventInvalid,
+    LintRule::HookMatcherInvalid,
+    LintRule::HookTypeMissing,
+    LintRule::HookTypeUnknown,
+    LintRule::HookCommandRequired,
+    LintRule::HookPromptRequired,
+    LintRule::HookUrlRequired,
+    LintRule::HookServerRequired,
+    LintRule::HookToolRequired,
+    LintRule::HookTimeoutInvalid,
+    LintRule::HookAsyncInvalid,
+    LintRule::HookModelInvalid,
+    LintRule::HookOnceInvalid,
+    LintRule::HookIfInvalid,
+    LintRule::HookShellInvalid,
+    LintRule::HookCommandDangerous,
+    LintRule::HookHeadersInterpolated,
+    LintRule::SettingsLocalInvalid,
     LintRule::SkillsDirMissing,
     LintRule::SkillMdMissing,
     LintRule::NoExportedSkills,
@@ -1198,7 +1292,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            199,
+            217,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1280,8 +1374,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            73,
-            "Expected 73 default-warning rules, got {}",
+            77,
+            "Expected 77 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1329,8 +1423,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            119,
-            "Expected 119 default-error rules, got {}",
+            133,
+            "Expected 133 default-error rules, got {}",
             errors.len()
         );
     }

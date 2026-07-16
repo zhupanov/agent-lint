@@ -12,6 +12,11 @@ pub(crate) static RE_NAME_INVALID: LazyLock<Regex> =
 pub(crate) static RE_TODO_MARKER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap());
 
+/// Shared enum: accepted values for a `shell` field.
+/// Used by skill_content frontmatter validation (S026) and hook schema
+/// validation (H022), which must stay in agreement.
+pub(crate) const VALID_SHELLS: &[&str] = &["bash", "powershell"];
+
 /// Model aliases accepted by Claude Code `/model` plus skill-only `inherit`.
 /// Full Anthropic model IDs (`claude-…`) are also accepted.
 /// Shared by skill frontmatter (S063) and future agent frontmatter validation.

@@ -7,8 +7,9 @@
 
 ## Features
 
-- **139 lint rules** across 10 categories (Manifest, Hooks, Skills, Agents,
-  Hygiene, Email, User Config, MCP, Slack, Docs)
+- **217 lint rules** across 14 categories (Manifest, Hooks, Skills, Agents,
+  Claude Rules, Output Styles, Settings, Hygiene, Email, User Config, MCP,
+  Codex, Slack, Docs)
 - **Two lint modes**:
   - **Basic mode** -- validates `.claude/` contents and standalone MCP
     configuration (settings, hooks, private skill frontmatter, private agents,
@@ -84,18 +85,22 @@ See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **139 rules** organized into 10 categories:
+Agent Lint ships **217 rules** organized into 14 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 11 | `plugin.json` and `marketplace.json` validation |
-| Hooks | H | 7 | `hooks.json` and `settings.json` hook paths |
+| Hooks | H | 25 | `hooks.json` / `settings.json` hook paths and hook object schema |
 | Skills | S | 71 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
-| Agents | A | 13 | Agent frontmatter, tool/evidence contracts, templates, description quality |
+| Agents | A | 27 | Agent frontmatter, field values, tool/evidence contracts, templates, description quality |
+| Claude Rules | R | 2 | `.claude/rules/` frontmatter `paths` globs and fields |
+| Output Styles | O | 6 | `.claude/output-styles/` frontmatter, body, and naming |
+| Settings | T | 2 | `.claude/settings.json` / `settings.local.json` field values |
 | Hygiene | G | 11 | `$PWD` hygiene, script integrity, portability, GitHub payload safety, TODO detection |
 | Email | E | 1 | Email format validation |
 | User Config | U | 6 | `userConfig` structure and env var mapping |
 | MCP | P | 13 | MCP server configuration, transport, security, and compatibility |
+| Codex | CX | 36 | Codex `config.toml` structure, profiles, providers, and security |
 | Slack | K | 1 | Slack fallback consistency |
 | Docs | D | 5 | Docs pointers, CLAUDE.md import closure and size, TODO detection |
 
@@ -106,8 +111,8 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 
 | Mode | Trigger | Scope |
 |------|---------|-------|
-| **Basic** | `.claude/` directory or any `*.mcp.json` file exists | Settings hooks, MCP configuration, private skill frontmatter, private agents (A002-A003, A008-A025), script refs, executability, always-mode S-rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 139 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
+| **Basic** | `.claude/` directory or any `*.mcp.json` file exists | Settings hooks and hook schema, MCP configuration, private skill frontmatter, private agents (A002-A003, A008-A027), script refs, executability, always-mode S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 217 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
 
 If no Claude or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
 

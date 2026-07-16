@@ -1,6 +1,7 @@
 use crate::context::{LintContext, ManifestState, collect_json_strings};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::validators::hook_schema;
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
@@ -128,6 +129,34 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
     );
 }
 
+/// V26: Validate the hook object schema in hooks/hooks.json (H008-H024).
+pub fn validate_hooks_json_schema(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    // H001/H002 already report a missing or unparseable hooks.json.
+    if let ManifestState::Parsed(val) = &ctx.hooks_json {
+        hook_schema::validate_hook_schema(val, "hooks/hooks.json", diag);
+    }
+}
+
+/// V27: Validate the hook object schema in .claude/settings.json (H008-H024).
+pub fn validate_settings_schema(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    // H006 already reports an unparseable settings.json.
+    if let ManifestState::Parsed(val) = &ctx.settings_json {
+        hook_schema::validate_hook_schema(val, ".claude/settings.json", diag);
+    }
+}
+
+/// V28: Validate .claude/settings.local.json (H025) and its hook object
+/// schema (H008-H024).
+pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    match &ctx.settings_local_json {
+        ManifestState::Missing => {} // Optional file
+        ManifestState::Invalid(e) => diag.report(LintRule::SettingsLocalInvalid, e),
+        ManifestState::Parsed(val) => {
+            hook_schema::validate_hook_schema(val, ".claude/settings.local.json", diag);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +171,7 @@ mod tests {
             marketplace_json: ManifestState::Missing,
             hooks_json: hooks,
             settings_json: settings,
+            settings_local_json: ManifestState::Missing,
         }
     }
 
@@ -307,5 +337,104 @@ mod tests {
         );
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
+    }
+
+    // ── Hook schema surfaces (H008-H025) ────────────────────────────
+    //
+    // Engine behavior is covered in hook_schema.rs; these verify that each
+    // surface is wired to the engine and labels its diagnostics correctly.
+
+    /// An event-keyed config whose only hook object is missing `type` (H010).
+    fn schema_violation() -> Value {
+        json!({"hooks": {"PreToolUse": [{"hooks": [{"command": "echo hi"}]}]}})
+    }
+
+    #[test]
+    fn test_v26_hooks_json_schema_surface() {
+        let ctx = make_ctx(
+            ManifestState::Parsed(schema_violation()),
+            ManifestState::Missing,
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("hooks/hooks.json"));
+        assert!(diag.errors()[0].contains("'type'"));
+    }
+
+    #[test]
+    fn test_v26_legacy_array_hooks_json_skipped() {
+        // The shape H001-H007 model: no event context, so the engine skips it.
+        let val = json!({"hooks": [{"command": "echo test"}]});
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_v26_unparseable_hooks_json_is_silent() {
+        // H002 owns that report; the schema engine must not double-report.
+        let ctx = make_ctx(
+            ManifestState::Invalid("bad".to_string()),
+            ManifestState::Missing,
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_v27_settings_json_schema_surface() {
+        let ctx = make_ctx(
+            ManifestState::Missing,
+            ManifestState::Parsed(schema_violation()),
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains(".claude/settings.json"));
+    }
+
+    #[test]
+    fn test_v27_settings_json_without_hooks_passes() {
+        let val = json!({"permissions": {"allow": []}});
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_v28_settings_local_schema_surface() {
+        let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        ctx.settings_local_json = ManifestState::Parsed(schema_violation());
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_local(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains(".claude/settings.local.json"));
+    }
+
+    #[test]
+    fn test_v28_settings_local_invalid_fires_h025() {
+        let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        ctx.settings_local_json = ManifestState::Invalid("bad local settings".to_string());
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_local(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("bad local settings"));
+        assert_eq!(
+            diag.diagnostics()[0].rule,
+            LintRule::SettingsLocalInvalid,
+            "must use the new H025 code, not H006"
+        );
+    }
+
+    #[test]
+    fn test_v28_settings_local_missing_silent_pass() {
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_local(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
     }
 }
