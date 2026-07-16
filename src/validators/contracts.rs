@@ -64,8 +64,12 @@ static FI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[\s;])fi(?:[\s;]
 static FORWARDED_ARRAY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^[^#\n]*(?:exec\s+)?[^\n]*"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}""#).unwrap()
 });
-static NPM_RUN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\bnpm\s+run(?:-script)?\s+([A-Za-z0-9][A-Za-z0-9_-]*)").unwrap());
+static NPM_RUN: LazyLock<Regex> = LazyLock::new(|| {
+    // The name class allows `:` because npm scripts are commonly
+    // colon-namespaced (e.g. `build:css`, `test:integration`); rejecting `:`
+    // would truncate `npm run build:css` to `build` and false-positive L006.
+    Regex::new(r"\bnpm\s+run(?:-script)?\s+([A-Za-z0-9][A-Za-z0-9_:-]*)").unwrap()
+});
 
 pub fn validate_contracts(
     diag: &mut DiagnosticCollector,
@@ -1901,6 +1905,29 @@ mod tests {
             .collect();
         assert_eq!(missing.len(), 1);
         assert!(missing[0].message.contains("build"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l006_accepts_colon_namespaced_script_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write(
+            "package.json",
+            "{\"name\":\"demo\",\"scripts\":{\"build:css\":\"postcss\"}}",
+        )
+        .unwrap();
+        fs::write("CLAUDE.md", "Run `npm run build:css` to compile styles.\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_npm_scripts(&mut diag, &ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::NpmScriptMissing),
+            "colon-namespaced npm scripts must be matched in full, not truncated at the colon"
+        );
     }
 
     #[test]
