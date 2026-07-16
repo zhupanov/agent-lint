@@ -33,6 +33,94 @@ pub const PLUGIN_SCRIPT_DIRS: &[&str] =
 /// Directory patterns for Basic mode script discovery (V10-adapted, --list-scripts).
 pub const BASIC_SCRIPT_DIRS: &[&str] = &[".claude/skills/*/scripts"];
 
+static RE_FULL_HASH_COMMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[[:space:]]*#").unwrap());
+
+/// Strip `#` comments from content that uses `#` as its comment character
+/// (YAML, Makefile, shell). Drops full-comment lines and trailing comments,
+/// respecting single/double quotes. Shared by the YAML-workflow and Makefile
+/// reference extraction in G004 (dead scripts) and V9 (script references).
+pub(super) fn strip_yaml_comments(content: &str) -> String {
+    content
+        .lines()
+        .filter(|line| !RE_FULL_HASH_COMMENT.is_match(line))
+        .map(strip_trailing_yaml_comment)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn strip_trailing_yaml_comment(line: &str) -> String {
+    let mut in_quote: Option<char> = None;
+    let mut prev_was_ws = false;
+    let mut skip_next = false;
+
+    for (byte_pos, ch) in line.char_indices() {
+        if skip_next {
+            skip_next = false;
+            prev_was_ws = ch.is_whitespace();
+            continue;
+        }
+        match in_quote {
+            Some(q) => {
+                if q == '"' && ch == '\\' {
+                    skip_next = true;
+                } else if q == '\'' && ch == '\'' {
+                    let rest = &line[byte_pos + ch.len_utf8()..];
+                    if rest.starts_with('\'') {
+                        skip_next = true;
+                    } else {
+                        in_quote = None;
+                    }
+                } else if ch == q {
+                    in_quote = None;
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    in_quote = Some(ch);
+                } else if ch == '#' && prev_was_ws {
+                    return line[..byte_pos].trim_end().to_string();
+                }
+            }
+        }
+        prev_was_ws = ch.is_whitespace();
+    }
+
+    line.to_string()
+}
+
+/// Read the repo-root `Makefile` and any root-level `*.mk` files and return
+/// their `#`-comment-stripped contents. Used by G004 (dead scripts) and V9
+/// (script references) so Make-target invocations like `bash scripts/foo.sh`
+/// and `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh` are recognised as references.
+pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<String> {
+    let mut candidates: Vec<PathBuf> = vec![PathBuf::from("Makefile")];
+    if let Ok(entries) = fs::read_dir(".") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.ends_with(".mk") {
+                    candidates.push(path);
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for path in candidates {
+        let display = path.display().to_string();
+        if exclude.is_excluded(&display) {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&path) {
+            out.push(strip_yaml_comments(&content));
+        }
+    }
+    out
+}
+
 /// V9: Script reference integrity.
 pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let mut seen = HashSet::new();
@@ -98,6 +186,35 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
                             ),
                         );
                     }
+                }
+            }
+        }
+    }
+
+    // Also scan the Makefile and any *.mk so Make-target invocations are
+    // validated for existence (V9). Comments are stripped first so
+    // commented-out references are not mistaken for live invocations.
+    for content in collect_makefile_contents(exclude) {
+        for cap in RE_SCRIPT_PUB.find_iter(&content) {
+            let reference = cap.as_str().to_string();
+            if seen.insert(reference.clone()) {
+                let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
+                if !Path::new(&rel).is_file() {
+                    diag.report(
+                        LintRule::ScriptRefMissing,
+                        &format!("script reference missing on disk: {reference} (expected {rel})"),
+                    );
+                }
+            }
+        }
+        for cap in RE_SCRIPTS_PATH.find_iter(&content) {
+            if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
+                let reference = m.as_str().to_string();
+                if seen.insert(reference.clone()) && !Path::new(&reference).is_file() {
+                    diag.report(
+                        LintRule::ScriptRefMissing,
+                        &format!("script reference missing on disk: {reference}"),
+                    );
                 }
             }
         }

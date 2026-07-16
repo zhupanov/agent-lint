@@ -384,6 +384,168 @@ mod tests {
         );
     }
 
+    // G004: Makefile references count as live invocations (not dead)
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_makefile_bare_reference_not_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/used.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write("Makefile", "lint:\n\tbash scripts/used.sh\n").unwrap();
+
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Missing,
+            settings_json: crate::context::ManifestState::Missing,
+        };
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "Script invoked from Makefile should not be reported as dead"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_makefile_qualified_reference_not_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/used.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "Makefile",
+            "lint:\n\t${CLAUDE_PLUGIN_ROOT}/scripts/used.sh\n",
+        )
+        .unwrap();
+
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Missing,
+            settings_json: crate::context::ManifestState::Missing,
+        };
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_makefile_commented_reference_still_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/orphan.sh", "#!/bin/bash\n").unwrap();
+        // Reference lives only in a comment, which must be stripped.
+        std::fs::write("Makefile", "# bash scripts/orphan.sh\nlint:\n\techo hi\n").unwrap();
+
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Missing,
+            settings_json: crate::context::ManifestState::Missing,
+        };
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            diag.error_count(),
+            1,
+            "Script only referenced in a Makefile comment should still be dead"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v11_mk_file_reference_not_dead() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/used.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write("tools.mk", "lint:\n\tbash scripts/used.sh\n").unwrap();
+
+        let ctx = crate::context::LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: crate::context::LintMode::Plugin,
+            plugin_json: crate::context::ManifestState::Missing,
+            marketplace_json: crate::context::ManifestState::Missing,
+            hooks_json: crate::context::ManifestState::Missing,
+            settings_json: crate::context::ManifestState::Missing,
+        };
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    // V9: Makefile references validated for existence
+    #[test]
+    #[serial_test::serial]
+    fn test_v9_makefile_bare_reference_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/helper.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write("Makefile", "lint:\n\tbash scripts/helper.sh\n").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v9_makefile_bare_reference_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::write("Makefile", "lint:\n\tbash scripts/ghost.sh\n").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains("missing on disk"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v9_makefile_qualified_reference_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/helper.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "Makefile",
+            "lint:\n\t${CLAUDE_PLUGIN_ROOT}/scripts/helper.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
     // expand_script_dirs tests
     #[test]
     #[serial_test::serial]

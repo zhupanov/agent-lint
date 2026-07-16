@@ -3,7 +3,7 @@
 # /relevant-checks uses: pre-commit run --files <changed-files> (scoped)
 # Developers use: pre-commit install (opt-in git hook)
 
-exclude: ^(\.venv/|node_modules/)
+exclude: ^(\.venv/|node_modules/|larch-logs/)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
