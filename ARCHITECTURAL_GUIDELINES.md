@@ -1,0 +1,243 @@
+# Architectural Guidelines
+
+These guidelines describe the preferred shape of Agent Lint. They are
+aspirational review criteria, not absolute rules. Meaningful deviations should
+be explained in the change that introduces them. Recurring, deterministic
+requirements should graduate to tests or lints instead of relying on this
+document.
+
+The absolute rules are in [Architectural Invariants](ARCHITECTURAL_INVARIANTS.md).
+
+## System shape
+
+The normal lint path has one direction of travel:
+
+```text
+CLI and repository root (main.rs)
+  -> configuration and platform activation (config.rs, platforms.rs)
+  -> parsed shared inputs (context.rs)
+  -> mode and platform dispatch (validators/mod.rs)
+  -> domain validators (validators/**)
+  -> rule policy and output (rules.rs, diagnostic.rs)
+```
+
+`autofix.rs` is a controlled side path. It consumes diagnostics from that same
+pipeline, mutates only supported rule violations, and then enters the normal
+validation path again.
+
+## Change discipline
+
+### G-Fix-1: Fix the class, not only the observed instance
+
+- Why: validators commonly have sibling surfaces for public plugins, private
+  Claude configuration, Cursor, Codex, and MCP. A local fix can leave the same
+  defect in another surface.
+- Guidance: search for sibling parsers, validators, dispatch sites, and autofix
+  handlers when fixing a defect. Fix every equivalent site or record why a
+  sibling has intentionally different semantics.
+- Deviate when: the sibling consumes a different external contract or cannot
+  reach the failing state; identify that boundary in the review notes.
+
+### G-Test-1: A behavior change ships with an executable regression
+
+- Why: examples in prose do not protect rule behavior, severity resolution,
+  mode dispatch, or autofix convergence.
+- Guidance: reproduce the old failure in a unit or integration test, then
+  verify the corrected diagnostic code, severity, message, or file content.
+  Prefer a small temporary repository over mocks of filesystem behavior.
+- Deviate when: the change is documentation-only or the behavior depends on an
+  external service that cannot be represented locally; describe the manual
+  verification.
+
+### G-Review-1: Review public behavior across every CLI strictness mode
+
+- Why: normal, pedantic, and all mode intentionally transform the same rule
+  registry differently.
+- Guidance: when changing default severity, suppression, or promotion logic,
+  check all three modes and preserve the documented precedence in
+  `LintConfig::apply_cli_mode` and `DiagnosticCollector::report`.
+- Deviate when: the change cannot affect rule disposition, such as an internal
+  parser refactor with byte-for-byte equivalent diagnostics.
+
+## Ownership and layering
+
+### G-Own-1: Keep one canonical owner for each concept
+
+- Why: duplicated policy drifts and makes a rule behave differently depending
+  on its call path.
+- Guidance: preserve the current ownership boundaries:
+  `rules.rs` owns rule identity and compiled defaults; `config.rs` owns user
+  policy and exclusions; `platforms.rs` owns discovery and activation;
+  `validators/mod.rs` owns dispatch; validator modules own domain facts;
+  `diagnostic.rs` owns disposition and rendering; `autofix.rs` owns mutation.
+- Deviate when: an external format needs an isolated adapter; keep policy in
+  the canonical owner and make the adapter translate only.
+
+### G-Layer-1: Keep validators leaf-like
+
+- Why: a validator is easiest to test when it reads an explicit input, reports
+  facts, and does not control the process.
+- Guidance: validators should not parse CLI arguments, select lint modes,
+  decide exit codes, print diagnostics directly, or apply fixes. Share lexical
+  and traversal behavior through focused helpers such as `frontmatter.rs`,
+  `fence.rs`, `validators/common.rs`, and `validators/walk.rs`.
+- Deviate when: a validator needs a small domain-specific parser that has no
+  second consumer; keep it private to that validator.
+
+### G-Dispatch-1: Add surfaces through the central dispatch
+
+- Why: calling a validator opportunistically from another validator hides its
+  mode and platform requirements.
+- Guidance: register new validation at the appropriate basic, plugin, or
+  platform branch in `validators/mod.rs`. Keep surface detection in
+  `platforms.rs` and configuration overrides in `config.rs`.
+- Deviate when: the check is an inseparable sub-check of an already-dispatched
+  domain validator and shares exactly the same inputs and scope.
+
+### G-Dep-1: Point dependencies toward shared primitives, not across domains
+
+- Why: imports between peer validator domains couple unrelated external
+  formats and invite cycles.
+- Guidance: move genuinely shared parsing, constants, or traversal into a
+  narrowly named common module. Keep platform-specific constants with their
+  platform unless another domain actually consumes the same contract.
+- Deviate when: one domain explicitly embeds another domain's public format;
+  document that contract at the import.
+
+## Rule evolution
+
+### G-Rule-1: Treat a rule addition as a registry-wide change
+
+- Why: a `LintRule` participates in lookup, configuration, default severity,
+  strictness modes, documentation, and possibly autofix.
+- Guidance: update the enum, code and name mappings, compiled default,
+  `ALL_RULES`, validator dispatch, tests, and `docs/rules.md` together. Add an
+  autofix mapping only when the transformation is deterministic and safe.
+- Deviate when: no new rule is being added, such as broadening the inputs of an
+  existing rule without changing its contract.
+
+### G-Compat-1: Evolve public rule and CLI contracts additively
+
+- Why: users persist rule codes and names in `agent-lint.toml` and branch on
+  process exit status in CI.
+- Guidance: do not reuse a code or name for new semantics. Prefer a new rule
+  over silently redefining an old one. Preserve exit-code meanings and stable
+  diagnostic prefixes unless a migration is deliberate and documented.
+- Deviate when: correcting a contract that is unsafe or unusable; include a
+  migration note and update every first-party consumer in the same change.
+
+### G-Diag-1: Report actionable facts with stable identity
+
+- Why: a diagnostic is both user guidance and machine-observable output.
+- Guidance: report the path or surface, the violated condition, and enough
+  context to fix it without embedding secrets. Keep wording deterministic and
+  assert the rule identity in tests instead of matching only prose.
+- Deviate when: the rule is repository-wide and no single path owns the
+  violation.
+
+## Input and filesystem handling
+
+### G-Parse-1: Preserve missing, invalid, and valid as distinct states
+
+- Why: treating an unreadable or malformed file as absent can suppress the
+  diagnostic that explains the real problem.
+- Guidance: use a typed state like `ManifestState` when absence is allowed but
+  malformed content is not. Parse once at the owning boundary and pass the
+  result down instead of re-reading the same file in sibling validators.
+- Deviate when: the rule is explicitly presence-only or the external format
+  defines malformed content as equivalent to absence.
+
+### G-Path-1: Make repository-relative path policy explicit
+
+- Why: Agent Lint changes to the resolved repository root and configuration
+  globs are matched against normalized repository-relative paths.
+- Guidance: construct paths from the repository root, normalize paths before
+  exclusion checks, skip known generated or dependency trees during recursive
+  discovery, and apply exclusions before expensive reads.
+- Deviate when: an API provides an absolute path; convert it at the boundary or
+  explain why retaining the absolute identity is required.
+
+### G-Input-1: Treat linted repository content as untrusted data
+
+- Why: configuration, Markdown, JSON, TOML, YAML, command strings, and paths
+  are controlled by the repository being analyzed.
+- Guidance: parse rather than execute, validate path containment before a
+  mutation, avoid shell interpretation, bound recursive or content-heavy work,
+  and do not echo likely secret values in diagnostics.
+- Deviate when: none for executing linted content. A test fixture may invoke a
+  controlled helper that is part of the test itself.
+
+## Autofix
+
+### G-FixSafe-1: Make every autofix conservative and idempotent
+
+- Why: `--autofix` writes to user repositories, so a plausible but incorrect
+  rewrite is worse than leaving a diagnostic.
+- Guidance: fix only a syntax or metadata transformation with one clear result.
+  Preserve unrelated bytes where practical, honor the validator's scope and
+  exclusions, return whether a write actually changed content, and test that a
+  second run makes no change.
+- Deviate when: none for idempotency. If a safe deterministic repair is not
+  available, leave the rule diagnostic-only.
+
+### G-FixSafe-2: Validator and fixer share one contract
+
+- Why: duplicated recognition logic can make a fixer rewrite content that its
+  validator would accept or fail to repair content it rejects.
+- Guidance: share constants and parsers, or pin equivalent behavior with paired
+  tests. A rule marked auto-fixable must have a reachable handler and a test
+  that validates after mutation.
+- Deviate when: platform-specific implementations must use different system
+  APIs while producing the same postcondition.
+
+## Rust and tests
+
+### G-Rust-1: Encode domain states in types and exhaustive matches
+
+- Why: enums such as `LintMode`, `CliMode`, `ManifestState`, `Severity`, and
+  `LintRule` make illegal fall-through visible to the compiler.
+- Guidance: prefer a small enum or struct over boolean combinations and magic
+  strings. Match exhaustively when adding a state should require every consumer
+  to make a decision.
+- Deviate when: values are an open-ended external namespace that must remain
+  forward-compatible.
+
+### G-Rust-2: Keep failure handling proportional to the boundary
+
+- Why: invalid user input should become a diagnostic or a CLI error, while a
+  violated internal assumption should be loud.
+- Guidance: use `Result` for recoverable I/O and parse failures. Reserve
+  `unwrap` and `expect` in production for construction-time constants or
+  assumptions already checked in the same path, with a reason visible nearby.
+- Deviate when: test setup should fail immediately and the panic already names
+  the failed operation.
+
+### G-Test-2: Isolate tests that mutate process-global state
+
+- Why: the working directory and environment are shared by parallel tests.
+- Guidance: use `CwdGuard`, temporary directories, and `serial_test` for tests
+  that change the current directory. Restore environment variables and other
+  process-global state through drop guards even when assertions panic.
+- Deviate when: the test never mutates process-global state.
+
+## Documentation and enforcement
+
+### G-Doc-1: Keep drift-prone facts out of prose
+
+- Why: rule totals, source line numbers, and duplicated defaults become stale
+  without a compiler error.
+- Guidance: refer to code by symbol or module, derive counts from `ALL_RULES`,
+  and keep exact defaults in one code owner. Sweep README and `docs/` when
+  renaming a rule, flag, config key, module, or script.
+- Deviate when: a literal is itself part of the public contract and tests pin
+  the documentation to the implementation.
+
+### G-Enf-1: Prefer mechanical enforcement for deterministic rules
+
+- Why: review guidance is weak protection for a condition a test or lint can
+  decide exactly.
+- Guidance: add a focused test, compiler-enforced type, pre-commit hook, or
+  lint when a violation is deterministic and likely to recur. Keep this file
+  for judgment calls and architectural direction.
+- Deviate when: enforcement would duplicate an upstream compiler or linter
+  check without improving its signal.

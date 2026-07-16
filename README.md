@@ -138,3 +138,5 @@ See [Configuration docs](docs/configuration.md) for the full reference.
 | [GitHub Action](docs/github-action.md) | Action inputs, token configuration, adding CI to your repo |
 | [Configuration](docs/configuration.md) | `agent-lint.toml` format, rule identifiers, file exclusion, strictness modes |
 | [Development](docs/development.md) | Local setup, Makefile targets, project structure, CI/CD |
+| [Architectural Guidelines](ARCHITECTURAL_GUIDELINES.md) | Preferred design, ownership, testing, and change practices |
+| [Architectural Invariants](ARCHITECTURAL_INVARIANTS.md) | Absolute contracts for the lint pipeline and public behavior |
