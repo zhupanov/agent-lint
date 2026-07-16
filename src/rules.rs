@@ -946,7 +946,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            140,
+            153,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1028,8 +1028,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            47,
-            "Expected 47 default-warning rules, got {}",
+            51,
+            "Expected 51 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1077,8 +1077,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            88,
-            "Expected 88 default-error rules, got {}",
+            97,
+            "Expected 97 default-error rules, got {}",
             errors.len()
         );
     }
