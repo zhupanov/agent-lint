@@ -1,11 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -15,17 +10,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  auto-tag:
-    if: github.event_name == 'push' && github.ref_type != 'tag'
+  validate-version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      should-release: ${{ steps.tag.outputs.created }}
-      version: ${{ steps.tag.outputs.version }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Read and validate versions
         id: version
@@ -50,28 +41,8 @@ jobs:
 
           echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Check and create tag
-        id: tag
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if git tag -l "v${VERSION}" | grep -q .; then
-            echo "Tag v${VERSION} already exists, skipping"
-            echo "created=false" >> "$GITHUB_OUTPUT"
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag "v${VERSION}"
-            git push origin "v${VERSION}"
-            echo "created=true" >> "$GITHUB_OUTPUT"
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: [auto-tag]
-    if: >-
-      github.ref_type == 'tag' ||
-      needs.auto-tag.outputs.should-release == 'true' ||
-      github.event_name == 'workflow_dispatch'
+    needs: validate-version
     strategy:
       fail-fast: false
       matrix:
@@ -111,17 +82,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          elif [ -n "${{ needs.auto-tag.outputs.version }}" ]; then
-            VERSION="${{ needs.auto-tag.outputs.version }}"
-          else
-            VERSION=$(jq -r '.version' package.json)
-            if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-              echo "::error::Could not read version from package.json"
-              exit 1
-            fi
-          fi
+          VERSION="${{ needs.validate-version.outputs.version }}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Package
@@ -141,12 +102,8 @@ jobs:
           path: ${{ env.ARCHIVE }}
 
   release:
-    needs: [build, auto-tag]
+    needs: [build, validate-version]
     runs-on: ubuntu-latest
-    if: >-
-      github.ref_type == 'tag' ||
-      needs.auto-tag.outputs.should-release == 'true' ||
-      github.event_name == 'workflow_dispatch'
     timeout-minutes: 10
 
     steps:
@@ -162,17 +119,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          elif [ -n "${{ needs.auto-tag.outputs.version }}" ]; then
-            VERSION="${{ needs.auto-tag.outputs.version }}"
-          else
-            VERSION=$(jq -r '.version' package.json)
-            if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-              echo "::error::Could not read version from package.json"
-              exit 1
-            fi
-          fi
+          VERSION="${{ needs.validate-version.outputs.version }}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Generate checksums
@@ -199,6 +146,7 @@ jobs:
             gh release create "v${VERSION}" \
               --repo "${{ github.repository }}" \
               --title "v${VERSION}" \
+              --target "${GITHUB_SHA}" \
               --generate-notes \
               agent-lint-*.tar.gz \
               "agent-lint-v${VERSION}-checksums.txt"
