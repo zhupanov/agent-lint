@@ -8,9 +8,10 @@
 
 ## Features
 
-- **280 lint rules** across 18 categories (Manifest, Hooks, Skills, Agents,
+- **286 lint rules** across 19 categories (Manifest, Hooks, Skills, Agents,
   Prompt Content, Claude Rules, Output Styles, Settings, Cursor Rules, Cursor
-  Skills, Hygiene, Email, User Config, MCP, Codex, Slack, Docs, Markdown Structure)
+  Skills, Hygiene, Email, User Config, MCP, Codex, Slack, Docs, Markdown
+  Structure, Link/import integrity)
 - **Two lint modes**:
   - **Basic mode** -- validates detected Claude, Cursor, Codex, and standalone
     MCP configuration
@@ -85,7 +86,7 @@ See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **280 rules** organized into 18 categories:
+Agent Lint ships **286 rules** organized into 19 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
@@ -107,6 +108,7 @@ Agent Lint ships **280 rules** organized into 18 categories:
 | Slack | K | 1 | Slack fallback consistency |
 | Docs | D | 5 | Docs pointers, CLAUDE.md import closure and size, TODO detection |
 | Markdown Structure | X | 5 | Strict YAML frontmatter, unclosed fences, XML tag balance |
+| Link/import integrity | L | 6 | `@import` graph (missing, circular, depth, duplicate) and markdown-link/script integrity for instruction files |
 
 For the complete rule table with codes, names, defaults, and auto-fixable
 rules, see **[docs/rules.md](docs/rules.md)**.
@@ -116,7 +118,7 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | Claude, Cursor, Codex, or MCP configuration is present | Detected platform configuration plus always-mode Claude rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 280 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 286 rules including manifest, agents, hygiene, MCP, and plugin-only S- and L-rules |
 
 If no supported agent or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
 

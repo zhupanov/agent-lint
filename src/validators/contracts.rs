@@ -64,6 +64,12 @@ static FI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[\s;])fi(?:[\s;]
 static FORWARDED_ARRAY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^[^#\n]*(?:exec\s+)?[^\n]*"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}""#).unwrap()
 });
+static NPM_RUN: LazyLock<Regex> = LazyLock::new(|| {
+    // The name class allows `:` because npm scripts are commonly
+    // colon-namespaced (e.g. `build:css`, `test:integration`); rejecting `:`
+    // would truncate `npm run build:css` to `build` and false-positive L006.
+    Regex::new(r"\bnpm\s+run(?:-script)?\s+([A-Za-z0-9][A-Za-z0-9_:-]*)").unwrap()
+});
 
 pub fn validate_contracts(
     diag: &mut DiagnosticCollector,
@@ -76,6 +82,9 @@ pub fn validate_contracts(
     validate_script_contracts(diag, exclude, include_public);
     validate_claude_import_budget(diag, exclude);
     validate_inline_paths(diag, exclude);
+    validate_import_graph(diag, exclude);
+    validate_markdown_links(diag, exclude);
+    validate_npm_scripts(diag, exclude);
 }
 
 fn scoped_skill_files(include_public: bool) -> Vec<PathBuf> {
@@ -885,6 +894,215 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     }
 }
 
+/// Maximum number of `@import` hops Claude Code resolves before giving up.
+const IMPORT_MAX_DEPTH: usize = 5;
+
+/// Resolve an `@import` target to a normalized repository-relative path
+/// without requiring it to exist. Returns `None` if the path is absolute,
+/// escapes the repository root, or cannot be normalized. Mirrors
+/// [`resolve_repo_reference`] minus the existence check so callers can
+/// distinguish "unresolvable" from "missing on disk".
+fn resolve_import_target(source: &Path, raw: &str) -> Option<PathBuf> {
+    let direct = PathBuf::from(raw.trim_start_matches("./"));
+    if !direct.is_absolute() && !direct.components().any(|part| part == Component::ParentDir) {
+        return normalize_repo_relative(&direct);
+    }
+    let joined = source.parent().unwrap_or_else(|| Path::new(".")).join(raw);
+    normalize_repo_relative(&joined)
+}
+
+fn format_import_chain(chain: &[PathBuf], target: &Path) -> String {
+    let mut parts: Vec<String> = chain.iter().map(|p| p.display().to_string()).collect();
+    parts.push(target.display().to_string());
+    parts.join(" → ")
+}
+
+/// L001--L004: `@import` graph integrity for each configured instruction file.
+///
+/// Walks the `@import` tree once per root instruction file, reporting missing
+/// targets (L001), circular chains (L002), chains deeper than
+/// [`IMPORT_MAX_DEPTH`] hops (L003), and duplicate imports of the same file
+/// within a single source (L004, after normalizing leading `./`).
+fn validate_import_graph(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    for relpath in diag.config().instruction_files.clone() {
+        if exclude.is_excluded(&relpath) {
+            continue;
+        }
+        let root = PathBuf::from(&relpath);
+        let Some(root) = normalize_repo_relative(&root) else {
+            continue;
+        };
+        if !root.is_file() || root.is_symlink() {
+            continue;
+        }
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        visited.insert(root.clone());
+        let mut stack: Vec<PathBuf> = vec![root.clone()];
+        walk_imports(&root, &mut stack, &mut visited, diag);
+    }
+}
+
+fn walk_imports(
+    source: &Path,
+    stack: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
+    diag: &mut DiagnosticCollector,
+) {
+    let Ok(content) = fs::read_to_string(source) else {
+        return;
+    };
+    let mut reported_missing: HashSet<PathBuf> = HashSet::new();
+    let mut seen_targets: HashSet<PathBuf> = HashSet::new();
+    for (number, line) in lines_outside_fences_with_numbers(&content) {
+        for capture in IMPORT.captures_iter(line) {
+            let raw = &capture[1];
+            let resolved = resolve_import_target(source, raw);
+            let Some(target) = resolved else {
+                let key = PathBuf::from(raw);
+                if reported_missing.insert(key.clone()) {
+                    diag.report(
+                        LintRule::ImportPathMissing,
+                        &format!(
+                            "{}:{number}: @import target does not resolve in the repository: {raw}",
+                            source.display()
+                        ),
+                    );
+                }
+                continue;
+            };
+            if !target.is_file() {
+                if reported_missing.insert(target.clone()) {
+                    diag.report(
+                        LintRule::ImportPathMissing,
+                        &format!(
+                            "{}:{number}: @import target does not exist: {}",
+                            source.display(),
+                            target.display()
+                        ),
+                    );
+                }
+                continue;
+            }
+            if !seen_targets.insert(target.clone()) {
+                diag.report(
+                    LintRule::DuplicateImport,
+                    &format!(
+                        "{}:{number}: duplicate @import of {}",
+                        source.display(),
+                        target.display()
+                    ),
+                );
+                continue;
+            }
+            if stack.len() > IMPORT_MAX_DEPTH {
+                diag.report(
+                    LintRule::ImportDepthExceeded,
+                    &format!(
+                        "{}:{number}: @import chain depth exceeds {IMPORT_MAX_DEPTH} hops: {}",
+                        source.display(),
+                        format_import_chain(stack, &target)
+                    ),
+                );
+                continue;
+            }
+            if let Some(index) = stack.iter().position(|p| p == &target) {
+                diag.report(
+                    LintRule::CircularImport,
+                    &format!(
+                        "{}:{number}: circular @import chain: {}",
+                        source.display(),
+                        format_import_chain(&stack[index..], &target)
+                    ),
+                );
+                continue;
+            }
+            if visited.insert(target.clone()) {
+                stack.push(target.clone());
+                walk_imports(&target, stack, visited, diag);
+                stack.pop();
+            }
+        }
+    }
+}
+
+fn is_external_link(target: &str) -> bool {
+    target.contains("://") || target.starts_with("mailto:") || target.starts_with("//")
+}
+
+/// L005: broken relative markdown link `[text](path.md)` in any configured
+/// instruction file. External URLs, pure anchors, and links inside code fences
+/// are skipped; the shared [`MARKDOWN_LINK`] regex already restricts captures
+/// to `.md` targets and strips `#anchor` suffixes.
+fn validate_markdown_links(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    for relpath in diag.config().instruction_files.clone() {
+        if exclude.is_excluded(&relpath) {
+            continue;
+        }
+        let path = Path::new(&relpath);
+        let Some(content) = read_text(path, exclude) else {
+            continue;
+        };
+        for (number, line) in lines_outside_fences_with_numbers(&content) {
+            for capture in MARKDOWN_LINK.captures_iter(line) {
+                let target = &capture[1];
+                if is_external_link(target) {
+                    continue;
+                }
+                let Some(resolved) = resolve_import_target(path, target) else {
+                    diag.report(
+                        LintRule::BrokenMarkdownLink,
+                        &format!("{relpath}:{number}: broken markdown link target: {target}"),
+                    );
+                    continue;
+                };
+                if !resolved.is_file() {
+                    diag.report(
+                        LintRule::BrokenMarkdownLink,
+                        &format!("{relpath}:{number}: broken markdown link target: {target}"),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// L006: `npm run <script>` referenced from a configured instruction file
+/// must exist in `package.json`'s `scripts` map. Silently skipped when there
+/// is no `package.json` or it defines no `scripts` object.
+fn validate_npm_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let Ok(pkg_text) = fs::read_to_string("package.json") else {
+        return;
+    };
+    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&pkg_text) else {
+        return;
+    };
+    let Some(scripts) = pkg.get("scripts").and_then(|value| value.as_object()) else {
+        return;
+    };
+    for relpath in diag.config().instruction_files.clone() {
+        if exclude.is_excluded(&relpath) {
+            continue;
+        }
+        let path = Path::new(&relpath);
+        let Some(content) = read_text(path, exclude) else {
+            continue;
+        };
+        for (number, line) in lines_outside_fences_with_numbers(&content) {
+            for capture in NPM_RUN.captures_iter(line) {
+                let script = &capture[1];
+                if !scripts.contains_key(script) {
+                    diag.report(
+                        LintRule::NpmScriptMissing,
+                        &format!(
+                            "{relpath}:{number}: npm run {script} is not defined in package.json scripts"
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn scoped_scripts(include_public: bool) -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from(".claude/skills")];
     if include_public {
@@ -1498,5 +1716,247 @@ mod tests {
         let fences = markdown_fences("````bash\necho hi\n```\necho still\n````\n");
         assert_eq!(fences.len(), 1);
         assert_eq!(fences[0].body.len(), 3);
+    }
+
+    // ── L001: import-path-missing ───────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn l001_flags_missing_import_target_once_per_pair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write("CLAUDE.md", "@docs/missing.md\n@./docs/missing.md\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let l001: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::ImportPathMissing)
+            .collect();
+        assert_eq!(l001.len(), 1, "dedup missing target per (source, target)");
+        assert!(l001[0].message.contains("does not exist"));
+    }
+
+    // ── L002: circular-import ───────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn l002_reports_circular_import_chain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs").unwrap();
+        fs::write("CLAUDE.md", "@docs/a.md\n").unwrap();
+        fs::write("docs/a.md", "@CLAUDE.md\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let cycle: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::CircularImport)
+            .collect();
+        assert_eq!(cycle.len(), 1);
+        assert!(cycle[0].message.contains("circular"));
+        assert!(cycle[0].message.contains("CLAUDE.md"));
+        assert!(cycle[0].message.contains("docs/a.md"));
+    }
+
+    // ── L003: import-depth-exceeded ─────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn l003_flags_chain_deeper_than_five_hops() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs").unwrap();
+        fs::write("CLAUDE.md", "@docs/a.md\n").unwrap();
+        fs::write("docs/a.md", "@docs/b.md\n").unwrap();
+        fs::write("docs/b.md", "@docs/c.md\n").unwrap();
+        fs::write("docs/c.md", "@docs/d.md\n").unwrap();
+        fs::write("docs/d.md", "@docs/e.md\n").unwrap();
+        fs::write("docs/e.md", "@docs/f.md\n").unwrap();
+        fs::write("docs/f.md", "end\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let depth: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::ImportDepthExceeded)
+            .collect();
+        assert_eq!(depth.len(), 1);
+        assert!(depth[0].message.contains("depth exceeds 5"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l003_allows_chain_of_five_hops() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs").unwrap();
+        // CLAUDE → a → b → c → d → e: exactly 5 hops, no violation.
+        fs::write("CLAUDE.md", "@docs/a.md\n").unwrap();
+        fs::write("docs/a.md", "@docs/b.md\n").unwrap();
+        fs::write("docs/b.md", "@docs/c.md\n").unwrap();
+        fs::write("docs/c.md", "@docs/d.md\n").unwrap();
+        fs::write("docs/d.md", "@docs/e.md\n").unwrap();
+        fs::write("docs/e.md", "end\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_import_graph(&mut diag, &ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::ImportDepthExceeded)
+        );
+    }
+
+    // ── L004: duplicate-import ──────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn l004_flags_duplicate_import_with_dot_slash_normalization() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs").unwrap();
+        fs::write("docs/a.md", "shared\n").unwrap();
+        fs::write("CLAUDE.md", "@docs/a.md\n@./docs/a.md\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let dup: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::DuplicateImport)
+            .collect();
+        assert_eq!(dup.len(), 1);
+        assert!(dup[0].message.contains("duplicate"));
+    }
+
+    // ── L005: broken-markdown-link ──────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn l005_flags_broken_relative_markdown_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write("CLAUDE.md", "See [details](docs/missing.md) for more.\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_markdown_links(&mut diag, &ExcludeSet::default());
+        let broken: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::BrokenMarkdownLink)
+            .collect();
+        assert_eq!(broken.len(), 1);
+        assert!(broken[0].message.contains("docs/missing.md"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l005_skips_external_anchor_fenced_and_image_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write(
+            "CLAUDE.md",
+            "External [ex](https://example.com/page.md) ok.\n\
+             Anchor [an](#section) ok.\n\
+             Image ![pic](assets/missing.png) ok.\n\
+             ```text\n\
+             [in fence](docs/missing.md)\n\
+             ```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_markdown_links(&mut diag, &ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::BrokenMarkdownLink),
+            "external, anchor, image, and fenced links must not trigger L005"
+        );
+    }
+
+    // ── L006: npm-script-missing ────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn l006_flags_npm_run_script_missing_from_package_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write(
+            "package.json",
+            "{\"name\":\"demo\",\"scripts\":{\"test\":\"echo hi\"}}",
+        )
+        .unwrap();
+        fs::write("CLAUDE.md", "Run `npm run build` to compile.\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_npm_scripts(&mut diag, &ExcludeSet::default());
+        let missing: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::NpmScriptMissing)
+            .collect();
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].message.contains("build"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l006_accepts_colon_namespaced_script_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write(
+            "package.json",
+            "{\"name\":\"demo\",\"scripts\":{\"build:css\":\"postcss\"}}",
+        )
+        .unwrap();
+        fs::write("CLAUDE.md", "Run `npm run build:css` to compile styles.\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_npm_scripts(&mut diag, &ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::NpmScriptMissing),
+            "colon-namespaced npm scripts must be matched in full, not truncated at the colon"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l006_silent_when_no_package_json_or_no_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write("CLAUDE.md", "Run `npm run build` to compile.\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_npm_scripts(&mut diag, &ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::NpmScriptMissing),
+            "L006 must be silent when package.json is absent"
+        );
+
+        // package.json present but with no scripts map: still silent.
+        fs::write("package.json", "{\"name\":\"demo\"}").unwrap();
+        let mut diag2 = DiagnosticCollector::new_all_enabled();
+        validate_npm_scripts(&mut diag2, &ExcludeSet::default());
+        assert!(
+            !diag2
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::NpmScriptMissing),
+            "L006 must be silent when package.json has no scripts object"
+        );
     }
 }
