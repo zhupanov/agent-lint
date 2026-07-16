@@ -55,13 +55,13 @@ every rule to error regardless of config. See
 | H010 | `hook-type-missing` | Hook object missing required `type` field | Always | error |
 | H011 | `hook-type-unknown` | Hook `type` is not `command`/`prompt`/`agent`/`http`/`mcp_tool` | Always | error |
 | H012 | `hook-command-required` | `type: command` hook missing `command` | Always | error |
-| H013 | `hook-prompt-required` | `type: prompt` hook missing `prompt` | Always | error |
+| H013 | `hook-prompt-required` | `type: prompt` or `type: agent` hook missing `prompt` | Always | error |
 | H014 | `hook-url-required` | `type: http` hook missing `url` | Always | error |
 | H015 | `hook-server-required` | `type: mcp_tool` hook missing `server` | Always | error |
 | H016 | `hook-tool-required` | `type: mcp_tool` hook missing `tool` | Always | error |
 | H017 | `hook-timeout-invalid` | Hook `timeout` is not a positive integer | Always | error |
 | H018 | `hook-async-invalid` | `async: true` on a non-`command` hook | Always | error |
-| H019 | `hook-model-invalid` | `model` on a non-`prompt` hook | Always | error |
+| H019 | `hook-model-invalid` | `model` on a hook other than `prompt`/`agent` | Always | error |
 | H020 | `hook-once-invalid` | Hook `once` is not a boolean | Always | error |
 | H021 | `hook-if-invalid` | Hook `if` is not a non-empty string | Always | warn |
 | H022 | `hook-shell-invalid` | Hook `shell` is not `bash`/`powershell` | Always | warn |
@@ -88,10 +88,14 @@ The valid event list and handler-type table live in
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks.md);
 expect them to change with Claude Code releases.
 
-H009 uses an explicit list of events that take no matcher. Several non-tool
-events (`SessionStart`, `Setup`, `Notification`, `SubagentStart`,
-`ConfigChange`, `FileChanged`, `StopFailure`) do accept documented matchers and
-are not flagged.
+H009 uses an explicit list of the events the hooks reference marks "no matcher
+support": `UserPromptSubmit`, `PostToolBatch`, `Stop`, `TeammateIdle`,
+`TaskCreated`, `TaskCompleted`, `CwdChanged`, `MessageDisplay`,
+`WorktreeCreate`, and `WorktreeRemove`. Every other event filters on some
+documented field -- not just the tool events, but also `SessionStart` (how the
+session started), `SessionEnd` (exit reason), `PreCompact`/`PostCompact`
+(`manual`/`auto`), `SubagentStop` (agent type), and `InstructionsLoaded` (load
+reason) -- so a blanket "non-tool event" check would flag valid configs.
 
 Hook `hooks:` keys in skill and agent frontmatter are not yet validated; that
 requires structured YAML frontmatter parsing.

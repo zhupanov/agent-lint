@@ -65,24 +65,22 @@ const VALID_EVENTS: &[&str] = &[
 /// Events that take no `matcher`. Only these fire H009.
 ///
 /// This is deliberately an explicit allowlist rather than a "non-tool event"
-/// test: several non-tool events take documented matchers (SessionStart,
-/// Setup, Notification, SubagentStart, ConfigChange, FileChanged, StopFailure),
-/// so a blanket non-tool check would produce false positives on valid configs.
+/// test: most non-tool events do take a documented matcher, so a blanket
+/// non-tool check would produce false positives on valid configs. Only the
+/// events the hooks reference marks "no matcher support" belong here — every
+/// other event in `VALID_EVENTS` filters on some field (`SessionEnd` on exit
+/// reason, `PreCompact`/`PostCompact` on `manual`/`auto`, `SubagentStop` on
+/// agent type, `Elicitation`/`ElicitationResult` on MCP server name,
+/// `InstructionsLoaded` on load reason, `UserPromptExpansion` on command name).
 const NO_MATCHER_EVENTS: &[&str] = &[
-    "Stop",
-    "SessionEnd",
     "UserPromptSubmit",
-    "UserPromptExpansion",
-    "PreCompact",
-    "PostCompact",
-    "SubagentStop",
+    "PostToolBatch",
+    "Stop",
+    "TeammateIdle",
     "TaskCreated",
     "TaskCompleted",
-    "Elicitation",
-    "ElicitationResult",
     "CwdChanged",
     "MessageDisplay",
-    "InstructionsLoaded",
     "WorktreeCreate",
     "WorktreeRemove",
 ];
@@ -188,7 +186,7 @@ fn validate_hook_object(
     };
 
     // H012/H013/H014/H015/H016: per-type required fields.
-    // `agent` has no required field.
+    // `prompt` and `agent` share one field table, and both require `prompt`.
     match hook_type {
         Some("command") => require_field(
             hook,
@@ -198,14 +196,9 @@ fn validate_hook_object(
             LintRule::HookCommandRequired,
             diag,
         ),
-        Some("prompt") => require_field(
-            hook,
-            "prompt",
-            "prompt",
-            &ctx,
-            LintRule::HookPromptRequired,
-            diag,
-        ),
+        Some(t @ ("prompt" | "agent")) => {
+            require_field(hook, t, "prompt", &ctx, LintRule::HookPromptRequired, diag)
+        }
         Some("http") => require_field(hook, "http", "url", &ctx, LintRule::HookUrlRequired, diag),
         Some("mcp_tool") => {
             require_field(
@@ -249,11 +242,11 @@ fn validate_hook_object(
         );
     }
 
-    // H019: model is documented for prompt handlers only.
-    if hook.contains_key("model") && matches!(hook_type, Some(t) if t != "prompt") {
+    // H019: model is documented for prompt and agent handlers only.
+    if hook.contains_key("model") && matches!(hook_type, Some(t) if t != "prompt" && t != "agent") {
         diag.report(
             LintRule::HookModelInvalid,
-            &format!("{ctx} sets 'model', which is only valid on type 'prompt'"),
+            &format!("{ctx} sets 'model', which is only valid on type 'prompt' or 'agent'"),
         );
     }
 
@@ -463,7 +456,6 @@ mod tests {
             "PreToolUse",
             "PostToolUse",
             "PostToolUseFailure",
-            "PostToolBatch",
             "PermissionRequest",
             "PermissionDenied",
             "SessionStart",
@@ -473,11 +465,57 @@ mod tests {
             "ConfigChange",
             "FileChanged",
             "StopFailure",
+            // Non-tool events that still filter on a documented field:
+            // exit reason, manual/auto, agent type, MCP server name,
+            // load reason, and command name respectively.
+            "SessionEnd",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStop",
+            "Elicitation",
+            "ElicitationResult",
+            "InstructionsLoaded",
+            "UserPromptExpansion",
         ] {
             let errors = check(json!({"hooks": {event: [{"matcher": "x", "hooks": []}]}}));
             assert!(
                 errors.is_empty(),
                 "{event} must accept a matcher: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn h009_partitions_every_documented_event() {
+        // Every valid event is either no-matcher or matcher-taking; the two
+        // regression lists above must jointly cover VALID_EVENTS so a newly
+        // added event cannot silently default to "matcher allowed".
+        let matcher_taking = [
+            "PreToolUse",
+            "PostToolUse",
+            "PostToolUseFailure",
+            "PermissionRequest",
+            "PermissionDenied",
+            "SessionStart",
+            "Setup",
+            "Notification",
+            "SubagentStart",
+            "ConfigChange",
+            "FileChanged",
+            "StopFailure",
+            "SessionEnd",
+            "PreCompact",
+            "PostCompact",
+            "SubagentStop",
+            "Elicitation",
+            "ElicitationResult",
+            "InstructionsLoaded",
+            "UserPromptExpansion",
+        ];
+        for event in VALID_EVENTS {
+            assert!(
+                NO_MATCHER_EVENTS.contains(event) ^ matcher_taking.contains(event),
+                "{event} must appear in exactly one of the two matcher lists"
             );
         }
     }
@@ -515,7 +553,7 @@ mod tests {
         let complete = [
             json!({"type": "command", "command": "echo hi"}),
             json!({"type": "prompt", "prompt": "do it"}),
-            json!({"type": "agent"}),
+            json!({"type": "agent", "prompt": "verify it"}),
             json!({"type": "http", "url": "https://example.com"}),
             json!({"type": "mcp_tool", "server": "s", "tool": "t"}),
         ];
@@ -567,8 +605,11 @@ mod tests {
     }
 
     #[test]
-    fn agent_type_requires_no_field() {
-        assert!(check(wrap("PreToolUse", json!({"type": "agent"}))).is_empty());
+    fn h013_agent_without_prompt_fires() {
+        // Prompt and agent hooks share one field table; both require 'prompt'.
+        let errors = check(wrap("PreToolUse", json!({"type": "agent"})));
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("of type 'agent' requires a non-empty 'prompt'"));
     }
 
     // ── H017: timeout ───────────────────────────────────────────────
@@ -625,17 +666,19 @@ mod tests {
     }
 
     #[test]
-    fn h019_model_on_prompt_passes_but_fires_elsewhere() {
-        let ok = check(wrap(
-            "PreToolUse",
+    fn h019_model_on_prompt_and_agent_passes_but_fires_elsewhere() {
+        // 'model' is documented on the shared prompt/agent field table.
+        for hook in [
             json!({"type": "prompt", "prompt": "p", "model": "sonnet"}),
-        ));
-        assert!(ok.is_empty(), "model on prompt must pass: {ok:?}");
+            json!({"type": "agent", "prompt": "p", "model": "sonnet"}),
+        ] {
+            let ok = check(wrap("PreToolUse", hook.clone()));
+            assert!(ok.is_empty(), "model on {hook} must pass: {ok:?}");
+        }
 
-        // Narrowed per the docs: 'agent' does NOT accept model.
         let errors = check(wrap(
             "PreToolUse",
-            json!({"type": "agent", "model": "sonnet"}),
+            json!({"type": "command", "command": "x", "model": "sonnet"}),
         ));
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("'model'"));

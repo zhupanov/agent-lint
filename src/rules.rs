@@ -66,7 +66,7 @@ pub enum LintRule {
     HookTypeUnknown,
     /// H012: type: command hook missing 'command'
     HookCommandRequired,
-    /// H013: type: prompt hook missing 'prompt'
+    /// H013: type: prompt or type: agent hook missing 'prompt'
     HookPromptRequired,
     /// H014: type: http hook missing 'url'
     HookUrlRequired,
@@ -78,7 +78,7 @@ pub enum LintRule {
     HookTimeoutInvalid,
     /// H018: 'async: true' on a non-command hook
     HookAsyncInvalid,
-    /// H019: 'model' on a non-prompt hook
+    /// H019: 'model' on a hook other than prompt/agent
     HookModelInvalid,
     /// H020: hook 'once' is not a boolean
     HookOnceInvalid,
