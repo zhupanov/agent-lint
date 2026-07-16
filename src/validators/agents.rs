@@ -195,6 +195,8 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
                     "{agent_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
                 ),
             );
+            // X002–X005 still apply when frontmatter is broken.
+            super::markdown_structure::check_markdown_structure(agent_path, content, diag);
             return;
         }
     };

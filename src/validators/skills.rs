@@ -188,6 +188,8 @@ fn validate_skill_frontmatter_in_dir(
                         "{skill_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
                     ),
                 );
+                // X002–X005 still apply to the markdown file when frontmatter is broken.
+                super::markdown_structure::check_markdown_structure(&skill_path, &content, diag);
                 continue;
             }
         };

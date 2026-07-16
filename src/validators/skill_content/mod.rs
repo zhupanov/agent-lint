@@ -281,6 +281,48 @@ mod tests {
         assert!(diag.errors().iter().any(|e| e.contains("reserved word")));
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s012_exact_skill_reserved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/skill").unwrap();
+        std::fs::write(
+            "skills/skill/SKILL.md",
+            "---\nname: skill\ndescription: A valid skill description here\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors().iter().any(|e| e.contains("reserved word")),
+            "exact name 'skill' must fire S012: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s012_skill_substring_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/skill-helper").unwrap();
+        std::fs::write(
+            "skills/skill-helper/SKILL.md",
+            "---\nname: skill-helper\ndescription: A valid skill description here\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("reserved word")),
+            "'skill-helper' must not fire S012 exact-skill match: {:?}",
+            diag.errors()
+        );
+    }
+
     // ── S013: name-has-xml ──────────────────────────────────────────
 
     #[test]

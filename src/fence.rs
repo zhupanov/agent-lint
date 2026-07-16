@@ -459,6 +459,12 @@ mod tests {
     }
 
     #[test]
+    fn find_unclosed_fence_line_reports_opener() {
+        assert_eq!(find_unclosed_fence_line("a\n```\nb\n"), Some(2));
+        assert_eq!(find_unclosed_fence_line("```\nb\n```\n"), None);
+    }
+
+    #[test]
     fn test_multiple_fences() {
         let text = "a\n```\nb\n```\nc\n~~~\nd\n~~~\ne";
         let outside: Vec<&str> = lines_outside_fences(text).collect();

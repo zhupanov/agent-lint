@@ -23,7 +23,11 @@ static RE_XML_TAG: LazyLock<Regex> =
 /// Inline code span: single backtick run (not a fence).
 static RE_INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`+[^`]*`+").unwrap());
 
-/// Run X002–X005 against a markdown file's full content.
+/// Run X002–X005 against a markdown file.
+///
+/// X002 scans the full file. X003–X005 scan the markdown **body** only (after
+/// frontmatter), matching the plan's body-scoped XML rules and avoiding FPs on
+/// angle brackets inside YAML values.
 pub fn check_markdown_structure(path: &str, content: &str, diag: &mut DiagnosticCollector) {
     check_unclosed_fence(path, content, diag);
     check_xml_balance(path, content, diag);
@@ -38,12 +42,36 @@ fn check_unclosed_fence(path: &str, content: &str, diag: &mut DiagnosticCollecto
     }
 }
 
+/// 1-based line number of the first body line. Files without frontmatter start
+/// at line 1. When an opening `---` has no closer, scan the whole file.
+fn xml_body_start_line(content: &str) -> usize {
+    let mut lines = content.lines();
+    let Some(first) = lines.next() else {
+        return 1;
+    };
+    if first != "---" {
+        return 1;
+    }
+    let mut line_no = 2;
+    for line in lines {
+        if line == "---" {
+            return line_no + 1;
+        }
+        line_no += 1;
+    }
+    1
+}
+
 fn check_xml_balance(path: &str, content: &str, diag: &mut DiagnosticCollector) {
+    let body_start = xml_body_start_line(content);
     let mut tracker = CodeFenceTracker::new();
     let mut stack: Vec<(String, usize)> = Vec::new();
 
     for (idx, raw_line) in content.lines().enumerate() {
         let line_no = idx + 1;
+        if line_no < body_start {
+            continue;
+        }
         let class = tracker.process_line(raw_line);
         if class != LineClass::Outside {
             continue;
@@ -161,5 +189,31 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         check_markdown_structure("f.md", "<example>\nhello\n</example>\n", &mut diag);
         assert!(codes(&diag).is_empty());
+    }
+
+    #[test]
+    fn xml_in_frontmatter_ignored() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(
+            "f.md",
+            "---\nname: foo\ndescription: use <Tool> here\n---\nHello\n",
+            &mut diag,
+        );
+        assert!(
+            codes(&diag).is_empty(),
+            "angle brackets in YAML frontmatter must not fire XML rules: {:?}",
+            codes(&diag)
+        );
+    }
+
+    #[test]
+    fn xml_in_body_after_frontmatter_reports() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure("f.md", "---\nname: foo\n---\n<div>\n", &mut diag);
+        assert!(
+            codes(&diag).iter().any(|c| c == "X003"),
+            "expected X003 on body tag: {:?}",
+            codes(&diag)
+        );
     }
 }
