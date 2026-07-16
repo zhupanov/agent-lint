@@ -2,22 +2,29 @@
 
 No review rounds completed.
 
-## /implement run 52EA960D-C46B-4731-B169-5EDABDB41B83: shipping
+## Exec Issues and Warnings
+Exec Issues (1):
+  1. ship route: merge and CI watch skipped — needs user (reason: first-fixer-non-health; pending NEXT_ACTION=ci-fix)
+    Material—blocks automated ship route requiring manual CI fix intervention before merge can proceed.
+Warnings (0):
 
-- **Outcome**: shipping
+## /implement run 52EA960D-C46B-4731-B169-5EDABDB41B83: pr-created
+
+- **Outcome**: ⚠️ NEEDS USER — merge and CI watch skipped (reason: first-fixer-non-health; pending: ci-fix)
 - Force: true
 - **Duration**: 00:31:50
-- **Cost**: 💰 TOTAL ~$0.34: Claude/GLM-5.2 token $2.95 (estimated $0.20), Codex-5.6 $0.00, Codex-mini $0.00, Cursor $0.00, Claude (subprocess) $0.14  |  Tokens: 9290k
+- **Cost**: 💰 TOTAL ~$2.37: Claude/GLM-5.2 token $3.63 (estimated $0.24), Codex-5.6 $0.00, Codex-mini $0.00, Cursor $0.00, Claude (subprocess) $2.13  |  Tokens: 14123k
 - **Cost note**: Token is API-equivalent GLM-5.2 pricing; estimated is plan cost (token ÷ 15).
 - **Issue**: #108: https://github.com/zhupanov/agent-lint/issues/108
+- **PR**: #126: https://github.com/zhupanov/agent-lint/pull/126
 - **Plan review**: N/A
 - **Plan coverage**: 0/0 firm headings; band: advisory; disposition: none; todos_left: 0
 - **Difficulty**: predicted MODERATE; applied MODERATE
 - **Dynamic archetypes**: N/A
 - **Code review**: 2/5 accepted
-- **Lines (PR diff)**: N/A
+- **Lines (PR diff)**: code +1257/-118, larch-logs +177/-0
 - **OOS filed**: 0
-- **Exec issues**: 0
+- **Exec issues**: 1
 - **Warnings**: 0
 - **Run logs**: `larch-logs/implement/52EA960D-C46B-4731-B169-5EDABDB41B83/`
 - **Main agent model**: glm-5.2
