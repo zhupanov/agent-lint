@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 117 rules across 9 categories. Every rule has a unique
+Agent Lint ships 126 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -120,17 +120,23 @@ every rule to error regardless of config. See
 | S061 | `unsafe-grep-probe` | A shell fence contains unbounded grep-family input, bare top-level `grep`, or a parent-directory ascent | Always | error |
 | S062 | `skill-closure-large` | Transitive always-loaded skill prompt closure exceeds `skill-closure-max-lines` | Always | warn |
 
-### Frontmatter Field Types (S023--S027)
+### Frontmatter Field Types (S023--S027, S063--S066, S070--S071)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S023 | `bool-field-invalid` | Boolean fields (`user-invocable`, `disable-model-invocation`) must be `true`/`false` | Always | error |
 | S024 | `context-field-invalid` | `context` field must be `fork` (if present) | Always | error |
-| S025 | `effort-field-invalid` | `effort` field must be `low`/`medium`/`high`/`max` (if present) | Always | error |
+| S025 | `effort-field-invalid` | `effort` field must be `low`/`medium`/`high`/`xhigh`/`max` (if present) | Always | error |
 | S026 | `shell-field-invalid` | `shell` field must be `bash`/`powershell` (if present) | Always | error |
 | S027 | `skill-unreachable` | Skill unreachable: `disable-model-invocation: true` AND `user-invocable: false` | Always | error |
+| S063 | `model-invalid` | `model` must be a recognized alias (`sonnet`/`opus`/`haiku`/`inherit`/…) or `claude-…` ID | Always | error |
+| S064 | `agent-no-fork` | `agent` is set without `context: fork` | Always | error |
+| S065 | `agent-unknown` | `agent` is not a built-in (`Explore`/`Plan`/`general-purpose`) or existing custom agent | Always | error |
+| S066 | `side-effect-auto` | Side-effect-named skill lacks `disable-model-invocation: true` | Always | warn |
+| S070 | `unknown-fm-field` | Unknown skill frontmatter field (typo catcher) | Always | warn |
+| S071 | `paths-empty` | `paths` field is present but empty | Always | warn |
 
-### Extended Frontmatter (S035, S039--S040, S042--S045)
+### Extended Frontmatter (S035, S039--S040, S042--S045, S067)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
@@ -141,8 +147,9 @@ every rule to error regardless of config. See
 | S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Always | error |
 | S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Always | warn |
 | S045 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Always | warn |
+| S067 | `bash-unscoped` | `allowed-tools` lists unscoped `Bash` (prefer `Bash(…)` scoping) | Always | warn |
 
-### Cross-Field and Structural (S028--S032, S036, S048, S054)
+### Cross-Field and Structural (S028--S032, S036, S048, S054, S068--S069)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
@@ -154,6 +161,8 @@ every rule to error regardless of config. See
 | S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no `##` headings | Plugin | warn |
 | S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Always | warn |
 | S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin | warn |
+| S068 | `injection-overflow` | More than 3 dynamic context injections (`!`…``) in skill body | Always | warn |
+| S069 | `hint-no-args` | `argument-hint` set but body never references `$ARGUMENTS` | Always | warn |
 
 ## Agent Rules (A)
 
@@ -229,7 +238,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 117):**
+**Auto-fixable rules (12 of 126):**
 
 | Rule | Code | Fix |
 |------|------|-----|

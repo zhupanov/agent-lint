@@ -7,7 +7,7 @@
 
 ## Features
 
-- **117 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
+- **126 lint rules** across 9 categories (Manifest, Hooks, Skills, Agents,
   Hygiene, Email, User Config, Slack, Docs)
 - **Two lint modes**:
   - **Basic mode** -- validates `.claude/` contents (settings, hooks, private
@@ -83,13 +83,13 @@ See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **117 rules** organized into 9 categories:
+Agent Lint ships **126 rules** organized into 9 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 11 | `plugin.json` and `marketplace.json` validation |
 | Hooks | H | 7 | `hooks.json` and `settings.json` hook paths |
-| Skills | S | 62 | Skill frontmatter, prompt contracts, descriptions, shell fences, security |
+| Skills | S | 71 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
 | Agents | A | 13 | Agent frontmatter, tool/evidence contracts, templates, description quality |
 | Hygiene | G | 11 | `$PWD` hygiene, script integrity, portability, GitHub payload safety, TODO detection |
 | Email | E | 1 | Email format validation |
@@ -105,7 +105,7 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | `.claude/` directory exists | Settings hooks, private skill frontmatter, script refs, executability, always-mode S-rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 117 rules including manifest, agents, hygiene, and plugin-only S-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 126 rules including manifest, agents, hygiene, and plugin-only S-rules |
 
 If neither directory exists, the tool prints "Nothing to lint" and exits 0.
 
