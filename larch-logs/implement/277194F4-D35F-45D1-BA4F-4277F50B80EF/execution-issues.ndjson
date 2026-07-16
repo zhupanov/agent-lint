@@ -1,0 +1,1 @@
+{"body":"- ship route: merge and CI watch skipped \u2014 needs user (reason: first-fixer-non-health; pending NEXT_ACTION=ci-fix)\n","category":"Tool Failures","phase":"implement","source":"execution-issues.md post-transcript refresh","source_sha256":"e4931e5c01443dff79092233faad544a860318604d1f07bd772f2172350098f5","step":"pre-push-post-transcript"}
