@@ -133,24 +133,25 @@ jobs:
           echo "CHECKSUMS=${CHECKSUMS}" >> "$GITHUB_ENV"
 
       - name: Create GitHub Release
-        id: create_release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           cd artifacts
-          if gh release view "v${VERSION}" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+          if RELEASE_OUTPUT=$(gh release create "v${VERSION}" \
+            --repo "${{ github.repository }}" \
+            --title "v${VERSION}" \
+            --target "${GITHUB_SHA}" \
+            --generate-notes \
+            agent-lint-*.tar.gz \
+            "agent-lint-v${VERSION}-checksums.txt" 2>&1); then
+            printf '%s\n' "$RELEASE_OUTPUT"
+          elif [[ "$RELEASE_OUTPUT" == *"a release with the same tag name already exists"* ]]; then
+            printf '%s\n' "$RELEASE_OUTPUT"
             echo "Release v${VERSION} already exists, skipping creation."
-            echo "created=false" >> "$GITHUB_OUTPUT"
           else
-            gh release create "v${VERSION}" \
-              --repo "${{ github.repository }}" \
-              --title "v${VERSION}" \
-              --target "${GITHUB_SHA}" \
-              --generate-notes \
-              agent-lint-*.tar.gz \
-              "agent-lint-v${VERSION}-checksums.txt"
-            echo "created=true" >> "$GITHUB_OUTPUT"
+            printf '%s\n' "$RELEASE_OUTPUT" >&2
+            exit 1
           fi
 
       - name: Update major version tag
