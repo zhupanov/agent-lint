@@ -12,7 +12,7 @@ Warnings (1):
 - **Outcome**: shipping
 - Force: true
 - **Duration**: 01:03:45
-- **Cost**: 💰 TOTAL ~$32.87: Claude $32.59, Codex-5.6 $0.00, Codex-mini $0.00, Cursor $0.00, Claude (subprocess) $0.28  |  Tokens: 36549k
+- **Cost**: 💰 TOTAL ~$32.87: Claude $32.59, Codex-5.6 $0.00, Codex-mini $0.00, Cursor $0.00, Claude (subprocess) $0.28  |  Tokens: 36576k
 - **Issue**: #109: https://github.com/zhupanov/agent-lint/issues/109
 - **Plan review**: N/A
 - **Plan coverage**: 0/0 firm headings; band: advisory; disposition: none; todos_left: 0
