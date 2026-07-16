@@ -1,7 +1,7 @@
 # Competitive Analysis: AI Agent Configuration Linters
 
 > Research conducted 2026-04-14. Star counts retrieved via GitHub API on that date.
-> Codebase context: `zhupanov/agent-lint` — 104 rules, Rust, Claude Code-focused.
+> Codebase context: `zhupanov/agent-lint` — 126 rules, Rust, Claude Code-focused.
 
 ## Top 30 Dedicated AI Agent Config Linters
 
@@ -91,11 +91,11 @@ The 30 repos cluster into these sub-niches:
 - **First-party tooling** — platform vendors may release built-in validation that obsoletes third-party linters
 - **Fragmentation** — 20+ competing tools all sub-200 stars, poor discoverability
 
-Mitigating factors: no dominant player has emerged, agent-lint's 104 rules + GitHub Actions + Rust performance provide a solid foundation.
+Mitigating factors: no dominant player has emerged, agent-lint's 126 rules + GitHub Actions + Rust performance provide a solid foundation.
 
 ## Open Questions
 
-1. **What specific rules do competitors implement that agent-lint doesn't?** Agnix claims 399 rules vs agent-lint's 104 — a deep rule comparison would identify borrowable ideas.
+1. **What specific rules do competitors implement that agent-lint doesn't?** Agnix claims 399 rules vs agent-lint's 113 — a deep rule comparison would identify borrowable ideas.
 2. **Which tools have GitHub Actions marketplace entries?** Pulser, Skills Check CI, and agent-lint do; most others don't. Distribution advantage.
 3. **How stable are these repos?** Most are <4 months old with single contributors. Monitoring survival rates would inform competitive strategy.
 4. **Would Anthropic/OpenAI/Cursor ship first-party linting?** Existential risk for all third-party tools.

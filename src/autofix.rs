@@ -316,7 +316,7 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet) -> bool {
                 Err(_) => continue,
             };
 
-            for field in &["argument-hint", "allowed-tools"] {
+            for field in crate::validators::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
                 let prefix = format!("{field}:");
                 let field_present = info.fm_lines.iter().any(|line| line.starts_with(&prefix));
                 if !field_present {

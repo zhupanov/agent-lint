@@ -106,7 +106,7 @@ pub enum LintRule {
     BoolFieldInvalid,
     /// S024: context field value is not fork
     ContextFieldInvalid,
-    /// S025: effort field value is not low/medium/high/max
+    /// S025: effort field value is not low/medium/high/xhigh/max
     EffortFieldInvalid,
     /// S026: shell field value is not bash/powershell
     ShellFieldInvalid,
@@ -172,6 +172,34 @@ pub enum LintRule {
     BodyNoDefault,
     /// S057: undocumented magic number in code block
     MagicNumberUndoc,
+    /// S058: Skill tool allowed without a clear invocation step
+    SkillInvokeMissing,
+    /// S059: prompt invocation flag is not accepted by its shipped script
+    SkillFlagMismatch,
+    /// S060: awk positional field appears in a skill shell fence
+    AwkFieldRef,
+    /// S061: grep-family probe in a skill shell fence is unbounded
+    UnsafeGrepProbe,
+    /// S062: always-loaded skill prompt closure exceeds configured budget
+    SkillClosureLarge,
+    /// S063: model field value is not a recognized alias or model ID
+    ModelInvalid,
+    /// S064: agent field present without context: fork
+    AgentNoFork,
+    /// S065: agent value is not a built-in or existing custom agent
+    AgentUnknown,
+    /// S066: side-effect-named skill without disable-model-invocation: true
+    SideEffectAuto,
+    /// S067: allowed-tools lists unscoped Bash (suggest Bash(…)-style scoping)
+    BashUnscoped,
+    /// S068: more than 3 dynamic context injections in skill body
+    InjectionOverflow,
+    /// S069: argument-hint set but body never references $ARGUMENTS
+    HintNoArgs,
+    /// S070: unknown skill frontmatter field
+    UnknownFmField,
+    /// S071: paths field present but empty
+    PathsEmpty,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -196,6 +224,10 @@ pub enum LintRule {
     AgentNameInvalid,
     /// A011: agent description too similar to agent name
     AgentDescRedundant,
+    /// A012: agent prompt asks to read evidence without the Read tool
+    AgentReadMismatch,
+    /// A013: machine-only agent output lacks fail-closed evidence handling
+    AgentOutputUnsafe,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
@@ -212,6 +244,14 @@ pub enum LintRule {
     TodoInSkill,
     /// G007: TODO/FIXME/HACK/XXX marker in agent .md body
     TodoInAgent,
+    /// G008: GitHub body or release notes are passed inline
+    GhInlineBody,
+    /// G009: Bash global substitution uses an unsafe variable replacement
+    BashReplacementUnsafe,
+    /// G010: shipped shell uses syntax unavailable in Bash 3.2
+    Bash32Incompatible,
+    /// G011: dynamic awk regex contains non-ASCII text
+    AwkRegexNonascii,
 
     // ── Email (E) ─────────────────────────────────────────────────
     /// E001: email address is not a valid format
@@ -242,6 +282,10 @@ pub enum LintRule {
     ClaudemdTooLarge,
     /// D003: TODO/FIXME/HACK/XXX marker in CLAUDE.md
     TodoInDocs,
+    /// D004: CLAUDE.md import closure exceeds configured budget
+    ClaudeImportLarge,
+    /// D005: inline-code repository path does not exist
+    InlinePathMissing,
 }
 
 impl LintRule {
@@ -325,6 +369,20 @@ impl LintRule {
             Self::ScriptErrhandMissing => "S055",
             Self::BodyNoDefault => "S056",
             Self::MagicNumberUndoc => "S057",
+            Self::SkillInvokeMissing => "S058",
+            Self::SkillFlagMismatch => "S059",
+            Self::AwkFieldRef => "S060",
+            Self::UnsafeGrepProbe => "S061",
+            Self::SkillClosureLarge => "S062",
+            Self::ModelInvalid => "S063",
+            Self::AgentNoFork => "S064",
+            Self::AgentUnknown => "S065",
+            Self::SideEffectAuto => "S066",
+            Self::BashUnscoped => "S067",
+            Self::InjectionOverflow => "S068",
+            Self::HintNoArgs => "S069",
+            Self::UnknownFmField => "S070",
+            Self::PathsEmpty => "S071",
 
             Self::AgentsDirMissing => "A001",
             Self::AgentFrontmatterMalformed => "A002",
@@ -337,6 +395,8 @@ impl LintRule {
             Self::AgentDescShort => "A009",
             Self::AgentNameInvalid => "A010",
             Self::AgentDescRedundant => "A011",
+            Self::AgentReadMismatch => "A012",
+            Self::AgentOutputUnsafe => "A013",
 
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
@@ -345,6 +405,10 @@ impl LintRule {
             Self::SecurityMdMissing => "G005",
             Self::TodoInSkill => "G006",
             Self::TodoInAgent => "G007",
+            Self::GhInlineBody => "G008",
+            Self::BashReplacementUnsafe => "G009",
+            Self::Bash32Incompatible => "G010",
+            Self::AwkRegexNonascii => "G011",
 
             Self::InvalidEmailFormat => "E001",
 
@@ -360,6 +424,8 @@ impl LintRule {
             Self::DocsRefMissing => "D001",
             Self::ClaudemdTooLarge => "D002",
             Self::TodoInDocs => "D003",
+            Self::ClaudeImportLarge => "D004",
+            Self::InlinePathMissing => "D005",
         }
     }
 
@@ -443,6 +509,20 @@ impl LintRule {
             Self::ScriptErrhandMissing => "script-errhand-missing",
             Self::BodyNoDefault => "body-no-default",
             Self::MagicNumberUndoc => "magic-number-undoc",
+            Self::SkillInvokeMissing => "skill-invoke-missing",
+            Self::SkillFlagMismatch => "skill-flag-mismatch",
+            Self::AwkFieldRef => "awk-field-ref",
+            Self::UnsafeGrepProbe => "unsafe-grep-probe",
+            Self::SkillClosureLarge => "skill-closure-large",
+            Self::ModelInvalid => "model-invalid",
+            Self::AgentNoFork => "agent-no-fork",
+            Self::AgentUnknown => "agent-unknown",
+            Self::SideEffectAuto => "side-effect-auto",
+            Self::BashUnscoped => "bash-unscoped",
+            Self::InjectionOverflow => "injection-overflow",
+            Self::HintNoArgs => "hint-no-args",
+            Self::UnknownFmField => "unknown-fm-field",
+            Self::PathsEmpty => "paths-empty",
 
             Self::AgentsDirMissing => "agents-dir-missing",
             Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
@@ -455,6 +535,8 @@ impl LintRule {
             Self::AgentDescShort => "agent-desc-short",
             Self::AgentNameInvalid => "agent-name-invalid",
             Self::AgentDescRedundant => "agent-desc-redundant",
+            Self::AgentReadMismatch => "agent-read-mismatch",
+            Self::AgentOutputUnsafe => "agent-output-unsafe",
 
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
@@ -463,6 +545,10 @@ impl LintRule {
             Self::SecurityMdMissing => "security-md-missing",
             Self::TodoInSkill => "todo-in-skill",
             Self::TodoInAgent => "todo-in-agent",
+            Self::GhInlineBody => "gh-inline-body",
+            Self::BashReplacementUnsafe => "bash-replacement-unsafe",
+            Self::Bash32Incompatible => "bash32-incompatible",
+            Self::AwkRegexNonascii => "awk-regex-nonascii",
 
             Self::InvalidEmailFormat => "invalid-email-format",
 
@@ -478,6 +564,8 @@ impl LintRule {
             Self::DocsRefMissing => "docs-ref-missing",
             Self::ClaudemdTooLarge => "claudemd-too-large",
             Self::TodoInDocs => "todo-in-docs",
+            Self::ClaudeImportLarge => "claude-import-large",
+            Self::InlinePathMissing => "inline-path-missing",
         }
     }
 
@@ -526,7 +614,8 @@ impl LintRule {
         match self {
             // ── Default-suppressed ──────────────────────────────────
             Self::NameNotGerund | Self::BodyNoExamples |
-            Self::BodyTooLong => DefaultSeverity::Suppressed,
+            Self::BodyTooLong | Self::Bash32Incompatible |
+            Self::AwkRegexNonascii => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
             Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
@@ -539,11 +628,15 @@ impl LintRule {
             Self::ScriptVerifyMissing | Self::TerminologyInconsistent |
             Self::DescBodyMisalign | Self::ScriptErrhandMissing |
             Self::BodyNoDefault | Self::MagicNumberUndoc |
+            Self::SkillClosureLarge |
 
             // ── Default-warning: niche (skills) ──────────────────────
             Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
             Self::TimeSensitive | Self::ToolsUnknown |
             Self::McpToolUnqualified | Self::ToolsListSyntax |
+            Self::SideEffectAuto | Self::BashUnscoped |
+            Self::InjectionOverflow | Self::HintNoArgs |
+            Self::UnknownFmField | Self::PathsEmpty |
 
             // ── Default-warning: template rules (agents) ─────────────
             Self::TemplateFileMissing | Self::TemplateMarkerMissing |
@@ -551,12 +644,14 @@ impl LintRule {
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
+            Self::GhInlineBody |
 
             // ── Default-warning: Slack ───────────────────────────────
             Self::SlackFallbackMismatch |
 
             // ── Default-warning: docs ────────────────────────────────
-            Self::ClaudemdTooLarge | Self::TodoInDocs
+            Self::ClaudemdTooLarge | Self::TodoInDocs |
+            Self::ClaudeImportLarge | Self::InlinePathMissing
                 => DefaultSeverity::Warning,
 
             // Everything else defaults to error.
@@ -642,6 +737,20 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::ScriptErrhandMissing,
     LintRule::BodyNoDefault,
     LintRule::MagicNumberUndoc,
+    LintRule::SkillInvokeMissing,
+    LintRule::SkillFlagMismatch,
+    LintRule::AwkFieldRef,
+    LintRule::UnsafeGrepProbe,
+    LintRule::SkillClosureLarge,
+    LintRule::ModelInvalid,
+    LintRule::AgentNoFork,
+    LintRule::AgentUnknown,
+    LintRule::SideEffectAuto,
+    LintRule::BashUnscoped,
+    LintRule::InjectionOverflow,
+    LintRule::HintNoArgs,
+    LintRule::UnknownFmField,
+    LintRule::PathsEmpty,
     LintRule::AgentsDirMissing,
     LintRule::AgentFrontmatterMalformed,
     LintRule::AgentFieldMissing,
@@ -653,6 +762,8 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::AgentDescShort,
     LintRule::AgentNameInvalid,
     LintRule::AgentDescRedundant,
+    LintRule::AgentReadMismatch,
+    LintRule::AgentOutputUnsafe,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
@@ -660,6 +771,10 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::SecurityMdMissing,
     LintRule::TodoInSkill,
     LintRule::TodoInAgent,
+    LintRule::GhInlineBody,
+    LintRule::BashReplacementUnsafe,
+    LintRule::Bash32Incompatible,
+    LintRule::AwkRegexNonascii,
     LintRule::InvalidEmailFormat,
     LintRule::UserconfigNotObject,
     LintRule::UserconfigDescMissing,
@@ -671,6 +786,8 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::DocsRefMissing,
     LintRule::ClaudemdTooLarge,
     LintRule::TodoInDocs,
+    LintRule::ClaudeImportLarge,
+    LintRule::InlinePathMissing,
 ];
 
 #[cfg(test)]
@@ -684,7 +801,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            104,
+            126,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -752,8 +869,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            3,
-            "Expected 3 default-suppressed rules, got {}",
+            5,
+            "Expected 5 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -766,8 +883,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            33,
-            "Expected 33 default-warning rules, got {}",
+            43,
+            "Expected 43 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -815,8 +932,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            68,
-            "Expected 68 default-error rules, got {}",
+            78,
+            "Expected 78 default-error rules, got {}",
             errors.len()
         );
     }

@@ -1,7 +1,7 @@
 ---
 name: bump-version
 description: Classify and apply a semantic version bump based on the current branch diff. Updates package.json, Cargo.toml, and README.md, and commits exactly one version-only commit.
-allowed-tools: Bash, Read
+allowed-tools: Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Read
 ---
 
 # Bump Version

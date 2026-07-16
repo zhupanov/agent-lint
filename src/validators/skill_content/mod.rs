@@ -19,7 +19,35 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-/// Validate skill content for public skills (skills/). Runs all S009-S057 rules.
+/// Canonical skill frontmatter keys (Claude Code docs + fields already linted here).
+/// Used by S070 (unknown-fm-field) and kept alongside S007's empty-optional list.
+pub(crate) const KNOWN_SKILL_FRONTMATTER_FIELDS: &[&str] = &[
+    "name",
+    "description",
+    "when_to_use",
+    "argument-hint",
+    "arguments",
+    "disable-model-invocation",
+    "user-invocable",
+    "allowed-tools",
+    "disallowed-tools",
+    "model",
+    "effort",
+    "context",
+    "agent",
+    "hooks",
+    "paths",
+    "shell",
+    "compatibility",
+    "metadata",
+    "license",
+];
+
+/// Optional scalar fields that S007 flags when present but empty.
+/// `paths` is handled by S071 instead (YAML list form is common).
+pub(crate) const OPTIONAL_NONEMPTY_SCALAR_FIELDS: &[&str] = &["argument-hint", "allowed-tools"];
+
+/// Validate skill content for public skills (skills/). Runs S009-S057 and S063-S071 rules.
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
@@ -33,7 +61,7 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056, S057).
+/// Runs only "both-mode" rules (excludes S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056, S057).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
@@ -565,7 +593,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_s021_bash_blocks_with_prose_ok() {
+    fn test_s021_short_breadcrumb_still_consecutive() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -576,7 +604,7 @@ mod tests {
         ).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(!diag.errors().iter().any(|e| e.contains("consecutive bash")));
+        assert!(diag.errors().iter().any(|e| e.contains("consecutive bash")));
     }
 
     // ── S022: backslash-path ────────────────────────────────────────
@@ -733,7 +761,7 @@ mod tests {
         assert!(
             diag.errors()
                 .iter()
-                .any(|e| e.contains("effort") && e.contains("low/medium/high/max"))
+                .any(|e| e.contains("effort") && e.contains("low/medium/high/xhigh/max"))
         );
     }
 
@@ -748,6 +776,23 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: high\n---\nBody content\n",
         ).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("effort")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s025_xhigh_effort_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: xhigh\n---\nBody content\n",
+        )
+        .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("effort")));
@@ -1252,14 +1297,14 @@ mod tests {
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        // S016 (person) and S015 (truncated) should NOT fire in basic mode
+        // S016 remains plugin-only, while configurable S015 covers private skills.
         assert!(
             !diag
                 .errors()
                 .iter()
                 .any(|e| e.contains("first/second person"))
         );
-        assert!(!diag.errors().iter().any(|e| e.contains("truncated")));
+        assert!(diag.errors().iter().any(|e| e.contains("truncated")));
     }
 
     // ── Integration: mode dispatch ───────────────────────────────────
@@ -2785,6 +2830,7 @@ mod tests {
             error: std::collections::HashSet::from([LintRule::DescTooShort]),
             warn: std::collections::HashSet::new(),
             exclude: vec![],
+            ..crate::config::LintConfig::default()
         };
         let mut diag2 = DiagnosticCollector::with_config(config);
         validate_skill_content(&mut diag2, &crate::config::ExcludeSet::default());
@@ -2818,6 +2864,7 @@ mod tests {
             error: std::collections::HashSet::new(),
             warn: std::collections::HashSet::from([LintRule::DescTooShort]),
             exclude: vec![],
+            ..crate::config::LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
@@ -4424,6 +4471,487 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("undocumented magic number")),
             "S057 should NOT fire on comment lines containing assignment patterns"
+        );
+    }
+
+    // ── S063: model-invalid ──────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s063_model_typo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nmodel: sonet\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("'model'") && e.contains("sonet")),
+            "S063 should fire for model typo, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s063_model_valid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nmodel: sonnet\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("'model'")));
+    }
+
+    // ── S064: agent-no-fork ──────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s064_agent_without_fork() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nagent: Explore\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("'agent'") && e.contains("context: fork")),
+            "S064 should fire, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s064_agent_with_fork_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\nagent: Explore\n---\nResearch the codebase thoroughly and report findings.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("without 'context: fork'")),
+            "S064 should not fire when context: fork is set"
+        );
+    }
+
+    // ── S065: agent-unknown ──────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s065_missing_custom_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\nagent: my-reviewer\n---\nResearch the topic thoroughly and summarize.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("my-reviewer") && e.contains("not found")),
+            "S065 should fire for missing custom agent, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s065_custom_agent_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write("agents/my-reviewer.md", "---\nname: my-reviewer\ndescription: Reviews code carefully and thoroughly\n---\nBody\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\nagent: my-reviewer\n---\nResearch the topic thoroughly and summarize.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("not found")),
+            "S065 should not fire when custom agent exists"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s065_fork_without_agent_ok() {
+        // CC-SK-003 dropped: agent defaults to general-purpose per Claude Code docs
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\n---\nResearch the topic thoroughly and summarize.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("'agent'")),
+            "fork without agent must not error (defaults to general-purpose)"
+        );
+    }
+
+    // ── S066: side-effect-auto ───────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s066_deploy_without_dmi() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/deploy").unwrap();
+        std::fs::write(
+            "skills/deploy/SKILL.md",
+            "---\nname: deploy\ndescription: Use when deploying the application to production\n---\nDeploy the app\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("side-effect-named") || e.contains("disable-model-invocation")),
+            "S066 should fire, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s066_deploy_with_dmi_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/deploy").unwrap();
+        std::fs::write(
+            "skills/deploy/SKILL.md",
+            "---\nname: deploy\ndescription: Use when deploying the application to production\ndisable-model-invocation: true\n---\nDeploy the app\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("side-effect-named")),
+            "S066 should not fire when DMI is true"
+        );
+    }
+
+    // ── S067: bash-unscoped ──────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s067_unscoped_bash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash, Read\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors().iter().any(|e| e.contains("unscoped Bash")),
+            "S067 should fire, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s067_scoped_bash_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash(git:*), Read\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("unscoped Bash")));
+    }
+
+    // ── S068: injection-overflow ─────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s068_too_many_injections() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n!`a`\n!`b`\n!`c`\n!`d`\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("dynamic injections")),
+            "S068 should fire, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s068_three_injections_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n!`a`\n!`b`\n!`c`\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("dynamic injections"))
+        );
+    }
+
+    // ── S069: hint-no-args ───────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s069_hint_without_arguments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <file>\n---\nBody with no args reference\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("argument-hint") && e.contains("$ARGUMENTS")),
+            "S069 should fire, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s069_hint_with_arguments_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <file>\n---\nProcess $ARGUMENTS carefully\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("never references $ARGUMENTS"))
+        );
+    }
+
+    // ── S070: unknown-fm-field ───────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s070_unknown_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nmodell: sonnet\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("unknown skill frontmatter field") && e.contains("modell")),
+            "S070 should fire, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s070_known_fields_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nwhen_to_use: Use for model override checks\nmodel: inherit\neffort: high\ndisallowed-tools: AskUserQuestion\nlicense: MIT\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("unknown skill frontmatter"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s070_yaml_comment_not_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n# note: not a field\nmodel: inherit\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("unknown skill frontmatter")),
+            "YAML comments must not trigger S070, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    // ── S071: paths-empty ────────────────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s071_paths_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\npaths:\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("'paths'") && e.contains("empty")),
+            "S071 should fire, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s071_paths_scalar_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\npaths: \"**/*.ts\"\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("'paths'") && e.contains("empty"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s071_paths_yaml_list_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\npaths:\n  - \"**/*.ts\"\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("'paths'") && e.contains("empty"))
         );
     }
 }
