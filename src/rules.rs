@@ -451,6 +451,48 @@ pub enum LintRule {
     /// CX060: a Codex skill uses Claude-only frontmatter
     CodexSkillUnsupportedFrontmatter,
 
+    // ── Cursor configuration (CU / CR) ───────────────────────────
+    /// CU001: Cursor rule file has no instructions
+    CursorRuleEmpty,
+    /// CU002: Cursor .mdc rule lacks YAML frontmatter
+    CursorRuleFrontmatterMissing,
+    /// CU003: Cursor rule frontmatter is invalid YAML
+    CursorRuleFrontmatterInvalid,
+    /// CU004: Cursor rule globs field contains an invalid pattern
+    CursorRuleGlobInvalid,
+    /// CU005: Cursor rule frontmatter contains an unknown field
+    CursorRuleFieldUnknown,
+    /// CU006: legacy .cursorrules file is present
+    CursorLegacyRules,
+    /// CU007: alwaysApply rule also declares globs
+    CursorAlwaysApplyGlobs,
+    /// CU008: alwaysApply is not a boolean
+    CursorAlwaysApplyInvalid,
+    /// CU009: agent-requested Cursor rule lacks a description
+    CursorRuleDescriptionMissing,
+    /// CU010: .cursor/hooks.json has an invalid schema
+    CursorHooksSchemaInvalid,
+    /// CU011: Cursor hook event is unknown
+    CursorHookEventUnknown,
+    /// CU012: Cursor hook entry lacks a command
+    CursorHookCommandMissing,
+    /// CU013: Cursor hook type is invalid
+    CursorHookTypeInvalid,
+    /// CU014: Cursor subagent frontmatter is invalid
+    CursorAgentFrontmatterInvalid,
+    /// CU015: Cursor subagent has no body
+    CursorAgentBodyEmpty,
+    /// CU016: .cursor/environment.json has an invalid schema
+    CursorEnvironmentInvalid,
+    /// CU017: Cursor hook entry field type is invalid
+    CursorHookFieldTypeInvalid,
+    /// CU018: Cursor prompt hook lacks prompt
+    CursorPromptHookPromptMissing,
+    /// CU019: Cursor prompt hook model is not a string
+    CursorPromptHookModelInvalid,
+    /// CR-SK-001: Cursor skill uses unsupported frontmatter
+    CursorSkillFieldUnsupported,
+
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
     PwdInSkill,
@@ -761,6 +803,27 @@ impl LintRule {
             Self::CodexPluginDescriptionMissing => "CX059",
             Self::CodexSkillUnsupportedFrontmatter => "CX060",
 
+            Self::CursorRuleEmpty => "CU001",
+            Self::CursorRuleFrontmatterMissing => "CU002",
+            Self::CursorRuleFrontmatterInvalid => "CU003",
+            Self::CursorRuleGlobInvalid => "CU004",
+            Self::CursorRuleFieldUnknown => "CU005",
+            Self::CursorLegacyRules => "CU006",
+            Self::CursorAlwaysApplyGlobs => "CU007",
+            Self::CursorAlwaysApplyInvalid => "CU008",
+            Self::CursorRuleDescriptionMissing => "CU009",
+            Self::CursorHooksSchemaInvalid => "CU010",
+            Self::CursorHookEventUnknown => "CU011",
+            Self::CursorHookCommandMissing => "CU012",
+            Self::CursorHookTypeInvalid => "CU013",
+            Self::CursorAgentFrontmatterInvalid => "CU014",
+            Self::CursorAgentBodyEmpty => "CU015",
+            Self::CursorEnvironmentInvalid => "CU016",
+            Self::CursorHookFieldTypeInvalid => "CU017",
+            Self::CursorPromptHookPromptMissing => "CU018",
+            Self::CursorPromptHookModelInvalid => "CU019",
+            Self::CursorSkillFieldUnsupported => "CR-SK-001",
+
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
             Self::ScriptNotExecutable => "G003",
@@ -1027,6 +1090,27 @@ impl LintRule {
             Self::CodexPluginDescriptionMissing => "codex-plugin-description",
             Self::CodexSkillUnsupportedFrontmatter => "codex-skill-frontmatter",
 
+            Self::CursorRuleEmpty => "cursor-rule-empty",
+            Self::CursorRuleFrontmatterMissing => "cursor-frontmatter-missing",
+            Self::CursorRuleFrontmatterInvalid => "cursor-frontmatter-invalid",
+            Self::CursorRuleGlobInvalid => "cursor-glob-invalid",
+            Self::CursorRuleFieldUnknown => "cursor-field-unknown",
+            Self::CursorLegacyRules => "cursor-legacy-rules",
+            Self::CursorAlwaysApplyGlobs => "cursor-always-globs",
+            Self::CursorAlwaysApplyInvalid => "cursor-always-invalid",
+            Self::CursorRuleDescriptionMissing => "cursor-description-missing",
+            Self::CursorHooksSchemaInvalid => "cursor-hooks-invalid",
+            Self::CursorHookEventUnknown => "cursor-event-unknown",
+            Self::CursorHookCommandMissing => "cursor-command-missing",
+            Self::CursorHookTypeInvalid => "cursor-type-invalid",
+            Self::CursorAgentFrontmatterInvalid => "cursor-agent-invalid",
+            Self::CursorAgentBodyEmpty => "cursor-body-empty",
+            Self::CursorEnvironmentInvalid => "cursor-environment-invalid",
+            Self::CursorHookFieldTypeInvalid => "cursor-hook-invalid",
+            Self::CursorPromptHookPromptMissing => "cursor-prompt-missing",
+            Self::CursorPromptHookModelInvalid => "cursor-model-invalid",
+            Self::CursorSkillFieldUnsupported => "cursor-skill-unsupported",
+
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
             Self::ScriptNotExecutable => "script-not-executable",
@@ -1121,7 +1205,8 @@ impl LintRule {
             Self::BodyTooLong | Self::Bash32Incompatible |
             Self::AwkRegexNonascii | Self::CodexNetworkPermissionField |
             Self::CodexWindowsSandbox | Self::CodexAgentsGenericGuidance |
-            Self::CodexAgentsMissingStructure | Self::CodexAgentsConfigConflict
+            Self::CodexAgentsMissingStructure | Self::CodexAgentsConfigConflict |
+            Self::CursorPromptHookModelInvalid
                 => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
@@ -1180,6 +1265,11 @@ impl LintRule {
             Self::CodexPluginDefaultPromptEmpty | Self::CodexPluginInterfaceUrl |
             Self::CodexPluginHooksUnsupported | Self::CodexPluginDescriptionMissing |
             Self::CodexSkillUnsupportedFrontmatter |
+            Self::CursorRuleFrontmatterMissing | Self::CursorRuleFieldUnknown |
+            Self::CursorLegacyRules | Self::CursorAlwaysApplyGlobs |
+            Self::CursorRuleDescriptionMissing | Self::CursorHookEventUnknown |
+            Self::CursorHookFieldTypeInvalid | Self::CursorPromptHookPromptMissing |
+            Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
 
             // ── Default-warning: user config ─────────────────────────
             Self::UserconfigKeyInvalid |
@@ -1417,6 +1507,26 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::CodexPluginHooksUnsupported,
     LintRule::CodexPluginDescriptionMissing,
     LintRule::CodexSkillUnsupportedFrontmatter,
+    LintRule::CursorRuleEmpty,
+    LintRule::CursorRuleFrontmatterMissing,
+    LintRule::CursorRuleFrontmatterInvalid,
+    LintRule::CursorRuleGlobInvalid,
+    LintRule::CursorRuleFieldUnknown,
+    LintRule::CursorLegacyRules,
+    LintRule::CursorAlwaysApplyGlobs,
+    LintRule::CursorAlwaysApplyInvalid,
+    LintRule::CursorRuleDescriptionMissing,
+    LintRule::CursorHooksSchemaInvalid,
+    LintRule::CursorHookEventUnknown,
+    LintRule::CursorHookCommandMissing,
+    LintRule::CursorHookTypeInvalid,
+    LintRule::CursorAgentFrontmatterInvalid,
+    LintRule::CursorAgentBodyEmpty,
+    LintRule::CursorEnvironmentInvalid,
+    LintRule::CursorHookFieldTypeInvalid,
+    LintRule::CursorPromptHookPromptMissing,
+    LintRule::CursorPromptHookModelInvalid,
+    LintRule::CursorSkillFieldUnsupported,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
@@ -1468,7 +1578,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            249,
+            269,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1536,8 +1646,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            10,
-            "Expected 10 default-suppressed rules, got {}",
+            11,
+            "Expected 11 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1550,8 +1660,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            93,
-            "Expected 93 default-warning rules, got {}",
+            103,
+            "Expected 103 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1599,8 +1709,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            146,
-            "Expected 146 default-error rules, got {}",
+            155,
+            "Expected 155 default-error rules, got {}",
             errors.len()
         );
     }

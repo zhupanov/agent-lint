@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 249 rules across 14 categories. Every rule has a unique
+Agent Lint ships 269 rules across 16 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -21,7 +21,7 @@ every rule to error regardless of config. See
 **Mode column key:**
 
 - **Plugin** -- runs only when `.claude-plugin/` is present
-- **Always** -- runs in both Basic (Claude, Codex, or MCP configuration) and Plugin modes
+- **Always** -- runs in both Basic (any detected supported configuration) and Plugin modes
 
 ## Manifest Rules (M)
 
@@ -344,6 +344,34 @@ checked on 2026-07-16. The canonical manifest field is
 `interface.defaultPrompt`; `default_prompts` is accepted by the linter only to
 make migrations diagnosable.
 
+## Cursor Configuration Rules (CU / CR)
+
+Cursor rules run when a Cursor surface is present and are otherwise inert.
+They run in both Basic and Plugin modes.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| CU001 | `cursor-rule-empty` | `.cursor/rules/*.mdc` or `.cursorrules` has no instructions | Always | error |
+| CU002 | `cursor-frontmatter-missing` | `.mdc` rule lacks YAML frontmatter | Always | warn |
+| CU003 | `cursor-frontmatter-invalid` | `.mdc` frontmatter is invalid YAML | Always | error |
+| CU004 | `cursor-glob-invalid` | `.mdc` `globs` has an invalid pattern | Always | error |
+| CU005 | `cursor-field-unknown` | `.mdc` frontmatter uses an unknown field | Always | warn |
+| CU006 | `cursor-legacy-rules` | Legacy `.cursorrules` file is present | Always | warn |
+| CU007 | `cursor-always-globs` | `alwaysApply: true` has redundant `globs` | Always | warn |
+| CU008 | `cursor-always-invalid` | `alwaysApply` is not a boolean | Always | error |
+| CU009 | `cursor-description-missing` | Agent-requested `.mdc` rule lacks a description | Always | warn |
+| CU010 | `cursor-hooks-invalid` | `.cursor/hooks.json` top-level or entry schema is invalid | Always | error |
+| CU011 | `cursor-event-unknown` | Cursor hook event is not recognized | Always | warn |
+| CU012 | `cursor-command-missing` | Cursor hook entry lacks a non-empty `command` | Always | error |
+| CU013 | `cursor-type-invalid` | Cursor hook `type` is not `command` or `prompt` | Always | error |
+| CU014 | `cursor-agent-invalid` | Cursor subagent frontmatter is invalid | Always | error |
+| CU015 | `cursor-body-empty` | Cursor subagent body is empty | Always | warn |
+| CU016 | `cursor-environment-invalid` | `.cursor/environment.json` schema is invalid | Always | error |
+| CU017 | `cursor-hook-invalid` | Cursor hook timeout, loop limit, or fail-closed type is invalid | Always | warn |
+| CU018 | `cursor-prompt-missing` | Prompt hook lacks `prompt` | Always | warn |
+| CU019 | `cursor-model-invalid` | Prompt hook `model` is not a string | Always | suppressed |
+| CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses frontmatter unsupported by Cursor | Always | warn |
+
 ## Hygiene / Scripts Rules (G)
 
 | Code | Name | Description | Mode | Default |
@@ -423,7 +451,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 249):**
+**Auto-fixable rules (12 of 269):**
 
 | Rule | Code | Fix |
 |------|------|-----|

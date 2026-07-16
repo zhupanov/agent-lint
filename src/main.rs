@@ -113,7 +113,9 @@ fn main() {
                 // Silent exit — no stdout contamination for pipe consumers.
                 std::process::exit(0);
             }
-            println!("Nothing to lint (no Claude configuration or MCP configuration found).");
+            println!(
+                "Nothing to lint (no supported agent configuration or MCP configuration found)."
+            );
             std::process::exit(0);
         }
     };
@@ -233,7 +235,7 @@ fn run_autofix(
     run_lint(repo_root, mode, lint_config, exclude);
 }
 
-/// Detect lint mode based on directory or MCP configuration presence.
+/// Detect lint mode based on Claude, Codex, Cursor, or MCP configuration.
 fn detect_mode() -> Option<LintMode> {
     if std::path::Path::new(".claude-plugin").is_dir() {
         Some(LintMode::Plugin)
@@ -242,6 +244,8 @@ fn detect_mode() -> Option<LintMode> {
         || std::path::Path::new(".codex-plugin/plugin.json").is_file()
         || has_agents_file()
         || std::path::Path::new(".agents/skills").is_dir()
+        || std::path::Path::new(".cursor").is_dir()
+        || std::path::Path::new(".cursorrules").is_file()
     {
         Some(LintMode::Basic)
     } else if has_mcp_config() {
@@ -350,6 +354,26 @@ mod tests {
 
         std::fs::remove_dir_all(".codex-plugin").unwrap();
         std::fs::create_dir_all(".agents/skills").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+    }
+
+    #[test]
+    #[serial]
+    fn detect_mode_cursor_surfaces_return_basic() {
+        let _guard = test_helpers::CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir(".cursor").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+    }
+
+    #[test]
+    #[serial]
+    fn detect_mode_legacy_cursor_rules_return_basic() {
+        let _guard = test_helpers::CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write(".cursorrules", "Use strict mode.\n").unwrap();
         assert_eq!(detect_mode(), Some(context::LintMode::Basic));
     }
 

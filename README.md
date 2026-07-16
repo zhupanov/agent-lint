@@ -1,19 +1,19 @@
 # Agent Lint
 
-- A linter for [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
-  and Codex configuration and plugins.
-- Validates Claude, Codex, and MCP configuration surfaces.
+- A linter for Claude Code, Cursor, and Codex configuration.
+- Validates `.claude/`, `.claude-plugin/`, `.cursor/`, `.cursorrules`,
+  `.codex/`, `.codex-plugin/`, `AGENTS.md`, `.agents/skills/`, and MCP
+  configuration.
 - Implemented in Rust, and fully configurable.
 
 ## Features
 
-- **249 lint rules** across 14 categories (Manifest, Hooks, Skills, Agents,
-  Claude Rules, Output Styles, Settings, Hygiene, Email, User Config, MCP,
-  Codex, Slack, Docs)
+- **269 lint rules** across 16 categories (Manifest, Hooks, Skills, Agents,
+  Claude Rules, Output Styles, Settings, Cursor Rules, Cursor Skills, Hygiene,
+  Email, User Config, MCP, Codex, Slack, Docs)
 - **Two lint modes**:
-  - **Basic mode** -- validates Claude, Codex, and standalone MCP
-    configuration (settings, hooks, instruction files, private skill frontmatter,
-    private agents, script references, executability)
+  - **Basic mode** -- validates detected Claude, Cursor, Codex, and standalone
+    MCP configuration
   - **Plugin mode** -- runs the full rule suite when `.claude-plugin/` is
     present
 - **Configurable** -- suppress or downgrade rules via `agent-lint.toml`
@@ -85,7 +85,7 @@ See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
 
 ## Lint Rules
 
-Agent Lint ships **249 rules** organized into 14 categories:
+Agent Lint ships **269 rules** organized into 16 categories:
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
@@ -101,6 +101,8 @@ Agent Lint ships **249 rules** organized into 14 categories:
 | User Config | U | 7 | `userConfig` structure, key format, and env var mapping |
 | MCP | P | 13 | MCP server configuration, transport, security, and compatibility |
 | Codex | CX | 60 | Codex configuration, instructions, plugins, and skills |
+| Cursor Rules | CU | 19 | Cursor rules, hooks, subagents, and cloud environment configuration |
+| Cursor Skills | CR-SK | 1 | Unsupported Cursor skill frontmatter fields |
 | Slack | K | 1 | Slack fallback consistency |
 | Docs | D | 5 | Docs pointers, CLAUDE.md import closure and size, TODO detection |
 
@@ -111,10 +113,10 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 
 | Mode | Trigger | Scope |
 |------|---------|-------|
-| **Basic** | Claude/MCP files, `.codex/config.toml`, `.codex-plugin/plugin.json`, any `AGENTS.md`, or `.agents/skills/` exists | Settings hooks and hook schema, MCP configuration, Codex surfaces, private skill frontmatter, private agents (A002-A003, A008-A027), script refs, executability, always-mode S-rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 249 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
+| **Basic** | Claude, Cursor, Codex, or MCP configuration is present | Detected platform configuration plus always-mode Claude rules |
+| **Plugin** | `.claude-plugin/` directory exists | All 269 rules including manifest, agents, hygiene, MCP, and plugin-only S-rules |
 
-If no Claude, Codex, or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
+If no supported agent or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
 
 ## Configuration
 
