@@ -16,7 +16,7 @@ const CONTEXT_WORDS: &[&str] = &["use", "call", "invoke", "run", "execute", "too
 // Built-in platform tools in snake_case form. Single-word tools (bash, read,
 // etc.) are excluded automatically by the regex's underscore requirement.
 // This list covers multi-word built-ins that a user might write in snake_case.
-// See also: KNOWN_TOOLS in common.rs (PascalCase, shared by S040 and A017/A018).
+// See also: KNOWN_TOOLS in common.rs (PascalCase, shared by S040 and A019/A020).
 const BUILTIN_TOOLS_SNAKE: &[&str] = &[
     "task_create",
     "task_update",

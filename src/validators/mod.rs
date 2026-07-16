@@ -215,7 +215,7 @@ mod tests {
         );
     }
 
-    // Integration test: Plugin mode also lints .claude/agents/ (A012-A025 are "Always")
+    // Integration test: Plugin mode also lints .claude/agents/ (A014-A027 are "Always")
     #[test]
     #[serial_test::serial]
     fn test_plugin_mode_lints_private_agents() {

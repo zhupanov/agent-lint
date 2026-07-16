@@ -116,7 +116,7 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 
 /// V7-adapted: Validate `.claude/agents/*.md` (private agents) in Basic mode.
 /// Runs the same per-file frontmatter and field-value checks as `agents/`
-/// (A002/A003, A008-A011, A012-A025). Does not report A001/A004 (the
+/// (A002/A003, A008-A011, A014-A027). Does not report A001/A004 (the
 /// `.claude/agents/` directory is optional) nor the larch-specific
 /// template rules A005-A007.
 pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -155,7 +155,7 @@ pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
 
 /// Run all per-file agent frontmatter checks (used for both `agents/` and
 /// `.claude/agents/`). Covers A002, A003, A008-A011, and the field-value
-/// rules A012-A025.
+/// rules A014-A027.
 fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content: &str) {
     let fm_lines = match frontmatter::extract_frontmatter(content) {
         Some(lines) => lines,
@@ -232,9 +232,9 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
     check_agent_field_values(diag, agent_path, &fm_lines);
 }
 
-/// Recognized agent frontmatter fields. Any other top-level key triggers A025
+/// Recognized agent frontmatter fields. Any other top-level key triggers A027
 /// (agent-field-unknown) as a typo catcher. Matches the field set validated by
-/// A002/A003 and A012-A024 plus the standard Claude Code agent schema.
+/// A002/A003 and A014-A026 plus the standard Claude Code agent schema.
 const KNOWN_AGENT_FIELDS: &[&str] = &[
     "name",
     "description",
@@ -387,9 +387,9 @@ fn skill_exists_on_disk(skill: &str) -> bool {
         || Path::new(&format!(".claude/skills/{skill}/SKILL.md")).is_file()
 }
 
-/// A012-A025: field-value validation for agent frontmatter.
+/// A014-A027: field-value validation for agent frontmatter.
 fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm_lines: &[String]) {
-    // A012: model must be a recognized value (CC-AG-003).
+    // A014: model must be a recognized value (CC-AG-003).
     if let Some(model) = frontmatter::get_field(fm_lines, "model") {
         if !is_valid_model(&model) {
             diag.report(
@@ -402,7 +402,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A013 + A019: permissionMode enum (CC-AG-004) and bypass warning (CC-AG-012).
+    // A015 + A021: permissionMode enum (CC-AG-004) and bypass warning (CC-AG-012).
     if let Some(mode) = frontmatter::get_field(fm_lines, "permissionMode") {
         if !VALID_PERMISSION_MODES.contains(&mode.as_str()) {
             diag.report(
@@ -422,7 +422,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A016: memory must be user/project/local (CC-AG-008).
+    // A018: memory must be user/project/local (CC-AG-008).
     if let Some(mem) = frontmatter::get_field(fm_lines, "memory") {
         if !VALID_MEMORY.contains(&mem.as_str()) {
             diag.report(
@@ -435,7 +435,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A021: effort must be low/medium/high/xhigh/max (CC-AG-014).
+    // A023: effort must be low/medium/high/xhigh/max (CC-AG-014).
     if let Some(eff) = frontmatter::get_field(fm_lines, "effort") {
         if !VALID_EFFORT.contains(&eff.as_str()) {
             diag.report(
@@ -448,7 +448,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A022: isolation must be worktree (CC-AG-015).
+    // A024: isolation must be worktree (CC-AG-015).
     if let Some(iso) = frontmatter::get_field(fm_lines, "isolation") {
         if iso != "worktree" {
             diag.report(
@@ -461,7 +461,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A023: background must be a boolean (CC-AG-016).
+    // A025: background must be a boolean (CC-AG-016).
     if let Some(bg) = frontmatter::get_field(fm_lines, "background") {
         if bg != "true" && bg != "false" {
             diag.report(
@@ -474,7 +474,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A024: maxTurns must be a positive integer (CC-AG-017).
+    // A026: maxTurns must be a positive integer (CC-AG-017).
     if let Some(turns) = frontmatter::get_field(fm_lines, "maxTurns") {
         let ok =
             turns.chars().all(|c| c.is_ascii_digit()) && turns.parse::<u64>().is_ok_and(|n| n >= 1);
@@ -492,7 +492,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
     let tools = get_field_items(fm_lines, "tools");
     let disallowed = get_field_items(fm_lines, "disallowedTools");
 
-    // A017: tools must be known (CC-AG-009).
+    // A019: tools must be known (CC-AG-009).
     for tool in &tools {
         if !is_known_tool_name(tool) {
             diag.report(
@@ -504,7 +504,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A018: disallowedTools must be known (CC-AG-010).
+    // A020: disallowedTools must be known (CC-AG-010).
     for tool in &disallowed {
         if !is_known_tool_name(tool) {
             diag.report(
@@ -516,7 +516,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A015: no tool in both tools and disallowedTools (CC-AG-006).
+    // A017: no tool in both tools and disallowedTools (CC-AG-006).
     let disallowed_set: HashSet<&str> = disallowed.iter().map(String::as_str).collect();
     for tool in &tools {
         if disallowed_set.contains(tool.as_str()) {
@@ -527,7 +527,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A014 + A020: skills must exist on disk (CC-AG-005) and be kebab-case (CC-AG-013).
+    // A016 + A022: skills must exist on disk (CC-AG-005) and be kebab-case (CC-AG-013).
     let skills = get_field_items(fm_lines, "skills");
     for skill in &skills {
         if !is_kebab_case(skill) {
@@ -548,7 +548,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A025: unknown frontmatter field (CC-AG-019, typo catcher).
+    // A027: unknown frontmatter field (CC-AG-019, typo catcher).
     for key in collect_top_level_keys(fm_lines) {
         if !KNOWN_AGENT_FIELDS.contains(&key.as_str()) {
             diag.report(
@@ -1151,12 +1151,12 @@ mod tests {
         );
     }
 
-    // ── A012-A025: agent field-value validation ──────────────────────
+    // ── A014-A027: agent field-value validation ──────────────────────
 
     /// Run `validate_agents` against a single `agents/general.md` with the given
     /// frontmatter/body and return the resulting error messages (all rules
     /// promoted to errors via `new_all_enabled`). Temp dir + cwd are scoped to
-    /// the closure so disk-backed checks (A014) see an empty skills layout.
+    /// the closure so disk-backed checks (A016) see an empty skills layout.
     fn run_agent<F: FnOnce(&mut DiagnosticCollector)>(content: &str, f: F) {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -1170,7 +1170,7 @@ mod tests {
 
     const GOOD_DESC: &str = "A general-purpose code review assistant";
 
-    // ── A012: agent-model-invalid ────────────────────────────────────
+    // ── A014: agent-model-invalid ────────────────────────────────────
 
     #[test]
     fn test_is_valid_model_aliases_and_ids() {
@@ -1206,7 +1206,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a012_invalid_model_fires() {
+    fn test_aPH14PH_invalid_model_fires() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonet\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1220,7 +1220,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a012_valid_model_no_fire() {
+    fn test_aPH14PH_valid_model_no_fire() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\nmodel: claude-sonnet-5[1m]\n---\nBody\n"
         );
@@ -1231,18 +1231,18 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a012_missing_model_no_fire() {
+    fn test_aPH14PH_missing_model_no_fire() {
         let content = format!("---\nname: general\ndescription: {GOOD_DESC}\n---\nBody\n");
         run_agent(&content, |diag| {
             assert!(!diag.errors().iter().any(|e| e.contains("model")));
         });
     }
 
-    // ── A013: agent-permission-invalid ───────────────────────────────
+    // ── A015: agent-permission-invalid ───────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a013_invalid_permission_fires() {
+    fn test_aPH15PH_invalid_permission_fires() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: yolo\n---\nBody\n"
         );
@@ -1257,7 +1257,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a013_valid_permission_no_fire() {
+    fn test_aPH15PH_valid_permission_no_fire() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: acceptEdits\n---\nBody\n"
         );
@@ -1266,11 +1266,11 @@ mod tests {
         });
     }
 
-    // ── A014: agent-skill-missing ────────────────────────────────────
+    // ── A016: agent-skill-missing ────────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a014_missing_skill_fires() {
+    fn test_aPH16PH_missing_skill_fires() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\nskills:\n  - missing-skill\n---\nBody\n"
         );
@@ -1285,7 +1285,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a014_existing_skill_no_fire() {
+    fn test_aPH16PH_existing_skill_no_fire() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -1311,7 +1311,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a014_existing_private_skill_no_fire() {
+    fn test_aPH16PH_existing_private_skill_no_fire() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -1337,11 +1337,11 @@ mod tests {
         );
     }
 
-    // ── A015: agent-tools-overlap ────────────────────────────────────
+    // ── A017: agent-tools-overlap ────────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a015_overlap_fires() {
+    fn test_aPH17PH_overlap_fires() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Read\ndisallowedTools: Read\n---\nBody\n"
         );
@@ -1356,7 +1356,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a015_disjoint_no_fire() {
+    fn test_aPH17PH_disjoint_no_fire() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Read\ndisallowedTools: Write\n---\nBody\n"
         );
@@ -1365,11 +1365,11 @@ mod tests {
         });
     }
 
-    // ── A016: agent-memory-invalid ───────────────────────────────────
+    // ── A018: agent-memory-invalid ───────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a016_invalid_memory_fires() {
+    fn test_aPH18PH_invalid_memory_fires() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nmemory: global\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1379,7 +1379,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a016_valid_memory_no_fire() {
+    fn test_aPH18PH_valid_memory_no_fire() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nmemory: project\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1387,11 +1387,11 @@ mod tests {
         });
     }
 
-    // ── A017/A018: agent-tools-unknown / agent-disallowed-unknown ────
+    // ── A019/A020: agent-tools-unknown / agent-disallowed-unknown ────
 
     #[test]
     #[serial_test::serial]
-    fn test_a017_unknown_tool_fires() {
+    fn test_aPH19PH_unknown_tool_fires() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Bsh\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1405,7 +1405,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a017_known_and_mcp_no_fire() {
+    fn test_aPH19PH_known_and_mcp_no_fire() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, mcp__github__create_pr\n---\nBody\n"
         );
@@ -1421,7 +1421,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a018_unknown_disallowed_fires() {
+    fn test_aPH20PH_unknown_disallowed_fires() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\ndisallowedTools: Bsh\n---\nBody\n"
         );
@@ -1434,15 +1434,15 @@ mod tests {
         });
     }
 
-    // ── A019: agent-bypass-permissions (warn) ────────────────────────
+    // ── A021: agent-bypass-permissions (warn) ────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a019_bypass_fires_as_warning() {
+    fn test_aPH21PH_bypass_fires_as_warning() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: bypassPermissions\n---\nBody\n"
         );
-        // Under default config A019 is a warning and A013 (enum) must NOT fire.
+        // Under default config A021 is a warning and A015 (enum) must NOT fire.
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -1458,7 +1458,7 @@ mod tests {
         );
     }
 
-    // ── A020: agent-skill-kebab (warn) ───────────────────────────────
+    // ── A022: agent-skill-kebab (warn) ───────────────────────────────
 
     #[test]
     fn test_is_kebab_case() {
@@ -1472,7 +1472,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a020_non_kebab_skill_fires() {
+    fn test_aPH22PH_non_kebab_skill_fires() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nskills: My_Skill\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1484,11 +1484,11 @@ mod tests {
         });
     }
 
-    // ── A021: agent-effort-invalid ───────────────────────────────────
+    // ── A023: agent-effort-invalid ───────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a021_invalid_effort_fires() {
+    fn test_aPH23PH_invalid_effort_fires() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\neffort: turbo\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1498,7 +1498,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a021_valid_effort_xhigh_no_fire() {
+    fn test_aPH23PH_valid_effort_xhigh_no_fire() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\neffort: xhigh\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1506,11 +1506,11 @@ mod tests {
         });
     }
 
-    // ── A022: agent-isolation-invalid ────────────────────────────────
+    // ── A024: agent-isolation-invalid ────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a022_invalid_isolation_fires() {
+    fn test_aPH24PH_invalid_isolation_fires() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\nisolation: container\n---\nBody\n"
         );
@@ -1525,7 +1525,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a022_valid_isolation_no_fire() {
+    fn test_aPH24PH_valid_isolation_no_fire() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\nisolation: worktree\n---\nBody\n"
         );
@@ -1534,11 +1534,11 @@ mod tests {
         });
     }
 
-    // ── A023: agent-background-invalid (warn) ────────────────────────
+    // ── A025: agent-background-invalid (warn) ────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a023_invalid_background_fires() {
+    fn test_aPH25PH_invalid_background_fires() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nbackground: yes\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1548,7 +1548,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a023_valid_background_no_fire() {
+    fn test_aPH25PH_valid_background_no_fire() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nbackground: false\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1556,11 +1556,11 @@ mod tests {
         });
     }
 
-    // ── A024: agent-maxturns-invalid ─────────────────────────────────
+    // ── A026: agent-maxturns-invalid ─────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a024_invalid_maxturns_fires() {
+    fn test_aPH26PH_invalid_maxturns_fires() {
         for val in ["0", "-5", "abc", "3.5"] {
             let content = format!(
                 "---\nname: general\ndescription: {GOOD_DESC}\nmaxTurns: {val}\n---\nBody\n"
@@ -1578,7 +1578,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a024_valid_maxturns_no_fire() {
+    fn test_aPH26PH_valid_maxturns_no_fire() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nmaxTurns: 5\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1586,11 +1586,11 @@ mod tests {
         });
     }
 
-    // ── A025: agent-field-unknown (warn) ─────────────────────────────
+    // ── A027: agent-field-unknown (warn) ─────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_a025_unknown_field_fires() {
+    fn test_aPH27PH_unknown_field_fires() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\nmode: plan\n---\nBody\n");
         run_agent(&content, |diag| {
@@ -1604,7 +1604,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a025_known_fields_no_fire() {
+    fn test_aPH27PH_known_fields_no_fire() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonnet\neffort: high\n---\nBody\n"
         );
@@ -1620,7 +1620,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a025_warns_under_default_config() {
+    fn test_aPH27PH_warns_under_default_config() {
         let content =
             format!("---\nname: general\ndescription: {GOOD_DESC}\ntypoField: 1\n---\nBody\n");
         let tmp = tempfile::tempdir().unwrap();
@@ -1673,7 +1673,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_a017_flow_sequence_no_false_positive() {
+    fn test_aPH19PH_flow_sequence_no_false_positive() {
         // Flow-sequence tools must not be falsely flagged as unknown.
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\ntools: [Bash, Read]\n---\nBody\n"
@@ -1684,7 +1684,7 @@ mod tests {
                     .errors()
                     .iter()
                     .any(|e| e.contains("unrecognized tool")),
-                "flow-sequence tools should not fire A017: {:?}",
+                "flow-sequence tools should not fire A019: {:?}",
                 diag.errors()
             );
         });

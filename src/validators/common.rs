@@ -44,7 +44,7 @@ pub(crate) fn is_valid_model_value(value: &str) -> bool {
 }
 
 /// Built-in Claude Code tool names (PascalCase). Shared by S040
-/// (skill `allowed-tools`) and A017/A018 (agent `tools`/`disallowedTools`).
+/// (skill `allowed-tools`) and A019/A020 (agent `tools`/`disallowedTools`).
 pub(crate) const KNOWN_TOOLS: &[&str] = &[
     "AskUserQuestion",
     "Bash",
