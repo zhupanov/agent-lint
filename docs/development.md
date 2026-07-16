@@ -81,12 +81,11 @@ Runs on pull requests to `main` and `workflow_dispatch`:
 
 ### Release (`.github/workflows/release.yml`)
 
-Triggered on push to `main`, tag push (`v*`), or `workflow_dispatch`:
+Triggered only by `workflow_dispatch`, normally by the repository-local
+`/release` skill after its version PR merges:
 
-1. **auto-tag** -- reads version from `package.json` / `Cargo.toml`, creates
-   a git tag if it doesn't exist
-2. **build** -- cross-compiles for Linux (x86_64, aarch64 musl) and macOS
+1. **build** -- cross-compiles for Linux (x86_64, aarch64 musl) and macOS
    (aarch64)
-3. **release** -- creates a GitHub Release with tarballs and checksums;
+2. **release** -- creates a GitHub Release with tarballs and checksums;
    on a new release, also moves the floating `v2` tag forward so `@v2`
    action references always resolve to the newest version
