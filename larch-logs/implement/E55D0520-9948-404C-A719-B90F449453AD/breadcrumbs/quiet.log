@@ -12,6 +12,55 @@ read-session-env-key.sh: --file is required
 === larch-quiet-scout-plan-archetypes-wrapper.sh-84373.log ===
 === larch-quiet-sessionstart-health.sh-93574.log ===
 === larch-quiet-ship.py-23783.log ===
+ci_monitor: CI status query #1 in progress after 0s
+ci_monitor: poll 1/180 pending after 4s; sleeping 10s
+ci_monitor: CI status query #2 in progress after 14s
+ci_monitor: poll 2/180 pending after 18s; sleeping 10s
+ci_monitor: CI status query #3 in progress after 28s
+ci_monitor: poll 3/180 pending after 32s; sleeping 10s
+ci_monitor: CI status query #4 in progress after 42s
+ci_monitor: poll 4/180 pending after 46s; sleeping 10s
+ci_monitor: CI status query #5 in progress after 56s
+ci_monitor: poll 5/180 pending after 60s; sleeping 10s
+ci_monitor: CI status query #6 in progress after 70s
+ci_monitor: poll 6/180 pending after 74s; sleeping 10s
+ci_monitor: CI status query #7 in progress after 84s
+ci_monitor: poll 7/180 pending after 88s; sleeping 10s
+ci_monitor: CI status query #8 in progress after 98s
+ci_monitor: poll 8/180 pending after 103s; sleeping 10s
+ci_monitor: CI status query #9 in progress after 113s
+ci_monitor: poll 9/180 pending after 117s; sleeping 10s
+ci_monitor: CI status query #10 in progress after 127s
+ci_monitor: poll 10/180 pending after 131s; sleeping 10s
+ci_monitor: CI status query #11 in progress after 141s
+ci_monitor: poll 11/180 pending after 145s; sleeping 10s
+ci_monitor: CI status query #12 in progress after 155s
+ci_monitor: poll 12/180 pending after 160s; sleeping 10s
+ci_monitor: CI status query #13 in progress after 170s
+ci_monitor: poll 13/180 pending after 174s; sleeping 10s
+ci_monitor: CI status query #14 in progress after 184s
+ci_monitor: poll 14/180 pending after 188s; sleeping 10s
+ci_monitor: CI status query #15 in progress after 198s
+ci_monitor: poll 15/180 pending after 203s; sleeping 10s
+ci_monitor: CI status query #16 in progress after 213s
+ci_monitor: poll 16/180 pending after 217s; sleeping 10s
+ci_monitor: CI status query #17 in progress after 227s
+ci_monitor: poll 17/180 pending after 231s; sleeping 10s
+ci_monitor: CI status query #18 in progress after 241s
+ci_monitor: poll 18/180 pending after 246s; sleeping 10s
+ci_monitor: CI status query #19 in progress after 256s
+ci_monitor: poll 19/180 pending after 260s; sleeping 10s
+ci_monitor: CI status query #20 in progress after 270s
+ci_monitor: poll 20/180 pending after 274s; sleeping 10s
+ci_monitor: CI status query #21 in progress after 284s
+ci_monitor: poll 21/180 pending after 288s; sleeping 10s
+ci_monitor: CI status query #22 in progress after 298s
+ci_monitor: poll 22/180 pending after 302s; sleeping 10s
+ci_monitor: CI status query #23 in progress after 312s
+ci_monitor: CI NO_CHECKS after 316s -> bail (no-ci-checks-observed)
+ship.py: finalize-state-written: path=<TMPDIR>/finalize-state.sh outcome=STALLED step=no-ci-checks-observed
+=== larch-quiet-ship.py-57126.log ===
+ship.py: pre-pr-reentry: de-terminalized prior phase stalled -> assessments
 === larch-quiet-ship.py-99689.log ===
 ship.py: pr-prep: postbump/Flush+Push
 ship.py: pr-create: PR
