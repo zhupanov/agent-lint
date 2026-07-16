@@ -10,7 +10,10 @@ Classify and apply a semantic version bump for this PR. Produces exactly ONE com
 
 ## Classification rules
 
-The classifier inspects the diff between the branch and main. Since this repo currently has no defined public surface directories, all changes default to PATCH. The MAJOR/MINOR rules below are documented for when the repo grows directories designated as public surface — update the `git diff` scope in `classify-bump.sh` at that time.
+The classifier inspects the diff between the branch and main. Agent-lint's public
+surface is its stable lint-rule IDs (`src/rules.rs`), CLI flags (`src/main.rs`),
+and validator modules (`src/validators/**`), alongside the existing
+`skills/**` and `agents/**` plugin surface.
 
 Severity hierarchy: **MAJOR > MINOR > PATCH** (highest wins).
 
@@ -20,6 +23,7 @@ Any of the following in the designated public surface:
 
 - A deleted public-facing file
 - A renamed public-facing file (git status `R`)
+- A removed lint-rule ID or CLI flag
 - A changed `name:` frontmatter field in an existing SKILL.md
 - A `--<flag>` token removed from a SKILL.md's `argument-hint:` frontmatter field
 
@@ -28,6 +32,7 @@ Any of the following in the designated public surface:
 Any of the following in the designated public surface (only if not MAJOR):
 
 - A newly added public-facing file
+- A newly added lint-rule ID, validator module, or CLI flag
 - A `--<flag>` token added to a SKILL.md's `argument-hint:` frontmatter field
 
 ### PATCH — everything else
@@ -50,7 +55,7 @@ If you escalate, append a paragraph to the reasoning log file explaining why.
    - Resolves `BASE` via `main` → `origin/main` fallback
    - Validates `package.json` via `jq`
    - Detects an **already-bumped branch** by checking whether HEAD itself is a commit with subject `^Bump version to [0-9]+\.[0-9]+\.[0-9]+$`. If HEAD is such a commit, emits `BUMP_TYPE=NONE` and exits 0 (no-op).
-   - Computes `git diff -M --name-status $BASE HEAD -- skills agents` for file-level classification
+   - Compares public rule IDs, CLI flags, validator modules, and the plugin surface
    - Writes evidence to `${IMPLEMENT_TMPDIR:-$(mktemp -d)}/bump-version-reasoning.md`
    - Emits `KEY=VALUE` lines on stdout: `CURRENT_VERSION`, `NEW_VERSION`, `BUMP_TYPE`, `REASONING_FILE`
 3. You (main agent) parse the output, read the reasoning log, review the diff, and apply the **escalation-only** caveat review. If you escalate, update `NEW_VERSION` accordingly and append reasoning to the log.
