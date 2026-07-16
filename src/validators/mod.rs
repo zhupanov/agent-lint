@@ -224,12 +224,14 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn platform_override_gates_codex_validators() {
+    fn platform_overrides_gate_platform_validators() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir(".codex").unwrap();
         std::fs::write(".codex/config.toml", "not = [valid").unwrap();
+        std::fs::create_dir(".cursor").unwrap();
+        std::fs::write(".cursor/hooks.json", "not valid JSON").unwrap();
 
         let ctx = LintContext {
             base_path: tmp.path().to_path_buf(),
@@ -253,6 +255,9 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.rule == crate::rules::LintRule::CodexTomlInvalid)
         );
+        assert!(!disabled.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == crate::rules::LintRule::CursorHooksSchemaInvalid
+        }));
 
         let mut enabled = DiagnosticCollector::new_all_enabled();
         run_all_with_platforms(
@@ -266,6 +271,29 @@ mod tests {
         );
         assert!(
             enabled
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == crate::rules::LintRule::CodexTomlInvalid)
+        );
+        assert!(!enabled.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == crate::rules::LintRule::CursorHooksSchemaInvalid
+        }));
+
+        let mut cursor_enabled = DiagnosticCollector::new_all_enabled();
+        run_all_with_platforms(
+            &ctx,
+            &mut cursor_enabled,
+            &ExcludeSet::default(),
+            ActivePlatforms {
+                cursor: true,
+                codex: false,
+            },
+        );
+        assert!(cursor_enabled.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == crate::rules::LintRule::CursorHooksSchemaInvalid
+        }));
+        assert!(
+            !cursor_enabled
                 .diagnostics()
                 .iter()
                 .any(|diagnostic| diagnostic.rule == crate::rules::LintRule::CodexTomlInvalid)
