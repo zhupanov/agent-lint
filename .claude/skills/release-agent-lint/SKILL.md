@@ -2,7 +2,7 @@
 name: release-agent-lint
 description: Create and publish an agent-lint release through a version pull request and a manually dispatched release workflow.
 argument-hint: "[--dry-run] [--bump major|minor|patch]"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Read
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(date:*), Bash(sleep:*), Bash(head:*), Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Read
 disable-model-invocation: true
 ---
 
@@ -104,16 +104,44 @@ git merge-base --is-ancestor "$MERGE_COMMIT" origin/main
 
 ## 4. Publish and clean up
 
-Explicitly dispatch the release workflow from `main`; this is the only action
-that creates the release tag, GitHub Release, artifacts, and floating `v2`
-tag. Identify the dispatched run for the merged `origin/main` commit, then
-wait at a 30-second refresh interval and stop if it fails.
+Explicitly dispatch the release workflow from `main`; it creates the immutable
+version tag, GitHub Release, and artifacts. Identify the dispatched run for
+the merged `origin/main` commit, then wait at a 30-second refresh interval and
+stop if it fails.
 
 ```bash
+DISPATCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 gh workflow run release.yml --ref main
-RUN_ID=$(gh run list --workflow release.yml --branch main --event workflow_dispatch \
-  --limit 1 --json databaseId --jq '.[0].databaseId')
+RUN_ID=""
+for ((attempt = 1; attempt <= 10; attempt++)); do
+  RUN_ID=$(gh run list --workflow release.yml --branch main --event workflow_dispatch \
+    --limit 20 --json databaseId,headSha,createdAt \
+    --jq ".[] | select(.headSha == \"${MERGE_COMMIT}\" and .createdAt >= \"${DISPATCHED_AT}\") | .databaseId" \
+    | head -n 1)
+  test -n "$RUN_ID" && break
+  if [ "$attempt" -lt 10 ]; then sleep 30; fi
+done
+test -n "$RUN_ID" || { echo "Release workflow run was not found after five minutes." >&2; exit 1; }
 gh run watch "$RUN_ID" --exit-status --interval 30
+```
+
+Only after that workflow succeeds, update the floating major tag locally using
+the operator's already-authenticated `origin` remote. This avoids relying on
+the default Actions token, which GitHub blocks from moving a ref across a
+workflow-file change. The immutable version tag and release remain created by
+the workflow; `v2` is a final local promotion step. Fetch the version tag,
+force-update the annotated major tag, push it, and verify the remote peeled
+commit equals the version tag's commit before declaring success.
+
+```bash
+MAJOR=${NEW_VERSION%%.*}
+git fetch origin "refs/tags/v${NEW_VERSION}:refs/tags/v${NEW_VERSION}" --force
+VERSION_OID=$(git rev-parse "v${NEW_VERSION}^{commit}")
+git tag -fa "v${MAJOR}" "v${NEW_VERSION}" -m "Update v${MAJOR} to v${NEW_VERSION}"
+git push origin "v${MAJOR}" --force
+git fetch origin "refs/tags/v${MAJOR}:refs/tags/v${MAJOR}" --force
+REMOTE_MAJOR_OID=$(git rev-parse "v${MAJOR}^{commit}")
+test "$REMOTE_MAJOR_OID" = "$VERSION_OID"
 ```
 
 When the workflow succeeds, return to `main`, fast-forward from `origin/main`,
@@ -135,7 +163,9 @@ unknown state, then verify the release and tag explicitly before proceeding.
 Check the release state explicitly: the version tag, GitHub Release, uploaded
 artifacts, and floating major tag must all agree. A failure after GitHub Release
 creation can leave a partial release: for example, the version tag and release
-may exist while the floating `v2` tag remains on the previous release.
+may exist while the floating `v2` tag remains on the previous release. Repair
+that state with the local major-tag promotion step above; keep `v2` promotion
+outside the Actions workflow.
 
 Fix the workflow in a separate PR, wait for its checks, merge it according to
 repository policy, and only then explicitly re-dispatch the release workflow
