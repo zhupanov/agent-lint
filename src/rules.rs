@@ -402,6 +402,54 @@ pub enum LintRule {
     CodexNetworkPermissionField,
     /// CX036: windows.sandbox is invalid
     CodexWindowsSandbox,
+    /// CX037: AGENTS.md is empty or whitespace-only
+    CodexAgentsEmpty,
+    /// CX038: AGENTS.md contains a potential hardcoded secret
+    CodexAgentsSecret,
+    /// CX039: AGENTS.md exceeds Codex's hard size limit
+    CodexAgentsTooLarge,
+    /// CX040: AGENTS.md exceeds the configured Codex document budget
+    CodexAgentsDocLimit,
+    /// CX041: AGENTS.md references a missing inline-code path
+    CodexAgentsInlinePathMissing,
+    /// CX042: AGENTS.override.md is tracked by Git
+    CodexAgentsOverrideTracked,
+    /// CX043: AGENTS.md contains only generic guidance
+    CodexAgentsGenericGuidance,
+    /// CX044: AGENTS.md lacks project-specific structure
+    CodexAgentsMissingStructure,
+    /// CX045: AGENTS.md explicitly contradicts a Codex config value
+    CodexAgentsConfigConflict,
+    /// CX046: a Codex plugin manifest is not at the repository root
+    CodexPluginManifestPath,
+    /// CX047: .codex-plugin/plugin.json is not valid JSON
+    CodexPluginManifestInvalid,
+    /// CX048: Codex plugin manifest name is missing or blank
+    CodexPluginNameMissing,
+    /// CX049: Codex plugin manifest name contains invalid characters
+    CodexPluginNameInvalid,
+    /// CX050: Codex plugin component path lacks a ./ prefix
+    CodexPluginPathPrefix,
+    /// CX051: Codex plugin component path contains traversal
+    CodexPluginPathTraversal,
+    /// CX052: Codex plugin component path is a bare ./
+    CodexPluginPathBare,
+    /// CX053: Codex plugin has too many default prompts
+    CodexPluginDefaultPromptCount,
+    /// CX054: Codex plugin default prompt exceeds Codex's character limit
+    CodexPluginDefaultPromptLength,
+    /// CX055: Codex plugin default prompt is empty after whitespace normalization
+    CodexPluginDefaultPromptEmpty,
+    /// CX056: Codex plugin interface URL is not HTTP(S)
+    CodexPluginInterfaceUrl,
+    /// CX057: Codex plugin interface asset path is unsafe
+    CodexPluginInterfaceAssetPath,
+    /// CX058: Codex plugin manifest uses the unsupported hooks field
+    CodexPluginHooksUnsupported,
+    /// CX059: Codex plugin manifest description is missing or blank
+    CodexPluginDescriptionMissing,
+    /// CX060: a Codex skill uses Claude-only frontmatter
+    CodexSkillUnsupportedFrontmatter,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
@@ -688,6 +736,30 @@ impl LintRule {
             Self::CodexFeatureKey => "CX034",
             Self::CodexNetworkPermissionField => "CX035",
             Self::CodexWindowsSandbox => "CX036",
+            Self::CodexAgentsEmpty => "CX037",
+            Self::CodexAgentsSecret => "CX038",
+            Self::CodexAgentsTooLarge => "CX039",
+            Self::CodexAgentsDocLimit => "CX040",
+            Self::CodexAgentsInlinePathMissing => "CX041",
+            Self::CodexAgentsOverrideTracked => "CX042",
+            Self::CodexAgentsGenericGuidance => "CX043",
+            Self::CodexAgentsMissingStructure => "CX044",
+            Self::CodexAgentsConfigConflict => "CX045",
+            Self::CodexPluginManifestPath => "CX046",
+            Self::CodexPluginManifestInvalid => "CX047",
+            Self::CodexPluginNameMissing => "CX048",
+            Self::CodexPluginNameInvalid => "CX049",
+            Self::CodexPluginPathPrefix => "CX050",
+            Self::CodexPluginPathTraversal => "CX051",
+            Self::CodexPluginPathBare => "CX052",
+            Self::CodexPluginDefaultPromptCount => "CX053",
+            Self::CodexPluginDefaultPromptLength => "CX054",
+            Self::CodexPluginDefaultPromptEmpty => "CX055",
+            Self::CodexPluginInterfaceUrl => "CX056",
+            Self::CodexPluginInterfaceAssetPath => "CX057",
+            Self::CodexPluginHooksUnsupported => "CX058",
+            Self::CodexPluginDescriptionMissing => "CX059",
+            Self::CodexSkillUnsupportedFrontmatter => "CX060",
 
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
@@ -930,6 +1002,30 @@ impl LintRule {
             Self::CodexFeatureKey => "codex-feature-key",
             Self::CodexNetworkPermissionField => "codex-network-field",
             Self::CodexWindowsSandbox => "codex-windows-sandbox",
+            Self::CodexAgentsEmpty => "codex-agents-empty",
+            Self::CodexAgentsSecret => "codex-agents-secret",
+            Self::CodexAgentsTooLarge => "codex-agents-large",
+            Self::CodexAgentsDocLimit => "codex-agents-limit",
+            Self::CodexAgentsInlinePathMissing => "codex-agents-path",
+            Self::CodexAgentsOverrideTracked => "codex-agents-override",
+            Self::CodexAgentsGenericGuidance => "codex-agents-generic",
+            Self::CodexAgentsMissingStructure => "codex-agents-structure",
+            Self::CodexAgentsConfigConflict => "codex-agents-conflict",
+            Self::CodexPluginManifestPath => "codex-plugin-path",
+            Self::CodexPluginManifestInvalid => "codex-plugin-invalid",
+            Self::CodexPluginNameMissing => "codex-name-missing",
+            Self::CodexPluginNameInvalid => "codex-name-invalid",
+            Self::CodexPluginPathPrefix => "codex-path-prefix",
+            Self::CodexPluginPathTraversal => "codex-path-traversal",
+            Self::CodexPluginPathBare => "codex-path-bare",
+            Self::CodexPluginDefaultPromptCount => "codex-prompt-count",
+            Self::CodexPluginDefaultPromptLength => "codex-prompt-length",
+            Self::CodexPluginDefaultPromptEmpty => "codex-prompt-empty",
+            Self::CodexPluginInterfaceUrl => "codex-plugin-url",
+            Self::CodexPluginInterfaceAssetPath => "codex-plugin-asset",
+            Self::CodexPluginHooksUnsupported => "codex-plugin-hooks",
+            Self::CodexPluginDescriptionMissing => "codex-plugin-description",
+            Self::CodexSkillUnsupportedFrontmatter => "codex-skill-frontmatter",
 
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
@@ -1024,7 +1120,9 @@ impl LintRule {
             Self::NameNotGerund | Self::BodyNoExamples |
             Self::BodyTooLong | Self::Bash32Incompatible |
             Self::AwkRegexNonascii | Self::CodexNetworkPermissionField |
-            Self::CodexWindowsSandbox => DefaultSeverity::Suppressed,
+            Self::CodexWindowsSandbox | Self::CodexAgentsGenericGuidance |
+            Self::CodexAgentsMissingStructure | Self::CodexAgentsConfigConflict
+                => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
             Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
@@ -1076,6 +1174,12 @@ impl LintRule {
             Self::CodexApprovalPolicyField | Self::CodexApprovalsReviewer |
             Self::CodexServiceTier | Self::CodexSkillsType | Self::CodexProfileType |
             Self::CodexTopLevelKey | Self::CodexFeatureKey |
+            Self::CodexAgentsTooLarge | Self::CodexAgentsDocLimit |
+            Self::CodexAgentsInlinePathMissing | Self::CodexAgentsOverrideTracked |
+            Self::CodexPluginDefaultPromptCount | Self::CodexPluginDefaultPromptLength |
+            Self::CodexPluginDefaultPromptEmpty | Self::CodexPluginInterfaceUrl |
+            Self::CodexPluginHooksUnsupported | Self::CodexPluginDescriptionMissing |
+            Self::CodexSkillUnsupportedFrontmatter |
 
             // ── Default-warning: user config ─────────────────────────
             Self::UserconfigKeyInvalid |
@@ -1289,6 +1393,30 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::CodexFeatureKey,
     LintRule::CodexNetworkPermissionField,
     LintRule::CodexWindowsSandbox,
+    LintRule::CodexAgentsEmpty,
+    LintRule::CodexAgentsSecret,
+    LintRule::CodexAgentsTooLarge,
+    LintRule::CodexAgentsDocLimit,
+    LintRule::CodexAgentsInlinePathMissing,
+    LintRule::CodexAgentsOverrideTracked,
+    LintRule::CodexAgentsGenericGuidance,
+    LintRule::CodexAgentsMissingStructure,
+    LintRule::CodexAgentsConfigConflict,
+    LintRule::CodexPluginManifestPath,
+    LintRule::CodexPluginManifestInvalid,
+    LintRule::CodexPluginNameMissing,
+    LintRule::CodexPluginNameInvalid,
+    LintRule::CodexPluginPathPrefix,
+    LintRule::CodexPluginPathTraversal,
+    LintRule::CodexPluginPathBare,
+    LintRule::CodexPluginDefaultPromptCount,
+    LintRule::CodexPluginDefaultPromptLength,
+    LintRule::CodexPluginDefaultPromptEmpty,
+    LintRule::CodexPluginInterfaceUrl,
+    LintRule::CodexPluginInterfaceAssetPath,
+    LintRule::CodexPluginHooksUnsupported,
+    LintRule::CodexPluginDescriptionMissing,
+    LintRule::CodexSkillUnsupportedFrontmatter,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
@@ -1340,7 +1468,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            225,
+            249,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1408,8 +1536,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            7,
-            "Expected 7 default-suppressed rules, got {}",
+            10,
+            "Expected 10 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1422,8 +1550,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            82,
-            "Expected 82 default-warning rules, got {}",
+            93,
+            "Expected 93 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1471,8 +1599,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            136,
-            "Expected 136 default-error rules, got {}",
+            146,
+            "Expected 146 default-error rules, got {}",
             errors.len()
         );
     }

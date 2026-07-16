@@ -1,0 +1,674 @@
+//! Validation for Codex instruction files, plugin manifests, and skills.
+//!
+//! These files are optional. When present, Codex discovers nested `AGENTS.md`
+//! files hierarchically, so every discovered instruction file is validated.
+
+use crate::config::ExcludeSet;
+use crate::diagnostic::DiagnosticCollector;
+use crate::frontmatter;
+use crate::rules::LintRule;
+use crate::validators::skill_content::security::has_hardcoded_secret;
+use serde_json::Value;
+use std::path::{Component, Path};
+use walkdir::{DirEntry, WalkDir};
+
+const AGENTS_DEFAULT_MAX_BYTES: usize = 32_768;
+const AGENTS_HARD_MAX_BYTES: usize = 100_000;
+// Verified against openai/codex commit 18110b810f0a328147f6cd85e6f1ab6414927366
+// (`codex-rs/core-plugins/src/manifest.rs`) on 2026-07-16.
+const MAX_DEFAULT_PROMPT_COUNT: usize = 3;
+const MAX_DEFAULT_PROMPT_LEN: usize = 128;
+const CODEX_SKILL_UNSUPPORTED_FIELDS: &[&str] = &["context", "agent", "hooks"];
+
+pub fn validate(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    validate_agents_files(diag, exclude);
+    validate_override_tracking(diag, exclude);
+    validate_plugin_manifests(diag, exclude);
+    validate_codex_skill_frontmatter(diag, exclude);
+}
+
+fn skip_git(entry: &DirEntry) -> bool {
+    entry.file_name() != ".git"
+}
+
+fn relative_display(path: &Path) -> String {
+    path.strip_prefix(".")
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn validate_agents_files(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let max_bytes = project_doc_max_bytes();
+    for entry in WalkDir::new(".")
+        .into_iter()
+        .filter_entry(skip_git)
+        .flatten()
+    {
+        if !entry.file_type().is_file() || entry.file_name() != "AGENTS.md" {
+            continue;
+        }
+        let path = entry.path();
+        let display = relative_display(path);
+        if exclude.is_excluded(&display) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if content.trim().is_empty() {
+            diag.report(
+                LintRule::CodexAgentsEmpty,
+                &format!("{display} is empty or whitespace-only"),
+            );
+        }
+        if has_hardcoded_secret(&content) {
+            diag.report(
+                LintRule::CodexAgentsSecret,
+                &format!("{display} contains a potential hardcoded secret/API key"),
+            );
+        }
+        if content.len() > AGENTS_HARD_MAX_BYTES {
+            diag.report(
+                LintRule::CodexAgentsTooLarge,
+                &format!(
+                    "{display} exceeds Codex's {AGENTS_HARD_MAX_BYTES}-byte hard limit ({} bytes)",
+                    content.len()
+                ),
+            );
+        }
+        if content.len() > max_bytes {
+            diag.report(LintRule::CodexAgentsDocLimit, &format!("{display} exceeds Codex's effective project document limit of {max_bytes} bytes ({} bytes)", content.len()));
+        }
+        validate_agents_inline_paths(diag, path, &display, &content);
+        if is_generic_guidance(&content) {
+            diag.report(LintRule::CodexAgentsGenericGuidance, &format!("{display} contains only generic guidance; add project-specific commands, paths, or constraints"));
+        }
+        if lacks_project_structure(&content) {
+            diag.report(LintRule::CodexAgentsMissingStructure, &format!("{display} lacks project-specific headings, commands, paths, or sufficient detail"));
+        }
+        if agents_conflicts_with_config(&content) {
+            diag.report(
+                LintRule::CodexAgentsConfigConflict,
+                &format!("{display} explicitly contradicts a value in .codex/config.toml"),
+            );
+        }
+    }
+}
+
+fn project_doc_max_bytes() -> usize {
+    std::fs::read_to_string(".codex/config.toml")
+        .ok()
+        .and_then(|content| content.parse::<toml::Value>().ok())
+        .and_then(|value| {
+            value
+                .get("project_doc_max_bytes")
+                .and_then(toml::Value::as_integer)
+        })
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(AGENTS_DEFAULT_MAX_BYTES)
+}
+
+fn validate_agents_inline_paths(
+    diag: &mut DiagnosticCollector,
+    agents_path: &Path,
+    display: &str,
+    content: &str,
+) {
+    for reference in backtick_tokens(content) {
+        if !looks_like_path(reference) {
+            continue;
+        }
+        let candidate = agents_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(reference);
+        if !candidate.is_file() && !candidate.is_dir() {
+            diag.report(
+                LintRule::CodexAgentsInlinePathMissing,
+                &format!("{display} references missing inline-code path `{reference}`"),
+            );
+            break;
+        }
+    }
+}
+
+fn backtick_tokens(content: &str) -> Vec<&str> {
+    let mut result = Vec::new();
+    let mut rest = content;
+    while let Some(start) = rest.find('`') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('`') else { break };
+        let token = after[..end].trim();
+        if !token.is_empty() && !token.contains(char::is_whitespace) {
+            result.push(token);
+        }
+        rest = &after[end + 1..];
+    }
+    result
+}
+
+fn looks_like_path(token: &str) -> bool {
+    !["http://", "https://", "$", "<"]
+        .iter()
+        .any(|prefix| token.starts_with(prefix))
+        && (token.starts_with('.') || token.contains('/') || token.rsplit_once('.').is_some())
+}
+
+fn is_generic_guidance(content: &str) -> bool {
+    let normalized = content.trim().to_ascii_lowercase();
+    normalized.len() < 120
+        && !normalized.contains(['`', '/', '\\'])
+        && [
+            "be helpful",
+            "be accurate",
+            "write good code",
+            "follow best practices",
+        ]
+        .iter()
+        .any(|phrase| normalized.contains(phrase))
+}
+
+fn lacks_project_structure(content: &str) -> bool {
+    let trimmed = content.trim();
+    !trimmed.is_empty()
+        && trimmed.len() < 200
+        && !trimmed.contains("# ")
+        && !trimmed.contains('`')
+        && !trimmed.contains(['/', '\\'])
+}
+
+fn agents_conflicts_with_config(content: &str) -> bool {
+    let Ok(config) = std::fs::read_to_string(".codex/config.toml") else {
+        return false;
+    };
+    let Ok(value) = config.parse::<toml::Value>() else {
+        return false;
+    };
+    for key in ["approval_policy", "sandbox_mode", "project_doc_max_bytes"] {
+        let Some(config_value) = value.get(key) else {
+            continue;
+        };
+        let config_value = config_value.to_string().trim_matches('"').to_string();
+        for line in content.lines() {
+            let normalized = line.replace(['`', '"', '\''], "");
+            let Some((mentioned_key, mentioned_value)) = normalized.split_once('=') else {
+                continue;
+            };
+            if mentioned_key.trim() == key && mentioned_value.trim() != config_value {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn validate_override_tracking(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let path = "AGENTS.override.md";
+    if exclude.is_excluded(path) || !Path::new(path).is_file() || !is_git_tracked(path) {
+        return;
+    }
+    diag.report(LintRule::CodexAgentsOverrideTracked, "AGENTS.override.md is tracked by Git; add it to .gitignore because it holds user-specific overrides");
+}
+
+fn is_git_tracked(path: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["ls-files", "--error-unmatch", "--", path])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn validate_plugin_manifests(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let canonical = ".codex-plugin/plugin.json";
+    for entry in WalkDir::new(".")
+        .into_iter()
+        .filter_entry(skip_git)
+        .flatten()
+    {
+        let path = entry.path();
+        let display = relative_display(path);
+        if !entry.file_type().is_file()
+            || entry.file_name() != "plugin.json"
+            || !display.ends_with(".codex-plugin/plugin.json")
+        {
+            continue;
+        }
+        if exclude.is_excluded(&display) {
+            continue;
+        }
+        if display != canonical {
+            diag.report(
+                LintRule::CodexPluginManifestPath,
+                &format!("{display} must be located at .codex-plugin/plugin.json"),
+            );
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let value: Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(error) => {
+                diag.report(
+                    LintRule::CodexPluginManifestInvalid,
+                    &format!("{display} is not valid JSON: {error}"),
+                );
+                continue;
+            }
+        };
+        validate_plugin_manifest_value(diag, &display, &value);
+    }
+}
+
+fn validate_plugin_manifest_value(diag: &mut DiagnosticCollector, display: &str, value: &Value) {
+    let Some(root) = value.as_object() else {
+        diag.report(
+            LintRule::CodexPluginNameMissing,
+            &format!("{display}: plugin manifest must be a JSON object with a non-empty name"),
+        );
+        return;
+    };
+    match root.get("name").and_then(Value::as_str).map(str::trim) {
+        Some(name) if !name.is_empty() => {
+            if !name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+            {
+                diag.report(LintRule::CodexPluginNameInvalid, &format!("{display}: name must contain only ASCII alphanumerics, hyphens, or underscores"));
+            }
+        }
+        _ => diag.report(
+            LintRule::CodexPluginNameMissing,
+            &format!("{display}: name must be present and non-empty"),
+        ),
+    }
+    for field in ["skills", "mcpServers", "apps"] {
+        if let Some(value) = root.get(field) {
+            validate_component_paths(diag, display, field, value);
+        }
+    }
+    if root.contains_key("hooks") {
+        diag.report(
+            LintRule::CodexPluginHooksUnsupported,
+            &format!("{display}: hooks is not supported in Codex plugin manifests"),
+        );
+    }
+    if root
+        .get("description")
+        .and_then(Value::as_str)
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        diag.report(
+            LintRule::CodexPluginDescriptionMissing,
+            &format!("{display}: description is missing or empty"),
+        );
+    }
+    if let Some(interface) = root.get("interface").and_then(Value::as_object) {
+        validate_default_prompts(
+            diag,
+            display,
+            interface
+                .get("defaultPrompt")
+                .or_else(|| interface.get("default_prompts")),
+        );
+        validate_interface_urls(diag, display, interface);
+        validate_interface_assets(diag, display, interface);
+    }
+}
+
+fn validate_component_paths(
+    diag: &mut DiagnosticCollector,
+    display: &str,
+    field: &str,
+    value: &Value,
+) {
+    let paths: Vec<&str> = match value {
+        Value::String(path) => vec![path],
+        Value::Array(paths) => paths.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    for path in paths {
+        let trimmed = path.trim();
+        if path_has_traversal(trimmed) {
+            diag.report(
+                LintRule::CodexPluginPathTraversal,
+                &format!("{display}: {field} path `{trimmed}` must not contain `..` segments"),
+            );
+        } else if trimmed == "./" {
+            diag.report(
+                LintRule::CodexPluginPathBare,
+                &format!(
+                    "{display}: {field} path must reference a file or directory, not bare `./`"
+                ),
+            );
+        } else if !trimmed.starts_with("./") {
+            diag.report(
+                LintRule::CodexPluginPathPrefix,
+                &format!("{display}: {field} path `{trimmed}` must start with `./`"),
+            );
+        }
+    }
+}
+
+fn path_has_traversal(path: &str) -> bool {
+    Path::new(path)
+        .components()
+        .any(|component| component == Component::ParentDir)
+        || path.split('\\').any(|component| component == "..")
+}
+
+fn validate_default_prompts(diag: &mut DiagnosticCollector, display: &str, value: Option<&Value>) {
+    let Some(value) = value else { return };
+    let prompts: Vec<&str> = match value {
+        Value::String(prompt) => vec![prompt],
+        Value::Array(prompts) => prompts.iter().filter_map(Value::as_str).collect(),
+        _ => return,
+    };
+    if prompts.len() > MAX_DEFAULT_PROMPT_COUNT {
+        diag.report(LintRule::CodexPluginDefaultPromptCount, &format!("{display}: interface.defaultPrompt has {} entries; Codex supports at most {MAX_DEFAULT_PROMPT_COUNT}", prompts.len()));
+    }
+    for prompt in prompts {
+        let normalized = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+        if normalized.is_empty() {
+            diag.report(
+                LintRule::CodexPluginDefaultPromptEmpty,
+                &format!("{display}: interface.defaultPrompt must not contain an empty entry"),
+            );
+        } else if normalized.chars().count() > MAX_DEFAULT_PROMPT_LEN {
+            diag.report(LintRule::CodexPluginDefaultPromptLength, &format!("{display}: interface.defaultPrompt entry exceeds Codex's {MAX_DEFAULT_PROMPT_LEN}-character limit"));
+        }
+    }
+}
+
+fn validate_interface_urls(
+    diag: &mut DiagnosticCollector,
+    display: &str,
+    interface: &serde_json::Map<String, Value>,
+) {
+    for field in ["websiteUrl", "privacyPolicyUrl", "termsOfServiceUrl"] {
+        let Some(value) = interface.get(field) else {
+            continue;
+        };
+        if !value.as_str().is_some_and(valid_http_url) {
+            diag.report(
+                LintRule::CodexPluginInterfaceUrl,
+                &format!("{display}: interface.{field} must be a valid http(s) URL"),
+            );
+        }
+    }
+}
+
+fn valid_http_url(value: &str) -> bool {
+    let Some(rest) = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    !rest.is_empty()
+        && !rest.contains(char::is_whitespace)
+        && !rest
+            .split(['/', '?', '#'])
+            .next()
+            .unwrap_or_default()
+            .is_empty()
+}
+
+fn validate_interface_assets(
+    diag: &mut DiagnosticCollector,
+    display: &str,
+    interface: &serde_json::Map<String, Value>,
+) {
+    for field in ["composerIcon", "logo"] {
+        if let Some(value) = interface.get(field) {
+            validate_asset_path(diag, display, field, value);
+        }
+    }
+    if let Some(screenshots) = interface.get("screenshots").and_then(Value::as_array) {
+        for (index, value) in screenshots.iter().enumerate() {
+            validate_asset_path(diag, display, &format!("screenshots[{index}]"), value);
+        }
+    }
+}
+
+fn validate_asset_path(diag: &mut DiagnosticCollector, display: &str, field: &str, value: &Value) {
+    if !value
+        .as_str()
+        .is_some_and(|path| path.starts_with("./") && !path_has_traversal(path))
+    {
+        diag.report(
+            LintRule::CodexPluginInterfaceAssetPath,
+            &format!(
+                "{display}: interface.{field} must start with `./` and must not contain traversal"
+            ),
+        );
+    }
+}
+
+fn validate_codex_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let root = Path::new(".agents/skills");
+    if !root.is_dir() {
+        return;
+    }
+    for entry in WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() || entry.file_name() != "SKILL.md" {
+            continue;
+        }
+        let path = entry.path();
+        let display = relative_display(path);
+        if exclude.is_excluded(&display) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(lines) = frontmatter::extract_frontmatter(&content) else {
+            continue;
+        };
+        for line in lines {
+            let Some((field, _)) = line.split_once(':') else {
+                continue;
+            };
+            let field = field.trim();
+            if CODEX_SKILL_UNSUPPORTED_FIELDS.contains(&field) {
+                diag.report(LintRule::CodexSkillUnsupportedFrontmatter, &format!("{display}: `{field}` is Claude-only skill frontmatter unsupported by Codex CLI"));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn validates_nested_agents_files_and_the_effective_doc_limit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("nested/.codex").unwrap();
+        std::fs::write("nested/AGENTS.md", "x".repeat(32_769)).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|error| error.contains("nested/AGENTS.md")
+                    && error.contains("effective project document limit"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn validates_all_agents_surface_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".codex").unwrap();
+        std::fs::create_dir_all("nested/deeper").unwrap();
+        std::fs::create_dir_all("nested/secret").unwrap();
+        std::fs::create_dir_all("nested/generic").unwrap();
+        std::fs::write(".codex/config.toml", "approval_policy = \"never\"\n").unwrap();
+        std::fs::write(
+            "AGENTS.md",
+            "Be helpful and write good code.\napproval_policy = \"on-request\"\nCheck `missing.md`.\n",
+        )
+        .unwrap();
+        std::fs::write("nested/AGENTS.md", " \n\t").unwrap();
+        std::fs::write("nested/secret/AGENTS.md", "token = sk-12345678901234567890").unwrap();
+        std::fs::write(
+            "nested/generic/AGENTS.md",
+            "Be helpful and write good code.",
+        )
+        .unwrap();
+        std::fs::write("nested/large.md", "present").unwrap();
+        std::fs::write("nested/deeper/large.txt", "x".repeat(100_001)).unwrap();
+        std::fs::write("nested/deeper/AGENTS.md", "x".repeat(100_001)).unwrap();
+        std::fs::write("AGENTS.override.md", "personal settings\n").unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            std::process::Command::new("git")
+                .args(["add", "AGENTS.override.md"])
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        for rule in [
+            LintRule::CodexAgentsEmpty,
+            LintRule::CodexAgentsSecret,
+            LintRule::CodexAgentsTooLarge,
+            LintRule::CodexAgentsInlinePathMissing,
+            LintRule::CodexAgentsOverrideTracked,
+            LintRule::CodexAgentsGenericGuidance,
+            LintRule::CodexAgentsMissingStructure,
+            LintRule::CodexAgentsConfigConflict,
+        ] {
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == rule),
+                "missing {}: {:?}",
+                rule.code(),
+                diag.errors()
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn validates_codex_plugin_manifest_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".codex-plugin").unwrap();
+        std::fs::write(".codex-plugin/plugin.json", r#"{
+          "name": "bad name!",
+          "skills": "../skills",
+          "hooks": {},
+          "interface": {
+            "defaultPrompt": [" ", "x", "x", "x", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"],
+            "websiteUrl": "ftp://example.com",
+            "logo": "../logo.svg"
+          }
+        }"#).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        let errors = diag.errors();
+        for needle in [
+            "name must contain",
+            "must not contain `..`",
+            "hooks is not supported",
+            "at most 3",
+            "empty entry",
+            "128-character",
+            "valid http(s)",
+            "must start with `./`",
+            "description is missing",
+        ] {
+            assert!(
+                errors.iter().any(|error| error.contains(needle)),
+                "missing {needle}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn validates_manifest_location_parse_name_and_component_path_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("nested/.codex-plugin").unwrap();
+        std::fs::write("nested/.codex-plugin/plugin.json", "{}").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::CodexPluginManifestPath)
+        );
+
+        std::fs::remove_dir_all("nested").unwrap();
+        std::fs::create_dir_all(".codex-plugin").unwrap();
+        std::fs::write(".codex-plugin/plugin.json", "{").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::CodexPluginManifestInvalid)
+        );
+
+        std::fs::write(
+            ".codex-plugin/plugin.json",
+            r#"{"skills":"skills", "mcpServers":"./", "apps":"./apps"}"#,
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        for rule in [
+            LintRule::CodexPluginNameMissing,
+            LintRule::CodexPluginPathPrefix,
+            LintRule::CodexPluginPathBare,
+        ] {
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == rule),
+                "missing {}: {:?}",
+                rule.code(),
+                diag.errors()
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rejects_claude_only_codex_skill_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".agents/skills/example").unwrap();
+        std::fs::write(".agents/skills/example/SKILL.md", "---\nname: example\ndescription: Example\ncontext: fork\nagent: Explore\nhooks: {}\n---\nbody\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        assert_eq!(
+            diag.errors()
+                .iter()
+                .filter(|error| error.contains("Claude-only"))
+                .count(),
+            3
+        );
+    }
+}

@@ -239,6 +239,9 @@ fn detect_mode() -> Option<LintMode> {
         Some(LintMode::Plugin)
     } else if std::path::Path::new(".claude").is_dir()
         || std::path::Path::new(".codex/config.toml").is_file()
+        || std::path::Path::new(".codex-plugin/plugin.json").is_file()
+        || has_agents_file()
+        || std::path::Path::new(".agents/skills").is_dir()
     {
         Some(LintMode::Basic)
     } else if has_mcp_config() {
@@ -258,6 +261,14 @@ fn has_mcp_config() -> bool {
             entry.file_type().is_file()
                 && entry.file_name().to_string_lossy().ends_with(".mcp.json")
         })
+}
+
+fn has_agents_file() -> bool {
+    walkdir::WalkDir::new(".")
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".git")
+        .flatten()
+        .any(|entry| entry.file_type().is_file() && entry.file_name() == "AGENTS.md")
 }
 
 fn resolve_repo_root(target: &str) -> Result<String, String> {
@@ -318,6 +329,27 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir(".codex").unwrap();
         std::fs::write(".codex/config.toml", "model = 'gpt-5'\n").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+    }
+
+    #[test]
+    #[serial]
+    fn detect_mode_codex_surfaces_return_basic() {
+        let _guard = test_helpers::CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir("nested").unwrap();
+        std::fs::write("nested/AGENTS.md", "# Instructions\n").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+
+        std::fs::remove_dir_all("nested").unwrap();
+        std::fs::create_dir_all(".codex-plugin").unwrap();
+        std::fs::write(".codex-plugin/plugin.json", "{}").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+
+        std::fs::remove_dir_all(".codex-plugin").unwrap();
+        std::fs::create_dir_all(".agents/skills").unwrap();
         assert_eq!(detect_mode(), Some(context::LintMode::Basic));
     }
 

@@ -6,8 +6,10 @@ agent-lint [--pedantic | --all] [--autofix] [--list-scripts] [PATH]
 
 If `PATH` is omitted, the current directory is used. The tool detects the
 repo root via `git rev-parse --show-toplevel` and selects Basic or Plugin
-mode automatically based on the configuration it finds. A standalone
-`*.mcp.json` file selects Basic mode.
+mode automatically based on the configuration it finds. Claude/MCP files,
+`.codex/config.toml`, `.codex-plugin/plugin.json`, any `AGENTS.md`, and
+`.agents/skills/` select Basic mode; a `.claude-plugin/` directory selects
+Plugin mode.
 
 ## Flags
 

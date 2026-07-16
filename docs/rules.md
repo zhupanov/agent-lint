@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 225 rules across 14 categories. Every rule has a unique
+Agent Lint ships 249 rules across 14 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -21,7 +21,7 @@ every rule to error regardless of config. See
 **Mode column key:**
 
 - **Plugin** -- runs only when `.claude-plugin/` is present
-- **Always** -- runs in both Basic (`.claude/` or MCP configuration) and Plugin modes
+- **Always** -- runs in both Basic (Claude, Codex, or MCP configuration) and Plugin modes
 
 ## Manifest Rules (M)
 
@@ -310,6 +310,40 @@ schema and are covered by the unknown-key rules.
 | CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | suppressed |
 | CX036 | `codex-windows-sandbox` | Invalid Windows sandbox mode | Always | suppressed |
 
+### Codex Instruction, Plugin, and Skill Rules (CX037--CX060)
+
+These optional rules run in Basic and Plugin modes whenever the corresponding
+Codex surface exists. `AGENTS.md` is discovered recursively because Codex
+applies nested instruction files to their subtrees.
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| CX037 | `codex-agents-empty` | `AGENTS.md` is empty or whitespace-only | Always | error |
+| CX038 | `codex-agents-secret` | `AGENTS.md` contains a potential hardcoded credential | Always | error |
+| CX039 | `codex-agents-large` | `AGENTS.md` exceeds 100,000 bytes | Always | warn |
+| CX040 | `codex-agents-limit` | `AGENTS.md` exceeds the effective Codex document limit | Always | warn |
+| CX041 | `codex-agents-path` | Backtick-quoted path in `AGENTS.md` is missing | Always | warn |
+| CX042 | `codex-agents-override` | Root `AGENTS.override.md` is tracked by Git | Always | warn |
+| CX043 | `codex-agents-generic` | `AGENTS.md` is generic-only | Always | suppressed |
+| CX044 | `codex-agents-structure` | `AGENTS.md` lacks project-specific structure | Always | suppressed |
+| CX045 | `codex-agents-conflict` | Explicit `AGENTS.md` setting conflicts with `.codex/config.toml` | Always | suppressed |
+| CX046 | `codex-plugin-path` | Codex plugin manifest is not at `.codex-plugin/plugin.json` | Always | error |
+| CX047 | `codex-plugin-invalid` | `.codex-plugin/plugin.json` is invalid JSON | Always | error |
+| CX048--CX049 | — | Missing/invalid Codex plugin name | Always | error |
+| CX050--CX052 | — | Component path lacks `./`, traverses, or is bare `./` | Always | error |
+| CX053--CX056 | — | Invalid default prompts or interface URL | Always | warn |
+| CX057 | `codex-plugin-asset` | Interface asset path lacks `./` or traverses | Always | error |
+| CX058--CX059 | — | Unsupported `hooks` field or missing description | Always | warn |
+| CX060 | `codex-skill-frontmatter` | Codex skill uses Claude-only frontmatter (`context`, `agent`, or `hooks`) | Always | warn |
+
+CX040 uses Codex's default 32,768-byte project-document budget unless
+`.codex/config.toml` sets `project_doc_max_bytes`. CX053 and CX054 use the
+three-prompt and 128-character limits from
+[`openai/codex` commit `18110b8`](https://github.com/openai/codex/blob/18110b810f0a328147f6cd85e6f1ab6414927366/codex-rs/core-plugins/src/manifest.rs),
+checked on 2026-07-16. The canonical manifest field is
+`interface.defaultPrompt`; `default_prompts` is accepted by the linter only to
+make migrations diagnosable.
+
 ## Hygiene / Scripts Rules (G)
 
 | Code | Name | Description | Mode | Default |
@@ -389,7 +423,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 225):**
+**Auto-fixable rules (12 of 249):**
 
 | Rule | Code | Fix |
 |------|------|-----|
