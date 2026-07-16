@@ -279,6 +279,80 @@ pub enum LintRule {
     /// T002: settings channelsEnabled is not a boolean
     SettingsChannelsEnabledInvalid,
 
+    // ── Codex configuration (CX) ─────────────────────────────────
+    /// CX001: .codex/config.toml is not valid TOML
+    CodexTomlInvalid,
+    /// CX002: project_doc_max_bytes is outside the supported range
+    CodexProjectDocMaxBytes,
+    /// CX003: project_doc_fallback_filenames is invalid
+    CodexProjectDocFallbackNames,
+    /// CX004: unknown Codex configuration key
+    CodexUnknownNestedKey,
+    /// CX005: approval_policy is invalid
+    CodexApprovalPolicy,
+    /// CX006: sandbox_mode is invalid
+    CodexSandboxMode,
+    /// CX007: model_reasoning_effort is invalid
+    CodexReasoningEffort,
+    /// CX008: model_verbosity is invalid
+    CodexModelVerbosity,
+    /// CX009: personality is invalid
+    CodexPersonality,
+    /// CX010: danger-full-access acknowledgement is missing
+    CodexFullAccessAcknowledgment,
+    /// CX011: shell_environment_policy.inherit is invalid
+    CodexShellEnvironmentInherit,
+    /// CX012: an MCP server lacks a command or URL
+    CodexMcpServerTransport,
+    /// CX013: an MCP configuration contains a hardcoded secret
+    CodexHardcodedSecret,
+    /// CX014: cli_auth_credentials_store is invalid
+    CodexCliCredentialsStore,
+    /// CX015: sandbox_workspace_write.mode is invalid
+    CodexWorkspaceWriteMode,
+    /// CX016: model is not a string
+    CodexModelType,
+    /// CX017: model_provider is not a string
+    CodexModelProviderType,
+    /// CX018: model_reasoning_summary is invalid
+    CodexReasoningSummary,
+    /// CX019: history is not a TOML table
+    CodexHistoryType,
+    /// CX020: tui is not a TOML table
+    CodexTuiType,
+    /// CX021: file_opener is not a string
+    CodexFileOpenerType,
+    /// CX022: mcp_oauth_credentials_store is invalid
+    CodexMcpCredentialsStore,
+    /// CX023: model_context_window is not positive
+    CodexContextWindow,
+    /// CX024: model_auto_compact_token_limit is not positive
+    CodexAutoCompactLimit,
+    /// CX025: approval_policy table has an unknown field
+    CodexApprovalPolicyField,
+    /// CX026: approvals_reviewer is invalid
+    CodexApprovalsReviewer,
+    /// CX027: service_tier is invalid
+    CodexServiceTier,
+    /// CX028: inline MCP bearer_token is forbidden
+    CodexInlineBearerToken,
+    /// CX029: agents.max_threads conflicts with multi_agent_v2
+    CodexMultiAgentThreadLimit,
+    /// CX030: app default_tools_approval_mode is invalid
+    CodexAppApprovalMode,
+    /// CX031: skills is not a TOML table
+    CodexSkillsType,
+    /// CX032: profile is not a string
+    CodexProfileType,
+    /// CX033: unknown top-level Codex configuration key
+    CodexTopLevelKey,
+    /// CX034: unknown Codex feature flag
+    CodexFeatureKey,
+    /// CX035: unknown permissions.network field
+    CodexNetworkPermissionField,
+    /// CX036: windows.sandbox is invalid
+    CodexWindowsSandbox,
+
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
     PwdInSkill,
@@ -501,6 +575,43 @@ impl LintRule {
             Self::SettingsPrUrlTemplateInvalid => "T001",
             Self::SettingsChannelsEnabledInvalid => "T002",
 
+            Self::CodexTomlInvalid => "CX001",
+            Self::CodexProjectDocMaxBytes => "CX002",
+            Self::CodexProjectDocFallbackNames => "CX003",
+            Self::CodexUnknownNestedKey => "CX004",
+            Self::CodexApprovalPolicy => "CX005",
+            Self::CodexSandboxMode => "CX006",
+            Self::CodexReasoningEffort => "CX007",
+            Self::CodexModelVerbosity => "CX008",
+            Self::CodexPersonality => "CX009",
+            Self::CodexFullAccessAcknowledgment => "CX010",
+            Self::CodexShellEnvironmentInherit => "CX011",
+            Self::CodexMcpServerTransport => "CX012",
+            Self::CodexHardcodedSecret => "CX013",
+            Self::CodexCliCredentialsStore => "CX014",
+            Self::CodexWorkspaceWriteMode => "CX015",
+            Self::CodexModelType => "CX016",
+            Self::CodexModelProviderType => "CX017",
+            Self::CodexReasoningSummary => "CX018",
+            Self::CodexHistoryType => "CX019",
+            Self::CodexTuiType => "CX020",
+            Self::CodexFileOpenerType => "CX021",
+            Self::CodexMcpCredentialsStore => "CX022",
+            Self::CodexContextWindow => "CX023",
+            Self::CodexAutoCompactLimit => "CX024",
+            Self::CodexApprovalPolicyField => "CX025",
+            Self::CodexApprovalsReviewer => "CX026",
+            Self::CodexServiceTier => "CX027",
+            Self::CodexInlineBearerToken => "CX028",
+            Self::CodexMultiAgentThreadLimit => "CX029",
+            Self::CodexAppApprovalMode => "CX030",
+            Self::CodexSkillsType => "CX031",
+            Self::CodexProfileType => "CX032",
+            Self::CodexTopLevelKey => "CX033",
+            Self::CodexFeatureKey => "CX034",
+            Self::CodexNetworkPermissionField => "CX035",
+            Self::CodexWindowsSandbox => "CX036",
+
             Self::PwdInSkill => "G001",
             Self::ScriptRefMissing => "G002",
             Self::ScriptNotExecutable => "G003",
@@ -680,6 +791,43 @@ impl LintRule {
             Self::SettingsPrUrlTemplateInvalid => "pr-template-invalid",
             Self::SettingsChannelsEnabledInvalid => "channels-enabled-invalid",
 
+            Self::CodexTomlInvalid => "codex-toml-invalid",
+            Self::CodexProjectDocMaxBytes => "codex-doc-bytes",
+            Self::CodexProjectDocFallbackNames => "codex-doc-names",
+            Self::CodexUnknownNestedKey => "codex-key-unknown",
+            Self::CodexApprovalPolicy => "codex-approval-policy",
+            Self::CodexSandboxMode => "codex-sandbox-mode",
+            Self::CodexReasoningEffort => "codex-reasoning-effort",
+            Self::CodexModelVerbosity => "codex-model-verbosity",
+            Self::CodexPersonality => "codex-personality",
+            Self::CodexFullAccessAcknowledgment => "codex-access-ack",
+            Self::CodexShellEnvironmentInherit => "codex-shell-inherit",
+            Self::CodexMcpServerTransport => "codex-mcp-transport",
+            Self::CodexHardcodedSecret => "codex-secret-literal",
+            Self::CodexCliCredentialsStore => "codex-cli-credentials",
+            Self::CodexWorkspaceWriteMode => "codex-write-mode",
+            Self::CodexModelType => "codex-model-type",
+            Self::CodexModelProviderType => "codex-provider-type",
+            Self::CodexReasoningSummary => "codex-reasoning-summary",
+            Self::CodexHistoryType => "codex-history-type",
+            Self::CodexTuiType => "codex-tui-type",
+            Self::CodexFileOpenerType => "codex-opener-type",
+            Self::CodexMcpCredentialsStore => "codex-mcp-credentials",
+            Self::CodexContextWindow => "codex-context-window",
+            Self::CodexAutoCompactLimit => "codex-compact-limit",
+            Self::CodexApprovalPolicyField => "codex-approval-field",
+            Self::CodexApprovalsReviewer => "codex-approval-reviewer",
+            Self::CodexServiceTier => "codex-service-tier",
+            Self::CodexInlineBearerToken => "codex-bearer-token",
+            Self::CodexMultiAgentThreadLimit => "codex-agent-threads",
+            Self::CodexAppApprovalMode => "codex-app-approval",
+            Self::CodexSkillsType => "codex-skills-type",
+            Self::CodexProfileType => "codex-profile-type",
+            Self::CodexTopLevelKey => "codex-top-key",
+            Self::CodexFeatureKey => "codex-feature-key",
+            Self::CodexNetworkPermissionField => "codex-network-field",
+            Self::CodexWindowsSandbox => "codex-windows-sandbox",
+
             Self::PwdInSkill => "pwd-in-skill",
             Self::ScriptRefMissing => "script-ref-missing",
             Self::ScriptNotExecutable => "script-not-executable",
@@ -771,7 +919,8 @@ impl LintRule {
             // ── Default-suppressed ──────────────────────────────────
             Self::NameNotGerund | Self::BodyNoExamples |
             Self::BodyTooLong | Self::Bash32Incompatible |
-            Self::AwkRegexNonascii => DefaultSeverity::Suppressed,
+            Self::AwkRegexNonascii | Self::CodexNetworkPermissionField |
+            Self::CodexWindowsSandbox => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
             Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
@@ -807,6 +956,13 @@ impl LintRule {
             Self::OutputStyleFieldUnknown | Self::OutputStyleBodyEmpty |
             Self::OutputStyleNameTooLong | Self::SettingsPrUrlTemplateInvalid |
             Self::SettingsChannelsEnabledInvalid |
+            Self::CodexUnknownNestedKey | Self::CodexModelType |
+            Self::CodexReasoningSummary | Self::CodexHistoryType |
+            Self::CodexTuiType | Self::CodexFileOpenerType |
+            Self::CodexContextWindow | Self::CodexAutoCompactLimit |
+            Self::CodexApprovalPolicyField | Self::CodexApprovalsReviewer |
+            Self::CodexServiceTier | Self::CodexSkillsType | Self::CodexProfileType |
+            Self::CodexTopLevelKey | Self::CodexFeatureKey |
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
@@ -956,6 +1112,42 @@ pub const ALL_RULES: &[LintRule] = &[
     LintRule::OutputStyleFrontmatterInvalid,
     LintRule::SettingsPrUrlTemplateInvalid,
     LintRule::SettingsChannelsEnabledInvalid,
+    LintRule::CodexTomlInvalid,
+    LintRule::CodexProjectDocMaxBytes,
+    LintRule::CodexProjectDocFallbackNames,
+    LintRule::CodexUnknownNestedKey,
+    LintRule::CodexApprovalPolicy,
+    LintRule::CodexSandboxMode,
+    LintRule::CodexReasoningEffort,
+    LintRule::CodexModelVerbosity,
+    LintRule::CodexPersonality,
+    LintRule::CodexFullAccessAcknowledgment,
+    LintRule::CodexShellEnvironmentInherit,
+    LintRule::CodexMcpServerTransport,
+    LintRule::CodexHardcodedSecret,
+    LintRule::CodexCliCredentialsStore,
+    LintRule::CodexWorkspaceWriteMode,
+    LintRule::CodexModelType,
+    LintRule::CodexModelProviderType,
+    LintRule::CodexReasoningSummary,
+    LintRule::CodexHistoryType,
+    LintRule::CodexTuiType,
+    LintRule::CodexFileOpenerType,
+    LintRule::CodexMcpCredentialsStore,
+    LintRule::CodexContextWindow,
+    LintRule::CodexAutoCompactLimit,
+    LintRule::CodexApprovalPolicyField,
+    LintRule::CodexApprovalsReviewer,
+    LintRule::CodexServiceTier,
+    LintRule::CodexInlineBearerToken,
+    LintRule::CodexMultiAgentThreadLimit,
+    LintRule::CodexAppApprovalMode,
+    LintRule::CodexSkillsType,
+    LintRule::CodexProfileType,
+    LintRule::CodexTopLevelKey,
+    LintRule::CodexFeatureKey,
+    LintRule::CodexNetworkPermissionField,
+    LintRule::CodexWindowsSandbox,
     LintRule::PwdInSkill,
     LintRule::ScriptRefMissing,
     LintRule::ScriptNotExecutable,
@@ -1006,7 +1198,7 @@ mod tests {
         // will still compile (match is exhaustive), but this test will catch it.
         assert_eq!(
             ALL_RULES.len(),
-            163,
+            199,
             "ALL_RULES length must match enum variant count"
         );
     }
@@ -1074,8 +1266,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            5,
-            "Expected 5 default-suppressed rules, got {}",
+            7,
+            "Expected 7 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1088,8 +1280,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            58,
-            "Expected 58 default-warning rules, got {}",
+            73,
+            "Expected 73 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1137,8 +1329,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            100,
-            "Expected 100 default-error rules, got {}",
+            119,
+            "Expected 119 default-error rules, got {}",
             errors.len()
         );
     }
