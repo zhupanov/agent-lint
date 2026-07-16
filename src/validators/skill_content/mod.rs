@@ -24,11 +24,13 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
 pub(crate) const KNOWN_SKILL_FRONTMATTER_FIELDS: &[&str] = &[
     "name",
     "description",
+    "when_to_use",
     "argument-hint",
     "arguments",
     "disable-model-invocation",
     "user-invocable",
     "allowed-tools",
+    "disallowed-tools",
     "model",
     "effort",
     "context",
@@ -38,6 +40,7 @@ pub(crate) const KNOWN_SKILL_FRONTMATTER_FIELDS: &[&str] = &[
     "shell",
     "compatibility",
     "metadata",
+    "license",
 ];
 
 /// Optional scalar fields that S007 flags when present but empty.
@@ -758,7 +761,7 @@ mod tests {
         assert!(
             diag.errors()
                 .iter()
-                .any(|e| e.contains("effort") && e.contains("low/medium/high/max"))
+                .any(|e| e.contains("effort") && e.contains("low/medium/high/xhigh/max"))
         );
     }
 
@@ -773,6 +776,23 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: high\n---\nBody content\n",
         ).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("effort")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s025_xhigh_effort_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need effort testing\neffort: xhigh\n---\nBody content\n",
+        )
+        .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("effort")));
@@ -4829,7 +4849,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\nmodel: inherit\neffort: high\n---\nBody\n",
+            "---\nname: my-skill\ndescription: A valid skill description here\nwhen_to_use: Use for model override checks\nmodel: inherit\neffort: high\ndisallowed-tools: AskUserQuestion\nlicense: MIT\n---\nBody\n",
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -4839,6 +4859,30 @@ mod tests {
                 .errors()
                 .iter()
                 .any(|e| e.contains("unknown skill frontmatter"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s070_yaml_comment_not_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n# note: not a field\nmodel: inherit\n---\nBody\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("unknown skill frontmatter")),
+            "YAML comments must not trigger S070, got: {:?}",
+            diag.errors()
         );
     }
 

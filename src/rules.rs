@@ -106,7 +106,7 @@ pub enum LintRule {
     BoolFieldInvalid,
     /// S024: context field value is not fork
     ContextFieldInvalid,
-    /// S025: effort field value is not low/medium/high/max
+    /// S025: effort field value is not low/medium/high/xhigh/max
     EffortFieldInvalid,
     /// S026: shell field value is not bash/powershell
     ShellFieldInvalid,

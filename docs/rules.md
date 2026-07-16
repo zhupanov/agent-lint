@@ -126,7 +126,7 @@ every rule to error regardless of config. See
 |------|------|-------------|------|---------|
 | S023 | `bool-field-invalid` | Boolean fields (`user-invocable`, `disable-model-invocation`) must be `true`/`false` | Always | error |
 | S024 | `context-field-invalid` | `context` field must be `fork` (if present) | Always | error |
-| S025 | `effort-field-invalid` | `effort` field must be `low`/`medium`/`high`/`max` (if present) | Always | error |
+| S025 | `effort-field-invalid` | `effort` field must be `low`/`medium`/`high`/`xhigh`/`max` (if present) | Always | error |
 | S026 | `shell-field-invalid` | `shell` field must be `bash`/`powershell` (if present) | Always | error |
 | S027 | `skill-unreachable` | Skill unreachable: `disable-model-invocation: true` AND `user-invocable: false` | Always | error |
 | S063 | `model-invalid` | `model` must be a recognized alias (`sonnet`/`opus`/`haiku`/`inherit`/…) or `claude-…` ID | Always | error |

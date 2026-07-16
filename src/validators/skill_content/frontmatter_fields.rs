@@ -65,14 +65,14 @@ pub(super) fn check_frontmatter_fields(info: &SkillInfo, diag: &mut DiagnosticCo
         frontmatter::FieldState::Missing => {}
     }
 
-    // S025: effort field
+    // S025: effort field (Claude Code docs: low/medium/high/xhigh/max)
     match frontmatter::get_field_state(&info.fm_lines, "effort") {
         frontmatter::FieldState::Value(val) => {
-            if !["low", "medium", "high", "max"].contains(&val.as_str()) {
+            if !["low", "medium", "high", "xhigh", "max"].contains(&val.as_str()) {
                 diag.report(
                     LintRule::EffortFieldInvalid,
                     &format!(
-                        "{}: 'effort' must be low/medium/high/max, got '{}'",
+                        "{}: 'effort' must be low/medium/high/xhigh/max, got '{}'",
                         info.path, val
                     ),
                 );
@@ -182,7 +182,17 @@ fn agents_dir_for_skill(skill_path: &str) -> &str {
 
 fn check_agent_value(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     let agent = match frontmatter::get_field_state(&info.fm_lines, "agent") {
-        frontmatter::FieldState::Value(v) => v,
+        frontmatter::FieldState::Value(v) => {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                diag.report(
+                    LintRule::AgentUnknown,
+                    &format!("{}: 'agent' is present but empty", info.path),
+                );
+                return;
+            }
+            trimmed.to_string()
+        }
         frontmatter::FieldState::Empty => {
             diag.report(
                 LintRule::AgentUnknown,
@@ -246,7 +256,11 @@ fn check_side_effect_auto(info: &SkillInfo, diag: &mut DiagnosticCollector) {
 
 fn check_unknown_fields(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     for line in &info.fm_lines {
-        if line.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
+        if line.is_empty()
+            || line.starts_with(' ')
+            || line.starts_with('\t')
+            || line.starts_with('#')
+        {
             continue;
         }
         let Some(colon) = line.find(':') else {
