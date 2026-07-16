@@ -63,8 +63,12 @@ fn fix_executability_hooks(mode: LintMode) -> bool {
     let re_plugin = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh").unwrap();
     let re_pwd = Regex::new(r"\$PWD/[a-zA-Z0-9._/-]+\.sh").unwrap();
 
-    // Check hooks.json
-    for json_path in &["hooks/hooks.json", ".claude/settings.json"] {
+    // Check every JSON surface whose hook paths H005 validates.
+    for json_path in &[
+        "hooks/hooks.json",
+        ".claude/settings.json",
+        ".claude/settings.local.json",
+    ] {
         let content = match fs::read_to_string(json_path) {
             Ok(c) => c,
             Err(_) => continue,
@@ -1006,6 +1010,40 @@ fn remove_frontmatter_line(content: &str, line_prefix: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn fix_executability_hooks_includes_settings_local() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude").unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/local-hook.sh", "#!/usr/bin/env bash\n").unwrap();
+        std::fs::set_permissions(
+            "scripts/local-hook.sh",
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/settings.local.json",
+            r#"{"hooks":[{"command":"${CLAUDE_PLUGIN_ROOT}/scripts/local-hook.sh"}]}"#,
+        )
+        .unwrap();
+
+        assert!(fix_executability_hooks(LintMode::Plugin));
+        assert_ne!(
+            std::fs::metadata("scripts/local-hook.sh")
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+    }
 
     #[test]
     fn replace_in_frontmatter_basic() {

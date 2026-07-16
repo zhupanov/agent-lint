@@ -148,13 +148,20 @@ pub fn validate_settings_schema(ctx: &LintContext, diag: &mut DiagnosticCollecto
     }
 }
 
-/// V28: Validate .claude/settings.local.json (H025) and its hook object
-/// schema (H008-H024).
+/// V28: Validate .claude/settings.local.json (H025), hook command paths
+/// (H004/H005), and hook object schema (H008-H024).
 pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     match &ctx.settings_local_json {
         ManifestState::Missing => {} // Optional file
         ManifestState::Invalid(e) => diag.report(LintRule::SettingsLocalInvalid, e),
         ManifestState::Parsed(val) => {
+            validate_hook_command_paths(
+                val,
+                ".claude/settings.local.json",
+                LintRule::HookCommandMissing,
+                LintRule::HookNotExecutable,
+                diag,
+            );
             hook_schema::validate_hook_schema(val, ".claude/settings.local.json", diag);
         }
     }
@@ -434,6 +441,25 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_local(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
+        assert!(diag.errors()[0].contains(".claude/settings.local.json"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v28_settings_local_checks_hook_command_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        ctx.settings_local_json = ManifestState::Parsed(json!({
+            "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/nonexistent.sh"}]
+        }));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_local(&ctx, &mut diag);
+
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::HookCommandMissing);
         assert!(diag.errors()[0].contains(".claude/settings.local.json"));
     }
 
