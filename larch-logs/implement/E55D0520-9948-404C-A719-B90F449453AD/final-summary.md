@@ -16,7 +16,7 @@ No review rounds completed.
 - **Difficulty**: predicted MODERATE; applied MODERATE
 - **Dynamic archetypes**: N/A
 - **Code review**: 4/7 accepted
-- **Lines (PR diff)**: code +712/-26, larch-logs +273/-0
+- **Lines (PR diff)**: code +712/-26, larch-logs +299/-0
 - **OOS filed**: 0
 - **Exec issues**: 0
 - **Warnings**: 0

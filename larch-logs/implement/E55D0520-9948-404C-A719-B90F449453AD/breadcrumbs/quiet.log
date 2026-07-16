@@ -13,6 +13,25 @@ read-session-env-key.sh: --file is required
 === larch-quiet-sessionstart-health.sh-93574.log ===
 === larch-quiet-ship.py-23783.log ===
 ship.py: pre-pr-reentry: de-terminalized prior phase stalled -> assessments
+ship.py: pr-create: PR
+ship.py: post-ensure-pr: Push
+ci_monitor: CI status query #1 in progress after 0s
+ci_monitor: poll 1/180 pending after 3s; sleeping 10s
+ci_monitor: CI status query #2 in progress after 13s
+ci_monitor: poll 2/180 pending after 17s; sleeping 10s
+ci_monitor: CI status query #3 in progress after 27s
+ci_monitor: poll 3/180 pending after 30s; sleeping 10s
+ci_monitor: CI status query #4 in progress after 40s
+ci_monitor: poll 4/180 pending after 43s; sleeping 10s
+ci_monitor: CI status query #5 in progress after 53s
+ci_monitor: poll 5/180 pending after 56s; sleeping 10s
+ci_monitor: CI status query #6 in progress after 66s
+ci_monitor: poll 6/180 pending after 69s; sleeping 10s
+ci_monitor: CI status query #7 in progress after 79s
+ci_monitor: poll 7/180 pending after 83s; sleeping 10s
+ci_monitor: CI status query #8 in progress after 93s
+ci_monitor: CI pass after 96s -> rebase
+ship.py: rebase: Flush+Push
 === larch-quiet-ship.py-99689.log ===
 ship.py: pr-prep: postbump/Flush+Push
 ship.py: pr-create: PR
