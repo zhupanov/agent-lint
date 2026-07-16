@@ -40,7 +40,7 @@ src/
 +-- context.rs           # LintContext, ManifestState, LintMode
 +-- diagnostic.rs        # DiagnosticCollector, Severity, config-aware filtering
 +-- frontmatter.rs       # YAML frontmatter extraction
-+-- rules.rs             # Central LintRule enum (104 rules, codes, names)
++-- rules.rs             # Central LintRule enum (117 rules, codes, names)
 +-- test_helpers.rs      # Shared test utilities
 +-- validators/
     +-- mod.rs           # run_all -> run_basic / run_plugin dispatch
@@ -48,6 +48,7 @@ src/
     +-- hooks.rs         # H001-H007: hooks.json & settings.json
     +-- skills.rs        # S001-S008: skills layout & frontmatter
     +-- skill_content/   # S009-S057: name, description, body, MCP, security checks
+    +-- contracts.rs     # A012-A013, S058-S062, G008-G011, D004-D005
     +-- agents.rs        # A001-A011: agent frontmatter, templates, description quality
     +-- hygiene.rs       # G001-G007: PWD hygiene, scripts, executability, TODO detection
     +-- docs.rs          # D001-D003: docs file references, CLAUDE.md size, TODO detection

@@ -16,6 +16,211 @@ pub enum LineClass {
     Delimiter,
 }
 
+/// A balanced fenced code block with source line metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownFence {
+    pub info: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub body: Vec<(usize, String)>,
+}
+
+const BREADCRUMB_MAX_CHARS: usize = 160;
+const BREADCRUMB_MAX_LINE_CHARS: usize = 100;
+const BREADCRUMB_MAX_LINES: usize = 2;
+
+/// Extract balanced CommonMark-style backtick and tilde fences.
+///
+/// Openers may be indented by at most three spaces. A closer must use the
+/// same marker and at least the opener's marker count. Unclosed openers are
+/// skipped so they cannot hide later valid fences.
+pub fn markdown_fences(content: &str) -> Vec<MarkdownFence> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let trimmed = lines[index].trim_start();
+        let Some(marker) = trimmed.chars().next().filter(|ch| *ch == '`' || *ch == '~') else {
+            index += 1;
+            continue;
+        };
+        let count = trimmed.chars().take_while(|ch| *ch == marker).count();
+        if count < 3 || lines[index].len() - trimmed.len() > 3 {
+            index += 1;
+            continue;
+        }
+        let info = trimmed[count..].trim().to_string();
+        let mut cursor = index + 1;
+        let mut body = Vec::new();
+        let mut closed = false;
+        while cursor < lines.len() {
+            let close = lines[cursor].trim();
+            let close_indent = lines[cursor].len() - lines[cursor].trim_start().len();
+            let close_count = close.chars().take_while(|ch| *ch == marker).count();
+            if close_indent <= 3 && close_count >= count && close.chars().all(|ch| ch == marker) {
+                result.push(MarkdownFence {
+                    info,
+                    start_line: index + 1,
+                    end_line: cursor + 1,
+                    body,
+                });
+                index = cursor + 1;
+                closed = true;
+                break;
+            }
+            body.push((cursor + 1, lines[cursor].to_string()));
+            cursor += 1;
+        }
+        if !closed {
+            index += 1;
+        }
+    }
+    result
+}
+
+/// Return adjacent shell-fence pairs that should be combined.
+///
+/// This is the shared policy host for S021 across SKILL.md bodies and skill
+/// reference files. Short prose breadcrumbs and HTML comments do not create a
+/// tool boundary. Reason-bearing pragmas and the documented example/driver
+/// carve-outs do.
+pub fn consecutive_bash_pairs(content: &str) -> Vec<(usize, usize)> {
+    let fences: Vec<_> = markdown_fences(content)
+        .into_iter()
+        .filter(is_shell_fence)
+        .collect();
+    let lines: Vec<&str> = content.lines().collect();
+    fences
+        .windows(2)
+        .filter_map(|pair| {
+            let first = &pair[0];
+            let second = &pair[1];
+            let gap = &lines[first.end_line..second.start_line - 1];
+            (gap_is_adjacent(gap)
+                && !fence_has_suppression(first)
+                && !fence_has_suppression(second)
+                && !is_carved_out_pair(content, first, second, gap))
+            .then_some((first.start_line, second.start_line))
+        })
+        .collect()
+}
+
+fn is_shell_fence(fence: &MarkdownFence) -> bool {
+    fence
+        .info
+        .split_whitespace()
+        .next()
+        .is_some_and(|language| {
+            matches!(
+                language.to_ascii_lowercase().as_str(),
+                "bash" | "sh" | "shell"
+            )
+        })
+}
+
+fn gap_is_adjacent(lines: &[&str]) -> bool {
+    let mut visible = Vec::new();
+    let mut in_comment = false;
+    for line in lines {
+        let trimmed = line.trim();
+        if in_comment {
+            if trimmed.ends_with("-->") {
+                in_comment = false;
+            }
+            continue;
+        }
+        if trimmed.starts_with("<!--") {
+            in_comment = !trimmed.ends_with("-->");
+            continue;
+        }
+        if !trimmed.is_empty() {
+            visible.push(trimmed);
+        }
+    }
+    visible.len() <= BREADCRUMB_MAX_LINES
+        && visible.iter().map(|line| line.len()).sum::<usize>() <= BREADCRUMB_MAX_CHARS
+        && visible.iter().all(|line| {
+            line.len() <= BREADCRUMB_MAX_LINE_CHARS
+                && !line.starts_with('#')
+                && !line.starts_with(['-', '*', '+', '>', '|'])
+                && !line.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+        })
+}
+
+fn fence_has_suppression(fence: &MarkdownFence) -> bool {
+    let nonblank: Vec<_> = fence
+        .body
+        .iter()
+        .filter(|(_, line)| !line.trim().is_empty())
+        .collect();
+    nonblank.iter().any(|(_, line)| {
+        const MARKER: &str = "lint-consecutive-bash: ok";
+        line.find(MARKER).is_some_and(|index| {
+            let has_reason = !line[index + MARKER.len()..].trim().is_empty();
+            let before = line[..index].trim();
+            let standalone = line.trim_start().starts_with("# lint-consecutive-bash: ok");
+            has_reason
+                && ((standalone && nonblank.len() > 1)
+                    || (!before.is_empty() && !before.starts_with('#')))
+        })
+    })
+}
+
+fn is_carved_out_pair(
+    content: &str,
+    first: &MarkdownFence,
+    second: &MarkdownFence,
+    gap: &[&str],
+) -> bool {
+    let lines: Vec<&str> = content.lines().collect();
+    let preceding = &lines[first.start_line.saturating_sub(4)..first.start_line - 1];
+    let full_text = [
+        preceding.join("\n"),
+        first.info.clone(),
+        fence_body(first),
+        gap.join("\n"),
+        second.info.clone(),
+        fence_body(second),
+    ]
+    .join("\n");
+    let lower = full_text.to_ascii_lowercase();
+    if lower
+        .split(|ch: char| !ch.is_alphanumeric())
+        .any(|word| word == "wrong")
+        && lower
+            .split(|ch: char| !ch.is_alphanumeric())
+            .any(|word| word == "correct")
+    {
+        return true;
+    }
+
+    let pair_text = [fence_body(first), gap.join("\n"), fence_body(second)].join("\n");
+    let pair_lower = pair_text.to_ascii_lowercase();
+    let design_context = pair_lower.contains("/design")
+        || pair_lower.contains(" design ")
+        || pair_lower.contains("design driver")
+        || pair_lower.contains("design-step");
+    design_context
+        && [
+            "pause",
+            "resume",
+            "design-step",
+            "design_action",
+            "skills/design/scripts",
+        ]
+        .iter()
+        .any(|marker| pair_lower.contains(marker))
+}
+
+fn fence_body(fence: &MarkdownFence) -> String {
+    fence
+        .body
+        .iter()
+        .map(|(_, line)| line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Tracks code fence state while iterating over lines.
 pub struct CodeFenceTracker {
     fence_char: Option<char>,
@@ -244,5 +449,47 @@ mod tests {
         let inside: Vec<&str> = lines_inside_fences(text).collect();
         assert_eq!(outside, vec!["a", "c", "e"]);
         assert_eq!(inside, vec!["b", "d"]);
+    }
+
+    #[test]
+    fn markdown_fences_preserve_info_body_and_lines() {
+        let fences = markdown_fences("before\n````bash title\necho hi\n```\necho still\n````\n");
+        assert_eq!(fences.len(), 1);
+        assert_eq!(fences[0].info, "bash title");
+        assert_eq!(fences[0].start_line, 2);
+        assert_eq!(fences[0].end_line, 6);
+        assert_eq!(fences[0].body.len(), 3);
+    }
+
+    #[test]
+    fn markdown_fences_support_tildes_and_skip_unclosed_openers() {
+        let fences = markdown_fences("```bash\nunclosed\n~~~sh\necho hi\n~~~\n");
+        assert_eq!(fences.len(), 1);
+        assert_eq!(fences[0].info, "sh");
+        assert_eq!(fences[0].start_line, 3);
+    }
+
+    #[test]
+    fn consecutive_bash_policy_honors_suppressions_and_carve_outs() {
+        let ordinary = "```bash\necho one\n```\nThen continue:\n```bash\necho two\n```\n";
+        assert_eq!(consecutive_bash_pairs(ordinary), [(1, 5)]);
+
+        let suppressed = "```bash\n# lint-consecutive-bash: ok separate tool boundary\necho one\n```\n```bash\necho two\n```\n";
+        assert!(consecutive_bash_pairs(suppressed).is_empty());
+
+        let example = "WRONG:\n```bash\necho one\n```\nCORRECT:\n```bash\necho two\n```\n";
+        assert!(consecutive_bash_pairs(example).is_empty());
+
+        let design = "```bash\ndesign-step3-mav.sh --phase pre\n```\nBoundary: vote.\nThen resume:\n```bash\ndesign-step3-mav.sh --phase post\n```\n";
+        assert!(consecutive_bash_pairs(design).is_empty());
+    }
+
+    #[test]
+    fn markdown_fences_reject_over_indented_closer() {
+        let fences = markdown_fences("```bash\necho one\n    ```\n```bash\necho two\n```\n");
+        assert_eq!(fences.len(), 1);
+        assert_eq!(fences[0].start_line, 1);
+        assert_eq!(fences[0].end_line, 6);
+        assert_eq!(fences[0].body[1].1, "    ```");
     }
 }

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.4.0] - 2026-07-16
+
+### Added
+
+- Migrated general-purpose agent evidence, skill invocation, fenced-shell,
+  prompt-closure, document-pointer, and shipped-script safety checks
+- Added configurable skill-description, skill-closure, and `CLAUDE.md`
+  import-closure limits
+- Added optional Bash 3.2 and portable awk regex checks
+
+### Changed
+
+- Extended consecutive Bash detection to robust fences, reference files,
+  short breadcrumb/comment separators, and reason-bearing exceptions
+
 ## [2.3.5] - 2026-04-18
 
 ### Changed

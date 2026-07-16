@@ -19,7 +19,7 @@ pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 
-/// Validate skill content for public skills (skills/). Runs all S009-S057 rules.
+/// Validate the original skill-content suite for public skills (S009-S057).
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
@@ -33,7 +33,7 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S015, S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056, S057).
+/// Runs only "both-mode" rules (excludes S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056, S057).
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
@@ -565,7 +565,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_s021_bash_blocks_with_prose_ok() {
+    fn test_s021_short_breadcrumb_still_consecutive() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -576,7 +576,7 @@ mod tests {
         ).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(!diag.errors().iter().any(|e| e.contains("consecutive bash")));
+        assert!(diag.errors().iter().any(|e| e.contains("consecutive bash")));
     }
 
     // ── S022: backslash-path ────────────────────────────────────────
@@ -1252,14 +1252,14 @@ mod tests {
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        // S016 (person) and S015 (truncated) should NOT fire in basic mode
+        // S016 remains plugin-only, while configurable S015 covers private skills.
         assert!(
             !diag
                 .errors()
                 .iter()
                 .any(|e| e.contains("first/second person"))
         );
-        assert!(!diag.errors().iter().any(|e| e.contains("truncated")));
+        assert!(diag.errors().iter().any(|e| e.contains("truncated")));
     }
 
     // ── Integration: mode dispatch ───────────────────────────────────
@@ -2785,6 +2785,7 @@ mod tests {
             error: std::collections::HashSet::from([LintRule::DescTooShort]),
             warn: std::collections::HashSet::new(),
             exclude: vec![],
+            ..crate::config::LintConfig::default()
         };
         let mut diag2 = DiagnosticCollector::with_config(config);
         validate_skill_content(&mut diag2, &crate::config::ExcludeSet::default());
@@ -2818,6 +2819,7 @@ mod tests {
             error: std::collections::HashSet::new(),
             warn: std::collections::HashSet::from([LintRule::DescTooShort]),
             exclude: vec![],
+            ..crate::config::LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());

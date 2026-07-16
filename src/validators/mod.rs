@@ -1,5 +1,6 @@
 mod agents;
 mod common;
+mod contracts;
 mod docs;
 mod email;
 mod hooks;
@@ -33,8 +34,9 @@ fn run_basic(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclud
     hygiene::validate_private_script_references(diag, exclude);
     // V10-adapted: executability for .claude/skills/*/scripts/*.sh
     hygiene::validate_private_executability(diag, exclude);
-    // Skill content checks (both-mode subset: excludes S015, S016, S017, S029, S033)
+    // Skill content checks (both-mode subset: excludes S016, S017, S029, S033)
     skill_content::validate_private_skill_content(diag, exclude);
+    contracts::validate_contracts(diag, exclude, false);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -94,7 +96,7 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     user_config::validate_userconfig_title(ctx, diag);
     // V25: userConfig type field
     user_config::validate_userconfig_type(ctx, diag);
-    // Skill content checks (all 57 S-family rules including plugin-only)
+    // Original skill content checks (S009-S057, including plugin-only rules)
     skill_content::validate_skill_content(diag, exclude);
     // Private skill content checks (both-mode subset)
     skill_content::validate_private_skill_content(diag, exclude);
@@ -106,6 +108,8 @@ fn run_plugin(ctx: &LintContext, diag: &mut DiagnosticCollector, exclude: &Exclu
     hygiene::validate_todo_in_skills(diag, exclude);
     // G007: TODO/FIXME in agents
     hygiene::validate_todo_in_agents(diag, exclude);
+    // Prompt/reference/script contracts shared with private configuration mode.
+    contracts::validate_contracts(diag, exclude, true);
 }
 
 #[cfg(test)]
@@ -293,6 +297,7 @@ mod tests {
             error: std::collections::HashSet::new(),
             warn: std::collections::HashSet::new(),
             exclude: vec![],
+            ..crate::config::LintConfig::default()
         };
 
         let ctx = LintContext {

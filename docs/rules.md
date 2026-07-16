@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 104 rules across 9 categories. Every rule has a unique
+Agent Lint ships 117 rules across 9 categories. Every rule has a unique
 code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
 Either form can be used in `agent-lint.toml` to configure rule severity.
 
@@ -83,7 +83,7 @@ every rule to error regardless of config. See
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S014 | `desc-too-long` | Skill description exceeds 1024 characters | Always | error |
-| S015 | `desc-truncated` | Skill description exceeds 250 characters (truncated in listings) | Plugin | warn |
+| S015 | `desc-truncated` | Skill description exceeds the configurable listing threshold (250 by default) | Always | warn |
 | S016 | `desc-uses-person` | Skill description uses first/second person | Plugin | error |
 | S017 | `desc-no-trigger` | Skill description lacks trigger context (e.g., "Use when...") | Plugin | error |
 | S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Always | error |
@@ -96,7 +96,7 @@ every rule to error regardless of config. See
 |------|------|-------------|------|---------|
 | S019 | `body-too-long` | `SKILL.md` body exceeds 500 lines | Always | suppressed |
 | S020 | `body-empty` | `SKILL.md` has no content after frontmatter | Always | error |
-| S021 | `consecutive-bash` | Consecutive bash code blocks that could be combined | Always | warn |
+| S021 | `consecutive-bash` | Consecutive bash code blocks, including reference-file blocks separated by short breadcrumbs/comments, that could be combined | Always | warn |
 | S022 | `backslash-path` | Windows-style backslash paths in skill content | Always | error |
 | S037 | `body-no-refs` | Body exceeds 300 lines with no file references | Plugin | warn |
 | S038 | `time-sensitive` | Body contains time-sensitive date/year patterns | Plugin | warn |
@@ -109,6 +109,16 @@ every rule to error regardless of config. See
 | S055 | `script-errhand-missing` | Script file lacks error handling patterns (`set -e`/`trap` for shell, `try`/`except` for Python) | Plugin | warn |
 | S056 | `body-no-default` | Body lists alternatives without stating a default recommendation | Plugin | warn |
 | S057 | `magic-number-undoc` | Undocumented magic number in code block (no justification comment) | Plugin | warn |
+
+### Prompt and Invocation Contracts (S058--S062)
+
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
+| S058 | `skill-invoke-missing` | `allowed-tools` includes `Skill` without a clear Skill tool invocation step, or uses ambiguous `Invoke /name` prose | Always | error |
+| S059 | `skill-flag-mismatch` | A flag in a fenced shipped-script invocation is not accepted by that script; forwarding scripts are skipped | Always | error |
+| S060 | `awk-field-ref` | Awk positional fields such as `$0` or `$1` appear inside a `SKILL.md` shell fence | Always | error |
+| S061 | `unsafe-grep-probe` | A shell fence contains unbounded grep-family input, bare top-level `grep`, or a parent-directory ascent | Always | error |
+| S062 | `skill-closure-large` | Transitive always-loaded skill prompt closure exceeds `skill-closure-max-lines` | Always | warn |
 
 ### Frontmatter Field Types (S023--S027)
 
@@ -160,6 +170,8 @@ every rule to error regardless of config. See
 | A009 | `agent-desc-short` | Agent description under 20 characters | Plugin | error |
 | A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Plugin | error |
 | A011 | `agent-desc-redundant` | Agent description too similar to agent name | Plugin | error |
+| A012 | `agent-read-mismatch` | Explicit agent tools omit `Read` while its prompt instructs reading file-backed evidence | Always | error |
+| A013 | `agent-output-unsafe` | Machine-only evidence output lacks both an unreadable-evidence outcome and never-invent language | Always | error |
 
 ## Hygiene / Scripts Rules (G)
 
@@ -172,6 +184,10 @@ every rule to error regardless of config. See
 | G005 | `security-md-missing` | `SECURITY.md` is missing from repo root | Plugin | warn |
 | G006 | `todo-in-skill` | `TODO`/`FIXME`/`HACK`/`XXX` marker in published skill body | Plugin | warn |
 | G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin | warn |
+| G008 | `gh-inline-body` | Shipped script passes a GitHub body or release notes inline instead of using a file-backed option | Always | warn |
+| G009 | `bash-replacement-unsafe` | Bash global substitution uses a variable replacement that can reinterpret `&` | Always | error |
+| G010 | `bash32-incompatible` | Shipped shell uses syntax unavailable in macOS Bash 3.2 | Always | suppressed |
+| G011 | `awk-regex-nonascii` | Dynamic awk regex contains non-ASCII text with implementation-dependent behavior | Always | suppressed |
 
 ## Email Rules (E)
 
@@ -203,6 +219,8 @@ every rule to error regardless of config. See
 | D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin | error |
 | D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin | warn |
 | D003 | `todo-in-docs` | `TODO`/`FIXME`/`HACK`/`XXX` marker in `CLAUDE.md` (outside code fences) | Plugin | warn |
+| D004 | `claude-import-large` | Recursive `CLAUDE.md` `@`-import closure exceeds a configured per-file or total line budget | Always | warn |
+| D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
 
 ## Auto-Fixable Rules
 
@@ -211,7 +229,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 104):**
+**Auto-fixable rules (12 of 117):**
 
 | Rule | Code | Fix |
 |------|------|-----|

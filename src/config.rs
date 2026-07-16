@@ -14,7 +14,7 @@ pub enum CliMode {
     /// too-long rules). Respects suppress list. Default-suppressed rules
     /// stay suppressed.
     Pedantic,
-    /// All 104 rules fire as errors. Ignores all TOML severity config.
+    /// All 117 rules fire as errors. Ignores all TOML severity config.
     All,
 }
 
@@ -25,7 +25,7 @@ struct RawConfig {
     lint: Option<RawLintSection>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawLintSection {
     #[serde(default)]
@@ -36,18 +36,101 @@ struct RawLintSection {
     warn: Vec<String>,
     #[serde(default)]
     exclude: Vec<String>,
+    #[serde(
+        default = "default_desc_truncated_max_chars",
+        rename = "desc-truncated-max-chars"
+    )]
+    desc_truncated_max_chars: usize,
+    #[serde(default, rename = "skill-closure-max-lines")]
+    skill_closure_max_lines: Option<usize>,
+    #[serde(default, rename = "claude-import-max-lines")]
+    claude_import_max_lines: Option<usize>,
+    #[serde(default, rename = "claude-import-total-max-lines")]
+    claude_import_total_max_lines: Option<usize>,
+    #[serde(default = "default_instruction_files", rename = "instruction-files")]
+    instruction_files: Vec<String>,
+    #[serde(
+        default = "default_inline_path_prefixes",
+        rename = "inline-path-prefixes"
+    )]
+    inline_path_prefixes: Vec<String>,
+}
+
+const fn default_desc_truncated_max_chars() -> usize {
+    250
+}
+
+fn default_instruction_files() -> Vec<String> {
+    vec!["AGENTS.md".into(), "SECURITY.md".into(), "CLAUDE.md".into()]
+}
+
+fn default_inline_path_prefixes() -> Vec<String> {
+    [
+        "src/",
+        "skills/",
+        "scripts/",
+        "docs/",
+        "hooks/",
+        "agents/",
+        ".claude/",
+        ".claude-plugin/",
+        ".github/",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+impl Default for RawLintSection {
+    fn default() -> Self {
+        Self {
+            suppress: Vec::new(),
+            error: Vec::new(),
+            warn: Vec::new(),
+            exclude: Vec::new(),
+            desc_truncated_max_chars: default_desc_truncated_max_chars(),
+            skill_closure_max_lines: None,
+            claude_import_max_lines: None,
+            claude_import_total_max_lines: None,
+            instruction_files: default_instruction_files(),
+            inline_path_prefixes: default_inline_path_prefixes(),
+        }
+    }
 }
 
 /// Resolved lint configuration. Rules in `suppress` are completely suppressed.
 /// Rules in `error` are promoted to errors (overriding default severity).
 /// Rules in `warn` are downgraded to warnings. Priority: suppress > error > warn.
 /// Rules not in any set fall back to `LintRule::default_severity()`.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct LintConfig {
     pub suppress: HashSet<LintRule>,
     pub error: HashSet<LintRule>,
     pub warn: HashSet<LintRule>,
     pub exclude: Vec<String>,
+    pub desc_truncated_max_chars: usize,
+    pub skill_closure_max_lines: Option<usize>,
+    pub claude_import_max_lines: Option<usize>,
+    pub claude_import_total_max_lines: Option<usize>,
+    pub instruction_files: Vec<String>,
+    pub inline_path_prefixes: Vec<String>,
+}
+
+impl Default for LintConfig {
+    fn default() -> Self {
+        Self {
+            suppress: HashSet::new(),
+            error: HashSet::new(),
+            warn: HashSet::new(),
+            exclude: Vec::new(),
+            desc_truncated_max_chars: default_desc_truncated_max_chars(),
+            skill_closure_max_lines: None,
+            claude_import_max_lines: None,
+            claude_import_total_max_lines: None,
+            instruction_files: default_instruction_files(),
+            inline_path_prefixes: default_inline_path_prefixes(),
+        }
+    }
 }
 
 /// Compiled glob set for file exclusion. Wraps `globset::GlobSet` and provides
@@ -127,6 +210,32 @@ impl LintConfig {
 
         let section = raw.lint.unwrap_or_default();
 
+        if section.desc_truncated_max_chars == 0 {
+            return Err(format!(
+                "{}: desc-truncated-max-chars must be greater than zero",
+                path.display()
+            ));
+        }
+        for (name, value) in [
+            ("skill-closure-max-lines", section.skill_closure_max_lines),
+            ("claude-import-max-lines", section.claude_import_max_lines),
+            (
+                "claude-import-total-max-lines",
+                section.claude_import_total_max_lines,
+            ),
+        ] {
+            if value == Some(0) {
+                return Err(format!(
+                    "{}: {name} must be greater than zero",
+                    path.display()
+                ));
+            }
+        }
+        validate_relative_paths(&section.instruction_files, "instruction-files", false)
+            .map_err(|message| format!("{}: {message}", path.display()))?;
+        validate_relative_paths(&section.inline_path_prefixes, "inline-path-prefixes", true)
+            .map_err(|message| format!("{}: {message}", path.display()))?;
+
         // Parse error list first (user-explicit error promotions).
         let mut error = HashSet::new();
         for entry in &section.error {
@@ -175,6 +284,12 @@ impl LintConfig {
             error,
             warn,
             exclude: section.exclude,
+            desc_truncated_max_chars: section.desc_truncated_max_chars,
+            skill_closure_max_lines: section.skill_closure_max_lines,
+            claude_import_max_lines: section.claude_import_max_lines,
+            claude_import_total_max_lines: section.claude_import_total_max_lines,
+            instruction_files: section.instruction_files,
+            inline_path_prefixes: section.inline_path_prefixes,
         })
     }
 
@@ -231,6 +346,33 @@ impl LintConfig {
         // Patterns were already validated in load(), so unwrap is safe.
         ExcludeSet::new(&self.exclude).expect("exclude patterns were validated at load time")
     }
+}
+
+fn validate_relative_paths(
+    values: &[String],
+    name: &str,
+    require_slash: bool,
+) -> Result<(), String> {
+    for value in values {
+        let candidate = Path::new(value);
+        if value.is_empty()
+            || candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+            || (require_slash && !value.ends_with('/'))
+        {
+            return Err(format!(
+                "{name} entry '{value}' must be a safe repository-relative {}",
+                if require_slash {
+                    "prefix ending in /"
+                } else {
+                    "path"
+                }
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -555,6 +697,56 @@ mod tests {
         assert!(!err.is_empty());
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn contract_limits_and_path_scope_are_configurable() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\n\
+             desc-truncated-max-chars = 200\n\
+             skill-closure-max-lines = 700\n\
+             claude-import-max-lines = 120\n\
+             claude-import-total-max-lines = 400\n\
+             instruction-files = [\"AGENTS.md\"]\n\
+             inline-path-prefixes = [\"src/\", \"docs/\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.desc_truncated_max_chars, 200);
+        assert_eq!(config.skill_closure_max_lines, Some(700));
+        assert_eq!(config.claude_import_max_lines, Some(120));
+        assert_eq!(config.claude_import_total_max_lines, Some(400));
+        assert_eq!(config.instruction_files, ["AGENTS.md"]);
+        assert_eq!(config.inline_path_prefixes, ["src/", "docs/"]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn zero_contract_limit_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nskill-closure-max-lines = 0\n",
+        )
+        .unwrap();
+        let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(error.contains("must be greater than zero"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn escaping_instruction_path_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\ninstruction-files = [\"../AGENTS.md\"]\n",
+        )
+        .unwrap();
+        let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(error.contains("safe repository-relative path"));
+    }
+
     // ── ExcludeSet ──────────────────────────────────────────────────
 
     #[test]
@@ -670,6 +862,7 @@ mod tests {
             error: HashSet::from([LintRule::NameVague]),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Normal);
         assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
@@ -684,6 +877,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing, LintRule::TodoInSkill]),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         assert!(config.error.contains(&LintRule::SecurityMdMissing));
@@ -702,6 +896,7 @@ mod tests {
                 LintRule::CompatTooLong,
             ]),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         // Non-too-long rule promoted to error
@@ -720,6 +915,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
@@ -733,6 +929,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         // Default-error rules like PluginJsonMissing aren't in the error set
@@ -748,6 +945,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         // Default-warning rules are promoted to error by pedantic.
@@ -763,6 +961,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         // CompatTooLong is a default-warning too-long rule; stays as warning.
@@ -778,6 +977,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         // Suppressed default-warning rules are not promoted.
@@ -792,6 +992,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::Pedantic);
         // NameNotGerund is default-suppressed, should not be promoted.
@@ -805,11 +1006,12 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::from([LintRule::SecurityMdMissing]),
             exclude: vec!["docs/*.md".to_string()],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 104);
+        assert_eq!(config.error.len(), 117);
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }
@@ -821,6 +1023,7 @@ mod tests {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: vec![],
+            ..LintConfig::default()
         };
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
