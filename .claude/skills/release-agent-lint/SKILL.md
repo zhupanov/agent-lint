@@ -105,18 +105,20 @@ git merge-base --is-ancestor "$MERGE_COMMIT" origin/main
 ## 4. Publish and clean up
 
 Explicitly dispatch the release workflow from `main`; it creates the immutable
-version tag, GitHub Release, and artifacts. Identify the dispatched run for
-the merged `origin/main` commit, then wait at a 30-second refresh interval and
-stop if it fails.
+version tag, GitHub Release, and artifacts. Capture the `origin/main` commit
+that will be dispatched, identify that new run, then wait at a 30-second
+refresh interval and stop if it fails. In a recovery, this is the current
+workflow-fix commit rather than the original version-PR merge commit.
 
 ```bash
+RELEASE_COMMIT=$(git rev-parse origin/main)
 DISPATCHED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 gh workflow run release.yml --ref main
 RUN_ID=""
 for ((attempt = 1; attempt <= 10; attempt++)); do
   RUN_ID=$(gh run list --workflow release.yml --branch main --event workflow_dispatch \
     --limit 20 --json databaseId,headSha,createdAt \
-    --jq ".[] | select(.headSha == \"${MERGE_COMMIT}\" and .createdAt >= \"${DISPATCHED_AT}\") | .databaseId" \
+    --jq ".[] | select(.headSha == \"${RELEASE_COMMIT}\" and .createdAt >= \"${DISPATCHED_AT}\") | .databaseId" \
     | head -n 1)
   test -n "$RUN_ID" && break
   if [ "$attempt" -lt 10 ]; then sleep 30; fi
