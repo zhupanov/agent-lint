@@ -5,6 +5,7 @@ mod diagnostic;
 mod fence;
 mod frontmatter;
 mod platforms;
+mod prompt_budget;
 mod rules;
 #[cfg(test)]
 mod test_helpers;
@@ -20,6 +21,7 @@ fn main() {
 
     // Partition args[1..] into flags and positional args.
     let mut list_scripts = false;
+    let mut closure_report = false;
     let mut pedantic = false;
     let mut all = false;
     let mut autofix = false;
@@ -33,6 +35,9 @@ fn main() {
                 println!("  --help, -h         Print this help message");
                 println!("  --version          Print version information");
                 println!("  --list-scripts     List discovered script paths and exit");
+                println!(
+                    "  --closure-report   Print configured prompt-source budget measurements as JSON"
+                );
                 println!("  --pedantic         Promote warnings to errors (except too-long rules)");
                 println!(
                     "  --all              Force every rule to error, ignoring config overrides"
@@ -49,6 +54,9 @@ fn main() {
             "--list-scripts" => {
                 list_scripts = true;
             }
+            "--closure-report" => {
+                closure_report = true;
+            }
             "--pedantic" => {
                 pedantic = true;
             }
@@ -61,7 +69,7 @@ fn main() {
             flag if flag.starts_with('-') => {
                 eprintln!("Unknown flag: {arg}");
                 eprintln!(
-                    "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [--autofix] [PATH]"
+                    "Usage: agent-lint [--help] [--version] [--list-scripts] [--closure-report] [--pedantic] [--all] [--autofix] [PATH]"
                 );
                 std::process::exit(2);
             }
@@ -75,6 +83,10 @@ fn main() {
         eprintln!("Cannot use both --pedantic and --all");
         std::process::exit(2);
     }
+    if usize::from(list_scripts) + usize::from(closure_report) + usize::from(autofix) > 1 {
+        eprintln!("Cannot combine --list-scripts, --closure-report, and --autofix");
+        std::process::exit(2);
+    }
 
     let cli_mode = if all {
         CliMode::All
@@ -86,7 +98,7 @@ fn main() {
 
     if positional.len() > 1 {
         eprintln!(
-            "Usage: agent-lint [--help] [--version] [--list-scripts] [--pedantic] [--all] [--autofix] [PATH]"
+            "Usage: agent-lint [--help] [--version] [--list-scripts] [--closure-report] [--pedantic] [--all] [--autofix] [PATH]"
         );
         std::process::exit(2);
     }
@@ -115,6 +127,10 @@ fn main() {
         if list_scripts {
             std::process::exit(0);
         }
+        if closure_report {
+            println!("[]");
+            std::process::exit(0);
+        }
         println!("Nothing to lint (no supported agent configuration or MCP configuration found).");
         std::process::exit(0);
     }
@@ -129,14 +145,15 @@ fn main() {
 
     lint_config.apply_cli_mode(cli_mode);
 
+    if closure_report {
+        run_closure_report(&lint_config);
+    }
+
     let exclude = lint_config.build_exclude_set();
     let targets = DetectedSurfaces::discover(&exclude).resolve(lint_config.platforms);
-    let mode = match detect_mode_for_targets(targets).or_else(|| {
-        lint_config
-            .script_inventory
-            .is_some()
-            .then_some(LintMode::Basic)
-    }) {
+    let mode = match detect_mode_for_targets(targets)
+        .or_else(|| config_selects_basic_mode(&lint_config).then_some(LintMode::Basic))
+    {
         Some(mode) => mode,
         None => {
             if list_scripts {
@@ -170,6 +187,34 @@ fn main() {
     } else {
         run_lint(&repo_root, mode, lint_config, &exclude, targets);
     }
+}
+
+fn config_selects_basic_mode(config: &LintConfig) -> bool {
+    config.script_inventory.is_some()
+        || config.skill_closure_max_lines.is_some()
+        || config.claude_import_max_lines.is_some()
+        || config.claude_import_total_max_lines.is_some()
+        || !config.claude_import_path_budgets.is_empty()
+        || !config.prompt_source_budgets.is_empty()
+}
+
+fn run_closure_report(lint_config: &LintConfig) -> ! {
+    let mut rows = Vec::new();
+    for budget in &lint_config.prompt_source_budgets {
+        let measurement = match prompt_budget::measure_budget(budget) {
+            Ok(measurement) => measurement,
+            Err(message) => {
+                eprintln!("ERROR: prompt-source-budgets '{}': {message}", budget.name);
+                std::process::exit(2);
+            }
+        };
+        rows.extend(prompt_budget::report_rows(budget, &measurement));
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&rows).expect("closure report rows serialize")
+    );
+    std::process::exit(0);
 }
 
 fn run_lint(
@@ -317,6 +362,19 @@ mod tests {
     use serial_test::serial;
 
     // ── detect_mode ──────────────────────────────────────────────────
+
+    #[test]
+    fn explicit_contract_configuration_selects_basic_mode() {
+        let config = LintConfig {
+            claude_import_path_budgets: std::collections::BTreeMap::from([(
+                "AGENTS.md".into(),
+                10,
+            )]),
+            ..LintConfig::default()
+        };
+        assert!(config_selects_basic_mode(&config));
+        assert!(!config_selects_basic_mode(&LintConfig::default()));
+    }
 
     #[test]
     #[serial]

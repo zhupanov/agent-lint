@@ -82,7 +82,8 @@ If `PATH` is omitted, the current directory is used. The tool detects the
 repo root and selects Basic or Plugin mode automatically based on the
 configuration it finds.
 
-See [CLI Reference](docs/cli.md) for flags, exit codes, and `--autofix`.
+See [CLI Reference](docs/cli.md) for flags, exit codes, autofix, and the
+machine-readable `--closure-report`.
 
 ## Lint Rules
 
@@ -134,7 +135,7 @@ See [Configuration docs](docs/configuration.md) for the full reference.
 | Document | Description |
 |----------|-------------|
 | [Rules Reference](docs/rules.md) | Complete rule table with codes, names, defaults, and auto-fixable rules |
-| [CLI Reference](docs/cli.md) | Flags, exit codes, `--autofix`, `--list-scripts` |
+| [CLI Reference](docs/cli.md) | Flags, exit codes, `--autofix`, `--list-scripts`, `--closure-report` |
 | [GitHub Action](docs/github-action.md) | Action inputs, token configuration, adding CI to your repo |
 | [Configuration](docs/configuration.md) | `agent-lint.toml` format, rule identifiers, file exclusion, strictness modes |
 | [Development](docs/development.md) | Local setup, Makefile targets, project structure, CI/CD |

@@ -1,9 +1,12 @@
 //! Prompt, reference, and shipped-script contracts shared by public and private skills.
 
-use crate::config::ExcludeSet;
+use crate::config::{ExcludeSet, PromptMetricCaps, PromptSourceBudget};
 use crate::diagnostic::DiagnosticCollector;
 use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs, markdown_fences};
 use crate::frontmatter;
+use crate::prompt_budget::{
+    INLINE_CODE, MARKDOWN_LINK, normalize_repo_relative, resolve_repo_reference,
+};
 use crate::rules::LintRule;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -35,18 +38,6 @@ static FLAG: LazyLock<Regex> =
 static AWK_FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$[0-9]+").unwrap());
 static IMPORT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|\s)@([A-Za-z0-9._/-]+\.md)\b").unwrap());
-static INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`([^`\n]+)`").unwrap());
-static MARKDOWN_LINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[[^\]]*\]\(([^)\s]+\.md)(?:#[^)]*)?\)").unwrap());
-static PLAIN_MD_PATH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?:^|[\s`'(])((?:skills|\.claude/skills|docs|agents|scripts)/[A-Za-z0-9._/-]+\.md)\b",
-    )
-    .unwrap()
-});
-static ALWAYS_LOAD_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:\b(?:read|load|open)\b.*\b(?:before|first|completely|always|entire|required|must)\b|\b(?:before|first|always|required|must)\b.*\b(?:read|load|open)\b|^\s*@)").unwrap()
-});
 static HEREDOC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"<<-?\s*(?:'([A-Za-z_][A-Za-z0-9_]*)'|\"([A-Za-z_][A-Za-z0-9_]*)\"|([A-Za-z_][A-Za-z0-9_]*))"#,
@@ -149,6 +140,7 @@ pub fn validate_contracts(
     validate_reference_consecutive_bash(diag, exclude, include_public);
     validate_script_contracts(diag, exclude, include_public);
     validate_claude_import_budget(diag, exclude);
+    validate_prompt_source_budgets(diag);
     validate_inline_paths(diag, exclude);
     validate_import_graph(diag, exclude);
     validate_markdown_links(diag, exclude);
@@ -327,9 +319,9 @@ fn body_line_number(content: &str, body_offset: usize) -> usize {
 fn has_reasoned_marker(content: &str, marker: &str) -> bool {
     content.lines().any(|line| {
         line.find(marker).is_some_and(|index| {
-            !line[index + marker.len()..]
-                .trim_matches([' ', '-', '>'])
-                .is_empty()
+            let remainder = &line[index + marker.len()..];
+            remainder.chars().next().is_some_and(char::is_whitespace)
+                && !remainder.trim_matches([' ', '-', '>']).is_empty()
         })
     })
 }
@@ -745,6 +737,7 @@ fn validate_reference_consecutive_bash(
         if !root.is_dir() {
             continue;
         }
+        let mut paths = Vec::new();
         for entry in WalkDir::new(&root).into_iter().flatten() {
             let path = entry.path();
             if !path.is_file()
@@ -756,14 +749,18 @@ fn validate_reference_consecutive_bash(
             {
                 continue;
             }
-            let Some(content) = read_text(path, exclude) else {
+            paths.push(path.to_path_buf());
+        }
+        paths.sort();
+        for path in paths {
+            let Some(content) = read_text(&path, exclude) else {
                 continue;
             };
-            if let Some((first, second)) = consecutive_bash_pairs(&content).first() {
+            for (first, second) in consecutive_bash_pairs(&content) {
                 diag.report(
                     LintRule::ConsecutiveBash,
                     &format!(
-                        "{}: consecutive bash code blocks (lines {first} and {second}) could be combined into one",
+                        "{}:{first}: consecutive bash tool-call fences at lines {first} and {second}; combine them or add a reason-bearing lint-consecutive-bash waiver",
                         path.display()
                     ),
                 );
@@ -772,101 +769,76 @@ fn validate_reference_consecutive_bash(
     }
 }
 
-fn markdown_references(source_path: &Path, content: &str) -> Vec<PathBuf> {
-    let mut refs = BTreeSet::new();
-    for line in crate::fence::lines_outside_fences(content) {
-        if !ALWAYS_LOAD_DIRECTIVE.is_match(line) {
-            continue;
-        }
-        for capture in INLINE_CODE.captures_iter(line) {
-            add_markdown_reference(source_path, &capture[1], &mut refs);
-        }
-        for capture in MARKDOWN_LINK.captures_iter(line) {
-            add_markdown_reference(source_path, &capture[1], &mut refs);
-        }
-        for capture in PLAIN_MD_PATH.captures_iter(line) {
-            add_markdown_reference(source_path, &capture[1], &mut refs);
-        }
-    }
-    refs.into_iter().collect()
-}
-
-fn add_markdown_reference(source: &Path, raw: &str, refs: &mut BTreeSet<PathBuf>) {
-    let raw = raw.split(['#', ':']).next().unwrap_or(raw);
-    if !raw.ends_with(".md") || raw.contains(['$', '{', '}', '<', '>', '*']) {
-        return;
-    }
-    if let Some(candidate) = resolve_repo_reference(source, raw) {
-        if candidate.is_file() && !candidate.is_symlink() {
-            refs.insert(candidate);
-        }
-    }
-}
-
 fn validate_skill_closure(skill: &Path, diag: &mut DiagnosticCollector) {
     let Some(max_lines) = diag.config().skill_closure_max_lines else {
         return;
     };
-    let mut seen = BTreeSet::new();
-    let mut pending = vec![skill.to_path_buf()];
-    let mut total = 0;
-    while let Some(path) = pending.pop() {
-        let Some(normalized) = normalize_repo_relative(&path) else {
-            continue;
-        };
-        if !seen.insert(normalized.clone()) {
-            continue;
-        }
-        let Ok(content) = fs::read_to_string(&normalized) else {
-            continue;
-        };
-        total += content.lines().count();
-        pending.extend(markdown_references(&normalized, &content));
-    }
-    if total > max_lines {
+    let budget = PromptSourceBudget {
+        name: skill.display().to_string(),
+        roots: vec![skill.display().to_string()],
+        conditional_sources: Vec::new(),
+        root_caps: PromptMetricCaps::default(),
+        closure_caps: PromptMetricCaps {
+            lines: Some(max_lines),
+            ..PromptMetricCaps::default()
+        },
+        conditional_caps: PromptMetricCaps::default(),
+    };
+    let Ok(measurement) = crate::prompt_budget::measure_budget(&budget) else {
+        return;
+    };
+    if measurement.closure.lines > max_lines {
         diag.report(
             LintRule::SkillClosureLarge,
             &format!(
-                "{}: always-loaded prompt closure is {total} lines across {} files (configured maximum {max_lines})",
+                "{}: always-loaded prompt closure is {} lines across {} files (configured maximum {max_lines})",
                 skill.display(),
-                seen.len()
+                measurement.closure.lines,
+                measurement.closure_files.len()
             ),
         );
     }
 }
 
-fn normalize_repo_relative(path: &Path) -> Option<PathBuf> {
-    let mut result = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !result.pop() {
-                    return None;
-                }
+fn validate_prompt_source_budgets(diag: &mut DiagnosticCollector) {
+    let budgets = diag.config().prompt_source_budgets.clone();
+    for budget in budgets {
+        let measurement = match crate::prompt_budget::measure_budget(&budget) {
+            Ok(measurement) => measurement,
+            Err(message) => {
+                diag.report(
+                    LintRule::SkillClosureLarge,
+                    &format!("prompt-source group '{}': {message}", budget.name),
+                );
+                continue;
             }
-            Component::Normal(value) => result.push(value),
-            Component::RootDir | Component::Prefix(_) => return None,
+        };
+        for row in crate::prompt_budget::report_rows(&budget, &measurement) {
+            if row.cap.is_some_and(|cap| row.measured_value > cap) {
+                diag.report(
+                    LintRule::SkillClosureLarge,
+                    &format!(
+                        "prompt-source group '{}': {} {} {} is {} (configured maximum {})",
+                        row.group,
+                        row.source_set,
+                        row.scope,
+                        row.metric,
+                        row.measured_value,
+                        row.cap.unwrap_or_default()
+                    ),
+                );
+            }
         }
     }
-    Some(result)
-}
-
-fn resolve_repo_reference(source: &Path, raw: &str) -> Option<PathBuf> {
-    let direct = PathBuf::from(raw.trim_start_matches("./"));
-    if !direct.is_absolute()
-        && !direct.components().any(|part| part == Component::ParentDir)
-        && direct.is_file()
-    {
-        return normalize_repo_relative(&direct);
-    }
-    normalize_repo_relative(&source.parent().unwrap_or_else(|| Path::new(".")).join(raw))
 }
 
 fn validate_claude_import_budget(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let per_file = diag.config().claude_import_max_lines;
     let total_cap = diag.config().claude_import_total_max_lines;
-    if per_file.is_none() && total_cap.is_none() || exclude.is_excluded("CLAUDE.md") {
+    let path_budgets = diag.config().claude_import_path_budgets.clone();
+    if per_file.is_none() && total_cap.is_none() && path_budgets.is_empty()
+        || exclude.is_excluded("CLAUDE.md")
+    {
         return;
     }
     let mut seen = BTreeSet::new();
@@ -883,17 +855,21 @@ fn validate_claude_import_budget(diag: &mut DiagnosticCollector, exclude: &Exclu
             continue;
         };
         seen.insert(path.clone());
-        let count = content.lines().count();
+        let count = crate::prompt_budget::source_metrics(&content).lines;
         total += count;
-        if path != Path::new("CLAUDE.md") && per_file.is_some_and(|cap| count > cap) {
-            diag.report(
-                LintRule::ClaudeImportLarge,
-                &format!(
-                    "{}: imported prompt source has {count} lines (configured maximum {})",
-                    path.display(),
-                    per_file.unwrap_or_default()
-                ),
-            );
+        if path != Path::new("CLAUDE.md") {
+            let normalized = crate::config::normalize_path(&path.to_string_lossy());
+            let effective_cap = path_budgets.get(&normalized).copied().or(per_file);
+            if effective_cap.is_some_and(|cap| count > cap) {
+                diag.report(
+                    LintRule::ClaudeImportLarge,
+                    &format!(
+                        "{}: imported prompt source has {count} lines (effective maximum {})",
+                        path.display(),
+                        effective_cap.unwrap_or_default()
+                    ),
+                );
+            }
         }
         for line in crate::fence::lines_outside_fences(&content) {
             for capture in IMPORT.captures_iter(line) {
@@ -1815,6 +1791,112 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn path_specific_import_caps_override_the_global_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write(
+            "CLAUDE.md",
+            "@./AGENTS.md\n@KARPATHY_CLAUDE.md\n@BASH_AUTHORING.md\n",
+        )
+        .unwrap();
+        fs::write("AGENTS.md", "a\na\na\n").unwrap();
+        fs::write("KARPATHY_CLAUDE.md", "k\nk\nk\nk\n").unwrap();
+        fs::write("BASH_AUTHORING.md", "b\nb\nb\nb\nb\n").unwrap();
+        let config = LintConfig {
+            claude_import_max_lines: Some(1),
+            claude_import_path_budgets: BTreeMap::from([
+                ("AGENTS.md".into(), 2),
+                ("BASH_AUTHORING.md".into(), 5),
+                ("KARPATHY_CLAUDE.md".into(), 3),
+            ]),
+            ..LintConfig::default()
+        };
+        let mut diag = all_enabled_with(config);
+
+        validate_claude_import_budget(&mut diag, &ExcludeSet::default());
+
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::ClaudeImportLarge)
+            .map(|item| item.message.as_str())
+            .collect();
+        assert_eq!(findings.len(), 2);
+        assert!(findings.iter().any(|message| message.contains("AGENTS.md")
+            && message.contains("3 lines")
+            && message.contains("maximum 2")));
+        assert!(findings.iter().any(|message| {
+            message.contains("KARPATHY_CLAUDE.md")
+                && message.contains("4 lines")
+                && message.contains("maximum 3")
+        }));
+        assert!(
+            !findings
+                .iter()
+                .any(|message| message.contains("BASH_AUTHORING"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn named_prompt_source_groups_measure_conditional_sources_separately() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/review").unwrap();
+        fs::write(
+            "skills/review/SKILL.md",
+            "Read `always.md` completely.\nroot\n",
+        )
+        .unwrap();
+        fs::write("skills/review/always.md", "always\nalways\n").unwrap();
+        fs::write("skills/review/branch.md", "branch\nbranch\nbranch\n").unwrap();
+        let config = LintConfig {
+            prompt_source_budgets: vec![PromptSourceBudget {
+                name: "review".into(),
+                roots: vec!["skills/review/SKILL.md".into()],
+                conditional_sources: vec!["skills/review/branch.md".into()],
+                root_caps: PromptMetricCaps {
+                    lines: Some(2),
+                    ..PromptMetricCaps::default()
+                },
+                closure_caps: PromptMetricCaps {
+                    lines: Some(3),
+                    ..PromptMetricCaps::default()
+                },
+                conditional_caps: PromptMetricCaps {
+                    lines: Some(2),
+                    ..PromptMetricCaps::default()
+                },
+            }],
+            ..LintConfig::default()
+        };
+        let mut diag = all_enabled_with(config);
+
+        validate_prompt_source_budgets(&mut diag);
+
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::SkillClosureLarge)
+            .map(|item| item.message.as_str())
+            .collect();
+        assert_eq!(findings.len(), 2);
+        assert!(
+            findings
+                .iter()
+                .any(|message| message.contains("always closure lines is 4"))
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|message| message.contains("conditional closure lines is 3"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn flag_parity_understands_python_and_skips_forwarders() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -1950,6 +2032,32 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn reference_bash_diagnostics_are_deterministic_across_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let adjacent = "```bash\necho one\n```\n```bash\necho two\n```\n";
+        for name in ["zeta", "alpha"] {
+            fs::create_dir_all(format!("skills/{name}/references")).unwrap();
+            fs::write(format!("skills/{name}/references/workflow.md"), adjacent).unwrap();
+        }
+        let mut diag = DiagnosticCollector::new_all_enabled();
+
+        validate_reference_consecutive_bash(&mut diag, &ExcludeSet::default(), true);
+
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::ConsecutiveBash)
+            .map(|item| item.message.as_str())
+            .collect();
+        assert_eq!(findings.len(), 2);
+        assert!(findings[0].contains("skills/alpha/"));
+        assert!(findings[1].contains("skills/zeta/"));
+    }
+
+    #[test]
     fn awk_parser_distinguishes_programs_from_option_values() {
         assert_eq!(awk_programs("echo $1"), Vec::<String>::new());
         assert_eq!(
@@ -1994,6 +2102,43 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn bash_replacement_matches_renderer_harness_cases() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir("scripts").unwrap();
+        fs::write(
+            "scripts/unsafe.sh",
+            "out=\"${out//TOKEN/$rep}\"\nout=\"${out//TOKEN/${rep}}\"\nout=\"${out//TOKEN/$arr[0]}\"\nout=\"${out//TOKEN/$rep}\" # lint-renderer-safe: okay is not a waiver\n",
+        )
+        .unwrap();
+        fs::write(
+            "scripts/safe.sh",
+            "before=\"${body%%TOKEN*}\"\nafter=\"${body##*TOKEN}\"\nout=\"${out//$'\\n'/$'\\n    '}\"\nout=\"${out//TOKEN/$rep}\" # lint-renderer-safe: ok trusted constant\n# lint-renderer-safe: ok reviewed fixture\nout=\"${out//TOKEN/$rep}\"\ncat <<'FIXTURE'\nout=\"${out//TOKEN/$rep}\"\nFIXTURE\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+
+        validate_script_contracts(&mut diag, &ExcludeSet::default(), true);
+
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::BashReplacementUnsafe)
+            .map(|item| item.message.as_str())
+            .collect();
+        assert_eq!(findings.len(), 4);
+        for line in 1..=4 {
+            assert!(
+                findings
+                    .iter()
+                    .any(|message| message.contains(&format!("scripts/unsafe.sh:{line}:")))
+            );
+        }
     }
 
     #[test]

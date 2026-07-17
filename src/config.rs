@@ -1,7 +1,7 @@
 use crate::rules::{ALL_RULES, LintRule};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 /// CLI strictness mode. Applied as a one-shot transformation to LintConfig
@@ -63,6 +63,10 @@ struct RawLintSection {
     claude_import_max_lines: Option<usize>,
     #[serde(default, rename = "claude-import-total-max-lines")]
     claude_import_total_max_lines: Option<usize>,
+    #[serde(default, rename = "claude-import-path-budgets")]
+    claude_import_path_budgets: BTreeMap<String, usize>,
+    #[serde(default, rename = "prompt-source-budgets")]
+    prompt_source_budgets: Vec<RawPromptSourceBudget>,
     #[serde(default = "default_instruction_files", rename = "instruction-files")]
     instruction_files: Vec<String>,
     #[serde(
@@ -72,6 +76,52 @@ struct RawLintSection {
     inline_path_prefixes: Vec<String>,
     #[serde(default, rename = "script-inventory")]
     script_inventory: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawPromptSourceBudget {
+    name: String,
+    roots: Vec<String>,
+    #[serde(default, rename = "conditional-sources")]
+    conditional_sources: Vec<String>,
+    #[serde(default, rename = "root-max-lines")]
+    root_max_lines: Option<usize>,
+    #[serde(default, rename = "root-max-tokens")]
+    root_max_tokens: Option<usize>,
+    #[serde(default, rename = "root-max-content-tokens")]
+    root_max_content_tokens: Option<usize>,
+    #[serde(default, rename = "closure-max-lines")]
+    closure_max_lines: Option<usize>,
+    #[serde(default, rename = "closure-max-tokens")]
+    closure_max_tokens: Option<usize>,
+    #[serde(default, rename = "closure-max-content-tokens")]
+    closure_max_content_tokens: Option<usize>,
+    #[serde(default, rename = "conditional-max-lines")]
+    conditional_max_lines: Option<usize>,
+    #[serde(default, rename = "conditional-max-tokens")]
+    conditional_max_tokens: Option<usize>,
+    #[serde(default, rename = "conditional-max-content-tokens")]
+    conditional_max_content_tokens: Option<usize>,
+}
+
+/// Optional caps for the three stable prompt-source size metrics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PromptMetricCaps {
+    pub lines: Option<usize>,
+    pub estimated_tokens: Option<usize>,
+    pub content_tokens: Option<usize>,
+}
+
+/// One repository-neutral prompt-source group configured for S062.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptSourceBudget {
+    pub name: String,
+    pub roots: Vec<String>,
+    pub conditional_sources: Vec<String>,
+    pub root_caps: PromptMetricCaps,
+    pub closure_caps: PromptMetricCaps,
+    pub conditional_caps: PromptMetricCaps,
 }
 
 const fn default_desc_truncated_max_chars() -> usize {
@@ -110,6 +160,8 @@ impl Default for RawLintSection {
             skill_closure_max_lines: None,
             claude_import_max_lines: None,
             claude_import_total_max_lines: None,
+            claude_import_path_budgets: BTreeMap::new(),
+            prompt_source_budgets: Vec::new(),
             instruction_files: default_instruction_files(),
             inline_path_prefixes: default_inline_path_prefixes(),
             script_inventory: None,
@@ -131,6 +183,8 @@ pub struct LintConfig {
     pub skill_closure_max_lines: Option<usize>,
     pub claude_import_max_lines: Option<usize>,
     pub claude_import_total_max_lines: Option<usize>,
+    pub claude_import_path_budgets: BTreeMap<String, usize>,
+    pub prompt_source_budgets: Vec<PromptSourceBudget>,
     pub instruction_files: Vec<String>,
     pub inline_path_prefixes: Vec<String>,
     /// Explicit repository-relative script paths used by G009-G011. `None`
@@ -150,6 +204,8 @@ impl Default for LintConfig {
             skill_closure_max_lines: None,
             claude_import_max_lines: None,
             claude_import_total_max_lines: None,
+            claude_import_path_budgets: BTreeMap::new(),
+            prompt_source_budgets: Vec::new(),
             instruction_files: default_instruction_files(),
             inline_path_prefixes: default_inline_path_prefixes(),
             script_inventory: None,
@@ -261,6 +317,12 @@ impl LintConfig {
             .map_err(|message| format!("{}: {message}", path.display()))?;
         validate_relative_paths(&section.inline_path_prefixes, "inline-path-prefixes", true)
             .map_err(|message| format!("{}: {message}", path.display()))?;
+        let claude_import_path_budgets =
+            load_import_path_budgets(Path::new(repo_root), section.claude_import_path_budgets)
+                .map_err(|message| format!("{}: {message}", path.display()))?;
+        let prompt_source_budgets =
+            load_prompt_source_budgets(Path::new(repo_root), section.prompt_source_budgets)
+                .map_err(|message| format!("{}: {message}", path.display()))?;
         let script_inventory = section
             .script_inventory
             .as_deref()
@@ -320,6 +382,8 @@ impl LintConfig {
             skill_closure_max_lines: section.skill_closure_max_lines,
             claude_import_max_lines: section.claude_import_max_lines,
             claude_import_total_max_lines: section.claude_import_total_max_lines,
+            claude_import_path_budgets,
+            prompt_source_budgets,
             instruction_files: section.instruction_files,
             inline_path_prefixes: section.inline_path_prefixes,
             script_inventory,
@@ -424,6 +488,208 @@ fn load_script_inventory(root: &Path, inventory: &str) -> Result<Vec<String>, St
     paths.sort();
     paths.dedup();
     Ok(paths)
+}
+
+fn load_import_path_budgets(
+    root: &Path,
+    raw: BTreeMap<String, usize>,
+) -> Result<BTreeMap<String, usize>, String> {
+    let mut budgets = BTreeMap::new();
+    for (path, cap) in raw {
+        if cap == 0 {
+            return Err(format!(
+                "claude-import-path-budgets entry '{path}' must be greater than zero"
+            ));
+        }
+        let normalized = normalize_config_path(&path, "claude-import-path-budgets")?;
+        validate_source_file(root, &normalized, "claude-import-path-budgets")?;
+        if budgets.insert(normalized.clone(), cap).is_some() {
+            return Err(format!(
+                "claude-import-path-budgets contains duplicate normalized path '{normalized}'"
+            ));
+        }
+    }
+    Ok(budgets)
+}
+
+fn load_prompt_source_budgets(
+    root: &Path,
+    raw: Vec<RawPromptSourceBudget>,
+) -> Result<Vec<PromptSourceBudget>, String> {
+    let mut names = HashSet::new();
+    let mut budgets = Vec::new();
+    for budget in raw {
+        if budget.name.is_empty()
+            || !budget
+                .name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        {
+            return Err(format!(
+                "prompt-source-budgets name '{}' must use only ASCII letters, digits, '.', '_', or '-'",
+                budget.name
+            ));
+        }
+        if !names.insert(budget.name.clone()) {
+            return Err(format!(
+                "prompt-source-budgets contains duplicate name '{}'",
+                budget.name
+            ));
+        }
+        if budget.roots.is_empty() {
+            return Err(format!(
+                "prompt-source-budgets '{}' must configure at least one root",
+                budget.name
+            ));
+        }
+
+        let root_caps = PromptMetricCaps {
+            lines: budget.root_max_lines,
+            estimated_tokens: budget.root_max_tokens,
+            content_tokens: budget.root_max_content_tokens,
+        };
+        let closure_caps = PromptMetricCaps {
+            lines: budget.closure_max_lines,
+            estimated_tokens: budget.closure_max_tokens,
+            content_tokens: budget.closure_max_content_tokens,
+        };
+        let conditional_caps = PromptMetricCaps {
+            lines: budget.conditional_max_lines,
+            estimated_tokens: budget.conditional_max_tokens,
+            content_tokens: budget.conditional_max_content_tokens,
+        };
+        validate_metric_caps(&budget.name, "root", root_caps)?;
+        validate_metric_caps(&budget.name, "closure", closure_caps)?;
+        validate_metric_caps(&budget.name, "conditional", conditional_caps)?;
+        if [root_caps, closure_caps, conditional_caps]
+            .iter()
+            .all(|caps| {
+                caps.lines.is_none()
+                    && caps.estimated_tokens.is_none()
+                    && caps.content_tokens.is_none()
+            })
+        {
+            return Err(format!(
+                "prompt-source-budgets '{}' must configure at least one maximum",
+                budget.name
+            ));
+        }
+        if budget.conditional_sources.is_empty()
+            && (conditional_caps.lines.is_some()
+                || conditional_caps.estimated_tokens.is_some()
+                || conditional_caps.content_tokens.is_some())
+        {
+            return Err(format!(
+                "prompt-source-budgets '{}' configures conditional maxima without conditional-sources",
+                budget.name
+            ));
+        }
+
+        let mut paths = HashSet::new();
+        let roots = normalize_budget_paths(root, &budget.name, "roots", budget.roots, &mut paths)?;
+        let conditional_sources = normalize_budget_paths(
+            root,
+            &budget.name,
+            "conditional-sources",
+            budget.conditional_sources,
+            &mut paths,
+        )?;
+        budgets.push(PromptSourceBudget {
+            name: budget.name,
+            roots,
+            conditional_sources,
+            root_caps,
+            closure_caps,
+            conditional_caps,
+        });
+    }
+    budgets.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(budgets)
+}
+
+fn validate_metric_caps(group: &str, scope: &str, caps: PromptMetricCaps) -> Result<(), String> {
+    if [caps.lines, caps.estimated_tokens, caps.content_tokens]
+        .into_iter()
+        .flatten()
+        .any(|cap| cap == 0)
+    {
+        return Err(format!(
+            "prompt-source-budgets '{group}' {scope} maxima must be greater than zero"
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_budget_paths(
+    root: &Path,
+    group: &str,
+    field: &str,
+    raw: Vec<String>,
+    seen: &mut HashSet<String>,
+) -> Result<Vec<String>, String> {
+    let mut paths = Vec::new();
+    for path in raw {
+        let normalized = normalize_config_path(&path, "prompt-source-budgets")?;
+        validate_source_file(root, &normalized, "prompt-source-budgets")?;
+        if !seen.insert(normalized.clone()) {
+            return Err(format!(
+                "prompt-source-budgets '{group}' has duplicate normalized source '{normalized}'"
+            ));
+        }
+        paths.push(normalized);
+    }
+    paths.sort();
+    if field == "roots" && paths.is_empty() {
+        return Err(format!(
+            "prompt-source-budgets '{group}' must configure at least one root"
+        ));
+    }
+    Ok(paths)
+}
+
+fn normalize_config_path(value: &str, name: &str) -> Result<String, String> {
+    let normalized_separators = normalize_path(value);
+    validate_relative_paths(std::slice::from_ref(&normalized_separators), name, false)?;
+    let mut parts = Vec::new();
+    for component in Path::new(&normalized_separators).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => parts.push(part.to_string_lossy()),
+            _ => {
+                return Err(format!(
+                    "{name} entry '{value}' must be a safe repository-relative path"
+                ));
+            }
+        }
+    }
+    let normalized = parts.join("/");
+    if normalized.is_empty() {
+        return Err(format!("{name} entry '{value}' must name a file"));
+    }
+    Ok(normalized)
+}
+
+fn validate_source_file(root: &Path, relative: &str, name: &str) -> Result<(), String> {
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve repository root: {error}"))?;
+    let path = canonical_root.join(relative);
+    let metadata = std::fs::symlink_metadata(&path)
+        .map_err(|error| format!("{name} source '{relative}' cannot be read: {error}"))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(format!("{name} source '{relative}' must be a regular file"));
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("{name} source '{relative}' cannot be resolved: {error}"))?;
+    if !canonical.starts_with(canonical_root) {
+        return Err(format!(
+            "{name} source '{relative}' resolves outside the repository root"
+        ));
+    }
+    std::fs::read_to_string(&canonical)
+        .map_err(|error| format!("{name} source '{relative}' cannot be read as UTF-8: {error}"))?;
+    Ok(())
 }
 
 fn validate_inventory_file(root: &Path, path: &Path, label: &str) -> Result<(), String> {
@@ -930,6 +1196,164 @@ mod tests {
         .unwrap();
         let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
         assert!(error.contains("must be greater than zero"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_and_prompt_source_budgets_are_normalized_and_sorted() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("skills/design")).unwrap();
+        for path in ["AGENTS.md", "BASH_AUTHORING.md"] {
+            std::fs::write(tmp.path().join(path), "source\n").unwrap();
+        }
+        std::fs::write(tmp.path().join("skills/design/SKILL.md"), "root\n").unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            r#"[lint.claude-import-path-budgets]
+"./AGENTS.md" = 89
+"BASH_AUTHORING.md" = 115
+
+[[lint.prompt-source-budgets]]
+name = "design"
+roots = ["./skills/design/SKILL.md"]
+conditional-sources = ["AGENTS.md"]
+root-max-lines = 700
+closure-max-tokens = 50000
+conditional-max-content-tokens = 1000
+"#,
+        )
+        .unwrap();
+
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(config.claude_import_path_budgets["AGENTS.md"], 89);
+        assert_eq!(config.prompt_source_budgets[0].name, "design");
+        assert_eq!(
+            config.prompt_source_budgets[0].roots,
+            ["skills/design/SKILL.md"]
+        );
+        assert_eq!(
+            config.prompt_source_budgets[0]
+                .conditional_caps
+                .content_tokens,
+            Some(1000)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn duplicate_normalized_import_budget_path_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("AGENTS.md"), "source\n").unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint.claude-import-path-budgets]\n\"AGENTS.md\" = 10\n\"./AGENTS.md\" = 11\n",
+        )
+        .unwrap();
+
+        let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+
+        assert!(error.contains("duplicate normalized path"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn malformed_prompt_source_budget_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("source.md"), "source\n").unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[[lint.prompt-source-budgets]]\nname = \"demo\"\nroots = [\"source.md\"]\nclosure-max-lines = 10\nunknown-cap = 2\n",
+        )
+        .unwrap();
+
+        let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+
+        assert!(error.contains("unknown field"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn prompt_budgets_support_three_skills_and_a_named_panel() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["design", "implement", "review"] {
+            std::fs::create_dir_all(tmp.path().join(format!("skills/{name}"))).unwrap();
+            std::fs::write(tmp.path().join(format!("skills/{name}/SKILL.md")), "root\n").unwrap();
+        }
+        std::fs::create_dir(tmp.path().join("agents")).unwrap();
+        std::fs::write(tmp.path().join("agents/reviewer.md"), "panel\n").unwrap();
+        std::fs::write(tmp.path().join("review-conditional.md"), "branch\n").unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            r#"[[lint.prompt-source-budgets]]
+name = "review"
+roots = ["skills/review/SKILL.md"]
+conditional-sources = ["review-conditional.md"]
+closure-max-lines = 10
+conditional-max-tokens = 10
+
+[[lint.prompt-source-budgets]]
+name = "implement"
+roots = ["skills/implement/SKILL.md"]
+root-max-content-tokens = 10
+
+[[lint.prompt-source-budgets]]
+name = "panel"
+roots = ["agents/reviewer.md"]
+closure-max-tokens = 10
+
+[[lint.prompt-source-budgets]]
+name = "design"
+roots = ["skills/design/SKILL.md"]
+root-max-lines = 10
+"#,
+        )
+        .unwrap();
+
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            config
+                .prompt_source_budgets
+                .iter()
+                .map(|budget| budget.name.as_str())
+                .collect::<Vec<_>>(),
+            ["design", "implement", "panel", "review"]
+        );
+        assert_eq!(
+            config.prompt_source_budgets[3].conditional_sources,
+            ["review-conditional.md"]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unsafe_and_missing_budget_sources_are_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint.claude-import-path-budgets]\n\"../outside.md\" = 10\n",
+        )
+        .unwrap();
+        let unsafe_error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(unsafe_error.contains("safe repository-relative path"));
+
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint.claude-import-path-budgets]\n\"missing.md\" = 10\n",
+        )
+        .unwrap();
+        let missing_error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(missing_error.contains("cannot be read"));
+
+        std::fs::write(tmp.path().join("bad.md"), [0xff, 0xfe]).unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint.claude-import-path-budgets]\n\"bad.md\" = 10\n",
+        )
+        .unwrap();
+        let utf8_error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(utf8_error.contains("UTF-8"));
     }
 
     #[test]

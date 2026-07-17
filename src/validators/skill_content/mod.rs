@@ -632,6 +632,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(diag.errors().iter().any(|e| e.contains("consecutive bash")));
+        assert!(diag.errors().iter().any(|e| e.contains("SKILL.md:6:")));
     }
 
     #[test]

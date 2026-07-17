@@ -345,12 +345,15 @@ fn check_terminology_consistency(info: &SkillInfo, diag: &mut DiagnosticCollecto
 }
 
 fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    if let Some((first, second)) = crate::fence::consecutive_bash_pairs(&info.body).first() {
+    let body_line_offset = info.fm_lines.len() + 2;
+    for (first, second) in crate::fence::consecutive_bash_pairs(&info.body) {
+        let first = first + body_line_offset;
+        let second = second + body_line_offset;
         diag.report(
             LintRule::ConsecutiveBash,
             &format!(
-                "{}: consecutive bash code blocks (lines {first} and {second}) could be combined into one",
-                info.path
+                "{}:{first}: consecutive bash tool-call fences at lines {first} and {second}; combine them or add a reason-bearing lint-consecutive-bash waiver",
+                info.path,
             ),
         );
     }

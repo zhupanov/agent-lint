@@ -191,7 +191,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | S059 | `skill-flag-mismatch` | A flag in a fenced shipped-script invocation is not accepted by that script; forwarding scripts are skipped | Always | error |
 | S060 | `awk-field-ref` | Awk positional fields such as `$0` or `$1` appear inside a `SKILL.md` shell fence | Always | error |
 | S061 | `unsafe-grep-probe` | A shell fence contains unbounded grep-family input, bare top-level `grep`, or a parent-directory ascent | Always | error |
-| S062 | `skill-closure-large` | Transitive always-loaded skill prompt closure exceeds `skill-closure-max-lines` | Always | warn |
+| S062 | `skill-closure-large` | A compatible skill closure or configured named prompt-source metric exceeds its cap | Always | warn |
 
 ### Frontmatter Field Types (S023--S027, S063--S066, S070--S071)
 
@@ -498,7 +498,7 @@ present. These rules run in both Basic and Plugin modes.
 | D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin | error |
 | D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin | warn |
 | D003 | `todo-in-docs` | `TODO`/`FIXME`/`HACK`/`XXX` marker in `CLAUDE.md` (outside code fences) | Plugin | warn |
-| D004 | `claude-import-large` | Recursive `CLAUDE.md` `@`-import closure exceeds a configured per-file or total line budget | Always | warn |
+| D004 | `claude-import-large` | Recursive `CLAUDE.md` `@`-import closure exceeds a global, path-specific, or total line budget | Always | warn |
 | D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
 
 ## Link/import integrity Rules (L)

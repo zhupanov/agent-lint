@@ -77,6 +77,9 @@ fn run_basic(
     prompt_content::validate_claude_md(diag, exclude);
     // X002–X005: CLAUDE.md structure (when present)
     docs::validate_claudemd_structure(diag, exclude);
+    // Shared prompt/reference/script contracts for private configuration and
+    // explicitly configured script or prompt-source inventories.
+    contracts::validate_contracts(diag, exclude, false);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -319,6 +322,34 @@ mod tests {
                 .iter()
                 .any(|diagnostic| diagnostic.rule == crate::rules::LintRule::CodexTomlInvalid)
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn basic_mode_dispatches_explicit_script_inventory_contracts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills").unwrap();
+        std::fs::create_dir("portable").unwrap();
+        std::fs::write("portable/render.sh", "out=\"${out//TOKEN/$replacement}\"\n").unwrap();
+        let ctx = LintContext::new(tmp.path(), LintMode::Basic);
+        let config = crate::config::LintConfig {
+            script_inventory: Some(vec!["portable/render.sh".into()]),
+            ..crate::config::LintConfig::default()
+        };
+        let mut diag = DiagnosticCollector::with_config_silent(config);
+
+        run_all_with_targets(
+            &ctx,
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+
+        assert!(diag.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == crate::rules::LintRule::BashReplacementUnsafe
+        }));
     }
 
     #[test]
