@@ -81,9 +81,9 @@ Runs on pull requests to `main` and `workflow_dispatch`:
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
 - **self-lint** -- runs agent-lint against its own repo and validates
   `--list-scripts` output
-- **e2e-test** -- uses `zhupanov/agent-lint@v2` as a GitHub Action
-  (the same way clients integrate it), serving as both end-to-end
-  validation and a reference model for users adding CI to their own repos
+- **e2e-test** -- runs the released `zhupanov/agent-lint@v2` GitHub Action
+  against this repository in default, pedantic, and all modes, serving as
+  both end-to-end validation and a reference model for users adding CI
 
 ### Release (`.github/workflows/release.yml`)
 
