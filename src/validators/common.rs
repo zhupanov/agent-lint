@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::sync::LazyLock;
+use url::{Host, Url};
 
 /// Shared regex: matches characters outside [a-z0-9-] in names.
 /// Used by skill_content name validation and agents name validation.
@@ -104,6 +105,33 @@ pub(crate) fn is_known_tool_name(tool: &str) -> bool {
     KNOWN_TOOLS.contains(&base_name)
 }
 
+/// Whether `value` is an absolute HTTP(S) URL with a parsed host.
+pub(crate) fn is_valid_http_url(value: &str) -> bool {
+    Url::parse(value)
+        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
+}
+
+fn is_local_host(host: Host<&str>) -> bool {
+    match host {
+        Host::Domain(host) => host == "localhost",
+        Host::Ipv4(address) => address.is_loopback() || address.is_unspecified(),
+        Host::Ipv6(address) => {
+            address.is_loopback()
+                || address.is_unspecified()
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|address| address.is_loopback() || address.is_unspecified())
+        }
+    }
+}
+
+/// Whether `value` is an HTTP URL whose parsed host is not local.
+pub(crate) fn is_nonlocal_http_url(value: &str) -> bool {
+    Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "http" && url.host().is_some_and(|host| !is_local_host(host))
+    })
+}
+
 #[cfg(test)]
 mod model_tests {
     use super::is_valid_model_value;
@@ -159,5 +187,65 @@ mod tool_tests {
     fn rejects_unknown_tools() {
         assert!(!is_known_tool_name("UnknownTool"));
         assert!(!is_known_tool_name(""));
+    }
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::{is_nonlocal_http_url, is_valid_http_url};
+
+    #[test]
+    fn accepts_valid_http_urls_across_host_forms() {
+        for value in [
+            "https://example.com:8443/path?query=value#fragment",
+            "http://user:password@example.com",
+            "https://b\u{fc}cher.example",
+            "http://127.0.0.1",
+            "https://[::1]:3000",
+        ] {
+            assert!(is_valid_http_url(value), "expected {value} to be valid");
+        }
+    }
+
+    #[test]
+    fn rejects_urls_without_a_valid_http_host() {
+        for value in [
+            "ftp://example.com",
+            "example.com",
+            "https://",
+            "https://example.com:invalid",
+            "https://example .com",
+        ] {
+            assert!(!is_valid_http_url(value), "expected {value} to be invalid");
+        }
+    }
+
+    #[test]
+    fn identifies_only_remote_http_urls_as_nonlocal() {
+        for value in [
+            "http://example.com",
+            "http://user:password@b\u{fc}cher.example:8080",
+            "http://[2001:db8::1]",
+        ] {
+            assert!(
+                is_nonlocal_http_url(value),
+                "expected {value} to be non-local"
+            );
+        }
+        for value in [
+            "https://example.com",
+            "http://localhost",
+            "http://127.1.2.3",
+            "http://0.0.0.0",
+            "http://[::1]",
+            "http://[::]",
+            "http://[::ffff:127.0.0.1]",
+            "http://",
+        ] {
+            assert!(
+                !is_nonlocal_http_url(value),
+                "expected {value} to be local or invalid"
+            );
+        }
     }
 }

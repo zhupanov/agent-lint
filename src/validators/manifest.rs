@@ -1,6 +1,7 @@
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::validators::common::is_valid_http_url;
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
@@ -11,10 +12,6 @@ static RE_SEMVER: LazyLock<Regex> =
 
 /// Windows drive-letter path prefix, e.g. `C:\` or `c:/`.
 static RE_WIN_DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[\\/]").unwrap());
-
-/// http(s) URL with a non-empty host.
-static RE_HTTP_URL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^https?://[^\s/?#]+[^\s]*$").unwrap());
 
 /// The plugin manifest directory. Components must never live under it.
 const PLUGIN_DIR: &str = ".claude-plugin";
@@ -299,7 +296,7 @@ pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollecto
     // M015: homepage is optional, but must be a usable http(s) URL when set.
     if let Some(homepage) = val.get("homepage") {
         let url = homepage.as_str().unwrap_or("");
-        if !RE_HTTP_URL.is_match(url) {
+        if !is_valid_http_url(url) {
             diag.report(
                 LintRule::HomepageUrlInvalid,
                 &format!("{f} homepage '{url}' is not a valid http(s) URL"),

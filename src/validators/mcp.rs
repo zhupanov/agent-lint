@@ -3,6 +3,7 @@ use crate::context::LintContext;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::validators::common::is_nonlocal_http_url;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -145,7 +146,7 @@ fn validate_servers(display: &str, servers: Option<&Value>, diag: &mut Diagnosti
             );
         }
         if let Some(url) = config.get("url").and_then(Value::as_str) {
-            if is_nonlocal_http(url) {
+            if is_nonlocal_http_url(url) {
                 diag.report(
                     LintRule::McpUrlNotHttps,
                     &format!("{label}.url uses non-local http://; use HTTPS"),
@@ -202,20 +203,6 @@ fn has_nonempty_string(value: Option<&Value>) -> bool {
     value
         .and_then(Value::as_str)
         .is_some_and(|value| !value.trim().is_empty())
-}
-
-fn is_nonlocal_http(url: &str) -> bool {
-    let Some(authority) = url.strip_prefix("http://") else {
-        return false;
-    };
-    let host_port = authority.split('/').next().unwrap_or_default();
-    let host_port = host_port.rsplit('@').next().unwrap_or_default();
-    let host = if let Some(bracketed) = host_port.strip_prefix('[') {
-        bracketed.split(']').next().unwrap_or_default()
-    } else {
-        host_port.split(':').next().unwrap_or(host_port)
-    };
-    !matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
 fn has_literal_secret(env: Option<&Value>) -> bool {
