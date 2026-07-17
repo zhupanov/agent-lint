@@ -38,7 +38,7 @@ src/
 +-- main.rs              # CLI entry point: arg parsing, repo root, mode detection
 +-- config.rs            # agent-lint.toml loading and rule resolution
 +-- context.rs           # LintContext, ManifestState, LintMode
-+-- diagnostic.rs        # DiagnosticCollector, Severity, config-aware filtering
++-- diagnostic.rs        # DiagnosticCollector, structured subjects, config-aware filtering
 +-- frontmatter.rs       # YAML frontmatter extraction
 +-- rules.rs             # Central LintRule enum (286 rules, codes, names)
 +-- test_helpers.rs      # Shared test utilities
@@ -68,6 +68,23 @@ docs/
 +-- github-action.md     # Action inputs, token configuration, CI setup
 +-- development.md       # Local setup, Makefile targets, project structure, CI/CD
 ```
+
+## Diagnostic subjects and policy
+
+File-attributable validators report through `DiagnosticCollector::report_at`
+or an explicit `with_subject_path` scope. The collector normalizes and stores
+that path before resolving global and per-file policy; validators must never
+recover a filename by parsing their human-readable message. Fixed-path checks
+use their logical repository-relative target even when the target is missing.
+Repository-wide checks use `report` without a subject. The named multi-source
+prompt-budget checks remain pathless because one finding can describe several
+configured roots and their shared closure.
+
+Disposition and usage accounting stay in `diagnostic.rs`; TOML parsing and
+compiled glob ownership stay in `config.rs`; candidate mutation filtering
+stays in `autofix.rs`. A new file-attributable validator or fixer must test
+that an exact-path override suppresses only its rule and that autofix leaves a
+suppressed candidate byte-for-byte unchanged.
 
 ## JSON Schema validation pilots
 

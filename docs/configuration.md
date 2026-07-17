@@ -20,6 +20,16 @@ instruction-files = ["AGENTS.md", "SECURITY.md", "CLAUDE.md"]
 inline-path-prefixes = ["src/", "docs/", "skills/", "scripts/"]
 script-inventory = "scripts/portable-scripts.txt" # optional G009-G011 scope
 
+[[lint.overrides]]
+files = ["legacy/AGENTS.md"]
+suppress = ["I004"]
+reason = "kept compatible with an external consumer"
+
+[[lint.overrides]]
+files = ["vendor/**/SKILL.md", "third_party/**/*.md"]
+suppress = ["S033", "desc-too-long"]
+reason = "upstream-owned files retain published metadata"
+
 [[lint.prompt-source-budgets]]
 name = "design"
 roots = ["skills/design/SKILL.md"]
@@ -49,6 +59,7 @@ codex = false   # disable Codex checks even when Codex files exist
 | `error` | string array | Rules to promote to error (overrides default severity) |
 | `warn` | string array | Rules to downgrade to warning (printed, but exit 0) |
 | `exclude` | string array | File glob patterns -- matching files are skipped entirely |
+| `overrides` | array of tables | Suppress selected rules only for matching diagnostic subject paths |
 | `desc-truncated-max-chars` | positive integer | S015 listing threshold; defaults to 250 |
 | `skill-closure-max-lines` | positive integer | Enables S062 with a transitive Markdown prompt-source line budget |
 | `claude-import-max-lines` | positive integer | Enables D004 with a per-import line budget |
@@ -136,8 +147,37 @@ conventional dependency/build directories (`node_modules`, `vendor`, `target`,
 ## Rule Identifiers
 
 Rules can be referenced by **code** (e.g., `M001`) or **human-readable
-name** (e.g., `plugin-json-missing`). Priority when a rule appears in
-multiple lists: `suppress` > `error` > `warn`.
+name** (e.g., `plugin-json-missing`). In normal mode, disposition precedence
+is global `suppress`, matching override `suppress`, global `error`, global
+`warn`, then the compiled default.
+
+## Per-file Suppression Overrides
+
+Each `[[lint.overrides]]` table requires non-empty `files` and `suppress`
+arrays. `files` contains repository-relative exact paths or globs. `suppress`
+accepts the same rule codes and canonical names as the global lists. The
+optional `reason` must contain non-whitespace text and is retained for audit
+output. Unknown keys, unknown rules, invalid globs, unsafe paths, and missing
+or empty required fields make configuration loading fail with exit code 2.
+
+Diagnostic paths are structured metadata, not text parsed from the rendered
+message. Before matching, a path is made repository-relative, a leading `./`
+is removed, and `\\` separators become `/`. Exact paths need no special
+syntax. Multiple matching blocks combine; ordering does not affect the result.
+Only the listed rule is suppressed for a matching path, while other rules for
+that file and the same rule for other files continue to report. Truly
+repository-wide and multi-source diagnostics have no single subject path and
+can be suppressed only by global `suppress`.
+
+An override rule entry that suppresses no diagnostic during the final visible
+lint pass emits a non-failing `config/unused-override` warning with its rule,
+patterns, and optional reason. Usage is tracked per rule within each block, so
+stale entries are visible even when another rule in the block remains useful.
+Silent internal autofix passes do not emit these warnings.
+
+`--autofix` applies the same rule/path policy before every candidate mutation.
+An unsuppressed diagnostic in one file can therefore never cause that rule's
+fixer to rewrite a different file where an override suppresses it.
 
 ## File Exclusion
 
@@ -147,7 +187,8 @@ exception is G009-G011: a path named by `script-inventory` is still scanned by
 those rules. This lets repositories retain broad exclusions needed by unrelated
 rules without silently weakening their portability inventory.
 
-**Glob semantics** (matching `.gitignore` conventions):
+**Glob semantics** (provided by the same `globset` matcher for exclusions and
+overrides, without negation or gitignore-only behavior):
 
 - `*` matches any characters except `/` (single directory level)
 - `**` matches across directory boundaries (recursive)
@@ -175,14 +216,16 @@ exclusive (using both exits with code 2).
 **`--pedantic`**: Promotes all warnings (both `warn`-listed and
 default-warning rules) to errors, except too-long rules (`name-too-long`,
 `desc-too-long`, `body-too-long`, `compat-too-long`). Rules in `suppress`
-stay suppressed.
+and matching per-file overrides stay suppressed.
 
-**`--all`**: Forces every rule to fire as an error. The `suppress` and `warn`
-lists are bypassed entirely -- all 286 rules are promoted to errors. File
+**`--all`**: Forces every rule to fire as an error. Global and per-file
+suppression plus the `warn` list are bypassed entirely -- all 286 rules are promoted to errors. File
 exclusions (`exclude`) remain in effect. Note: `--all` applies to rules
 emittable by the detected lint mode. In Basic mode (Claude, Cursor, Codex, or standalone
 MCP configuration),
-plugin-only rules are not dispatched regardless of `--all`.
+plugin-only rules are not dispatched regardless of `--all`. Because override
+suppression is intentionally disabled, unused-override warnings are also not
+reported in this mode.
 
 ## Behavior Without Config
 

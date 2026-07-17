@@ -59,12 +59,14 @@ pub(crate) fn validate_claude_md(diag: &mut DiagnosticCollector, exclude: &Exclu
     let Ok(claude) = fs::read_to_string(CLAUDE_MD) else {
         return;
     };
-    validate_body(CLAUDE_MD, &claude, diag);
+    diag.with_subject_path(CLAUDE_MD, |diag| {
+        validate_body(CLAUDE_MD, &claude, diag);
 
-    let Ok(readme) = fs::read_to_string("README.md") else {
-        return;
-    };
-    check_readme_overlap(&claude, &readme, diag);
+        let Ok(readme) = fs::read_to_string("README.md") else {
+            return;
+        };
+        check_readme_overlap(&claude, &readme, diag);
+    });
 }
 
 fn check_generic_filler(path: &str, lines: &[&str], diag: &mut DiagnosticCollector) {

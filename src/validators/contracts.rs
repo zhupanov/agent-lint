@@ -276,8 +276,9 @@ fn validate_agent_contracts(
         if let (Some(tools), Some(line)) = (frontmatter_explicit_tools(&content), read_line) {
             let suppressed = has_reasoned_marker(&content, "lint-agent-tool-contract: ok");
             if !tools.iter().any(|tool| tool == "Read") && !suppressed {
-                diag.report(
+                diag.report_at(
                     LintRule::AgentReadMismatch,
+                    &path,
                     &format!(
                         "{}:{}: explicit tools omit Read but the prompt instructs reading evidence",
                         path.display(),
@@ -290,8 +291,9 @@ fn validate_agent_contracts(
             if (!CANNOT_READ.is_match(body) || !NEVER_INVENT.is_match(body))
                 && !has_reasoned_marker(&content, "lint-agent-output-mandate: ok")
             {
-                diag.report(
+                diag.report_at(
                     LintRule::AgentOutputUnsafe,
+                    &path,
                     &format!(
                         "{}:{}: machine-only output that reads evidence must define an unreadable-evidence outcome and prohibit invented evidence (read instruction at body line {})",
                         path.display(),
@@ -341,8 +343,9 @@ fn validate_skill_contracts(
             let has_clear_step =
                 body.contains("Invoke the Skill tool") || body.contains("via the Skill tool");
             if !has_clear_step {
-                diag.report(
+                diag.report_at(
                     LintRule::SkillInvokeMissing,
+                    &path,
                     &format!(
                         "{}: allowed-tools includes Skill but the body has no explicit Skill tool invocation step",
                         path.display()
@@ -351,8 +354,9 @@ fn validate_skill_contracts(
             }
             for (number, line) in lines_outside_fences_with_numbers(body) {
                 if SKILL_INVOKE.is_match(line) && !line.contains("via the Skill tool") {
-                    diag.report(
+                    diag.report_at(
                         LintRule::SkillInvokeMissing,
+                        &path,
                         &format!(
                             "{}:{}: ambiguous skill invocation; identify the Skill tool on the same line",
                             path.display(),
@@ -470,8 +474,9 @@ fn validate_flag_signature(
     for capture in FLAG.captures_iter(command) {
         let flag = &capture[1];
         if !script_declares_flag(&script, &source, flag) {
-            diag.report(
+            diag.report_at(
                 LintRule::SkillFlagMismatch,
+                skill,
                 &format!(
                     "{}:{line}: invocation uses --{flag}, but {} does not accept it",
                     skill.display(),
@@ -602,8 +607,9 @@ fn validate_awk_fields(skill: &Path, line: usize, command: &str, diag: &mut Diag
         .iter()
         .any(|program| AWK_FIELD.is_match(program))
     {
-        diag.report(
+        diag.report_at(
             LintRule::AwkFieldRef,
+            skill,
             &format!(
                 "{}:{line}: bare awk positional field in a skill shell fence; move parsing into a shipped script",
                 skill.display()
@@ -637,8 +643,9 @@ fn validate_grep_probe(skill: &Path, line: usize, command: &str, diag: &mut Diag
                 .components()
                 .any(|part| part == Component::ParentDir)
         }) {
-            diag.report(
+            diag.report_at(
                 LintRule::UnsafeGrepProbe,
+                skill,
                 &format!(
                     "{}:{line}: grep-family path ascends through a parent directory",
                     skill.display()
@@ -658,16 +665,18 @@ fn validate_grep_probe(skill: &Path, line: usize, command: &str, diag: &mut Diag
         let dev_null = command.contains("< /dev/null") || command.contains("</dev/null");
         let has_path = grep_has_explicit_path(args);
         if bare_grep {
-            diag.report(
+            diag.report_at(
                 LintRule::UnsafeGrepProbe,
+                skill,
                 &format!(
                     "{}:{line}: bare top-level grep in a shell fence; wrap it or use command grep",
                     skill.display()
                 ),
             );
         } else if !pipe_fed && !dev_null && !has_path {
-            diag.report(
+            diag.report_at(
                 LintRule::UnsafeGrepProbe,
+                skill,
                 &format!(
                     "{}:{line}: grep-family probe has no explicit path and may block on stdin",
                     skill.display()
@@ -755,8 +764,9 @@ fn validate_reference_consecutive_bash(
                 continue;
             };
             for (first, second) in consecutive_bash_pairs(&content) {
-                diag.report(
+                diag.report_at(
                     LintRule::ConsecutiveBash,
+                    &path,
                     &format!(
                         "{}:{first}: consecutive bash tool-call fences at lines {first} and {second}; combine them or add a reason-bearing lint-consecutive-bash waiver",
                         path.display()
@@ -786,8 +796,9 @@ fn validate_skill_closure(skill: &Path, diag: &mut DiagnosticCollector) {
         return;
     };
     if measurement.closure.lines > max_lines {
-        diag.report(
+        diag.report_at(
             LintRule::SkillClosureLarge,
+            skill,
             &format!(
                 "{}: always-loaded prompt closure is {} lines across {} files (configured maximum {max_lines})",
                 skill.display(),
@@ -859,8 +870,9 @@ fn validate_claude_import_budget(diag: &mut DiagnosticCollector, exclude: &Exclu
             let normalized = crate::config::normalize_path(&path.to_string_lossy());
             let effective_cap = path_budgets.get(&normalized).copied().or(per_file);
             if effective_cap.is_some_and(|cap| count > cap) {
-                diag.report(
+                diag.report_at(
                     LintRule::ClaudeImportLarge,
+                    &path,
                     &format!(
                         "{}: imported prompt source has {count} lines (effective maximum {})",
                         path.display(),
@@ -878,8 +890,9 @@ fn validate_claude_import_budget(diag: &mut DiagnosticCollector, exclude: &Exclu
         }
     }
     if total_cap.is_some_and(|cap| total > cap) {
-        diag.report(
+        diag.report_at(
             LintRule::ClaudeImportLarge,
+            "CLAUDE.md",
             &format!(
                 "CLAUDE.md import closure has {total} lines across {} files (configured maximum {})",
                 seen.len(),
@@ -926,8 +939,9 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                     || candidate.is_symlink()
                     || !candidate.exists()
                 {
-                    diag.report(
+                    diag.report_at(
                         LintRule::InlinePathMissing,
+                        &relpath,
                         &format!("{relpath}:{number}: dead or escaping inline path `{token}`"),
                     );
                 }
@@ -1002,8 +1016,9 @@ fn walk_imports(
             let Some(target) = resolved else {
                 let key = PathBuf::from(raw);
                 if reported_missing.insert(key.clone()) {
-                    diag.report(
+                    diag.report_at(
                         LintRule::ImportPathMissing,
+                        source,
                         &format!(
                             "{}:{number}: @import target does not resolve in the repository: {raw}",
                             source.display()
@@ -1014,8 +1029,9 @@ fn walk_imports(
             };
             if !target.is_file() {
                 if reported_missing.insert(target.clone()) {
-                    diag.report(
+                    diag.report_at(
                         LintRule::ImportPathMissing,
+                        source,
                         &format!(
                             "{}:{number}: @import target does not exist: {}",
                             source.display(),
@@ -1026,8 +1042,9 @@ fn walk_imports(
                 continue;
             }
             if !seen_targets.insert(target.clone()) {
-                diag.report(
+                diag.report_at(
                     LintRule::DuplicateImport,
+                    source,
                     &format!(
                         "{}:{number}: duplicate @import of {}",
                         source.display(),
@@ -1037,8 +1054,9 @@ fn walk_imports(
                 continue;
             }
             if stack.len() > IMPORT_MAX_DEPTH {
-                diag.report(
+                diag.report_at(
                     LintRule::ImportDepthExceeded,
+                    source,
                     &format!(
                         "{}:{number}: @import chain depth exceeds {IMPORT_MAX_DEPTH} hops: {}",
                         source.display(),
@@ -1048,8 +1066,9 @@ fn walk_imports(
                 continue;
             }
             if let Some(index) = stack.iter().position(|p| p == &target) {
-                diag.report(
+                diag.report_at(
                     LintRule::CircularImport,
+                    source,
                     &format!(
                         "{}:{number}: circular @import chain: {}",
                         source.display(),
@@ -1091,15 +1110,17 @@ fn validate_markdown_links(diag: &mut DiagnosticCollector, exclude: &ExcludeSet)
                     continue;
                 }
                 let Some(resolved) = resolve_import_target(path, target) else {
-                    diag.report(
+                    diag.report_at(
                         LintRule::BrokenMarkdownLink,
+                        &relpath,
                         &format!("{relpath}:{number}: broken markdown link target: {target}"),
                     );
                     continue;
                 };
                 if !resolved.is_file() {
-                    diag.report(
+                    diag.report_at(
                         LintRule::BrokenMarkdownLink,
+                        &relpath,
                         &format!("{relpath}:{number}: broken markdown link target: {target}"),
                     );
                 }
@@ -1133,8 +1154,9 @@ fn validate_npm_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             for capture in NPM_RUN.captures_iter(line) {
                 let script = &capture[1];
                 if !scripts.contains_key(script) {
-                    diag.report(
+                    diag.report_at(
                         LintRule::NpmScriptMissing,
+                        &relpath,
                         &format!(
                             "{relpath}:{number}: npm run {script} is not defined in package.json scripts"
                         ),
@@ -1307,8 +1329,9 @@ impl BashArrayState {
                     && line.contains(&expansion)
                     && !safe_conditional_array_expansion(line, &name, suffix)
                 {
-                    diag.report(
+                    diag.report_at(
                         LintRule::Bash32Incompatible,
+                        path,
                         &format!(
                             "{}:{line_number}: Bash 3.2 incompatible unguarded empty-array expansion {expansion}",
                             path.display()
@@ -1517,8 +1540,9 @@ fn validate_bash_replacement(
         && !has_reasoned_marker(line, "lint-renderer-safe: ok")
         && !has_reasoned_marker(previous, "lint-renderer-safe: ok")
     {
-        diag.report(
+        diag.report_at(
             LintRule::BashReplacementUnsafe,
+            path,
             &format!(
                 "{}:{line_number}: unsafe Bash global substitution with a variable replacement",
                 path.display()
@@ -1539,8 +1563,9 @@ fn validate_gh_inline(path: &Path, line_number: usize, line: &str, diag: &mut Di
             .any(|word| word == option || word.starts_with(&format!("{option}=")))
             && !line.contains(replacement)
         {
-            diag.report(
+            diag.report_at(
                 LintRule::GhInlineBody,
+                path,
                 &format!(
                     "{}:{line_number}: inline gh {option} payload; use {replacement}",
                     path.display()
@@ -1556,8 +1581,9 @@ fn validate_bash32(path: &Path, line_number: usize, line: &str, diag: &mut Diagn
     }
     for (pattern, label) in BASH32_PATTERNS.iter() {
         if pattern.is_match(line) {
-            diag.report(
+            diag.report_at(
                 LintRule::Bash32Incompatible,
+                path,
                 &format!(
                     "{}:{line_number}: Bash 3.2 incompatible {label}",
                     path.display()
@@ -1586,8 +1612,9 @@ fn validate_awk_command(
             .or_else(|| capture.get(3))
             .is_some_and(|value| !value.as_str().is_ascii())
     }) {
-        diag.report(
+        diag.report_at(
             LintRule::AwkRegexNonascii,
+            path,
             &format!(
                 "{}:{line_number}: non-ASCII awk -v value may be used as an implementation-dependent regex",
                 path.display()
@@ -1605,8 +1632,9 @@ fn validate_awk_body(path: &Path, line_number: usize, line: &str, diag: &mut Dia
     {
         return;
     }
-    diag.report(
+    diag.report_at(
         LintRule::AwkRegexNonascii,
+        path,
         &format!(
             "{}:{line_number}: non-ASCII text in an awk regex context is not portable",
             path.display()

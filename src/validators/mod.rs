@@ -99,9 +99,13 @@ fn run_plugin(
     prompt_content::validate_claude_md(diag, exclude);
 
     // V1: plugin.json
-    manifest::validate_plugin_json(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        manifest::validate_plugin_json(ctx, diag);
+    });
     // V2: marketplace.json
-    manifest::validate_marketplace_json(ctx, diag);
+    diag.with_subject_path(".claude-plugin/marketplace.json", |diag| {
+        manifest::validate_marketplace_json(ctx, diag);
+    });
     // V3: hooks/hooks.json
     hooks::validate_hooks_json(ctx, diag);
     // V4: settings.json hook paths
@@ -128,9 +132,13 @@ fn run_plugin(
     // V11: dead-script detection
     hygiene::validate_dead_scripts(ctx, diag, exclude);
     // V12: marketplace enriched metadata
-    manifest::validate_marketplace_enriched(ctx, diag);
+    diag.with_subject_path(".claude-plugin/marketplace.json", |diag| {
+        manifest::validate_marketplace_enriched(ctx, diag);
+    });
     // V13: plugin enriched metadata
-    manifest::validate_plugin_enriched(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        manifest::validate_plugin_enriched(ctx, diag);
+    });
     // V14: SECURITY.md presence
     hygiene::validate_security_md(diag);
     // V15: shared markdown reference integrity
@@ -140,31 +148,53 @@ fn run_plugin(
     // V17: email format
     email::validate_email_format(ctx, diag);
     // V18: userConfig structure
-    user_config::validate_userconfig_structure(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        user_config::validate_userconfig_structure(ctx, diag);
+    });
     // V19: Slack fallback consistency (larch-specific convention)
-    slack::validate_slack_fallback_consistency(diag, exclude);
+    diag.with_subject_path(".claude-plugin/marketplace.json", |diag| {
+        slack::validate_slack_fallback_consistency(diag, exclude);
+    });
     // V20: userConfig→env mapping
-    user_config::validate_userconfig_env_mapping(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        user_config::validate_userconfig_env_mapping(ctx, diag);
+    });
     // V21: agent-template count
     agents::validate_agent_template_count(diag, exclude);
     // V22: docs file references
     docs::validate_docs_references(diag, exclude);
     // V23: userConfig sensitive type
-    user_config::validate_userconfig_sensitive_type(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        user_config::validate_userconfig_sensitive_type(ctx, diag);
+    });
     // V24: userConfig title field
-    user_config::validate_userconfig_title(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        user_config::validate_userconfig_title(ctx, diag);
+    });
     // V25: userConfig type field
-    user_config::validate_userconfig_type(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        user_config::validate_userconfig_type(ctx, diag);
+    });
     // V29: component path safety and layout
-    manifest::validate_component_paths(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        manifest::validate_component_paths(ctx, diag);
+    });
     // V30: plugin.json optional metadata (author.name, homepage)
-    manifest::validate_plugin_metadata(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        manifest::validate_plugin_metadata(ctx, diag);
+    });
     // V31: plugin.json lspServers entries
-    manifest::validate_lsp_servers(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        manifest::validate_lsp_servers(ctx, diag);
+    });
     // V32: plugin.json channels entries
-    manifest::validate_channels(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        manifest::validate_channels(ctx, diag);
+    });
     // V33: userConfig key format
-    user_config::validate_userconfig_key_format(ctx, diag);
+    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+        user_config::validate_userconfig_key_format(ctx, diag);
+    });
     // Original skill content checks (S009-S057, including plugin-only rules)
     skill_content::validate_skill_content(diag, exclude);
     // Private skill content checks (both-mode subset)
@@ -195,7 +225,9 @@ fn validate_optional_surfaces(
         skills::validate_agent_skill_frontmatter(diag, exclude);
     }
     if targets.codex {
-        codex_config::validate_config(diag, exclude);
+        diag.with_subject_path(".codex/config.toml", |diag| {
+            codex_config::validate_config(diag, exclude);
+        });
         codex_surfaces::validate(diag, exclude);
     }
     if targets.cursor {

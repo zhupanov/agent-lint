@@ -93,7 +93,7 @@ pub fn validate(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 }
 
 fn report(diag: &mut DiagnosticCollector, rule: LintRule, path: &str, message: &str) {
-    diag.report(rule, &format!("{path}: {message}"));
+    diag.report_at(rule, path, &format!("{path}: {message}"));
 }
 
 fn yaml_string<'a>(map: &'a Mapping, name: &str) -> Option<&'a str> {

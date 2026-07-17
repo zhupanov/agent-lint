@@ -26,7 +26,7 @@ fn validate_override_tracking(diag: &mut DiagnosticCollector, exclude: &ExcludeS
     if exclude.is_excluded(path) || !Path::new(path).is_file() || !is_git_tracked(path) {
         return;
     }
-    diag.report(LintRule::CodexAgentsOverrideTracked, "AGENTS.override.md is tracked by Git; add it to .gitignore because it holds user-specific overrides");
+    diag.report_at(LintRule::CodexAgentsOverrideTracked, path, "AGENTS.override.md is tracked by Git; add it to .gitignore because it holds user-specific overrides");
 }
 
 fn is_git_tracked(path: &str) -> bool {
@@ -47,8 +47,9 @@ fn validate_plugin_manifests(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
             continue;
         }
         if display != canonical {
-            diag.report(
+            diag.report_at(
                 LintRule::CodexPluginManifestPath,
+                &display,
                 &format!("{display} must be located at .codex-plugin/plugin.json"),
             );
             continue;
@@ -59,14 +60,17 @@ fn validate_plugin_manifests(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
         let value: Value = match serde_json::from_str(&content) {
             Ok(value) => value,
             Err(error) => {
-                diag.report(
+                diag.report_at(
                     LintRule::CodexPluginManifestInvalid,
+                    &display,
                     &format!("{display} is not valid JSON: {error}"),
                 );
                 continue;
             }
         };
-        validate_plugin_manifest_value(diag, &display, &value);
+        diag.with_subject_path(&display, |diag| {
+            validate_plugin_manifest_value(diag, &display, &value);
+        });
     }
 }
 
@@ -262,7 +266,7 @@ fn validate_codex_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &Ex
             };
             let field = field.trim();
             if CODEX_SKILL_UNSUPPORTED_FIELDS.contains(&field) {
-                diag.report(LintRule::CodexSkillUnsupportedFrontmatter, &format!("{display}: `{field}` is Claude-only skill frontmatter unsupported by Codex CLI"));
+                diag.report_at(LintRule::CodexSkillUnsupportedFrontmatter, &display, &format!("{display}: `{field}` is Claude-only skill frontmatter unsupported by Codex CLI"));
             }
         }
     }

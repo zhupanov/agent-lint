@@ -126,7 +126,19 @@ If no supported agent or MCP configuration exists, the tool prints "Nothing to l
 ## Configuration
 
 Agent Lint reads an optional **`agent-lint.toml`** from the repository root
-to suppress, promote, or downgrade rules and exclude files from linting.
+to suppress, promote, or downgrade rules, suppress selected rules for matching
+files, and exclude files from every applicable validator.
+
+```toml
+[lint]
+suppress = ["M001"]
+exclude = ["generated/**"]
+
+[[lint.overrides]]
+files = ["vendor/**/SKILL.md"]
+suppress = ["S033", "desc-too-long"]
+reason = "upstream-owned metadata"
+```
 
 See [Configuration docs](docs/configuration.md) for the full reference.
 
@@ -137,7 +149,7 @@ See [Configuration docs](docs/configuration.md) for the full reference.
 | [Rules Reference](docs/rules.md) | Complete rule table with codes, names, defaults, and auto-fixable rules |
 | [CLI Reference](docs/cli.md) | Flags, exit codes, `--autofix`, `--list-scripts`, `--closure-report` |
 | [GitHub Action](docs/github-action.md) | Action inputs, token configuration, adding CI to your repo |
-| [Configuration](docs/configuration.md) | `agent-lint.toml` format, rule identifiers, file exclusion, strictness modes |
+| [Configuration](docs/configuration.md) | `agent-lint.toml` format, rule identifiers, per-file suppression, file exclusion, strictness modes |
 | [YAML parser policy](docs/yaml.md) | Parser selection, compatibility behavior, and input limits |
 | [Development](docs/development.md) | Local setup, Makefile targets, project structure, CI/CD |
 | [Architectural Guidelines](ARCHITECTURAL_GUIDELINES.md) | Preferred design, ownership, testing, and change practices |

@@ -95,7 +95,9 @@ fn validate_markdown_directory<F>(
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
-        validate(&display, &content, diag);
+        diag.with_subject_path(&display, |diag| {
+            validate(&display, &content, diag);
+        });
     }
 }
 
@@ -177,7 +179,9 @@ fn validate_typed_settings(diag: &mut DiagnosticCollector) {
         let Ok(settings) = serde_json::from_str::<JsonValue>(&content) else {
             continue;
         };
-        validate_typed_settings_file(diag, path, &settings);
+        diag.with_subject_path(path, |diag| {
+            validate_typed_settings_file(diag, path, &settings);
+        });
     }
 }
 

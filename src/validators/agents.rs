@@ -78,7 +78,11 @@ fn is_desc_redundant(name: &str, desc: &str) -> bool {
 pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let agents_dir = Path::new("agents");
     if !agents_dir.is_dir() {
-        diag.report(LintRule::AgentsDirMissing, "agents/ directory is missing");
+        diag.report_at(
+            LintRule::AgentsDirMissing,
+            agents_dir,
+            "agents/ directory is missing",
+        );
         return;
     }
 
@@ -103,12 +107,18 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             Err(_) => continue,
         };
 
-        validate_agent_file(diag, &agent_path, &content);
-        check_unsupported_plugin_fields(diag, &agent_path, &content);
+        diag.with_subject_path(&agent_path, |diag| {
+            validate_agent_file(diag, &agent_path, &content);
+            check_unsupported_plugin_fields(diag, &agent_path, &content);
+        });
     }
 
     if found == 0 && excluded_count == 0 {
-        diag.report(LintRule::NoAgentFiles, "agents/ has no .md files");
+        diag.report_at(
+            LintRule::NoAgentFiles,
+            agents_dir,
+            "agents/ has no .md files",
+        );
     }
 }
 
@@ -163,7 +173,9 @@ pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
             Err(_) => continue,
         };
 
-        validate_agent_file(diag, &agent_path, &content);
+        diag.with_subject_path(&agent_path, |diag| {
+            validate_agent_file(diag, &agent_path, &content);
+        });
     }
 }
 
@@ -610,8 +622,9 @@ pub fn validate_agent_template_alignment(diag: &mut DiagnosticCollector, exclude
         return;
     }
     if !templates.is_file() {
-        diag.report(
+        diag.report_at(
             LintRule::TemplateFileMissing,
+            templates,
             &format!("reviewer-templates.md missing: {}", templates.display()),
         );
         return;
@@ -640,8 +653,9 @@ pub fn validate_agent_template_alignment(diag: &mut DiagnosticCollector, exclude
         });
 
         if !has_marker {
-            diag.report(
+            diag.report_at(
                 LintRule::TemplateMarkerMissing,
+                &agent_path,
                 &format!(
                     "agents/{name} missing 'Derived from skills/shared/reviewer-templates.md' marker"
                 ),
@@ -686,8 +700,9 @@ pub fn validate_agent_template_count(diag: &mut DiagnosticCollector, exclude: &E
     }
 
     if template_count != agent_count {
-        diag.report(
+        diag.report_at(
             LintRule::TemplateCountMismatch,
+            templates,
             &format!(
                 "agent-template count mismatch: {agent_count} agent file(s) but {template_count} '## Reviewer' section(s) in {}",
                 templates.display()

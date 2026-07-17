@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
 use crate::config::LintConfig;
 use crate::rules::{DefaultSeverity, LintRule};
@@ -15,6 +17,8 @@ pub enum Severity {
 pub struct Diagnostic {
     pub rule: LintRule,
     pub severity: Severity,
+    #[allow(dead_code)] // consumed by autofix and available through diagnostics()
+    pub subject_path: Option<PathBuf>,
     #[allow(dead_code)] // read by #[cfg(test)] accessors and available via diagnostics()
     pub message: String,
 }
@@ -28,6 +32,8 @@ pub struct DiagnosticCollector {
     config: LintConfig,
     diagnostics: Vec<Diagnostic>,
     suppressed_count: usize,
+    used_overrides: HashSet<(usize, LintRule)>,
+    current_subject_path: Option<PathBuf>,
     writer: Box<dyn Write>,
 }
 
@@ -45,6 +51,8 @@ impl DiagnosticCollector {
             config: LintConfig::default(),
             diagnostics: Vec::new(),
             suppressed_count: 0,
+            used_overrides: HashSet::new(),
+            current_subject_path: None,
             writer: Box::new(io::sink()),
         }
     }
@@ -73,6 +81,8 @@ impl DiagnosticCollector {
             config,
             diagnostics: Vec::new(),
             suppressed_count: 0,
+            used_overrides: HashSet::new(),
+            current_subject_path: None,
             writer: Box::new(io::sink()),
         }
     }
@@ -83,6 +93,8 @@ impl DiagnosticCollector {
             config,
             diagnostics: Vec::new(),
             suppressed_count: 0,
+            used_overrides: HashSet::new(),
+            current_subject_path: None,
             writer: Box::new(io::stderr()),
         }
     }
@@ -94,6 +106,8 @@ impl DiagnosticCollector {
             config,
             diagnostics: Vec::new(),
             suppressed_count: 0,
+            used_overrides: HashSet::new(),
+            current_subject_path: None,
             writer: Box::new(io::sink()),
         }
     }
@@ -102,10 +116,48 @@ impl DiagnosticCollector {
     /// severity to determine disposition. Priority: user suppress > user error >
     /// user warn > compiled default severity.
     pub fn report(&mut self, rule: LintRule, msg: &str) {
+        let path = self.current_subject_path.clone();
+        self.report_inner(rule, path.as_deref(), msg);
+    }
+
+    /// Report a diagnostic owned by one concrete repository path. The path is
+    /// normalized and matched against per-file overrides before severity is
+    /// resolved; display text remains unchanged.
+    pub fn report_at(&mut self, rule: LintRule, path: impl AsRef<Path>, msg: &str) {
+        self.report_inner(rule, Some(path.as_ref()), msg);
+    }
+
+    /// Run a file validator with an explicit diagnostic subject. Calls to
+    /// `report` inside the closure are equivalent to `report_at` for this path;
+    /// nested scopes restore the prior subject when they return.
+    pub fn with_subject_path<R>(
+        &mut self,
+        path: impl AsRef<Path>,
+        validate: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous = self
+            .current_subject_path
+            .replace(path.as_ref().to_path_buf());
+        let result = validate(self);
+        self.current_subject_path = previous;
+        result
+    }
+
+    fn report_inner(&mut self, rule: LintRule, path: Option<&Path>, msg: &str) {
         // User suppress always wins — suppress and count.
         if self.config.suppress.contains(&rule) {
             self.suppressed_count += 1;
             return;
+        }
+
+        if let Some(path) = path {
+            let matching = self.config.matching_override_indexes(rule, path);
+            if !matching.is_empty() {
+                self.used_overrides
+                    .extend(matching.into_iter().map(|index| (index, rule)));
+                self.suppressed_count += 1;
+                return;
+            }
         }
 
         // User error promotes to error (overrides default severity).
@@ -139,8 +191,47 @@ impl DiagnosticCollector {
         self.diagnostics.push(Diagnostic {
             rule,
             severity,
+            subject_path: path.map(|path| PathBuf::from(self.config.normalize_subject_path(path))),
             message: msg.to_string(),
         });
+    }
+
+    /// Emit one non-failing warning for each configured `(override, rule)`
+    /// pair that suppressed no diagnostic in this visible lint pass.
+    pub fn emit_unused_override_warnings(&mut self) {
+        for warning in self.unused_override_warnings() {
+            let _ = writeln!(self.writer, "{warning}");
+        }
+    }
+
+    pub fn unused_override_warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        if !self.config.per_file_overrides_enabled() {
+            return warnings;
+        }
+        for (index, entry) in self.config.overrides.iter().enumerate() {
+            let mut rules: Vec<_> = entry.suppress.iter().copied().collect();
+            rules.sort_by_key(|rule| rule.code());
+            for rule in rules {
+                if self.used_overrides.contains(&(index, rule)) {
+                    continue;
+                }
+                let patterns = entry.files.join(", ");
+                let reason = entry
+                    .reason
+                    .as_deref()
+                    .map(|reason| format!("; reason: {reason}"))
+                    .unwrap_or_default();
+                warnings.push(format!(
+                    "warning[config/unused-override]: {}/{} for [{}] suppressed no diagnostics{}",
+                    rule.code(),
+                    rule.name(),
+                    patterns,
+                    reason
+                ));
+            }
+        }
+        warnings
     }
 
     /// Number of diagnostics recorded as errors.
@@ -197,6 +288,12 @@ impl DiagnosticCollector {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    fn config_with_overrides(source: &str) -> LintConfig {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("agent-lint.toml"), source).unwrap();
+        LintConfig::load(tmp.path()).unwrap()
+    }
 
     #[test]
     fn default_collector_treats_all_as_errors() {
@@ -331,5 +428,140 @@ mod tests {
         // PluginJsonMissing is default-error — fires as error.
         diag.report(LintRule::PluginJsonMissing, "missing");
         assert_eq!(diag.error_count(), 1);
+    }
+
+    #[test]
+    fn override_suppresses_only_matching_rule_and_path() {
+        let config = config_with_overrides(
+            r#"
+[lint]
+[[lint.overrides]]
+files = ["legacy/*.md"]
+suppress = ["M001"]
+"#,
+        );
+        let mut diag = DiagnosticCollector::with_config(config);
+        diag.report_at(LintRule::PluginJsonMissing, "legacy/one.md", "suppressed");
+        diag.report_at(LintRule::HooksJsonMissing, "legacy/one.md", "other rule");
+        diag.report_at(LintRule::PluginJsonMissing, "current/one.md", "other path");
+
+        assert_eq!(diag.suppressed_count(), 1);
+        assert_eq!(diag.error_count(), 2);
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(Path::new("legacy/one.md"))
+        );
+        assert_eq!(
+            diag.diagnostics()[1].subject_path.as_deref(),
+            Some(Path::new("current/one.md"))
+        );
+    }
+
+    #[test]
+    fn scoped_subject_is_structured_and_pathless_diagnostic_does_not_match() {
+        let config = config_with_overrides(
+            "[lint]\n[[lint.overrides]]\nfiles = [\"docs/*.md\"]\nsuppress = [\"M001\"]\n",
+        );
+        let mut diag = DiagnosticCollector::with_config(config);
+        diag.with_subject_path("docs/one.md", |diag| {
+            diag.report(LintRule::PluginJsonMissing, "scoped");
+        });
+        diag.report(LintRule::PluginJsonMissing, "repository-wide");
+
+        assert_eq!(diag.suppressed_count(), 1);
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].subject_path, None);
+    }
+
+    #[test]
+    fn overlapping_blocks_are_each_marked_used() {
+        let config = config_with_overrides(
+            r#"
+[lint]
+[[lint.overrides]]
+files = ["docs/*.md"]
+suppress = ["M001"]
+[[lint.overrides]]
+files = ["docs/one.md"]
+suppress = ["M001"]
+"#,
+        );
+        let mut diag = DiagnosticCollector::with_config(config);
+        diag.report_at(LintRule::PluginJsonMissing, "docs/one.md", "suppressed");
+
+        assert_eq!(diag.suppressed_count(), 1);
+        assert!(diag.unused_override_warnings().is_empty());
+    }
+
+    #[test]
+    fn unused_reporting_tracks_each_rule_and_includes_audit_context() {
+        let config = config_with_overrides(
+            r#"
+[lint]
+[[lint.overrides]]
+files = ["docs/*.md"]
+suppress = ["M001", "H001"]
+reason = "legacy publication contract"
+"#,
+        );
+        let mut diag = DiagnosticCollector::with_config(config);
+        diag.report_at(LintRule::PluginJsonMissing, "docs/one.md", "suppressed");
+
+        let warnings = diag.unused_override_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("H001/hooks-json-missing"));
+        assert!(warnings[0].contains("docs/*.md"));
+        assert!(warnings[0].contains("legacy publication contract"));
+    }
+
+    #[test]
+    fn global_suppression_wins_without_marking_override_used() {
+        let config = config_with_overrides(
+            r#"
+[lint]
+suppress = ["M001"]
+[[lint.overrides]]
+files = ["docs/*.md"]
+suppress = ["M001"]
+"#,
+        );
+        let mut diag = DiagnosticCollector::with_config(config);
+        diag.report_at(
+            LintRule::PluginJsonMissing,
+            "docs/one.md",
+            "globally suppressed",
+        );
+
+        assert_eq!(diag.suppressed_count(), 1);
+        assert_eq!(diag.unused_override_warnings().len(), 1);
+    }
+
+    #[test]
+    fn override_precedes_global_error_and_warn_lists() {
+        let config = config_with_overrides(
+            r#"
+[lint]
+error = ["M001"]
+warn = ["H001"]
+[[lint.overrides]]
+files = ["docs/*.md"]
+suppress = ["M001", "H001"]
+"#,
+        );
+        let mut diag = DiagnosticCollector::with_config(config);
+        diag.report_at(
+            LintRule::PluginJsonMissing,
+            "docs/one.md",
+            "promoted elsewhere",
+        );
+        diag.report_at(
+            LintRule::HooksJsonMissing,
+            "docs/one.md",
+            "warned elsewhere",
+        );
+
+        assert_eq!(diag.suppressed_count(), 2);
+        assert_eq!(diag.error_count(), 0);
+        assert_eq!(diag.warning_count(), 0);
     }
 }

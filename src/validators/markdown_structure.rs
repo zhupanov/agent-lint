@@ -41,8 +41,9 @@ pub(crate) fn check_markdown_document(
     diag: &mut DiagnosticCollector,
 ) {
     if let Some(line) = document.unclosed_fence_line() {
-        diag.report(
+        diag.report_at(
             LintRule::UnclosedCodeFence,
+            path,
             &format!("{path}:{line}: unclosed code fence"),
         );
     }
@@ -85,8 +86,9 @@ fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut Diagnos
                         stack.pop();
                     }
                     Some((open_name, open_line)) => {
-                        diag.report(
+                        diag.report_at(
                             LintRule::XmlTagMismatched,
+                            path,
                             &format!(
                                 "{path}:{line_no}: mismatched closing tag '</{name}>' (open '<{open_name}>' at line {open_line})"
                             ),
@@ -94,8 +96,9 @@ fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut Diagnos
                         stack.pop();
                     }
                     None => {
-                        diag.report(
+                        diag.report_at(
                             LintRule::XmlTagOrphan,
+                            path,
                             &format!(
                                 "{path}:{line_no}: closing tag '</{name}>' has no opening tag"
                             ),
@@ -109,8 +112,9 @@ fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut Diagnos
     }
 
     for (name, line) in stack {
-        diag.report(
+        diag.report_at(
             LintRule::XmlTagUnclosed,
+            path,
             &format!("{path}:{line}: unclosed XML tag '<{name}>'"),
         );
     }

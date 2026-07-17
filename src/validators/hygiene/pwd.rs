@@ -44,8 +44,9 @@ pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector, exclude: &ExcludeSet
         };
 
         if RE_PWD_HYGIENE.is_match(&content) {
-            diag.report(
+            diag.report_at(
                 LintRule::PwdInSkill,
+                &skill_path,
                 &format!(
                     "skills/{name}/SKILL.md uses $PWD/ or hardcoded path; use ${{CLAUDE_PLUGIN_ROOT}}/ instead"
                 ),

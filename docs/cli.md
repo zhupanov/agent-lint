@@ -38,6 +38,9 @@ When `--autofix` is provided, agent-lint attempts to automatically fix
 violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
+Configured per-file suppressions apply to both diagnosis and mutation, so a
+fixer never changes a file where that rule is suppressed. Unused-override
+warnings are emitted only by the final visible pass.
 
 See [rules.md](rules.md#auto-fixable-rules) for the list of auto-fixable
 rules.

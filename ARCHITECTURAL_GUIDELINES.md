@@ -130,8 +130,9 @@ validation path again.
 
 - Why: a diagnostic is both user guidance and machine-observable output.
 - Guidance: report the path or surface, the violated condition, and enough
-  context to fix it without embedding secrets. Keep wording deterministic and
-  assert the rule identity in tests instead of matching only prose.
+  context to fix it without embedding secrets. Supply file identity as a
+  structured subject, never only inside prose. Keep wording deterministic and
+  assert the rule identity and subject in tests instead of matching only prose.
 - Deviate when: the rule is repository-wide and no single path owns the
   violation.
 
@@ -175,8 +176,8 @@ validation path again.
   rewrite is worse than leaving a diagnostic.
 - Guidance: fix only a syntax or metadata transformation with one clear result.
   Preserve unrelated bytes where practical, honor the validator's scope and
-  exclusions, return whether a write actually changed content, and test that a
-  second run makes no change.
+  exclusions and per-file suppressions, return whether a write actually changed
+  content, and test that a second run makes no change.
 - Deviate when: none for idempotency. If a safe deterministic repair is not
   available, leave the rule diagnostic-only.
 

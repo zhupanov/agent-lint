@@ -44,8 +44,9 @@ pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector, exclude: &Exclude
 
         for line in crate::fence::lines_outside_fences(body) {
             if let Some(m) = RE_TODO_MARKER.find(line) {
-                diag.report(
+                diag.report_at(
                     LintRule::TodoInSkill,
+                    &skill_path,
                     &format!(
                         "skills/{dir_name}/SKILL.md contains {} marker; remove before publishing",
                         m.as_str()
@@ -85,8 +86,9 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
         let body = crate::frontmatter::extract_body(&content);
         for line in crate::fence::lines_outside_fences(body) {
             if let Some(m) = RE_TODO_MARKER.find(line) {
-                diag.report(
+                diag.report_at(
                     LintRule::TodoInAgent,
+                    &agent_path,
                     &format!(
                         "agents/{name} contains {} marker; remove before publishing",
                         m.as_str()

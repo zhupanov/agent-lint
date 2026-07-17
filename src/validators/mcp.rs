@@ -35,8 +35,9 @@ pub fn validate_mcp_configs(
         let content = match std::fs::read_to_string(&path) {
             Ok(content) => content,
             Err(error) => {
-                diag.report(
+                diag.report_at(
                     LintRule::McpJsonInvalid,
+                    &display,
                     &format!("{display} cannot be read: {error}"),
                 );
                 continue;
@@ -45,21 +46,24 @@ pub fn validate_mcp_configs(
         let value: Value = match serde_json::from_str(&content) {
             Ok(value) => value,
             Err(error) => {
-                diag.report(
+                diag.report_at(
                     LintRule::McpJsonInvalid,
+                    &display,
                     &format!("{display} is not valid JSON: {error}"),
                 );
                 continue;
             }
         };
 
-        for name in duplicate_mcp_server_names(&content) {
-            diag.report(
-                LintRule::McpDuplicateServer,
-                &format!("{display}: mcpServers contains duplicate server name '{name}'"),
-            );
-        }
-        validate_servers(&display, value.get("mcpServers"), diag);
+        diag.with_subject_path(&display, |diag| {
+            for name in duplicate_mcp_server_names(&content) {
+                diag.report(
+                    LintRule::McpDuplicateServer,
+                    &format!("{display}: mcpServers contains duplicate server name '{name}'"),
+                );
+            }
+            validate_servers(&display, value.get("mcpServers"), diag);
+        });
     }
 }
 

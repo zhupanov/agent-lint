@@ -68,8 +68,9 @@ pub(super) fn validate_nested_references(
 
             // Report for every referencing skill (not just the first)
             if nested.contains(&rel) {
-                diag.report(
+                diag.report_at(
                     LintRule::NestedRefDeep,
+                    &info.path,
                     &format!(
                         "{}: references {} which itself references other shared .md files (keep references one level deep)",
                         info.path, reference
@@ -132,8 +133,9 @@ pub(super) fn validate_orphaned_skill_files(
 
             // Check if the script file name is referenced anywhere in SKILL.md
             if !skill_content.contains(&script_name) {
-                diag.report(
+                diag.report_at(
                     LintRule::OrphanedSkillFiles,
+                    &display_path,
                     &format!(
                         "{}: not referenced from {base_dir}/{dir_name}/SKILL.md",
                         display_path
@@ -179,8 +181,9 @@ pub(super) fn validate_ref_no_toc(
                 if line_count > REF_NO_TOC_THRESHOLD {
                     let has_headings = content.lines().any(|l| l.starts_with("## "));
                     if !has_headings {
-                        diag.report(
+                        diag.report_at(
                             LintRule::RefNoToc,
+                            &rel,
                             &format!(
                                 "{}: references {} ({} lines) which has no ## headings for navigation",
                                 info.path, reference, line_count
@@ -238,8 +241,9 @@ pub(super) fn validate_generic_ref_names(
             }
 
             if RE_GENERIC_REF_NAME.is_match(&file_name) {
-                diag.report(
+                diag.report_at(
                     LintRule::RefNameGeneric,
+                    &display_path,
                     &format!(
                         "{}: non-descriptive reference file name (use a descriptive name like 'form-validation-rules.md')",
                         display_path

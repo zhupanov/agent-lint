@@ -33,8 +33,9 @@ pub fn validate_docs_references(diag: &mut DiagnosticCollector, exclude: &Exclud
     for cap in RE_DOCS_REF.find_iter(&section) {
         let doc_path = cap.as_str();
         if seen.insert(doc_path.to_string()) && !Path::new(doc_path).is_file() {
-            diag.report(
+            diag.report_at(
                 LintRule::DocsRefMissing,
+                claude_md,
                 &format!(
                     "docs reference in CLAUDE.md canonical sources not found on disk: {doc_path}"
                 ),
@@ -60,8 +61,9 @@ pub fn validate_claudemd_size(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 
     let line_count = content.lines().count();
     if line_count > 500 {
-        diag.report(
+        diag.report_at(
             LintRule::ClaudemdTooLarge,
+            claude_md,
             &format!(
                 "CLAUDE.md exceeds 500 lines ({} lines); consider splitting into docs/ files",
                 line_count
@@ -87,8 +89,9 @@ pub fn validate_claudemd_todos(diag: &mut DiagnosticCollector, exclude: &Exclude
 
     for line in crate::fence::lines_outside_fences(&content) {
         if let Some(m) = RE_TODO_MARKER.find(line) {
-            diag.report(
+            diag.report_at(
                 LintRule::TodoInDocs,
+                claude_md,
                 &format!(
                     "CLAUDE.md contains {} marker; remove before publishing",
                     m.as_str()
@@ -112,7 +115,9 @@ pub fn validate_claudemd_structure(diag: &mut DiagnosticCollector, exclude: &Exc
         Ok(c) => c,
         Err(_) => return,
     };
-    super::markdown_structure::check_markdown_structure("CLAUDE.md", &content, diag);
+    diag.with_subject_path(claude_md, |diag| {
+        super::markdown_structure::check_markdown_structure("CLAUDE.md", &content, diag);
+    });
 }
 
 fn extract_canonical_sources_section(content: &str) -> String {

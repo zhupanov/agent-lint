@@ -154,7 +154,8 @@ fn main() {
 }
 
 fn config_selects_basic_mode(config: &LintConfig) -> bool {
-    config.script_inventory.is_some()
+    !config.overrides.is_empty()
+        || config.script_inventory.is_some()
         || config.skill_closure_max_lines.is_some()
         || config.claude_import_max_lines.is_some()
         || config.claude_import_total_max_lines.is_some()
@@ -192,6 +193,8 @@ fn run_lint(
     let mut diag = DiagnosticCollector::with_config(lint_config);
 
     validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
+
+    diag.emit_unused_override_warnings();
 
     let errors = diag.error_count();
     let warnings = diag.warning_count();
@@ -254,7 +257,7 @@ fn run_autofix(
 
         let mut made_progress = false;
         for rule in fixable_rules {
-            if autofix::apply_fix(rule, mode, exclude) {
+            if autofix::apply_fix(rule, mode, exclude, &lint_config) {
                 made_progress = true;
                 break; // Re-validate after each fix
             }
@@ -340,6 +343,18 @@ mod tests {
         };
         assert!(config_selects_basic_mode(&config));
         assert!(!config_selects_basic_mode(&LintConfig::default()));
+    }
+
+    #[test]
+    fn per_file_overrides_select_basic_mode_for_unused_reporting() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\n[[lint.overrides]]\nfiles = [\"missing.md\"]\nsuppress = [\"M001\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path()).unwrap();
+        assert!(config_selects_basic_mode(&config));
     }
 
     #[test]
