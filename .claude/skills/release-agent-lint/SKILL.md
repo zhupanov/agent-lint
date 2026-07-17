@@ -92,11 +92,12 @@ passing release notes inline.
 Wait for every required PR check. Refresh no more frequently than every
 30 seconds. If any check fails, stop and fix the version PR before continuing.
 
-After checks are green, merge the release PR using the repository's normal
-merge policy, then confirm its commit is on `origin/main`.
+After checks are green, merge the release PR with the authenticated
+administrator override, using the repository's squash-merge policy, then
+confirm its commit is on `origin/main`.
 
 ```bash
-gh pr merge --merge --delete-branch
+gh pr merge --squash --admin --delete-branch
 git fetch origin main --quiet
 MERGE_COMMIT=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
 git merge-base --is-ancestor "$MERGE_COMMIT" origin/main
@@ -155,6 +156,11 @@ git switch main
 git pull --ff-only origin main
 git branch -d "release/v${NEW_VERSION}"
 ```
+
+Before reporting completion, print this reminder to the operator:
+
+> Reminder: download and install the local macOS binary using the
+> [README install instructions](https://github.com/zhupanov/agent-lint#install-on-macos).
 
 ## Failed release recovery
 
