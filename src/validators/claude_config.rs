@@ -8,9 +8,9 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::yaml::{Mapping, Value as YamlValue};
 use globset::Glob;
 use serde_json::Value as JsonValue;
-use serde_yaml::{Mapping, Value as YamlValue};
 use std::fs;
 use std::path::Path;
 
@@ -101,7 +101,7 @@ fn validate_markdown_directory<F>(
 
 fn parse_frontmatter(content: &str) -> Option<Mapping> {
     let lines = frontmatter::extract_frontmatter(content)?;
-    let yaml = serde_yaml::from_str::<YamlValue>(&lines.join("\n")).ok()?;
+    let yaml = crate::yaml::parse(&lines.join("\n")).ok()?;
     Some(yaml.as_mapping().cloned().unwrap_or_default())
 }
 
@@ -112,15 +112,15 @@ fn report_unknown_fields(
     known_fields: &[&str],
     rule: LintRule,
 ) {
-    for key in frontmatter.keys().filter_map(YamlValue::as_str) {
-        if !known_fields.contains(&key) {
+    for key in frontmatter.keys() {
+        if !known_fields.contains(&key.as_str()) {
             diag.report(rule, &format!("{path}: unknown frontmatter field '{key}'"));
         }
     }
 }
 
 fn validate_rule_paths(diag: &mut DiagnosticCollector, path: &str, frontmatter: &Mapping) {
-    let Some(value) = frontmatter.get(YamlValue::String("paths".to_string())) else {
+    let Some(value) = frontmatter.get("paths") else {
         return;
     };
     let values: Vec<&str> = match value {
@@ -139,9 +139,7 @@ fn validate_rule_paths(diag: &mut DiagnosticCollector, path: &str, frontmatter: 
 }
 
 fn validate_output_style_fields(diag: &mut DiagnosticCollector, path: &str, frontmatter: &Mapping) {
-    let description = frontmatter
-        .get(YamlValue::String("description".to_string()))
-        .and_then(YamlValue::as_str);
+    let description = frontmatter.get("description").and_then(YamlValue::as_str);
     if description.is_none_or(|value| value.trim().is_empty()) {
         diag.report(
             LintRule::OutputStyleDescriptionMissing,
@@ -149,7 +147,7 @@ fn validate_output_style_fields(diag: &mut DiagnosticCollector, path: &str, fron
         );
     }
 
-    if let Some(value) = frontmatter.get(YamlValue::String("keep-coding-instructions".to_string()))
+    if let Some(value) = frontmatter.get("keep-coding-instructions")
         && !value.is_bool()
     {
         diag.report(
@@ -158,9 +156,7 @@ fn validate_output_style_fields(diag: &mut DiagnosticCollector, path: &str, fron
         );
     }
 
-    if let Some(name) = frontmatter
-        .get(YamlValue::String("name".to_string()))
-        .and_then(YamlValue::as_str)
+    if let Some(name) = frontmatter.get("name").and_then(YamlValue::as_str)
         && name.chars().count() > 64
     {
         diag.report(

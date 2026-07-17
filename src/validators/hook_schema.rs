@@ -146,7 +146,7 @@ pub(super) fn validate_hook_schema(val: &Value, label: &str, diag: &mut Diagnost
 /// `hooks_yaml` is the raw YAML value of the `hooks` key. It is wrapped as
 /// `{"hooks": ...}` so the JSON-surface walker can apply H008–H024 unchanged.
 pub(super) fn validate_frontmatter_hooks(
-    hooks_yaml: &serde_yaml::Value,
+    hooks_yaml: &crate::yaml::Value,
     label: &str,
     diag: &mut DiagnosticCollector,
 ) {

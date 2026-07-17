@@ -11,6 +11,7 @@ mod rules;
 mod test_helpers;
 mod traversal;
 mod validators;
+mod yaml;
 
 use clap::{ArgGroup, Parser};
 use config::{CliMode, LintConfig};
