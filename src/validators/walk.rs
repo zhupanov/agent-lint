@@ -40,6 +40,7 @@ pub fn read_subdirs(
         }
         result.push((path, name));
     }
+    result.sort_by(|left, right| left.1.cmp(&right.1));
     result
 }
 
@@ -77,6 +78,7 @@ pub fn read_files(
         }
         result.push((path, name));
     }
+    result.sort_by(|left, right| left.1.cmp(&right.1));
     result
 }
 

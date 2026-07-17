@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.7.0] - 2026-07-17
+
+### Added
+
+- Added normalized per-path D004 import caps with explicit precedence over the
+  compatible global per-import cap
+- Added named S062 prompt-source budgets for root, transitive closure, token,
+  blank-line-neutral content-token, and conditional-source measurements
+- Added `--closure-report` deterministic JSON output for configured prompt
+  source groups
+- Ported the remaining focused S021 and G009 downstream regression cases
+
+### Changed
+
+- Dispatch configured prompt and script contracts in Basic mode as well as
+  Plugin mode
+- Report all S021 pairs with stable file locations and deterministic file order
+
 ## [2.6.0] - 2026-07-16
 
 ### Added

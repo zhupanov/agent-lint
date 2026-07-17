@@ -1,8 +1,9 @@
 //! Code fence tracking for Markdown documents.
 //!
-//! Properly handles opening/closing fences with backtick/tilde counts per CommonMark spec:
+//! Properly handles opening/closing fences with backtick/tilde counts:
 //! - A fence opens with 3+ consecutive backticks or tildes at the start of a line
-//! - A fence closes only when the same character appears with >= the opening count
+//! - A fence closes only at matching indentation when the same character appears
+//!   with >= the opening count
 //! - Backtick fences cannot be closed by tilde fences and vice versa
 
 /// Classification of a line after fence-state processing.
@@ -45,7 +46,8 @@ pub fn markdown_fences(content: &str) -> Vec<MarkdownFence> {
             continue;
         };
         let count = trimmed.chars().take_while(|ch| *ch == marker).count();
-        if count < 3 || lines[index].len() - trimmed.len() > 3 {
+        let opener_indent = lines[index].len() - trimmed.len();
+        if count < 3 || opener_indent > 3 {
             index += 1;
             continue;
         }
@@ -57,7 +59,10 @@ pub fn markdown_fences(content: &str) -> Vec<MarkdownFence> {
             let close = lines[cursor].trim();
             let close_indent = lines[cursor].len() - lines[cursor].trim_start().len();
             let close_count = close.chars().take_while(|ch| *ch == marker).count();
-            if close_indent <= 3 && close_count >= count && close.chars().all(|ch| ch == marker) {
+            if close_indent == opener_indent
+                && close_count >= count
+                && close.chars().all(|ch| ch == marker)
+            {
                 result.push(MarkdownFence {
                     info,
                     start_line: index + 1,
@@ -106,16 +111,7 @@ pub fn consecutive_bash_pairs(content: &str) -> Vec<(usize, usize)> {
 }
 
 fn is_shell_fence(fence: &MarkdownFence) -> bool {
-    fence
-        .info
-        .split_whitespace()
-        .next()
-        .is_some_and(|language| {
-            matches!(
-                language.to_ascii_lowercase().as_str(),
-                "bash" | "sh" | "shell"
-            )
-        })
+    fence.info.to_ascii_lowercase().starts_with("bash")
 }
 
 fn gap_is_adjacent(lines: &[&str]) -> bool {
@@ -139,12 +135,37 @@ fn gap_is_adjacent(lines: &[&str]) -> bool {
     }
     visible.len() <= BREADCRUMB_MAX_LINES
         && visible.iter().map(|line| line.len()).sum::<usize>() <= BREADCRUMB_MAX_CHARS
-        && visible.iter().all(|line| {
-            line.len() <= BREADCRUMB_MAX_LINE_CHARS
-                && !line.starts_with('#')
-                && !line.starts_with(['-', '*', '+', '>', '|'])
-                && !line.chars().next().is_some_and(|ch| ch.is_ascii_digit())
-        })
+        && visible.iter().all(|line| is_breadcrumb_line(line))
+}
+
+fn is_breadcrumb_line(line: &str) -> bool {
+    if line.len() > BREADCRUMB_MAX_LINE_CHARS
+        || line.starts_with(['>', '|'])
+        || (line.len() >= 3 && line.chars().all(|ch| ch == '-'))
+    {
+        return false;
+    }
+    let heading_marks = line.chars().take_while(|ch| *ch == '#').count();
+    if (1..=6).contains(&heading_marks)
+        && line[heading_marks..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+    {
+        return false;
+    }
+    if matches!(line.chars().next(), Some('-' | '*' | '+'))
+        && line[1..].chars().next().is_some_and(char::is_whitespace)
+    {
+        return false;
+    }
+    let digits = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    !(digits > 0
+        && matches!(line[digits..].chars().next(), Some('.' | ')'))
+        && line[digits + 1..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace))
 }
 
 fn fence_has_suppression(fence: &MarkdownFence) -> bool {
@@ -154,16 +175,22 @@ fn fence_has_suppression(fence: &MarkdownFence) -> bool {
         .filter(|(_, line)| !line.trim().is_empty())
         .collect();
     nonblank.iter().any(|(_, line)| {
-        const MARKER: &str = "lint-consecutive-bash: ok";
-        line.find(MARKER).is_some_and(|index| {
-            let has_reason = !line[index + MARKER.len()..].trim().is_empty();
+        const STANDALONE_MARKER: &str = "# lint-consecutive-bash: ok";
+        const TRAILING_MARKER: &str = " # lint-consecutive-bash: ok";
+        let trimmed = line.trim_start();
+        if let Some(reason) = trimmed.strip_prefix(STANDALONE_MARKER) {
+            return has_waiver_reason(reason) && nonblank.len() > 1;
+        }
+        line.find(TRAILING_MARKER).is_some_and(|index| {
+            let reason = &line[index + TRAILING_MARKER.len()..];
             let before = line[..index].trim();
-            let standalone = line.trim_start().starts_with("# lint-consecutive-bash: ok");
-            has_reason
-                && ((standalone && nonblank.len() > 1)
-                    || (!before.is_empty() && !before.starts_with('#')))
+            has_waiver_reason(reason) && !before.is_empty() && !before.starts_with('#')
         })
     })
+}
+
+fn has_waiver_reason(remainder: &str) -> bool {
+    remainder.chars().next().is_some_and(char::is_whitespace) && !remainder.trim().is_empty()
 }
 
 fn is_carved_out_pair(
@@ -198,8 +225,7 @@ fn is_carved_out_pair(
     let pair_lower = pair_text.to_ascii_lowercase();
     let design_context = pair_lower.contains("/design")
         || pair_lower.contains(" design ")
-        || pair_lower.contains("design driver")
-        || pair_lower.contains("design-step");
+        || pair_lower.contains("design driver");
     design_context
         && [
             "pause",
@@ -502,8 +528,54 @@ mod tests {
         let example = "WRONG:\n```bash\necho one\n```\nCORRECT:\n```bash\necho two\n```\n";
         assert!(consecutive_bash_pairs(example).is_empty());
 
-        let design = "```bash\ndesign-step3-mav.sh --phase pre\n```\nBoundary: vote.\nThen resume:\n```bash\ndesign-step3-mav.sh --phase post\n```\n";
+        let design = "```bash\npython3 python/cli.py design driver --action pause\n```\nResume boundary.\n```bash\npython3 python/cli.py design driver --action resume\n```\n";
         assert!(consecutive_bash_pairs(design).is_empty());
+    }
+
+    #[test]
+    fn consecutive_bash_matches_larch_fence_and_gap_cases() {
+        for info in ["sh", "shell", "text", ""] {
+            let content = format!("```{info}\necho one\n```\n```bash\necho two\n```\n");
+            assert!(consecutive_bash_pairs(&content).is_empty(), "{info}");
+        }
+
+        let unclosed =
+            "```bash\nunclosed\n  ```bash\necho one\n  ```\n  ```bash\necho two\n  ```\n";
+        assert_eq!(consecutive_bash_pairs(unclosed), [(3, 6)]);
+
+        for gap in [
+            "\n## Next step\n",
+            "\n- Inspect the result.\n",
+            "\nThis paragraph is deliberately long enough to be a real Markdown step rather than a short breadcrumb between two prompt-side shell calls.\n",
+        ] {
+            let content = format!("```bash\necho one\n```{gap}```bash\necho two\n```\n");
+            assert!(consecutive_bash_pairs(&content).is_empty(), "{gap:?}");
+        }
+    }
+
+    #[test]
+    fn consecutive_bash_requires_reasoned_nonempty_suppression() {
+        for first_body in [
+            "# lint-consecutive-bash: ok not enough",
+            "echo one # lint-consecutive-bash: ok",
+            "echo one # lint-consecutive-bash: okay not a waiver",
+            "# lint-consecutive-bash: ok\necho one",
+        ] {
+            let content = format!("```bash\n{first_body}\n```\n```bash\necho two\n```\n");
+            assert_eq!(
+                consecutive_bash_pairs(&content),
+                [(1, first_body.lines().count() + 3)]
+            );
+        }
+
+        let trailing = "```bash\necho one # lint-consecutive-bash: ok intentional boundary\n```\n```bash\necho two\n```\n";
+        assert!(consecutive_bash_pairs(trailing).is_empty());
+    }
+
+    #[test]
+    fn consecutive_bash_reports_each_pair() {
+        let content = "```bash\none\n```\n```bash\ntwo\n```\n```bash\nthree\n```\n";
+        assert_eq!(consecutive_bash_pairs(content), [(1, 4), (4, 7)]);
     }
 
     #[test]

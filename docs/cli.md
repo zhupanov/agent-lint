@@ -1,7 +1,7 @@
 # CLI Reference
 
 ```text
-agent-lint [--pedantic | --all] [--autofix] [--list-scripts] [PATH]
+agent-lint [--pedantic | --all] [--autofix | --list-scripts | --closure-report] [PATH]
 ```
 
 If `PATH` is omitted, the current directory is used. The tool detects the
@@ -19,6 +19,7 @@ themselves.
 | `--help`, `-h` | Print help message |
 | `--version` | Print version information |
 | `--list-scripts` | List discovered script paths and exit |
+| `--closure-report` | Print configured prompt-source budget measurements as deterministic JSON and exit |
 | `--autofix` | Fix auto-fixable violations in-place and report remaining issues |
 | `--pedantic` | Promote warnings to errors (except too-long rules) |
 | `--all` | Force every rule to error, ignoring config overrides |
@@ -57,3 +58,11 @@ sorted `.sh` and `.inc.bash` entries; standalone `.awk` entries remain part of
 G011's scope but are not sent to shell-oriented consumers. Pre-commit runs the
 linter without filenames, so G009-G011 deterministically inspect the complete
 configured inventory rather than only the files staged in an invocation.
+
+## `--closure-report`
+
+Outputs a JSON array ordered by group, source set, scope, and metric. Each row
+contains stable `group`, `source_set`, `scope`, `metric`, `measured_value`, and
+nullable `cap` fields. The command measures every configured
+`prompt-source-budgets` group without running unrelated validators. Measurement
+or configuration failures exit 2.

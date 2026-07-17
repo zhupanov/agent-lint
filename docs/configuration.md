@@ -15,9 +15,26 @@ desc-truncated-max-chars = 200              # tighten S015 (default: 250)
 skill-closure-max-lines = 700               # enable S062 budget
 claude-import-max-lines = 120               # enable D004 per-import budget
 claude-import-total-max-lines = 400          # enable D004 total budget
+claude-import-path-budgets = { "AGENTS.md" = 89, "BASH_AUTHORING.md" = 115 }
 instruction-files = ["AGENTS.md", "SECURITY.md", "CLAUDE.md"]
 inline-path-prefixes = ["src/", "docs/", "skills/", "scripts/"]
 script-inventory = "scripts/portable-scripts.txt" # optional G009-G011 scope
+
+[[lint.prompt-source-budgets]]
+name = "design"
+roots = ["skills/design/SKILL.md"]
+conditional-sources = ["skills/design/references/failure-path.md"]
+root-max-lines = 700
+closure-max-lines = 1800
+closure-max-tokens = 55000
+closure-max-content-tokens = 54800
+conditional-max-lines = 800
+
+[[lint.prompt-source-budgets]]
+name = "review-panel"
+roots = ["agents/reviewer-correctness.md", "agents/reviewer-testing.md"]
+closure-max-lines = 900
+closure-max-tokens = 18000
 
 [platforms]
 cursor = true   # force-enable Cursor checks; false disables them
@@ -36,6 +53,8 @@ codex = false   # disable Codex checks even when Codex files exist
 | `skill-closure-max-lines` | positive integer | Enables S062 with a transitive Markdown prompt-source line budget |
 | `claude-import-max-lines` | positive integer | Enables D004 with a per-import line budget |
 | `claude-import-total-max-lines` | positive integer | Enables D004 with a total recursive `@`-import closure budget |
+| `claude-import-path-budgets` | path-to-positive-integer table | D004 per-import caps that override the global per-import cap for matching normalized paths |
+| `prompt-source-budgets` | array of tables | Named S062 groups with explicit sources and metric caps |
 | `instruction-files` | string array | Repository-relative Markdown files scanned by D005 |
 | `inline-path-prefixes` | string array | Repository-relative prefixes, each ending in `/`, recognized by D005 |
 | `script-inventory` | string | Repository-relative newline-delimited inventory used by G009-G011 |
@@ -43,6 +62,44 @@ codex = false   # disable Codex checks even when Codex files exist
 Closure limits are disabled when omitted. The two D004 limits may be used
 independently. Import and Markdown-reference traversal is recursive, bounded,
 and counts each file once.
+
+### Import path budgets
+
+`claude-import-path-budgets` keys are normalized repository-relative paths.
+Each key must name an existing regular, non-symlinked file beneath the
+repository root. Unsafe, missing, zero-valued, and duplicate normalized paths
+are configuration errors. When an imported path has a path-specific cap, that
+cap replaces `claude-import-max-lines` for that path; otherwise the compatible
+global cap applies. `claude-import-total-max-lines` remains independent. D004
+diagnostics include the normalized path, measured line count, and effective
+cap.
+
+### Named prompt-source budgets
+
+Each `[[lint.prompt-source-budgets]]` entry has a unique `name`, one or more
+explicit `roots`, and at least one maximum. Repeat the table for individual
+skills such as `design`, `implement`, and `review`, or for non-skill groups such
+as a reviewer panel assembled from agent and shared prompt files.
+
+Available caps are:
+
+| Scope | Line cap | Estimated-token cap | Content-token cap |
+|-------|----------|---------------------|-------------------|
+| Configured roots only | `root-max-lines` | `root-max-tokens` | `root-max-content-tokens` |
+| Roots plus transitive mandatory Markdown references | `closure-max-lines` | `closure-max-tokens` | `closure-max-content-tokens` |
+| `conditional-sources` plus their transitive references | `conditional-max-lines` | `conditional-max-tokens` | `conditional-max-content-tokens` |
+
+Token estimates are the Unicode character count divided by four and rounded
+up. Content-token estimates use the same calculation after blank lines are
+removed. Conditional closure excludes files already counted in the always
+loaded closure, keeping the two source sets separate. Explicit source paths are
+normalized, sorted, required to exist, and may not overlap within a group.
+
+`skill-closure-max-lines` remains compatible and continues to apply the same
+transitive line cap to every discovered skill. Named groups are opt-in and are
+enforced independently. Run `agent-lint --closure-report` for deterministic
+JSON rows containing `group`, `source_set`, `scope`, `metric`,
+`measured_value`, and `cap`.
 
 When `script-inventory` is set, blank lines and full-line `#` comments are
 ignored and every other line must name an existing regular `.sh`, `.inc.bash`,
