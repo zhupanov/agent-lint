@@ -1,0 +1,17 @@
+[lint]
+# Define the repository's public guidance and architectural contracts as
+# inputs to the shared documentation-reference checks.
+instruction-files = [
+  "README.md",
+  "SECURITY.md",
+  "ARCHITECTURAL_INVARIANTS.md",
+  "ARCHITECTURAL_GUIDELINES.md",
+]
+
+# These are the repository-owned paths that documentation may cite inline.
+inline-path-prefixes = [
+  ".github/",
+  "docs/",
+  "scripts/",
+  "src/",
+]
