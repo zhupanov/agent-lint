@@ -1296,14 +1296,8 @@ impl LintRule {
     pub fn default_severity(self) -> DefaultSeverity {
         match self {
             // ── Default-suppressed ──────────────────────────────────
-            Self::NameNotGerund | Self::BodyNoExamples |
-            Self::BodyTooLong | Self::Bash32Incompatible |
-            Self::AwkRegexNonascii | Self::CodexNetworkPermissionField |
-            Self::CodexWindowsSandbox | Self::InstructionFileGenericGuidance |
-            Self::InstructionFileMissingStructure | Self::CodexAgentsConfigConflict |
-            Self::PromptNegativeOnly | Self::PromptWeakCritical |
-            Self::ClaudeReadmeDuplicate | Self::CursorPromptHookModelInvalid |
-            Self::SkillRefNested
+            Self::NameNotGerund | Self::BodyNoExamples | Self::BodyTooLong |
+            Self::Bash32Incompatible | Self::AwkRegexNonascii
                 => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
@@ -1784,8 +1778,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            15,
-            "Expected 15 default-suppressed rules, got {}",
+            5,
+            "Expected 5 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1802,6 +1796,24 @@ mod tests {
             "Expected 111 default-warning rules, got {}",
             warnings.len()
         );
+    }
+
+    #[test]
+    fn issue_163_rules_are_default_errors() {
+        for rule in [
+            LintRule::CodexNetworkPermissionField,
+            LintRule::CodexWindowsSandbox,
+            LintRule::InstructionFileGenericGuidance,
+            LintRule::InstructionFileMissingStructure,
+            LintRule::CodexAgentsConfigConflict,
+            LintRule::PromptNegativeOnly,
+            LintRule::PromptWeakCritical,
+            LintRule::ClaudeReadmeDuplicate,
+            LintRule::CursorPromptHookModelInvalid,
+            LintRule::SkillRefNested,
+        ] {
+            assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
+        }
     }
 
     #[test]
@@ -1847,8 +1859,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            160,
-            "Expected 160 default-error rules, got {}",
+            170,
+            "Expected 170 default-error rules, got {}",
             errors.len()
         );
     }
