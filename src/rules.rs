@@ -1296,8 +1296,7 @@ impl LintRule {
     pub fn default_severity(self) -> DefaultSeverity {
         match self {
             // ── Default-suppressed ──────────────────────────────────
-            Self::NameNotGerund | Self::BodyNoExamples | Self::BodyTooLong |
-            Self::Bash32Incompatible | Self::AwkRegexNonascii
+            Self::NameNotGerund | Self::BodyNoExamples | Self::BodyTooLong
                 => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
@@ -1778,8 +1777,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            5,
-            "Expected 5 default-suppressed rules, got {}",
+            3,
+            "Expected 3 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1812,6 +1811,13 @@ mod tests {
             LintRule::CursorPromptHookModelInvalid,
             LintRule::SkillRefNested,
         ] {
+            assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
+        }
+    }
+
+    #[test]
+    fn issue_162_portability_rules_are_default_errors() {
+        for rule in [LintRule::Bash32Incompatible, LintRule::AwkRegexNonascii] {
             assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
         }
     }
@@ -1859,8 +1865,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            170,
-            "Expected 170 default-error rules, got {}",
+            172,
+            "Expected 172 default-error rules, got {}",
             errors.len()
         );
     }
