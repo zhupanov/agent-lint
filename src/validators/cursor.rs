@@ -2,9 +2,11 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use globset::GlobBuilder;
-use serde_json::Value as JsonValue;
+use jsonschema::error::ValidationErrorKind;
+use serde_json::{Value as JsonValue, json};
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
@@ -42,6 +44,42 @@ const HOOK_EVENTS: &[&str] = &[
     "beforeTabFileRead",
     "afterTabFileEdit",
 ];
+
+/// Local-only schema for Cursor's cloud development environment file. Keep
+/// external `$ref` values out of this schema: the dependency is built without
+/// file or HTTP resolution, so validation cannot read from or fetch a network
+/// resource.
+static CURSOR_ENVIRONMENT_VALIDATOR: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "install": { "type": "string" },
+            "start": { "type": "string" },
+            "update": { "type": "string" },
+            "build": {
+                "type": "object",
+                "properties": {
+                    "dockerfile": { "type": "string" },
+                    "context": { "type": "string" }
+                },
+                "required": ["dockerfile", "context"]
+            },
+            "terminals": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "command": { "type": "string" }
+                    },
+                    "required": ["name", "command"]
+                }
+            }
+        },
+        "required": ["install"]
+    });
+    jsonschema::validator_for(&schema).expect("embedded Cursor environment schema is valid")
+});
 
 /// Validate Cursor surfaces when they are present. Every validator is
 /// file-gated, so Claude-only repositories receive no Cursor diagnostics.
@@ -468,85 +506,50 @@ fn validate_environment(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             return;
         }
     };
-    let Some(root) = value.as_object() else {
+    for error in CURSOR_ENVIRONMENT_VALIDATOR.iter_errors(&value) {
+        let property_path = cursor_environment_property_path(&error);
         report(
             diag,
             LintRule::CursorEnvironmentInvalid,
             PATH,
-            "top level must be an object",
-        );
-        return;
-    };
-    if root.get("install").and_then(JsonValue::as_str).is_none() {
-        report(
-            diag,
-            LintRule::CursorEnvironmentInvalid,
-            PATH,
-            "'install' must be a string",
+            // The configuration may contain commands or credentials. Retain
+            // the actionable path and constraint while masking its value.
+            &format!("{property_path}: {}", error.masked()),
         );
     }
-    for field in ["start", "update"] {
-        if root.get(field).is_some_and(|value| !value.is_string()) {
-            report(
-                diag,
-                LintRule::CursorEnvironmentInvalid,
-                PATH,
-                &format!("'{field}' must be a string"),
-            );
+}
+
+/// Convert JSON Pointer locations into the property paths shown in agent-lint
+/// diagnostics. Array indices are one-based, matching the validator's prior
+/// Cursor environment output.
+fn cursor_environment_property_path(error: &jsonschema::ValidationError<'_>) -> String {
+    let mut pointer = error.instance_path().as_str().to_string();
+    if let ValidationErrorKind::Required { property } = error.kind()
+        && let Some(property) = property.as_str()
+    {
+        pointer.push('/');
+        pointer.push_str(&property.replace('~', "~0").replace('/', "~1"));
+    }
+
+    let mut path = String::new();
+    for segment in pointer.trim_start_matches('/').split('/') {
+        if segment.is_empty() {
+            continue;
+        }
+        let segment = segment.replace("~1", "/").replace("~0", "~");
+        if let Ok(index) = segment.parse::<usize>() {
+            path.push_str(&format!("[{}]", index + 1));
+        } else if path.is_empty() {
+            path.push_str(&segment);
+        } else {
+            path.push('.');
+            path.push_str(&segment);
         }
     }
-    if let Some(build) = root.get("build") {
-        let Some(build) = build.as_object() else {
-            report(
-                diag,
-                LintRule::CursorEnvironmentInvalid,
-                PATH,
-                "'build' must be an object",
-            );
-            return;
-        };
-        for field in ["dockerfile", "context"] {
-            if build.get(field).and_then(JsonValue::as_str).is_none() {
-                report(
-                    diag,
-                    LintRule::CursorEnvironmentInvalid,
-                    PATH,
-                    &format!("'build.{field}' must be a string"),
-                );
-            }
-        }
-    }
-    if let Some(terminals) = root.get("terminals") {
-        let Some(terminals) = terminals.as_array() else {
-            report(
-                diag,
-                LintRule::CursorEnvironmentInvalid,
-                PATH,
-                "'terminals' must be an array",
-            );
-            return;
-        };
-        for (index, terminal) in terminals.iter().enumerate() {
-            let Some(terminal) = terminal.as_object() else {
-                report(
-                    diag,
-                    LintRule::CursorEnvironmentInvalid,
-                    PATH,
-                    &format!("terminals[{}] must be an object", index + 1),
-                );
-                continue;
-            };
-            for field in ["name", "command"] {
-                if terminal.get(field).and_then(JsonValue::as_str).is_none() {
-                    report(
-                        diag,
-                        LintRule::CursorEnvironmentInvalid,
-                        PATH,
-                        &format!("terminals[{}].{field} must be a string", index + 1),
-                    );
-                }
-            }
-        }
+    if path.is_empty() {
+        "top level".to_string()
+    } else {
+        path
     }
 }
 
@@ -681,5 +684,131 @@ mod tests {
             assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
         }
         assert_eq!(codes.iter().filter(|code| **code == "CR-SK-001").count(), 3);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn environment_schema_reports_each_invalid_property_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/environment.json"),
+            r#"{"install":1,"build":{"dockerfile":1},"terminals":[{"name":1}]}"#,
+        )
+        .unwrap();
+
+        let _guard = CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        let messages: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::CursorEnvironmentInvalid)
+            .map(|item| item.message.as_str())
+            .collect();
+
+        assert_eq!(messages.len(), 5, "unexpected diagnostics: {messages:?}");
+        for expected_path in [
+            "install:",
+            "build.dockerfile:",
+            "build.context:",
+            "terminals[1].name:",
+            "terminals[1].command:",
+        ] {
+            assert!(
+                messages
+                    .iter()
+                    .any(|message| message.contains(expected_path)),
+                "missing {expected_path}: {messages:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn environment_schema_accepts_existing_valid_shapes() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/environment.json"),
+            r#"{"install":"npm ci","start":"npm start","update":"npm update","build":{"dockerfile":"Dockerfile","context":"."},"terminals":[{"name":"app","command":"npm start"}],"futureField":true}"#,
+        )
+        .unwrap();
+
+        assert!(
+            !codes_for(tmp.path()).contains(&"CU016"),
+            "valid Cursor environment must not produce CU016"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn environment_schema_preserves_the_previous_structural_contract() {
+        let valid = [
+            r#"{"install":""}"#,
+            r#"{"install":"setup","build":{"dockerfile":"Dockerfile","context":"."}}"#,
+            r#"{"install":"setup","terminals":[{"name":"app","command":"run"}]}"#,
+            r#"{"install":"setup","unrecognized":true}"#,
+        ];
+        let invalid = [
+            r#"null"#,
+            r#"[]"#,
+            r#"{}"#,
+            r#"{"install":false}"#,
+            r#"{"install":"setup","start":false}"#,
+            r#"{"install":"setup","update":false}"#,
+            r#"{"install":"setup","build":false}"#,
+            r#"{"install":"setup","build":{"dockerfile":false}}"#,
+            r#"{"install":"setup","terminals":false}"#,
+            r#"{"install":"setup","terminals":[false]}"#,
+            r#"{"install":"setup","terminals":[{"name":false}]}"#,
+        ];
+
+        for content in valid {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+            std::fs::write(tmp.path().join(".cursor/environment.json"), content).unwrap();
+            assert!(
+                !codes_for(tmp.path()).contains(&"CU016"),
+                "expected valid environment: {content}"
+            );
+        }
+        for content in invalid {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+            std::fs::write(tmp.path().join(".cursor/environment.json"), content).unwrap();
+            assert!(
+                codes_for(tmp.path()).contains(&"CU016"),
+                "expected invalid environment: {content}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn environment_schema_does_not_echo_invalid_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/environment.json"),
+            r#"{"install":"setup","build":"untrusted-secret"}"#,
+        )
+        .unwrap();
+
+        let _guard = CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        let messages: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::CursorEnvironmentInvalid)
+            .map(|item| item.message.as_str())
+            .collect();
+
+        assert_eq!(messages.len(), 1, "unexpected diagnostics: {messages:?}");
+        assert!(messages[0].contains("build:"));
+        assert!(!messages[0].contains("untrusted-secret"));
     }
 }
