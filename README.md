@@ -138,6 +138,7 @@ See [Configuration docs](docs/configuration.md) for the full reference.
 | [CLI Reference](docs/cli.md) | Flags, exit codes, `--autofix`, `--list-scripts`, `--closure-report` |
 | [GitHub Action](docs/github-action.md) | Action inputs, token configuration, adding CI to your repo |
 | [Configuration](docs/configuration.md) | `agent-lint.toml` format, rule identifiers, file exclusion, strictness modes |
+| [YAML parser policy](docs/yaml.md) | Parser selection, compatibility behavior, and input limits |
 | [Development](docs/development.md) | Local setup, Makefile targets, project structure, CI/CD |
 | [Architectural Guidelines](ARCHITECTURAL_GUIDELINES.md) | Preferred design, ownership, testing, and change practices |
 | [Architectural Invariants](ARCHITECTURAL_INVARIANTS.md) | Absolute contracts for the lint pipeline and public behavior |

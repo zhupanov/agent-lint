@@ -5,13 +5,13 @@ use std::path::Path;
 
 use globset::GlobBuilder;
 use serde_json::Value as JsonValue;
-use serde_yaml::{Mapping, Value as YamlValue};
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::yaml::{Mapping, Value as YamlValue};
 
 const RULE_KEYS: &[&str] = &["description", "globs", "alwaysApply"];
 const CURSOR_SKILL_KEYS: &[&str] = &[
@@ -58,12 +58,8 @@ fn report(diag: &mut DiagnosticCollector, rule: LintRule, path: &str, message: &
     diag.report(rule, &format!("{path}: {message}"));
 }
 
-fn yaml_key(name: &str) -> YamlValue {
-    YamlValue::String(name.to_string())
-}
-
 fn yaml_string<'a>(map: &'a Mapping, name: &str) -> Option<&'a str> {
-    map.get(yaml_key(name)).and_then(YamlValue::as_str)
+    map.get(name).and_then(YamlValue::as_str)
 }
 
 fn validate_legacy_rules(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -140,7 +136,7 @@ fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str)
         );
     }
     let raw = lines.join("\n");
-    let yaml = match serde_yaml::from_str::<YamlValue>(&raw) {
+    let yaml = match crate::yaml::parse(&raw) {
         Ok(YamlValue::Mapping(map)) => map,
         // Empty YAML frontmatter is a valid manual/agent-requested rule shape;
         // CU009 reports its missing description when no targeting fields exist.
@@ -164,8 +160,8 @@ fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str)
             return;
         }
     };
-    for key in yaml.keys().filter_map(YamlValue::as_str) {
-        if !RULE_KEYS.contains(&key) {
+    for key in yaml.keys() {
+        if !RULE_KEYS.contains(&key.as_str()) {
             report(
                 diag,
                 LintRule::CursorRuleFieldUnknown,
@@ -174,7 +170,7 @@ fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str)
             );
         }
     }
-    let globs = yaml.get(yaml_key("globs"));
+    let globs = yaml.get("globs");
     if let Some(globs) = globs {
         let patterns: Option<Vec<&str>> = match globs {
             YamlValue::String(pattern) => Some(vec![pattern]),
@@ -202,7 +198,7 @@ fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str)
             ),
         }
     }
-    let always_apply = yaml.get(yaml_key("alwaysApply"));
+    let always_apply = yaml.get("alwaysApply");
     if let Some(value) = always_apply
         && !value.is_bool()
     {
@@ -402,7 +398,7 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, path: &str, content: &str
         );
         return;
     };
-    let yaml = match serde_yaml::from_str::<YamlValue>(&lines.join("\n")) {
+    let yaml = match crate::yaml::parse(&lines.join("\n")) {
         Ok(YamlValue::Mapping(map)) => map,
         _ => {
             report(
@@ -424,10 +420,7 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, path: &str, content: &str
             );
         }
     }
-    if yaml
-        .get(yaml_key("model"))
-        .is_some_and(|value| !value.is_string())
-    {
+    if yaml.get("model").is_some_and(|value| !value.is_string()) {
         report(
             diag,
             LintRule::CursorAgentFrontmatterInvalid,
@@ -436,10 +429,7 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, path: &str, content: &str
         );
     }
     for field in ["readonly", "is_background"] {
-        if yaml
-            .get(yaml_key(field))
-            .is_some_and(|value| !value.is_bool())
-        {
+        if yaml.get(field).is_some_and(|value| !value.is_bool()) {
             report(
                 diag,
                 LintRule::CursorAgentFrontmatterInvalid,
@@ -580,12 +570,11 @@ fn validate_skills(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         let Some(lines) = frontmatter::extract_frontmatter(&content) else {
             continue;
         };
-        let Ok(YamlValue::Mapping(yaml)) = serde_yaml::from_str::<YamlValue>(&lines.join("\n"))
-        else {
+        let Ok(YamlValue::Mapping(yaml)) = crate::yaml::parse(&lines.join("\n")) else {
             continue;
         };
-        for key in yaml.keys().filter_map(YamlValue::as_str) {
-            if !CURSOR_SKILL_KEYS.contains(&key) {
+        for key in yaml.keys() {
+            if !CURSOR_SKILL_KEYS.contains(&key.as_str()) {
                 report(
                     diag,
                     LintRule::CursorSkillFieldUnsupported,
