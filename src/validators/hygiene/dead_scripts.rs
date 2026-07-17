@@ -131,7 +131,7 @@ pub fn validate_dead_scripts(
     // invoked only from Make targets (e.g. `bash scripts/foo.sh` or
     // `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh`) are not false-flagged as dead.
     // `#` comments are stripped first (shared with YAML-workflow scanning).
-    for stripped in collect_makefile_contents(exclude) {
+    for (_, stripped) in collect_makefile_contents(exclude) {
         for cap in RE_DEAD_SCRIPT_AB.find_iter(&stripped) {
             let s = cap.as_str();
             let rel = if s.starts_with("${CLAUDE_PLUGIN_ROOT}/") {
@@ -196,8 +196,9 @@ pub fn validate_dead_scripts(
             continue;
         }
         if !references.contains(&key) {
-            diag.report(
+            diag.report_at(
                 LintRule::DeadScript,
+                &key,
                 &format!("dead script (no structured invocation reference found): scripts/{name}"),
             );
         }

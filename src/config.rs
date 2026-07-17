@@ -2,7 +2,7 @@ use crate::rules::{ALL_RULES, LintRule};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// CLI strictness mode. Applied as a one-shot transformation to LintConfig
 /// before creating DiagnosticCollector. Not configurable via TOML.
@@ -52,6 +52,8 @@ struct RawLintSection {
     warn: Vec<String>,
     #[serde(default)]
     exclude: Vec<String>,
+    #[serde(default)]
+    overrides: Vec<RawLintOverride>,
     #[serde(
         default = "default_desc_truncated_max_chars",
         rename = "desc-truncated-max-chars"
@@ -76,6 +78,14 @@ struct RawLintSection {
     inline_path_prefixes: Vec<String>,
     #[serde(default, rename = "script-inventory")]
     script_inventory: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawLintOverride {
+    files: Vec<String>,
+    suppress: Vec<String>,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -156,6 +166,7 @@ impl Default for RawLintSection {
             error: Vec::new(),
             warn: Vec::new(),
             exclude: Vec::new(),
+            overrides: Vec::new(),
             desc_truncated_max_chars: default_desc_truncated_max_chars(),
             skill_closure_max_lines: None,
             claude_import_max_lines: None,
@@ -169,6 +180,22 @@ impl Default for RawLintSection {
     }
 }
 
+/// One config-scoped suppression block. Patterns use the same glob semantics
+/// and path normalization as [`ExcludeSet`].
+#[derive(Debug, Clone)]
+pub struct LintOverride {
+    pub files: Vec<String>,
+    pub suppress: HashSet<LintRule>,
+    pub reason: Option<String>,
+    globs: GlobSet,
+}
+
+impl LintOverride {
+    fn matching_rule(&self, rule: LintRule, subject_path: &str) -> bool {
+        self.suppress.contains(&rule) && self.globs.is_match(normalize_path(subject_path))
+    }
+}
+
 /// Resolved lint configuration. Rules in `suppress` are completely suppressed.
 /// Rules in `error` are promoted to errors (overriding default severity).
 /// Rules in `warn` are downgraded to warnings. Priority: suppress > error > warn.
@@ -179,6 +206,7 @@ pub struct LintConfig {
     pub error: HashSet<LintRule>,
     pub warn: HashSet<LintRule>,
     pub exclude: Vec<String>,
+    pub overrides: Vec<LintOverride>,
     pub desc_truncated_max_chars: usize,
     pub skill_closure_max_lines: Option<usize>,
     pub claude_import_max_lines: Option<usize>,
@@ -191,6 +219,8 @@ pub struct LintConfig {
     /// selects conventional script discovery instead.
     pub script_inventory: Option<Vec<String>>,
     pub platforms: PlatformOverrides,
+    pub(crate) repo_root: PathBuf,
+    pub(crate) overrides_enabled: bool,
 }
 
 impl Default for LintConfig {
@@ -200,6 +230,7 @@ impl Default for LintConfig {
             error: HashSet::new(),
             warn: HashSet::new(),
             exclude: Vec::new(),
+            overrides: Vec::new(),
             desc_truncated_max_chars: default_desc_truncated_max_chars(),
             skill_closure_max_lines: None,
             claude_import_max_lines: None,
@@ -210,6 +241,8 @@ impl Default for LintConfig {
             inline_path_prefixes: default_inline_path_prefixes(),
             script_inventory: None,
             platforms: PlatformOverrides::default(),
+            repo_root: PathBuf::new(),
+            overrides_enabled: true,
         }
     }
 }
@@ -236,17 +269,7 @@ impl ExcludeSet {
         if patterns.is_empty() {
             return Ok(Self::default());
         }
-        let mut builder = GlobSetBuilder::new();
-        for pattern in patterns {
-            let glob = GlobBuilder::new(pattern)
-                .literal_separator(true)
-                .build()
-                .map_err(|e| format!("invalid exclude glob pattern '{pattern}': {e}"))?;
-            builder.add(glob);
-        }
-        let globs = builder
-            .build()
-            .map_err(|e| format!("failed to compile exclude patterns: {e}"))?;
+        let globs = compile_globs(patterns, "exclude")?;
         Ok(Self { globs })
     }
 
@@ -257,6 +280,20 @@ impl ExcludeSet {
         let normalized = normalize_path(path);
         self.globs.is_match(&normalized)
     }
+}
+
+fn compile_globs(patterns: &[String], label: &str) -> Result<GlobSet, String> {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        let glob = GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .build()
+            .map_err(|e| format!("invalid {label} glob pattern '{pattern}': {e}"))?;
+        builder.add(glob);
+    }
+    builder
+        .build()
+        .map_err(|e| format!("failed to compile {label} patterns: {e}"))
 }
 
 /// Normalize a path for consistent glob matching: strip leading `./`,
@@ -331,6 +368,9 @@ impl LintConfig {
             .transpose()
             .map_err(|message| format!("{}: {message}", path.display()))?;
 
+        let overrides = load_overrides(section.overrides)
+            .map_err(|message| format!("{}: {message}", path.display()))?;
+
         // Parse error list first (user-explicit error promotions).
         let mut error = HashSet::new();
         for entry in &section.error {
@@ -379,6 +419,7 @@ impl LintConfig {
             error,
             warn,
             exclude: section.exclude,
+            overrides,
             desc_truncated_max_chars: section.desc_truncated_max_chars,
             skill_closure_max_lines: section.skill_closure_max_lines,
             claude_import_max_lines: section.claude_import_max_lines,
@@ -392,6 +433,8 @@ impl LintConfig {
                 cursor: platforms.cursor,
                 codex: platforms.codex,
             },
+            repo_root: repo_root.to_path_buf(),
+            overrides_enabled: true,
         })
     }
 
@@ -438,6 +481,7 @@ impl LintConfig {
                 for r in ALL_RULES {
                     self.error.insert(*r);
                 }
+                self.overrides_enabled = false;
             }
         }
     }
@@ -448,6 +492,111 @@ impl LintConfig {
         // Patterns were already validated in load(), so unwrap is safe.
         ExcludeSet::new(&self.exclude).expect("exclude patterns were validated at load time")
     }
+
+    /// Return every override entry that suppresses `rule` at `subject_path`.
+    /// The returned indexes support per-entry usage accounting without moving
+    /// mutable runtime state into configuration.
+    pub fn matching_override_indexes(&self, rule: LintRule, subject_path: &Path) -> Vec<usize> {
+        if !self.overrides_enabled {
+            return Vec::new();
+        }
+        let normalized = self.normalize_subject_path(subject_path);
+        self.overrides
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| entry.matching_rule(rule, &normalized).then_some(index))
+            .collect()
+    }
+
+    /// Whether a rule is suppressed for a concrete subject path. Autofix uses
+    /// this before every candidate mutation so a diagnostic elsewhere cannot
+    /// cause a suppressed file to be rewritten.
+    pub fn is_suppressed_at(&self, rule: LintRule, subject_path: &Path) -> bool {
+        self.suppress.contains(&rule)
+            || !self
+                .matching_override_indexes(rule, subject_path)
+                .is_empty()
+    }
+
+    pub fn per_file_overrides_enabled(&self) -> bool {
+        self.overrides_enabled
+    }
+
+    /// Normalize a diagnostic subject to a repository-relative slash path.
+    pub fn normalize_subject_path(&self, subject_path: &Path) -> String {
+        let relative = if subject_path.is_absolute() && !self.repo_root.as_os_str().is_empty() {
+            subject_path
+                .strip_prefix(&self.repo_root)
+                .unwrap_or(subject_path)
+        } else {
+            subject_path
+        };
+        normalize_path(&relative.to_string_lossy())
+    }
+}
+
+fn load_overrides(raw: Vec<RawLintOverride>) -> Result<Vec<LintOverride>, String> {
+    let mut overrides = Vec::with_capacity(raw.len());
+    for (index, entry) in raw.into_iter().enumerate() {
+        let number = index + 1;
+        if entry.files.is_empty() {
+            return Err(format!(
+                "lint.overrides entry {number} requires at least one file pattern"
+            ));
+        }
+        if entry.suppress.is_empty() {
+            return Err(format!(
+                "lint.overrides entry {number} requires at least one suppressed rule"
+            ));
+        }
+        if entry.files.iter().any(|pattern| pattern.is_empty()) {
+            return Err(format!(
+                "lint.overrides entry {number} contains an empty file pattern"
+            ));
+        }
+        for pattern in &entry.files {
+            let normalized = normalize_path(pattern);
+            let path = Path::new(&normalized);
+            let windows_absolute = normalized.as_bytes().get(1) == Some(&b':');
+            if path.is_absolute()
+                || windows_absolute
+                || path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+            {
+                return Err(format!(
+                    "lint.overrides entry {number} file pattern '{pattern}' must be repository-relative"
+                ));
+            }
+        }
+        if entry
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.trim().is_empty())
+        {
+            return Err(format!(
+                "lint.overrides entry {number} reason must not be empty or whitespace-only"
+            ));
+        }
+
+        let mut suppress = HashSet::new();
+        for identifier in &entry.suppress {
+            let rule = LintRule::from_code_or_name(identifier).ok_or_else(|| {
+                format!(
+                    "unknown rule in lint.overrides entry {number}: '{identifier}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing)."
+                )
+            })?;
+            suppress.insert(rule);
+        }
+        let globs = compile_globs(&entry.files, &format!("lint.overrides entry {number}"))?;
+        overrides.push(LintOverride {
+            files: entry.files,
+            suppress,
+            reason: entry.reason,
+            globs,
+        });
+    }
+    Ok(overrides)
 }
 
 fn load_script_inventory(root: &Path, inventory: &str) -> Result<Vec<String>, String> {
@@ -779,6 +928,185 @@ mod tests {
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.suppress.contains(&LintRule::PluginJsonMissing));
         assert!(config.warn.contains(&LintRule::SecurityMdMissing));
+    }
+
+    fn load_override_config(contents: &str) -> Result<LintConfig, String> {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("agent-lint.toml"), contents).unwrap();
+        LintConfig::load(tmp.path())
+    }
+
+    #[test]
+    fn parses_one_and_multiple_overrides_by_code_and_name() {
+        let config = load_override_config(
+            r#"
+[lint]
+
+[[lint.overrides]]
+files = ["legacy/AGENTS.md"]
+suppress = ["I004", "instruction-file-generic"]
+reason = "kept for an external consumer"
+
+[[lint.overrides]]
+files = ["vendor/**/SKILL.md", "third_party/**/*.md"]
+suppress = ["S033", "name-vague"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.overrides.len(), 2);
+        assert_eq!(
+            config.overrides[0].reason.as_deref(),
+            Some("kept for an external consumer")
+        );
+        assert!(
+            config.overrides[0]
+                .suppress
+                .contains(&LintRule::InstructionFileGenericGuidance)
+        );
+        assert_eq!(config.overrides[1].suppress.len(), 1);
+        assert!(config.overrides[1].suppress.contains(&LintRule::NameVague));
+    }
+
+    #[test]
+    fn override_matches_exact_single_level_recursive_and_normalized_paths() {
+        let config = load_override_config(
+            r#"
+[lint]
+
+[[lint.overrides]]
+files = ["legacy/AGENTS.md", "skills/*/SKILL.md", "vendor/**/*.md"]
+suppress = ["I004"]
+"#,
+        )
+        .unwrap();
+        let rule = LintRule::InstructionFileGenericGuidance;
+
+        assert!(config.is_suppressed_at(rule, Path::new("legacy/AGENTS.md")));
+        assert!(config.is_suppressed_at(rule, Path::new("./skills/one/SKILL.md")));
+        assert!(config.is_suppressed_at(rule, Path::new(r"skills\one\SKILL.md")));
+        assert!(config.is_suppressed_at(rule, Path::new("vendor/a/b/file.md")));
+        assert!(!config.is_suppressed_at(rule, Path::new("skills/a/nested/SKILL.md")));
+        assert!(!config.is_suppressed_at(rule, Path::new("other/AGENTS.md")));
+    }
+
+    #[test]
+    fn override_normalizes_absolute_subject_beneath_repository_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\n[[lint.overrides]]\nfiles = [\"docs/*.md\"]\nsuppress = [\"I004\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path()).unwrap();
+        assert!(config.is_suppressed_at(
+            LintRule::InstructionFileGenericGuidance,
+            &tmp.path().join("docs/AGENTS.md")
+        ));
+    }
+
+    #[test]
+    fn overlapping_override_blocks_combine() {
+        let config = load_override_config(
+            r#"
+[lint]
+[[lint.overrides]]
+files = ["docs/*.md"]
+suppress = ["I004"]
+[[lint.overrides]]
+files = ["docs/AGENTS.md"]
+suppress = ["D002"]
+"#,
+        )
+        .unwrap();
+        let path = Path::new("docs/AGENTS.md");
+        assert!(config.is_suppressed_at(LintRule::InstructionFileGenericGuidance, path));
+        assert!(config.is_suppressed_at(LintRule::ClaudemdTooLarge, path));
+        assert!(!config.is_suppressed_at(LintRule::PluginJsonMissing, path));
+    }
+
+    #[test]
+    fn pedantic_retains_overrides_and_all_ignores_them() {
+        let source = r#"
+[lint]
+[[lint.overrides]]
+files = ["skills/*/SKILL.md"]
+suppress = ["S033"]
+"#;
+        let mut pedantic = load_override_config(source).unwrap();
+        pedantic.apply_cli_mode(CliMode::Pedantic);
+        assert!(
+            pedantic.is_suppressed_at(LintRule::NameVague, Path::new("skills/example/SKILL.md"))
+        );
+
+        let mut all = load_override_config(source).unwrap();
+        all.apply_cli_mode(CliMode::All);
+        assert!(!all.is_suppressed_at(LintRule::NameVague, Path::new("skills/example/SKILL.md")));
+    }
+
+    #[test]
+    fn invalid_override_rules_and_globs_are_rejected() {
+        let unknown = load_override_config(
+            "[lint]\n[[lint.overrides]]\nfiles = [\"a.md\"]\nsuppress = [\"X999\"]\n",
+        )
+        .unwrap_err();
+        assert!(unknown.contains("unknown rule in lint.overrides entry 1"));
+
+        let invalid_glob = load_override_config(
+            "[lint]\n[[lint.overrides]]\nfiles = [\"[\"]\nsuppress = [\"I004\"]\n",
+        )
+        .unwrap_err();
+        assert!(invalid_glob.contains("invalid lint.overrides entry 1 glob pattern"));
+    }
+
+    #[test]
+    fn override_required_nonempty_fields_are_enforced() {
+        for (source, expected) in [
+            (
+                "[lint]\n[[lint.overrides]]\nsuppress = [\"I004\"]\n",
+                "missing field `files`",
+            ),
+            (
+                "[lint]\n[[lint.overrides]]\nfiles = [\"a.md\"]\n",
+                "missing field `suppress`",
+            ),
+            (
+                "[lint]\n[[lint.overrides]]\nfiles = []\nsuppress = [\"I004\"]\n",
+                "requires at least one file pattern",
+            ),
+            (
+                "[lint]\n[[lint.overrides]]\nfiles = [\"a.md\"]\nsuppress = []\n",
+                "requires at least one suppressed rule",
+            ),
+        ] {
+            let error = load_override_config(source).unwrap_err();
+            assert!(error.contains(expected), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
+    fn override_rejects_empty_reason_unknown_fields_and_unsafe_patterns() {
+        for (source, expected) in [
+            (
+                "[lint]\n[[lint.overrides]]\nfiles = [\"a.md\"]\nsuppress = [\"D005\"]\nreason = \"  \"\n",
+                "reason must not be empty",
+            ),
+            (
+                "[lint]\n[[lint.overrides]]\nfiles = [\"a.md\"]\nsuppress = [\"D005\"]\nseverity = \"warn\"\n",
+                "unknown field",
+            ),
+            (
+                "[lint]\n[[lint.overrides]]\nfiles = [\"../a.md\"]\nsuppress = [\"D005\"]\n",
+                "must be repository-relative",
+            ),
+            (
+                "[lint]\n[[lint.overrides]]\nfiles = [\"/a.md\"]\nsuppress = [\"D005\"]\n",
+                "must be repository-relative",
+            ),
+        ] {
+            let error = load_override_config(source).unwrap_err();
+            assert!(error.contains(expected), "unexpected error: {error}");
+        }
     }
 
     #[test]

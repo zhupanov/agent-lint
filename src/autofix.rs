@@ -1,4 +1,4 @@
-use crate::config::ExcludeSet;
+use crate::config::{ExcludeSet, LintConfig};
 use crate::context::LintMode;
 use crate::fence::CodeFenceTracker;
 use crate::frontmatter;
@@ -23,22 +23,31 @@ static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9
 
 /// Attempt to fix all instances of a given auto-fixable rule.
 /// Returns `true` if at least one file was modified.
-pub fn apply_fix(rule: LintRule, mode: LintMode, exclude: &ExcludeSet) -> bool {
+pub fn apply_fix(
+    rule: LintRule,
+    mode: LintMode,
+    exclude: &ExcludeSet,
+    config: &LintConfig,
+) -> bool {
     match rule {
-        LintRule::HookNotExecutable => fix_executability_hooks(mode),
-        LintRule::ScriptNotExecutable => fix_executability_scripts(mode, exclude),
-        LintRule::FrontmatterNameMismatch => fix_frontmatter_name_mismatch(exclude),
-        LintRule::FrontmatterFieldEmpty => fix_frontmatter_field_empty(mode, exclude),
-        LintRule::NameHasXml => fix_name_has_xml(mode, exclude),
-        LintRule::DescHasXml => fix_desc_has_xml(mode, exclude),
-        LintRule::ConsecutiveBash => fix_consecutive_bash(mode, exclude),
-        LintRule::BackslashPath => fix_backslash_path(mode, exclude),
-        LintRule::NonHttpsUrl => fix_non_https_url(mode, exclude),
-        LintRule::FrontmatterBackslash => fix_frontmatter_backslash(mode, exclude),
-        LintRule::ToolsListSyntax => fix_tools_list_syntax(mode, exclude),
-        LintRule::PwdInSkill => fix_pwd_in_skill(exclude),
+        LintRule::HookNotExecutable => fix_executability_hooks(mode, config),
+        LintRule::ScriptNotExecutable => fix_executability_scripts(mode, exclude, config),
+        LintRule::FrontmatterNameMismatch => fix_frontmatter_name_mismatch(exclude, config),
+        LintRule::FrontmatterFieldEmpty => fix_frontmatter_field_empty(mode, exclude, config),
+        LintRule::NameHasXml => fix_name_has_xml(mode, exclude, config),
+        LintRule::DescHasXml => fix_desc_has_xml(mode, exclude, config),
+        LintRule::ConsecutiveBash => fix_consecutive_bash(mode, exclude, config),
+        LintRule::BackslashPath => fix_backslash_path(mode, exclude, config),
+        LintRule::NonHttpsUrl => fix_non_https_url(mode, exclude, config),
+        LintRule::FrontmatterBackslash => fix_frontmatter_backslash(mode, exclude, config),
+        LintRule::ToolsListSyntax => fix_tools_list_syntax(mode, exclude, config),
+        LintRule::PwdInSkill => fix_pwd_in_skill(exclude, config),
         _ => false,
     }
+}
+
+fn is_suppressed(config: &LintConfig, rule: LintRule, path: impl AsRef<Path>) -> bool {
+    config.is_suppressed_at(rule, path.as_ref())
 }
 
 fn log_fix(rule: LintRule, msg: &str) {
@@ -53,7 +62,7 @@ fn log_fix(rule: LintRule, msg: &str) {
 // ── H005: chmod +x on hook scripts ──────────────────────────────────────
 
 #[cfg(unix)]
-fn fix_executability_hooks(mode: LintMode) -> bool {
+fn fix_executability_hooks(mode: LintMode, config: &LintConfig) -> bool {
     use crate::context::collect_json_strings;
 
     if mode != LintMode::Plugin {
@@ -84,6 +93,9 @@ fn fix_executability_hooks(mode: LintMode) -> bool {
             for cap in re_plugin.find_iter(raw) {
                 let reference = cap.as_str();
                 let rel = reference.replacen("${CLAUDE_PLUGIN_ROOT}/", "", 1);
+                if is_suppressed(config, LintRule::HookNotExecutable, &rel) {
+                    continue;
+                }
                 if make_executable(&rel) {
                     log_fix(
                         LintRule::HookNotExecutable,
@@ -95,6 +107,9 @@ fn fix_executability_hooks(mode: LintMode) -> bool {
             for cap in re_pwd.find_iter(raw) {
                 let reference = cap.as_str();
                 let rel = reference.replacen("$PWD/", "", 1);
+                if is_suppressed(config, LintRule::HookNotExecutable, &rel) {
+                    continue;
+                }
                 if make_executable(&rel) {
                     log_fix(
                         LintRule::HookNotExecutable,
@@ -109,14 +124,14 @@ fn fix_executability_hooks(mode: LintMode) -> bool {
 }
 
 #[cfg(not(unix))]
-fn fix_executability_hooks(_mode: LintMode) -> bool {
+fn fix_executability_hooks(_mode: LintMode, _config: &LintConfig) -> bool {
     false
 }
 
 // ── G003: chmod +x on script files ──────────────────────────────────────
 
 #[cfg(unix)]
-fn fix_executability_scripts(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_executability_scripts(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     use crate::validators::hygiene::scripts::{BASIC_SCRIPT_DIRS, PLUGIN_SCRIPT_DIRS};
 
     let dirs = match mode {
@@ -134,7 +149,9 @@ fn fix_executability_scripts(mode: LintMode, exclude: &ExcludeSet) -> bool {
                     _ => continue,
                 };
                 let display = path.display().to_string();
-                if exclude.is_excluded(&display) {
+                if exclude.is_excluded(&display)
+                    || is_suppressed(config, LintRule::ScriptNotExecutable, &path)
+                {
                     continue;
                 }
                 if make_executable(path.to_str().unwrap_or("")) {
@@ -152,7 +169,7 @@ fn fix_executability_scripts(mode: LintMode, exclude: &ExcludeSet) -> bool {
 }
 
 #[cfg(not(unix))]
-fn fix_executability_scripts(_mode: LintMode, _exclude: &ExcludeSet) -> bool {
+fn fix_executability_scripts(_mode: LintMode, _exclude: &ExcludeSet, _config: &LintConfig) -> bool {
     false
 }
 
@@ -207,7 +224,7 @@ fn glob_dirs(pattern: &str) -> Vec<std::path::PathBuf> {
 
 // ── S006: frontmatter name mismatch ─────────────────────────────────────
 
-fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet) -> bool {
+fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
     for base_dir in &["skills", ".claude/skills"] {
         let dir = Path::new(base_dir);
@@ -224,7 +241,9 @@ fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet) -> bool {
                 continue;
             }
             let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
-            if exclude.is_excluded(&skill_path) {
+            if exclude.is_excluded(&skill_path)
+                || is_suppressed(config, LintRule::FrontmatterNameMismatch, &skill_path)
+            {
                 continue;
             }
             let skill_md = path.join("SKILL.md");
@@ -285,7 +304,7 @@ fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet) -> bool {
 
 // ── S007: empty frontmatter field ───────────────────────────────────────
 
-fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
@@ -295,6 +314,9 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet) -> bool {
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
             let skill_md = format!("{base_dir}/{}/SKILL.md", info.dir_name);
+            if is_suppressed(config, LintRule::FrontmatterFieldEmpty, &skill_md) {
+                continue;
+            }
             let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
             let content = match fs::read_to_string(&skill_path) {
                 Ok(c) => c,
@@ -358,41 +380,52 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet) -> bool {
 
 // ── S013: XML tags in name ──────────────────────────────────────────────
 
-fn fix_name_has_xml(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_name_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     fix_frontmatter_field_regex(
         mode,
         exclude,
-        "name",
-        &RE_XML_TAG,
-        "",
-        LintRule::NameHasXml,
-        "stripped XML tags from name",
+        config,
+        FrontmatterRegexFix {
+            field_name: "name",
+            pattern: &RE_XML_TAG,
+            replacement: "",
+            rule: LintRule::NameHasXml,
+            fix_desc: "stripped XML tags from name",
+        },
     )
 }
 
 // ── S018: XML tags in description ───────────────────────────────────────
 
-fn fix_desc_has_xml(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_desc_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     fix_frontmatter_field_regex(
         mode,
         exclude,
-        "description",
-        &RE_XML_TAG,
-        "",
-        LintRule::DescHasXml,
-        "stripped XML tags from description",
+        config,
+        FrontmatterRegexFix {
+            field_name: "description",
+            pattern: &RE_XML_TAG,
+            replacement: "",
+            rule: LintRule::DescHasXml,
+            fix_desc: "stripped XML tags from description",
+        },
     )
+}
+
+struct FrontmatterRegexFix<'a> {
+    field_name: &'a str,
+    pattern: &'a Regex,
+    replacement: &'a str,
+    rule: LintRule,
+    fix_desc: &'a str,
 }
 
 /// Generic fix: apply a regex replacement on a frontmatter field value.
 fn fix_frontmatter_field_regex(
     mode: LintMode,
     exclude: &ExcludeSet,
-    field_name: &str,
-    pattern: &Regex,
-    replacement: &str,
-    rule: LintRule,
-    fix_desc: &str,
+    config: &LintConfig,
+    fix: FrontmatterRegexFix<'_>,
 ) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
@@ -402,14 +435,18 @@ fn fix_frontmatter_field_regex(
     for base_dir in base_dirs {
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
-            let value = match frontmatter::get_field(&info.fm_lines, field_name) {
+            let display = format!("{base_dir}/{}/SKILL.md", info.dir_name);
+            if is_suppressed(config, fix.rule, &display) {
+                continue;
+            }
+            let value = match frontmatter::get_field(&info.fm_lines, fix.field_name) {
                 Some(v) => v,
                 None => continue,
             };
-            if !pattern.is_match(&value) {
+            if !fix.pattern.is_match(&value) {
                 continue;
             }
-            let new_value = pattern.replace_all(&value, replacement).to_string();
+            let new_value = fix.pattern.replace_all(&value, fix.replacement).to_string();
             let new_value = new_value.trim().to_string();
             if new_value == value || new_value.is_empty() {
                 continue;
@@ -422,19 +459,19 @@ fn fix_frontmatter_field_regex(
             };
 
             // Use raw line from fm_lines (handles quoted values)
-            let prefix = format!("{field_name}:");
+            let prefix = format!("{}:", fix.field_name);
             let raw_line = info
                 .fm_lines
                 .iter()
                 .find(|l| l.starts_with(&prefix))
                 .cloned()
                 .unwrap_or_default();
-            let new_line = format!("{field_name}: {new_value}");
+            let new_line = format!("{}: {new_value}", fix.field_name);
             if let Some(new_content) = replace_in_frontmatter(&content, &raw_line, &new_line) {
                 if fs::write(&skill_path, new_content).is_ok() {
                     log_fix(
-                        rule,
-                        &format!("{base_dir}/{}/SKILL.md: {fix_desc}", info.dir_name),
+                        fix.rule,
+                        &format!("{base_dir}/{}/SKILL.md: {}", info.dir_name, fix.fix_desc),
                     );
                     fixed = true;
                 }
@@ -446,7 +483,7 @@ fn fix_frontmatter_field_regex(
 
 // ── S021: consecutive bash code blocks ──────────────────────────────────
 
-fn fix_consecutive_bash(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_consecutive_bash(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
@@ -456,6 +493,9 @@ fn fix_consecutive_bash(mode: LintMode, exclude: &ExcludeSet) -> bool {
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
             let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
+            if is_suppressed(config, LintRule::ConsecutiveBash, &skill_path) {
+                continue;
+            }
             let content = match fs::read_to_string(&skill_path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -540,7 +580,7 @@ fn merge_first_consecutive_bash(content: &str) -> Option<String> {
 
 // ── S022: backslash paths in body ───────────────────────────────────────
 
-fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
@@ -549,6 +589,10 @@ fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet) -> bool {
     for base_dir in base_dirs {
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
+            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
+            if is_suppressed(config, LintRule::BackslashPath, &skill_path) {
+                continue;
+            }
             // Check outside code fences (matching validator)
             let has_backslash = crate::fence::lines_outside_fences(&info.body)
                 .any(|line| RE_BACKSLASH_PATH.is_match(line));
@@ -556,7 +600,6 @@ fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet) -> bool {
                 continue;
             }
 
-            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
             let content = match fs::read_to_string(&skill_path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -602,7 +645,7 @@ fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet) -> bool {
 
 // ── S031: non-HTTPS URLs ────────────────────────────────────────────────
 
-fn fix_non_https_url(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_non_https_url(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
@@ -611,6 +654,10 @@ fn fix_non_https_url(mode: LintMode, exclude: &ExcludeSet) -> bool {
     for base_dir in base_dirs {
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
+            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
+            if is_suppressed(config, LintRule::NonHttpsUrl, &skill_path) {
+                continue;
+            }
             if info.body.trim().is_empty() {
                 continue;
             }
@@ -628,7 +675,6 @@ fn fix_non_https_url(mode: LintMode, exclude: &ExcludeSet) -> bool {
                 continue;
             }
 
-            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
             let content = match fs::read_to_string(&skill_path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -678,7 +724,7 @@ fn replace_http_urls(content: &str) -> String {
 
 // ── S043: backslash paths in frontmatter ────────────────────────────────
 
-fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
@@ -687,12 +733,15 @@ fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet) -> bool {
     for base_dir in base_dirs {
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
+            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
+            if is_suppressed(config, LintRule::FrontmatterBackslash, &skill_path) {
+                continue;
+            }
             let has_backslash = info.fm_lines.iter().any(|l| RE_BACKSLASH_PATH.is_match(l));
             if !has_backslash {
                 continue;
             }
 
-            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
             let content = match fs::read_to_string(&skill_path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -742,7 +791,7 @@ fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet) -> bool {
 
 // ── S045: YAML list syntax for allowed-tools ────────────────────────────
 
-fn fix_tools_list_syntax(mode: LintMode, exclude: &ExcludeSet) -> bool {
+fn fix_tools_list_syntax(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
@@ -751,6 +800,10 @@ fn fix_tools_list_syntax(mode: LintMode, exclude: &ExcludeSet) -> bool {
     for base_dir in base_dirs {
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
+            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
+            if is_suppressed(config, LintRule::ToolsListSyntax, &skill_path) {
+                continue;
+            }
             if !frontmatter::field_exists(&info.fm_lines, "allowed-tools") {
                 continue;
             }
@@ -782,7 +835,6 @@ fn fix_tools_list_syntax(mode: LintMode, exclude: &ExcludeSet) -> bool {
                 continue;
             }
 
-            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
             let content = match fs::read_to_string(&skill_path) {
                 Ok(c) => c,
                 Err(_) => continue,
@@ -865,7 +917,7 @@ fn rewrite_yaml_list_to_scalar(content: &str, key: &str, scalar_value: &str) -> 
 
 // ── G001: $PWD in skill content ─────────────────────────────────────────
 
-fn fix_pwd_in_skill(exclude: &ExcludeSet) -> bool {
+fn fix_pwd_in_skill(exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
         return false;
@@ -881,7 +933,9 @@ fn fix_pwd_in_skill(exclude: &ExcludeSet) -> bool {
             continue;
         }
         let skill_path = format!("skills/{name}/SKILL.md");
-        if exclude.is_excluded(&skill_path) {
+        if exclude.is_excluded(&skill_path)
+            || is_suppressed(config, LintRule::PwdInSkill, &skill_path)
+        {
             continue;
         }
         let skill_md = path.join("SKILL.md");
@@ -1008,7 +1062,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(fix_executability_hooks(LintMode::Plugin));
+        assert!(fix_executability_hooks(
+            LintMode::Plugin,
+            &LintConfig::default()
+        ));
         assert_ne!(
             std::fs::metadata("scripts/local-hook.sh")
                 .unwrap()

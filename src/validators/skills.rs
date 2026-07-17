@@ -110,8 +110,9 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
         }
         let skill_md = path.join("SKILL.md");
         if !skill_md.is_file() {
-            diag.report(
+            diag.report_at(
                 LintRule::SkillMdMissing,
+                &skill_path,
                 &format!("skills/{name}/ missing SKILL.md"),
             );
             continue;
@@ -120,8 +121,9 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
     }
 
     if skill_count == 0 && excluded_count == 0 {
-        diag.report(
+        diag.report_at(
             LintRule::NoExportedSkills,
+            skills_dir,
             "no plugin-exported skills found under skills/",
         );
     }
@@ -182,8 +184,9 @@ fn validate_skill_frontmatter_in_dir(
         let fm_lines = match document.frontmatter() {
             Some(lines) => lines,
             None => {
-                diag.report(
+                diag.report_at(
                     LintRule::FrontmatterMalformed,
+                    &skill_path,
                     &format!(
                         "{skill_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
                     ),
@@ -198,16 +201,19 @@ fn validate_skill_frontmatter_in_dir(
         match frontmatter::parse_yaml_strict(fm_lines) {
             Ok(yaml) => {
                 if !platform_neutral && let Some(hooks) = yaml.get("hooks") {
-                    super::hook_schema::validate_frontmatter_hooks(
-                        hooks,
-                        &format!("{skill_path} frontmatter"),
-                        diag,
-                    );
+                    diag.with_subject_path(&skill_path, |diag| {
+                        super::hook_schema::validate_frontmatter_hooks(
+                            hooks,
+                            &format!("{skill_path} frontmatter"),
+                            diag,
+                        );
+                    });
                 }
             }
             Err((line, msg)) => {
-                diag.report(
+                diag.report_at(
                     LintRule::FrontmatterYamlInvalid,
+                    &skill_path,
                     &format!("{skill_path}:{line}: frontmatter is not valid YAML: {msg}"),
                 );
             }
@@ -228,14 +234,16 @@ fn validate_skill_frontmatter_in_dir(
         let desc = frontmatter::get_field(fm_lines, "description");
 
         if name.is_none() {
-            diag.report(
+            diag.report_at(
                 LintRule::FrontmatterFieldMissing,
+                &skill_path,
                 &format!("{skill_path}: missing required frontmatter field 'name'"),
             );
         }
         if desc.is_none() {
-            diag.report(
+            diag.report_at(
                 LintRule::FrontmatterFieldMissing,
+                &skill_path,
                 &format!("{skill_path}: missing required frontmatter field 'description'"),
             );
         }
@@ -243,8 +251,9 @@ fn validate_skill_frontmatter_in_dir(
         if check_name_match {
             if let Some(ref n) = name {
                 if n != &dir_name {
-                    diag.report(
+                    diag.report_at(
                         LintRule::FrontmatterNameMismatch,
+                        &skill_path,
                         &format!(
                             "{skill_path}: frontmatter name '{n}' does not match directory '{dir_name}'"
                         ),
@@ -284,8 +293,9 @@ fn validate_skill_frontmatter_in_dir(
                             continue; // S045 in frontmatter_extended.rs handles this
                         }
                     }
-                    diag.report(
+                    diag.report_at(
                         LintRule::FrontmatterFieldEmpty,
+                        &skill_path,
                         &format!("{skill_path}: optional field '{field}' is present but empty"),
                     );
                 }
@@ -302,8 +312,9 @@ fn check_skill_dir_size(dir: &Path, skill_path: &str, diag: &mut DiagnosticColle
         }
     }
     if total > SKILL_DIR_SIZE_LIMIT {
-        diag.report(
+        diag.report_at(
             LintRule::SkillDirOversized,
+            skill_path,
             &format!(
                 "{skill_path}: skill directory exceeds 8MB platform upload limit ({total} bytes)"
             ),
@@ -331,8 +342,9 @@ fn check_skill_ref_depth(
             .count();
         // One nesting level = dir/file.md (2 components). Deeper is flagged.
         if depth > 2 {
-            diag.report(
+            diag.report_at(
                 LintRule::SkillRefNested,
+                skill_path,
                 &format!(
                     "{skill_path}: skill file reference '{target}' is nested deeper than one level"
                 ),
@@ -379,8 +391,9 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &E
             let reference = cap.as_str();
             let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
             if !Path::new(&rel).is_file() {
-                diag.report(
+                diag.report_at(
                     LintRule::SharedMdMissing,
+                    &skill_path,
                     &format!(
                         "shared markdown reference missing on disk: {reference} (in {skill_path}, expected {rel})"
                     ),

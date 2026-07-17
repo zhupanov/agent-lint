@@ -13,15 +13,17 @@ pub fn validate_email_format(ctx: &LintContext, diag: &mut DiagnosticCollector) 
         if let Some(v) = email_val {
             match v.as_str() {
                 Some(s) if !s.is_empty() && !RE_EMAIL.is_match(s) => {
-                    diag.report(
+                    diag.report_at(
                         LintRule::InvalidEmailFormat,
+                        ".claude-plugin/marketplace.json",
                         &format!(".claude-plugin/marketplace.json owner.email is not a valid email format: {s}"),
                     );
                 }
                 Some(_) => {} // empty string or valid: skip
                 None => {
-                    diag.report(
+                    diag.report_at(
                         LintRule::InvalidEmailFormat,
+                        ".claude-plugin/marketplace.json",
                         ".claude-plugin/marketplace.json owner.email is not a string",
                     );
                 }
@@ -34,8 +36,9 @@ pub fn validate_email_format(ctx: &LintContext, diag: &mut DiagnosticCollector) 
         if let Some(v) = email_val {
             match v.as_str() {
                 Some(s) if !s.is_empty() && !RE_EMAIL.is_match(s) => {
-                    diag.report(
+                    diag.report_at(
                         LintRule::InvalidEmailFormat,
+                        ".claude-plugin/plugin.json",
                         &format!(
                             ".claude-plugin/plugin.json author.email is not a valid email format: {s}"
                         ),
@@ -43,8 +46,9 @@ pub fn validate_email_format(ctx: &LintContext, diag: &mut DiagnosticCollector) 
                 }
                 Some(_) => {} // empty string or valid: skip
                 None => {
-                    diag.report(
+                    diag.report_at(
                         LintRule::InvalidEmailFormat,
+                        ".claude-plugin/plugin.json",
                         ".claude-plugin/plugin.json author.email is not a string",
                     );
                 }

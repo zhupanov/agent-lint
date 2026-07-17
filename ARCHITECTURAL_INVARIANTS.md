@@ -28,13 +28,26 @@ rendering, and diagnostic accounting are centralized in
 Mechanical backing: the module boundary and tests in `diagnostic.rs`; direct
 output or process termination under `validators/` is a violation.
 
+### I-Diag-2: File-scoped policy uses a structured subject path
+
+Every file-attributable diagnostic carries an explicit repository-relative
+subject path supplied through `DiagnosticCollector::report_at` or an explicit
+subject scope. Severity resolution and override matching use that value before
+rendering; they never infer a filename from message text. Fixed-path checks use
+their logical target even when it is missing. Genuinely repository-wide or
+multi-source findings remain pathless and cannot match file overrides.
+
+Mechanical backing: the `Diagnostic::subject_path` type, collector/config
+matching tests, validator dispatch tests, and per-file CLI regressions.
+
 ### I-Severity-1: Severity precedence is deterministic
 
-For normal linting, an explicit suppression wins over an explicit error,
-which wins over an explicit warning, which wins over the compiled default.
-Pedantic mode preserves explicit suppressions and promotes eligible warnings.
-All mode enables every registered rule as an error while leaving file
-selection policy unchanged.
+For normal linting, global suppression wins over matching per-file
+suppression, which wins over an explicit error, which wins over an explicit
+warning, which wins over the compiled default. Pedantic mode preserves both
+forms of suppression and promotes eligible warnings. All mode ignores both
+forms of suppression and enables every registered rule as an error while
+leaving file selection policy unchanged.
 
 Mechanical backing: `LintConfig::apply_cli_mode`,
 `DiagnosticCollector::report`, and their unit tests.
@@ -111,7 +124,9 @@ The autofix loop may dispatch a mutation only for a diagnostic whose
 `LintRule::is_autofixable` value is true. It stops when no fixable diagnostic
 remains, no handler makes progress, or the iteration bound is reached. After
 mutation attempts, the normal lint pipeline always runs again and its result
-determines the process outcome.
+determines the process outcome. Before each candidate write, the fixer applies
+the same rule/subject suppression policy as the collector; a violation in one
+file never authorizes mutation of a file where that rule is suppressed.
 
 Mechanical backing: `run_autofix`, `autofix::apply_fix`, and autofix tests.
 

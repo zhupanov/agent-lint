@@ -48,8 +48,9 @@ fn check_hook_path(
 ) {
     let path = Path::new(rel);
     if !path.is_file() {
-        diag.report(
+        diag.report_at(
             missing_rule,
+            path,
             &format!("{label}: hook command missing on disk: {reference}"),
         );
         return;
@@ -60,8 +61,9 @@ fn check_hook_path(
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = path.metadata() {
             if meta.permissions().mode() & 0o111 == 0 {
-                diag.report(
+                diag.report_at(
                     not_exec_rule,
+                    path,
                     &format!("{label}: hook command not executable: {reference}"),
                 );
             }
@@ -74,19 +76,20 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = "hooks/hooks.json";
     let val = match &ctx.hooks_json {
         ManifestState::Missing => {
-            diag.report(LintRule::HooksJsonMissing, &format!("{f} is missing"));
+            diag.report_at(LintRule::HooksJsonMissing, f, &format!("{f} is missing"));
             return;
         }
         ManifestState::Invalid(e) => {
-            diag.report(LintRule::HooksJsonInvalid, e);
+            diag.report_at(LintRule::HooksJsonInvalid, f, e);
             return;
         }
         ManifestState::Parsed(v) => v,
     };
 
     match val.get("hooks") {
-        None => diag.report(
+        None => diag.report_at(
             LintRule::HooksKeyMissing,
+            f,
             &format!("{f} missing top-level 'hooks' key"),
         ),
         // Plugin hooks use an event-keyed object. Retain the legacy flat-array
@@ -95,8 +98,9 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
             if hooks.as_object().is_some_and(|events| events.is_empty())
                 || hooks.as_array().is_some_and(|entries| entries.is_empty()) =>
         {
-            diag.report(
+            diag.report_at(
                 LintRule::HooksArrayEmpty,
+                f,
                 &format!("{f} has empty 'hooks' collection"),
             );
         }
@@ -117,7 +121,7 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
     let val = match &ctx.settings_json {
         ManifestState::Missing => return, // Optional file
         ManifestState::Invalid(e) => {
-            diag.report(LintRule::SettingsJsonInvalid, e);
+            diag.report_at(LintRule::SettingsJsonInvalid, ".claude/settings.json", e);
             return;
         }
         ManifestState::Parsed(v) => v,
@@ -136,7 +140,9 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
 pub fn validate_hooks_json_schema(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     // H001/H002 already report a missing or unparseable hooks.json.
     if let ManifestState::Parsed(val) = &ctx.hooks_json {
-        hook_schema::validate_hook_schema(val, "hooks/hooks.json", diag);
+        diag.with_subject_path("hooks/hooks.json", |diag| {
+            hook_schema::validate_hook_schema(val, "hooks/hooks.json", diag);
+        });
     }
 }
 
@@ -144,7 +150,9 @@ pub fn validate_hooks_json_schema(ctx: &LintContext, diag: &mut DiagnosticCollec
 pub fn validate_settings_schema(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     // H006 already reports an unparseable settings.json.
     if let ManifestState::Parsed(val) = &ctx.settings_json {
-        hook_schema::validate_hook_schema(val, ".claude/settings.json", diag);
+        diag.with_subject_path(".claude/settings.json", |diag| {
+            hook_schema::validate_hook_schema(val, ".claude/settings.json", diag);
+        });
     }
 }
 
@@ -153,7 +161,11 @@ pub fn validate_settings_schema(ctx: &LintContext, diag: &mut DiagnosticCollecto
 pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     match &ctx.settings_local_json {
         ManifestState::Missing => {} // Optional file
-        ManifestState::Invalid(e) => diag.report(LintRule::SettingsLocalInvalid, e),
+        ManifestState::Invalid(e) => diag.report_at(
+            LintRule::SettingsLocalInvalid,
+            ".claude/settings.local.json",
+            e,
+        ),
         ManifestState::Parsed(val) => {
             validate_hook_command_paths(
                 val,
@@ -162,7 +174,9 @@ pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector
                 LintRule::HookNotExecutable,
                 diag,
             );
-            hook_schema::validate_hook_schema(val, ".claude/settings.local.json", diag);
+            diag.with_subject_path(".claude/settings.local.json", |diag| {
+                hook_schema::validate_hook_schema(val, ".claude/settings.local.json", diag);
+            });
         }
     }
 }

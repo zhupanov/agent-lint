@@ -77,15 +77,17 @@ fn run_content_checks(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
 ) {
-    name::check_name_format(info, plugin_mode, diag);
-    description::check_description_quality(info, plugin_mode, diag);
-    body::check_body_content(info, plugin_mode, diag, exclude);
-    super::prompt_content::validate_document_body(&info.path, &info.document, diag);
-    frontmatter_fields::check_frontmatter_fields(info, diag);
-    frontmatter_extended::check_frontmatter_extended(info, diag);
-    cross_field::check_cross_field(info, plugin_mode, diag);
-    security::check_content_security(info, diag);
-    mcp::check_mcp_tool_refs(info, diag);
+    diag.with_subject_path(&info.path, |diag| {
+        name::check_name_format(info, plugin_mode, diag);
+        description::check_description_quality(info, plugin_mode, diag);
+        body::check_body_content(info, plugin_mode, diag, exclude);
+        super::prompt_content::validate_document_body(&info.path, &info.document, diag);
+        frontmatter_fields::check_frontmatter_fields(info, diag);
+        frontmatter_extended::check_frontmatter_extended(info, diag);
+        cross_field::check_cross_field(info, plugin_mode, diag);
+        security::check_content_security(info, diag);
+        mcp::check_mcp_tool_refs(info, diag);
+    });
 }
 
 #[cfg(test)]

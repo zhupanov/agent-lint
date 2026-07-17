@@ -31,10 +31,12 @@ pub fn validate_agents_files(
             continue;
         };
 
-        validate_shared_rules(diag, path, &display, &content);
-        if let Some(max_bytes) = codex_max_bytes {
-            validate_codex_rules(diag, exclude, &display, &content, max_bytes);
-        }
+        diag.with_subject_path(&display, |diag| {
+            validate_shared_rules(diag, path, &display, &content);
+            if let Some(max_bytes) = codex_max_bytes {
+                validate_codex_rules(diag, exclude, &display, &content, max_bytes);
+            }
+        });
     }
 }
 

@@ -93,7 +93,7 @@ fn strip_trailing_yaml_comment(line: &str) -> String {
 /// their `#`-comment-stripped contents. Used by G004 (dead scripts) and V9
 /// (script references) so Make-target invocations like `bash scripts/foo.sh`
 /// and `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh` are recognised as references.
-pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<String> {
+pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<(String, String)> {
     let mut candidates: Vec<PathBuf> = vec![PathBuf::from("Makefile")];
     for entry in crate::traversal::shallow_files(Path::new("."), Path::new("."), None).entries {
         let path = entry.path;
@@ -110,7 +110,7 @@ pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<String> {
             continue;
         }
         if let Ok(content) = fs::read_to_string(&path) {
-            out.push(strip_yaml_comments(&content));
+            out.push((display, strip_yaml_comments(&content)));
         }
     }
     out
@@ -141,8 +141,9 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
                     if !Path::new(&rel).is_file() {
-                        diag.report(
+                        diag.report_at(
                             LintRule::ScriptRefMissing,
+                            &display_path,
                             &format!(
                                 "script reference missing on disk: {reference} (expected {rel})"
                             ),
@@ -156,8 +157,9 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("$PWD/", "");
                     if !Path::new(&rel).is_file() {
-                        diag.report(
+                        diag.report_at(
                             LintRule::ScriptRefMissing,
+                            &display_path,
                             &format!(
                                 "script reference missing on disk: {reference} (expected {rel})"
                             ),
@@ -171,8 +173,9 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
                 if seen.insert(reference.clone()) {
                     let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
                     if !Path::new(&rel).is_file() {
-                        diag.report(
+                        diag.report_at(
                             LintRule::ScriptRefMissing,
+                            &display_path,
                             &format!(
                                 "script reference missing on disk: {reference} (expected {rel})"
                             ),
@@ -186,14 +189,15 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
     // Also scan the Makefile and any *.mk so Make-target invocations are
     // validated for existence (V9). Comments are stripped first so
     // commented-out references are not mistaken for live invocations.
-    for content in collect_makefile_contents(exclude) {
+    for (source_path, content) in collect_makefile_contents(exclude) {
         for cap in RE_SCRIPT_PUB.find_iter(&content) {
             let reference = cap.as_str().to_string();
             if seen.insert(reference.clone()) {
                 let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
                 if !Path::new(&rel).is_file() {
-                    diag.report(
+                    diag.report_at(
                         LintRule::ScriptRefMissing,
+                        &source_path,
                         &format!("script reference missing on disk: {reference} (expected {rel})"),
                     );
                 }
@@ -203,8 +207,9 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
             if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
                 let reference = m.as_str().to_string();
                 if seen.insert(reference.clone()) && !Path::new(&reference).is_file() {
-                    diag.report(
+                    diag.report_at(
                         LintRule::ScriptRefMissing,
+                        &source_path,
                         &format!("script reference missing on disk: {reference}"),
                     );
                 }
@@ -237,8 +242,9 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclud
             if seen.insert(reference.clone()) {
                 let rel = reference.replace("$PWD/", "");
                 if !Path::new(&rel).is_file() {
-                    diag.report(
+                    diag.report_at(
                         LintRule::ScriptRefMissing,
+                        &display_path,
                         &format!("script reference missing on disk: {reference} (expected {rel})"),
                     );
                 }
@@ -250,8 +256,9 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclud
             if seen.insert(reference.clone()) {
                 let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
                 if !Path::new(&rel).is_file() {
-                    diag.report(
+                    diag.report_at(
                         LintRule::ScriptRefMissing,
+                        &display_path,
                         &format!("script reference missing on disk: {reference} (expected {rel})"),
                     );
                 }
@@ -394,8 +401,9 @@ fn check_sh_executability(dir: &Path, diag: &mut DiagnosticCollector, exclude: &
 
         if let Ok(meta) = path.metadata() {
             if meta.permissions().mode() & 0o111 == 0 {
-                diag.report(
+                diag.report_at(
                     LintRule::ScriptNotExecutable,
+                    &path,
                     &format!("script not executable: {}", path.display()),
                 );
                 let _ = name;
