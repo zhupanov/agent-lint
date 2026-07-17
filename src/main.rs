@@ -11,102 +11,63 @@ mod rules;
 mod test_helpers;
 mod validators;
 
+use clap::{ArgGroup, Parser};
 use config::{CliMode, LintConfig};
 use context::{LintContext, LintMode};
 use diagnostic::DiagnosticCollector;
 use platforms::{DetectedSurfaces, ValidationTargets};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "agent-lint",
+    version,
+    about = "Configuration linter for Claude Code"
+)]
+#[command(group(
+    ArgGroup::new("operation")
+        .args(["list_scripts", "closure_report", "autofix"])
+        .multiple(false)
+))]
+struct Cli {
+    /// List discovered script paths and exit
+    #[arg(long)]
+    list_scripts: bool,
+
+    /// Print configured prompt-source budget measurements as JSON
+    #[arg(long)]
+    closure_report: bool,
+
+    /// Promote warnings to errors (except too-long rules)
+    #[arg(long, conflicts_with = "all")]
+    pedantic: bool,
+
+    /// Force every rule to error, ignoring config overrides
+    #[arg(long, conflicts_with = "pedantic")]
+    all: bool,
+
+    /// Fix auto-fixable violations in-place and report remaining issues
+    #[arg(long)]
+    autofix: bool,
+
+    /// Repository directory to lint
+    #[arg(value_name = "PATH", default_value = ".")]
+    target: PathBuf,
+}
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
 
-    // Partition args[1..] into flags and positional args.
-    let mut list_scripts = false;
-    let mut closure_report = false;
-    let mut pedantic = false;
-    let mut all = false;
-    let mut autofix = false;
-    let mut positional = Vec::new();
-    for arg in &args[1..] {
-        match arg.as_str() {
-            "--help" | "-h" => {
-                println!("Usage: agent-lint [OPTIONS] [PATH]");
-                println!();
-                println!("Options:");
-                println!("  --help, -h         Print this help message");
-                println!("  --version          Print version information");
-                println!("  --list-scripts     List discovered script paths and exit");
-                println!(
-                    "  --closure-report   Print configured prompt-source budget measurements as JSON"
-                );
-                println!("  --pedantic         Promote warnings to errors (except too-long rules)");
-                println!(
-                    "  --all              Force every rule to error, ignoring config overrides"
-                );
-                println!(
-                    "  --autofix          Fix auto-fixable violations in-place and report remaining issues"
-                );
-                std::process::exit(0);
-            }
-            "--version" => {
-                println!("agent-lint {}", env!("CARGO_PKG_VERSION"));
-                std::process::exit(0);
-            }
-            "--list-scripts" => {
-                list_scripts = true;
-            }
-            "--closure-report" => {
-                closure_report = true;
-            }
-            "--pedantic" => {
-                pedantic = true;
-            }
-            "--all" => {
-                all = true;
-            }
-            "--autofix" => {
-                autofix = true;
-            }
-            flag if flag.starts_with('-') => {
-                eprintln!("Unknown flag: {arg}");
-                eprintln!(
-                    "Usage: agent-lint [--help] [--version] [--list-scripts] [--closure-report] [--pedantic] [--all] [--autofix] [PATH]"
-                );
-                std::process::exit(2);
-            }
-            _ => {
-                positional.push(arg.as_str());
-            }
-        }
-    }
-
-    if pedantic && all {
-        eprintln!("Cannot use both --pedantic and --all");
-        std::process::exit(2);
-    }
-    if usize::from(list_scripts) + usize::from(closure_report) + usize::from(autofix) > 1 {
-        eprintln!("Cannot combine --list-scripts, --closure-report, and --autofix");
-        std::process::exit(2);
-    }
-
-    let cli_mode = if all {
+    let cli_mode = if cli.all {
         CliMode::All
-    } else if pedantic {
+    } else if cli.pedantic {
         CliMode::Pedantic
     } else {
         CliMode::Normal
     };
 
-    if positional.len() > 1 {
-        eprintln!(
-            "Usage: agent-lint [--help] [--version] [--list-scripts] [--closure-report] [--pedantic] [--all] [--autofix] [PATH]"
-        );
-        std::process::exit(2);
-    }
-
-    let target = positional.first().copied().unwrap_or(".");
-
     // Resolve repo root from the target path.
-    let repo_root = match resolve_repo_root(target) {
+    let repo_root = match resolve_repo_root(&cli.target) {
         Ok(root) => root,
         Err(msg) => {
             eprintln!("ERROR: {msg}");
@@ -115,7 +76,7 @@ fn main() {
     };
 
     if std::env::set_current_dir(&repo_root).is_err() {
-        eprintln!("ERROR: cannot cd to repo root: {repo_root}");
+        eprintln!("ERROR: cannot cd to repo root: {}", repo_root.display());
         std::process::exit(2);
     }
 
@@ -124,10 +85,10 @@ fn main() {
     // Repositories with neither a surface nor a config retain the silent
     // no-work behavior before configuration is parsed.
     if detect_mode().is_none() && !std::path::Path::new("agent-lint.toml").is_file() {
-        if list_scripts {
+        if cli.list_scripts {
             std::process::exit(0);
         }
-        if closure_report {
+        if cli.closure_report {
             println!("[]");
             std::process::exit(0);
         }
@@ -145,7 +106,7 @@ fn main() {
 
     lint_config.apply_cli_mode(cli_mode);
 
-    if closure_report {
+    if cli.closure_report {
         run_closure_report(&lint_config);
     }
 
@@ -156,7 +117,7 @@ fn main() {
     {
         Some(mode) => mode,
         None => {
-            if list_scripts {
+            if cli.list_scripts {
                 std::process::exit(0);
             }
             println!("Nothing to lint (no Claude, Cursor, Codex, or MCP configuration found).");
@@ -165,7 +126,7 @@ fn main() {
     };
 
     // --list-scripts: print discovered script paths and exit.
-    if list_scripts {
+    if cli.list_scripts {
         if let Some(scripts) = &lint_config.script_inventory {
             for path in scripts
                 .iter()
@@ -182,7 +143,7 @@ fn main() {
         std::process::exit(0);
     }
 
-    if autofix {
+    if cli.autofix {
         run_autofix(&repo_root, mode, lint_config, &exclude, targets);
     } else {
         run_lint(&repo_root, mode, lint_config, &exclude, targets);
@@ -218,13 +179,13 @@ fn run_closure_report(lint_config: &LintConfig) -> ! {
 }
 
 fn run_lint(
-    repo_root: &str,
+    repo_root: &Path,
     mode: LintMode,
     lint_config: LintConfig,
     exclude: &config::ExcludeSet,
     targets: ValidationTargets,
 ) {
-    let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
+    let ctx = LintContext::new(repo_root, mode);
     let mut diag = DiagnosticCollector::with_config(lint_config);
 
     validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
@@ -261,7 +222,7 @@ fn run_lint(
 const MAX_FIX_ITERATIONS: usize = 50;
 
 fn run_autofix(
-    repo_root: &str,
+    repo_root: &Path,
     mode: LintMode,
     lint_config: LintConfig,
     exclude: &config::ExcludeSet,
@@ -269,7 +230,7 @@ fn run_autofix(
 ) {
     // Autofix loop: silently re-validate, fix one rule at a time
     for _ in 0..MAX_FIX_ITERATIONS {
-        let ctx = LintContext::new(std::path::Path::new(repo_root), mode);
+        let ctx = LintContext::new(repo_root, mode);
         let mut diag = DiagnosticCollector::with_config_silent(lint_config.clone());
         validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
 
@@ -335,15 +296,17 @@ fn has_mcp_config() -> bool {
         })
 }
 
-fn resolve_repo_root(target: &str) -> Result<String, String> {
+fn resolve_repo_root(target: &Path) -> Result<PathBuf, String> {
     let output = std::process::Command::new("git")
-        .args(["-C", target, "rev-parse", "--show-toplevel"])
+        .arg("-C")
+        .arg(target)
+        .args(["rev-parse", "--show-toplevel"])
         .output();
 
     if let Ok(output) = output {
         if output.status.success() {
-            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !root.is_empty() {
+            let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+            if !root.as_os_str().is_empty() {
                 return Ok(root);
             }
         }
@@ -352,8 +315,7 @@ fn resolve_repo_root(target: &str) -> Result<String, String> {
     // Git unavailable or not a git repo — fall back to the target directory.
     eprintln!("warning: not a git repository, using target directory as root");
     std::fs::canonicalize(target)
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| format!("cannot resolve path '{target}': {e}"))
+        .map_err(|e| format!("cannot resolve path '{}': {e}", target.display()))
 }
 
 #[cfg(test)]
@@ -502,29 +464,29 @@ mod tests {
     #[test]
     fn resolve_repo_root_valid_git_repo() {
         // Use CARGO_MANIFEST_DIR (absolute) to avoid CWD races with serial tests.
-        let result = resolve_repo_root(env!("CARGO_MANIFEST_DIR"));
+        let result = resolve_repo_root(Path::new(env!("CARGO_MANIFEST_DIR")));
         assert!(result.is_ok());
         let root = result.unwrap();
-        assert!(!root.is_empty());
-        assert!(std::path::Path::new(&root).join(".git").exists());
+        assert!(!root.as_os_str().is_empty());
+        assert!(root.join(".git").exists());
     }
 
     #[test]
     fn resolve_repo_root_non_git_dir_falls_back_to_target() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = resolve_repo_root(tmp.path().to_str().unwrap());
+        let result = resolve_repo_root(tmp.path());
         assert!(result.is_ok());
         let root = result.unwrap();
         // The returned path should be the canonicalized temp dir.
         let expected = tmp.path().canonicalize().unwrap();
-        assert_eq!(root, expected.to_string_lossy());
+        assert_eq!(root, expected);
     }
 
     #[test]
     fn resolve_repo_root_nonexistent_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let nonexistent = tmp.path().join("does-not-exist");
-        let result = resolve_repo_root(nonexistent.to_str().unwrap());
+        let result = resolve_repo_root(&nonexistent);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("cannot resolve path"));
     }

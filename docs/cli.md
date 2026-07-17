@@ -17,7 +17,7 @@ themselves.
 | Flag | Description |
 |------|-------------|
 | `--help`, `-h` | Print help message |
-| `--version` | Print version information |
+| `--version`, `-V` | Print version information |
 | `--list-scripts` | List discovered script paths and exit |
 | `--closure-report` | Print configured prompt-source budget measurements as deterministic JSON and exit |
 | `--autofix` | Fix auto-fixable violations in-place and report remaining issues |
