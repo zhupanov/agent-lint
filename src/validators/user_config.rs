@@ -1,10 +1,10 @@
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
-use walkdir::WalkDir;
 
 /// A valid userConfig key: an identifier starting with a letter or underscore.
 /// `-` and `.` are accepted because `to_upper_snake_case` maps both to `_` when
@@ -76,16 +76,13 @@ pub fn validate_userconfig_env_mapping(ctx: &LintContext, diag: &mut DiagnosticC
     // and every userConfig key will correctly trigger U003.
     let mut scripts_content = String::new();
     if scripts_dir.is_dir() {
-        for entry in WalkDir::new(scripts_dir).into_iter().flatten() {
-            if entry.path().is_file() {
-                if let Some(name) = entry.path().file_name().and_then(|n| n.to_str()) {
-                    if name.ends_with(".sh") {
-                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                            scripts_content.push_str(&content);
-                            scripts_content.push('\n');
-                        }
-                    }
-                }
+        for entry in traversal::recursive_files(scripts_dir, Path::new("."), None).entries {
+            if let Some(name) = entry.path.file_name().and_then(|n| n.to_str())
+                && name.ends_with(".sh")
+                && let Ok(content) = std::fs::read_to_string(&entry.path)
+            {
+                scripts_content.push_str(&content);
+                scripts_content.push('\n');
             }
         }
     }

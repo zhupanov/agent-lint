@@ -2,6 +2,7 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::traversal;
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::collections::HashSet;
@@ -372,16 +373,8 @@ fn check_script_error_handling(
         _ => return,
     };
 
-    let entries = match fs::read_dir(&scripts_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for entry in traversal::shallow_files(&scripts_dir, Path::new("."), None).entries {
+        let path = entry.path;
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if ext != "py" && ext != "sh" {

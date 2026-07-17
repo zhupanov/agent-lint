@@ -5,11 +5,8 @@
 //! observations intact.
 
 use crate::config::{ExcludeSet, PlatformOverrides};
+use crate::traversal;
 use std::path::Path;
-use walkdir::{DirEntry, WalkDir};
-
-const IGNORED_DIRECTORY_NAMES: &[&str] =
-    &[".git", "node_modules", "vendor", "target", "dist", "build"];
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DetectedSurfaces {
@@ -95,27 +92,10 @@ fn is_included_file(path: &str, exclude: &ExcludeSet) -> bool {
 }
 
 fn has_matching_file(base: &str, exclude: &ExcludeSet, matches: impl Fn(&Path) -> bool) -> bool {
-    WalkDir::new(base)
-        .into_iter()
-        .filter_entry(should_descend)
-        .flatten()
-        .any(|entry| {
-            entry.file_type().is_file()
-                && matches(entry.path())
-                && !exclude.is_excluded(&display_path(entry.path()))
-        })
-}
-
-/// Skip repository metadata, dependency trees, and conventional build output.
-pub fn should_descend(entry: &DirEntry) -> bool {
-    !IGNORED_DIRECTORY_NAMES.contains(&entry.file_name().to_string_lossy().as_ref())
-}
-
-fn display_path(path: &Path) -> String {
-    path.strip_prefix(".")
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+    traversal::recursive_files(Path::new(base), Path::new("."), Some(exclude))
+        .entries
+        .iter()
+        .any(|entry| matches(&entry.path))
 }
 
 #[cfg(test)]

@@ -3,9 +3,9 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use crate::validators::skill_content::security::has_hardcoded_secret;
 use std::path::Path;
-use walkdir::WalkDir;
 
 const CODEX_DEFAULT_MAX_BYTES: usize = 32_768;
 const CODEX_HARD_MAX_BYTES: usize = 100_000;
@@ -17,19 +17,16 @@ pub fn validate_agents_files(
     codex_active: bool,
 ) {
     let codex_max_bytes = codex_active.then(|| project_doc_max_bytes(exclude));
-    for entry in WalkDir::new(".")
-        .into_iter()
-        .filter_entry(crate::platforms::should_descend)
-        .flatten()
-    {
-        if !entry.file_type().is_file() || entry.file_name() != "AGENTS.md" {
+    for entry in traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude)).entries {
+        if entry
+            .path
+            .file_name()
+            .is_none_or(|name| name != "AGENTS.md")
+        {
             continue;
         }
-        let path = entry.path();
-        let display = relative_display(path);
-        if exclude.is_excluded(&display) {
-            continue;
-        }
+        let path = &entry.path;
+        let display = entry.display;
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
         };
@@ -98,13 +95,6 @@ fn validate_codex_rules(
             &format!("{display} explicitly contradicts a value in .codex/config.toml"),
         );
     }
-}
-
-fn relative_display(path: &Path) -> String {
-    path.strip_prefix(".")
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 fn project_doc_max_bytes(exclude: &ExcludeSet) -> usize {

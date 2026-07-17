@@ -6,12 +6,12 @@ use std::path::Path;
 use globset::GlobBuilder;
 use serde_json::Value as JsonValue;
 use serde_yaml::{Mapping, Value as YamlValue};
-use walkdir::WalkDir;
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::traversal;
 
 const RULE_KEYS: &[&str] = &["description", "globs", "alwaysApply"];
 const CURSOR_SKILL_KEYS: &[&str] = &[
@@ -92,15 +92,12 @@ fn validate_project_rules(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) 
     if !root.is_dir() {
         return;
     }
-    for entry in WalkDir::new(root).into_iter().flatten() {
-        if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "mdc") {
+    for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
+        if entry.path.extension().is_none_or(|ext| ext != "mdc") {
             continue;
         }
-        let path = entry.path().to_string_lossy().replace('\\', "/");
-        if exclude.is_excluded(&path) {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(entry.path()) {
+        let path = entry.display;
+        if let Ok(content) = fs::read_to_string(&entry.path) {
             validate_rule_file(diag, &path, &content);
         }
     }
@@ -384,15 +381,12 @@ fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     if !root.is_dir() {
         return;
     }
-    for entry in WalkDir::new(root).into_iter().flatten() {
-        if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "md") {
+    for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
+        if entry.path.extension().is_none_or(|ext| ext != "md") {
             continue;
         }
-        let path = entry.path().to_string_lossy().replace('\\', "/");
-        if exclude.is_excluded(&path) {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(entry.path()) {
+        let path = entry.display;
+        if let Ok(content) = fs::read_to_string(&entry.path) {
             validate_agent_file(diag, &path, &content);
         }
     }
@@ -571,11 +565,8 @@ fn validate_skills(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     if !root.is_dir() {
         return;
     }
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path().join("SKILL.md");
+    for entry in traversal::shallow_directories(root, Path::new("."), None).entries {
+        let path = entry.path.join("SKILL.md");
         if !path.is_file() {
             continue;
         }

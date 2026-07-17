@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
@@ -17,16 +18,8 @@ pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector, exclude: &ExcludeSet
         return;
     }
 
-    let entries = match fs::read_dir(skills_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(skills_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,

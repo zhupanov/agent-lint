@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use crate::validators::common::RE_TODO_MARKER;
 use std::fs;
 use std::path::Path;
@@ -13,16 +14,8 @@ pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector, exclude: &Exclude
         return;
     }
 
-    let entries = match fs::read_dir(skills_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(skills_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let dir_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -72,16 +65,8 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
         return;
     }
 
-    let entries = match fs::read_dir(agents_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) if n.ends_with(".md") => n.to_string(),
             _ => continue,

@@ -4,9 +4,9 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::traversal;
 use serde_json::Value;
 use std::path::{Component, Path};
-use walkdir::WalkDir;
 
 // Verified against openai/codex commit 18110b810f0a328147f6cd85e6f1ab6414927366
 // (`codex-rs/core-plugins/src/manifest.rs`) on 2026-07-16.
@@ -18,13 +18,6 @@ pub fn validate(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     validate_override_tracking(diag, exclude);
     validate_plugin_manifests(diag, exclude);
     validate_codex_skill_frontmatter(diag, exclude);
-}
-
-fn relative_display(path: &Path) -> String {
-    path.strip_prefix(".")
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 fn validate_override_tracking(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -44,20 +37,12 @@ fn is_git_tracked(path: &str) -> bool {
 
 fn validate_plugin_manifests(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let canonical = ".codex-plugin/plugin.json";
-    for entry in WalkDir::new(".")
-        .into_iter()
-        .filter_entry(crate::platforms::should_descend)
-        .flatten()
-    {
-        let path = entry.path();
-        let display = relative_display(path);
-        if !entry.file_type().is_file()
-            || entry.file_name() != "plugin.json"
+    for entry in traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude)).entries {
+        let path = &entry.path;
+        let display = entry.display;
+        if path.file_name().is_none_or(|name| name != "plugin.json")
             || !display.ends_with(".codex-plugin/plugin.json")
         {
-            continue;
-        }
-        if exclude.is_excluded(&display) {
             continue;
         }
         if display != canonical {
@@ -274,15 +259,12 @@ fn validate_codex_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &Ex
     if !root.is_dir() {
         return;
     }
-    for entry in WalkDir::new(root).into_iter().flatten() {
-        if !entry.file_type().is_file() || entry.file_name() != "SKILL.md" {
+    for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
+        if entry.path.file_name().is_none_or(|name| name != "SKILL.md") {
             continue;
         }
-        let path = entry.path();
-        let display = relative_display(path);
-        if exclude.is_excluded(&display) {
-            continue;
-        }
+        let path = &entry.path;
+        let display = entry.display;
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
         };

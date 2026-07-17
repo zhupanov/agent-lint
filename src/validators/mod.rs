@@ -20,7 +20,6 @@ pub(crate) mod skill_content;
 pub(crate) mod skills;
 mod slack;
 mod user_config;
-mod walk;
 
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, LintMode};
