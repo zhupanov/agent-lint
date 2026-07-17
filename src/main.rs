@@ -4,6 +4,7 @@ mod context;
 mod diagnostic;
 mod fence;
 mod frontmatter;
+mod markdown;
 mod platforms;
 mod prompt_budget;
 mod rules;

@@ -4,7 +4,8 @@
 //! - X003/X004/X005: XML tag balance (fence-aware, skips inline code)
 
 use crate::diagnostic::DiagnosticCollector;
-use crate::fence::{self, CodeFenceTracker, LineClass};
+use crate::fence::LineClass;
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -29,45 +30,33 @@ static RE_INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`+[^`]*`+
 /// frontmatter), matching the plan's body-scoped XML rules and avoiding FPs on
 /// angle brackets inside YAML values.
 pub fn check_markdown_structure(path: &str, content: &str, diag: &mut DiagnosticCollector) {
-    check_unclosed_fence(path, content, diag);
-    check_xml_balance(path, content, diag);
+    let document = MarkdownDocument::parse(content);
+    check_markdown_document(path, &document, diag);
 }
 
-fn check_unclosed_fence(path: &str, content: &str, diag: &mut DiagnosticCollector) {
-    if let Some(line) = fence::find_unclosed_fence_line(content) {
+/// Run structure checks against an already parsed document.
+pub(crate) fn check_markdown_document(
+    path: &str,
+    document: &MarkdownDocument,
+    diag: &mut DiagnosticCollector,
+) {
+    if let Some(line) = document.unclosed_fence_line() {
         diag.report(
             LintRule::UnclosedCodeFence,
             &format!("{path}:{line}: unclosed code fence"),
         );
     }
+    check_xml_balance(path, document, diag);
 }
 
 /// 1-based line number of the first body line. Files without frontmatter start
 /// at line 1. When an opening `---` has no closer, scan the whole file.
-fn xml_body_start_line(content: &str) -> usize {
-    let mut lines = content.lines();
-    let Some(first) = lines.next() else {
-        return 1;
-    };
-    if first != "---" {
-        return 1;
-    }
-    let mut line_no = 2;
-    for line in lines {
-        if line == "---" {
-            return line_no + 1;
-        }
-        line_no += 1;
-    }
-    1
-}
-
-fn check_xml_balance(path: &str, content: &str, diag: &mut DiagnosticCollector) {
-    let body_start = xml_body_start_line(content);
-    let mut tracker = CodeFenceTracker::new();
+fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut DiagnosticCollector) {
+    let body_start = document.body_start_line();
+    let mut tracker = crate::fence::CodeFenceTracker::new();
     let mut stack: Vec<(String, usize)> = Vec::new();
 
-    for (idx, raw_line) in content.lines().enumerate() {
+    for (idx, raw_line) in document.content().lines().enumerate() {
         let line_no = idx + 1;
         if line_no < body_start {
             continue;

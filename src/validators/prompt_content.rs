@@ -5,6 +5,7 @@
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use std::collections::HashSet;
 use std::fs;
@@ -31,10 +32,20 @@ const MIN_SHARED_README_LINES: usize = 3;
 /// frontmatter already removed, so frontmatter values are never interpreted as
 /// instructions.
 pub(crate) fn validate_body(path: &str, body: &str, diag: &mut DiagnosticCollector) {
-    let lines: Vec<_> = crate::fence::lines_outside_fences(body).collect();
+    let document = MarkdownDocument::parse_body(body);
+    validate_document_body(path, &document, diag);
+}
+
+/// Validate a pre-parsed Markdown document without reparsing its body.
+pub(crate) fn validate_document_body(
+    path: &str,
+    document: &MarkdownDocument,
+    diag: &mut DiagnosticCollector,
+) {
+    let lines: Vec<_> = document.body_prose_lines().collect();
     check_generic_filler(path, &lines, diag);
     check_negative_only(path, &lines, diag);
-    check_weak_critical_language(path, &lines, diag);
+    check_weak_critical_language(path, document, diag);
 }
 
 /// Run the shared body checks for the root `CLAUDE.md`, then compare its prose
@@ -98,16 +109,25 @@ fn check_negative_only(path: &str, lines: &[&str], diag: &mut DiagnosticCollecto
     }
 }
 
-fn check_weak_critical_language(path: &str, lines: &[&str], diag: &mut DiagnosticCollector) {
+fn check_weak_critical_language(
+    path: &str,
+    document: &MarkdownDocument,
+    diag: &mut DiagnosticCollector,
+) {
     let mut section_level: Option<usize> = None;
 
-    for line in lines {
-        if let Some((level, heading)) = markdown_heading(line) {
+    for (line_number, line) in document.body_prose_lines_with_numbers() {
+        if let Some(heading) = document
+            .headings()
+            .iter()
+            .find(|heading| heading.line == line_number)
+        {
+            let level = heading.level as usize;
             if section_level.is_some_and(|active| level <= active) {
                 section_level = None;
             }
-            if contains_word(&heading.to_ascii_lowercase(), "critical")
-                || contains_word(&heading.to_ascii_lowercase(), "important")
+            if contains_word(&heading.text.to_ascii_lowercase(), "critical")
+                || contains_word(&heading.text.to_ascii_lowercase(), "important")
             {
                 section_level = Some(level);
             }
@@ -167,19 +187,6 @@ fn normalize_line(line: &str) -> Option<String> {
         .join(" ")
         .to_ascii_lowercase();
     (!normalized.is_empty()).then_some(normalized)
-}
-
-fn markdown_heading(line: &str) -> Option<(usize, &str)> {
-    let trimmed = line.trim_start();
-    let level = trimmed.chars().take_while(|ch| *ch == '#').count();
-    (1..=6)
-        .contains(&level)
-        .then(|| {
-            trimmed[level..]
-                .strip_prefix(' ')
-                .map(|heading| (level, heading))
-        })
-        .flatten()
 }
 
 fn contains_phrase(text: &str, phrases: &[&str]) -> bool {
