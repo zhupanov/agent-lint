@@ -271,10 +271,11 @@ impl LintConfig {
     ///
     /// - Missing file → default (empty) config.
     /// - Malformed TOML or unknown rule code/name → `Err(msg)`.
-    pub fn load(repo_root: &str) -> Result<Self, String> {
-        let path = Path::new(repo_root).join("agent-lint.toml");
+    pub fn load(repo_root: impl AsRef<Path>) -> Result<Self, String> {
+        let repo_root = repo_root.as_ref();
+        let path = repo_root.join("agent-lint.toml");
         if !path.is_file() {
-            let legacy = Path::new(repo_root).join("claude-lint.toml");
+            let legacy = repo_root.join("claude-lint.toml");
             if legacy.is_file() {
                 eprintln!(
                     "warning: found 'claude-lint.toml' which is no longer read; rename it to 'agent-lint.toml'"
