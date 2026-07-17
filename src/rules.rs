@@ -3,6 +3,9 @@
 //! Every lint diagnostic has a unique code (e.g., "M001") and human-readable
 //! name (e.g., "plugin-json-missing"). Rules are grouped by category prefix.
 
+use strum::{EnumProperty as StrumEnumProperty, VariantArray as StrumVariantArray};
+use strum_macros::{EnumIter, EnumProperty, VariantArray};
+
 /// Compiled-in default severity for a rule. Used as fallback when the user's
 /// config does not mention the rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,1230 +18,912 @@ pub enum DefaultSeverity {
     Suppressed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, EnumProperty, VariantArray)]
 pub enum LintRule {
     // ── Manifest (M) ──────────────────────────────────────────────
     /// M001: .claude-plugin/plugin.json is missing
+    #[strum(props(code = "M001", name = "plugin-json-missing"))]
     PluginJsonMissing,
     /// M002: .claude-plugin/plugin.json is not valid JSON
+    #[strum(props(code = "M002", name = "plugin-json-invalid"))]
     PluginJsonInvalid,
     /// M003: plugin.json missing required field (name or version)
+    #[strum(props(code = "M003", name = "plugin-field-missing"))]
     PluginFieldMissing,
     /// M004: plugin.json version is not strict semver
+    #[strum(props(code = "M004", name = "plugin-version-format"))]
     PluginVersionFormat,
     /// M005: .claude-plugin/marketplace.json is missing
+    #[strum(props(code = "M005", name = "marketplace-json-missing"))]
     MarketplaceJsonMissing,
     /// M006: .claude-plugin/marketplace.json is not valid JSON
+    #[strum(props(code = "M006", name = "marketplace-json-invalid"))]
     MarketplaceJsonInvalid,
     /// M007: marketplace.json missing required field (name or owner.name)
+    #[strum(props(code = "M007", name = "marketplace-field-missing"))]
     MarketplaceFieldMissing,
     /// M008: marketplace.json plugins array is empty
+    #[strum(props(code = "M008", name = "marketplace-plugins-empty"))]
     MarketplacePluginsEmpty,
     /// M009: marketplace.json plugin entry has invalid name or source
+    #[strum(props(code = "M009", name = "marketplace-plugin-invalid"))]
     MarketplacePluginInvalid,
     /// M010: marketplace.json enriched metadata missing (owner.email or plugin category)
+    #[strum(props(code = "M010", name = "marketplace-enriched-missing"))]
     MarketplaceEnrichedMissing,
     /// M011: plugin.json enriched metadata missing (description, author.email, or keywords)
+    #[strum(props(code = "M011", name = "plugin-enriched-missing"))]
     PluginEnrichedMissing,
     /// M012: plugin component lives inside or is declared inside .claude-plugin/
+    #[strum(props(code = "M012", name = "component-path-nested"))]
     ComponentPathNested,
     /// M013: plugin.json component path is absolute or uses '..' traversal
+    #[strum(props(code = "M013", name = "component-path-unsafe"))]
     ComponentPathUnsafe,
     /// M014: plugin.json author object present but author.name missing/invalid
+    #[strum(props(code = "M014", name = "author-name-missing"))]
     AuthorNameMissing,
     /// M015: plugin.json homepage is not a valid http(s) URL
+    #[strum(props(code = "M015", name = "homepage-url-invalid"))]
     HomepageUrlInvalid,
     /// M016: plugin.json lspServers entry missing command or extensionToLanguage
+    #[strum(props(code = "M016", name = "lsp-server-invalid"))]
     LspServerInvalid,
     /// M017: plugin.json channels entry does not reference a server
+    #[strum(props(code = "M017", name = "channel-server-missing"))]
     ChannelServerMissing,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
     /// H001: hooks/hooks.json is missing
+    #[strum(props(code = "H001", name = "hooks-json-missing"))]
     HooksJsonMissing,
     /// H002: hooks/hooks.json is not valid JSON
+    #[strum(props(code = "H002", name = "hooks-json-invalid"))]
     HooksJsonInvalid,
     /// H003: hooks.json missing top-level 'hooks' key
+    #[strum(props(code = "H003", name = "hooks-key-missing"))]
     HooksKeyMissing,
     /// H004: hook command script missing on disk
+    #[strum(props(code = "H004", name = "hook-command-missing"))]
     HookCommandMissing,
     /// H005: hook command script not executable
+    #[strum(props(code = "H005", name = "hook-not-executable"))]
     HookNotExecutable,
     /// H006: .claude/settings.json is not valid JSON
+    #[strum(props(code = "H006", name = "settings-json-invalid"))]
     SettingsJsonInvalid,
     /// H007: hooks.json hooks collection is empty
+    #[strum(props(code = "H007", name = "hooks-array-empty"))]
     HooksArrayEmpty,
     /// H008: hook event name is not a recognized Claude Code event
+    #[strum(props(code = "H008", name = "hook-event-invalid"))]
     HookEventInvalid,
     /// H009: matcher present on an event that takes no matcher
+    #[strum(props(code = "H009", name = "hook-matcher-invalid"))]
     HookMatcherInvalid,
     /// H010: hook object missing required 'type' field
+    #[strum(props(code = "H010", name = "hook-type-missing"))]
     HookTypeMissing,
     /// H011: hook 'type' is not a recognized handler type
+    #[strum(props(code = "H011", name = "hook-type-unknown"))]
     HookTypeUnknown,
     /// H012: type: command hook missing 'command'
+    #[strum(props(code = "H012", name = "hook-command-required"))]
     HookCommandRequired,
     /// H013: type: prompt or type: agent hook missing 'prompt'
+    #[strum(props(code = "H013", name = "hook-prompt-required"))]
     HookPromptRequired,
     /// H014: type: http hook missing 'url'
+    #[strum(props(code = "H014", name = "hook-url-required"))]
     HookUrlRequired,
     /// H015: type: mcp_tool hook missing 'server'
+    #[strum(props(code = "H015", name = "hook-server-required"))]
     HookServerRequired,
     /// H016: type: mcp_tool hook missing 'tool'
+    #[strum(props(code = "H016", name = "hook-tool-required"))]
     HookToolRequired,
     /// H017: hook 'timeout' is not a positive integer
+    #[strum(props(code = "H017", name = "hook-timeout-invalid"))]
     HookTimeoutInvalid,
     /// H018: 'async: true' on a non-command hook
+    #[strum(props(code = "H018", name = "hook-async-invalid"))]
     HookAsyncInvalid,
     /// H019: 'model' on a hook other than prompt/agent
+    #[strum(props(code = "H019", name = "hook-model-invalid"))]
     HookModelInvalid,
     /// H020: hook 'once' is not a boolean
+    #[strum(props(code = "H020", name = "hook-once-invalid"))]
     HookOnceInvalid,
     /// H021: hook 'if' is invalid or used outside a tool event
+    #[strum(props(code = "H021", name = "hook-if-invalid"))]
     HookIfInvalid,
     /// H022: hook 'shell' value is not bash/powershell
+    #[strum(props(code = "H022", name = "hook-shell-invalid"))]
     HookShellInvalid,
     /// H023: dangerous command pattern in hook command
+    #[strum(props(code = "H023", name = "hook-command-dangerous"))]
     HookCommandDangerous,
     /// H024: http hook headers interpolate $VAR without allowedEnvVars
+    #[strum(props(code = "H024", name = "hook-headers-interpolated"))]
     HookHeadersInterpolated,
     /// H025: .claude/settings.local.json is not valid JSON
+    #[strum(props(code = "H025", name = "settings-local-invalid"))]
     SettingsLocalInvalid,
 
     // ── Markdown structure (X) ────────────────────────────────────
     /// X001: skill/agent frontmatter is not valid YAML
+    #[strum(props(code = "X001", name = "frontmatter-yaml-invalid"))]
     FrontmatterYamlInvalid,
     /// X002: unclosed code fence in a linted markdown file
+    #[strum(props(code = "X002", name = "unclosed-code-fence"))]
     UnclosedCodeFence,
     /// X003: unclosed XML tag in markdown body
+    #[strum(props(code = "X003", name = "xml-tag-unclosed"))]
     XmlTagUnclosed,
     /// X004: mismatched closing XML tag in markdown body
+    #[strum(props(code = "X004", name = "xml-tag-mismatched"))]
     XmlTagMismatched,
     /// X005: closing XML tag with no opening tag
+    #[strum(props(code = "X005", name = "xml-tag-orphan"))]
     XmlTagOrphan,
 
     // ── Skills (S) ────────────────────────────────────────────────
     /// S001: skills/ directory is missing
+    #[strum(props(code = "S001", name = "skills-dir-missing"))]
     SkillsDirMissing,
     /// S002: skills/{name}/ missing SKILL.md
+    #[strum(props(code = "S002", name = "skill-md-missing"))]
     SkillMdMissing,
     /// S003: no plugin-exported skills found under skills/
+    #[strum(props(code = "S003", name = "no-exported-skills"))]
     NoExportedSkills,
     /// S004: SKILL.md has malformed frontmatter
+    #[strum(props(code = "S004", name = "frontmatter-malformed"))]
     FrontmatterMalformed,
     /// S005: SKILL.md missing required frontmatter field (name or description)
+    #[strum(props(code = "S005", name = "frontmatter-field-missing"))]
     FrontmatterFieldMissing,
     /// S006: SKILL.md frontmatter name does not match directory name
+    #[strum(props(code = "S006", name = "frontmatter-name-mismatch"))]
     FrontmatterNameMismatch,
     /// S007: SKILL.md optional frontmatter field is present but empty
+    #[strum(props(code = "S007", name = "frontmatter-field-empty"))]
     FrontmatterFieldEmpty,
     /// S008: shared markdown reference missing on disk
+    #[strum(props(code = "S008", name = "shared-md-missing"))]
     SharedMdMissing,
     /// S009: skill name exceeds 64 characters
+    #[strum(props(code = "S009", name = "name-too-long"))]
     NameTooLong,
     /// S010: skill name contains characters outside [a-z0-9-]
+    #[strum(props(code = "S010", name = "name-invalid-chars"))]
     NameInvalidChars,
     /// S011: skill name starts/ends with hyphen or has consecutive hyphens
+    #[strum(props(code = "S011", name = "name-bad-hyphens"))]
     NameBadHyphens,
     /// S012: skill name contains reserved word (anthropic, claude)
+    #[strum(props(code = "S012", name = "name-reserved-word"))]
     NameReservedWord,
     /// S013: skill name contains XML/HTML tags
+    #[strum(props(code = "S013", name = "name-has-xml"))]
     NameHasXml,
     /// S014: skill description exceeds 1024 characters
+    #[strum(props(code = "S014", name = "desc-too-long"))]
     DescTooLong,
     /// S015: skill description exceeds 250 characters (listing truncation)
+    #[strum(props(code = "S015", name = "desc-truncated"))]
     DescTruncated,
     /// S016: skill description uses first/second person
+    #[strum(props(code = "S016", name = "desc-uses-person"))]
     DescUsesPerson,
     /// S017: skill description lacks trigger/usage context
+    #[strum(props(code = "S017", name = "desc-no-trigger"))]
     DescNoTrigger,
     /// S018: skill description contains XML/HTML tags
+    #[strum(props(code = "S018", name = "desc-has-xml"))]
     DescHasXml,
     /// S019: SKILL.md body exceeds 500 lines
+    #[strum(props(code = "S019", name = "body-too-long"))]
     BodyTooLong,
     /// S020: SKILL.md has no content after frontmatter
+    #[strum(props(code = "S020", name = "body-empty"))]
     BodyEmpty,
     /// S021: consecutive bash code blocks that could be combined
+    #[strum(props(code = "S021", name = "consecutive-bash"))]
     ConsecutiveBash,
     /// S022: Windows-style backslash paths in skill content
+    #[strum(props(code = "S022", name = "backslash-path"))]
     BackslashPath,
     /// S023: boolean frontmatter field is not true/false
+    #[strum(props(code = "S023", name = "bool-field-invalid"))]
     BoolFieldInvalid,
     /// S024: context field value is not fork
+    #[strum(props(code = "S024", name = "context-field-invalid"))]
     ContextFieldInvalid,
     /// S025: effort field value is not low/medium/high/xhigh/max
+    #[strum(props(code = "S025", name = "effort-field-invalid"))]
     EffortFieldInvalid,
     /// S026: shell field value is not bash/powershell
+    #[strum(props(code = "S026", name = "shell-field-invalid"))]
     ShellFieldInvalid,
     /// S027: skill is unreachable (disable-model-invocation: true and user-invocable: false)
+    #[strum(props(code = "S027", name = "skill-unreachable"))]
     SkillUnreachable,
     /// S028: $ARGUMENTS used in body but argument-hint not set
+    #[strum(props(code = "S028", name = "args-no-hint"))]
     ArgsNoHint,
     /// S029: referenced shared .md file itself references other shared .md files
+    #[strum(props(code = "S029", name = "nested-ref-deep"))]
     NestedRefDeep,
     /// S030: files in skill scripts/ not referenced from SKILL.md
+    #[strum(props(code = "S030", name = "orphaned-skill-files"))]
     OrphanedSkillFiles,
     /// S031: http:// URL in skill content (not https)
+    #[strum(props(code = "S031", name = "non-https-url"))]
     NonHttpsUrl,
     /// S032: potential hardcoded API key/token/secret
+    #[strum(props(code = "S032", name = "hardcoded-secret"))]
     HardcodedSecret,
     /// S033: skill name uses vague/generic terms
+    #[strum(props(code = "S033", name = "name-vague"))]
     NameVague,
     /// S034: skill description under 20 characters
+    #[strum(props(code = "S034", name = "desc-too-short"))]
     DescTooShort,
     /// S035: compatibility field exceeds 500 characters
+    #[strum(props(code = "S035", name = "compat-too-long"))]
     CompatTooLong,
     /// S036: referenced .md file exceeds 100 lines with no headings
+    #[strum(props(code = "S036", name = "ref-no-toc"))]
     RefNoToc,
     /// S037: SKILL.md body exceeds 300 lines with no file references
+    #[strum(props(code = "S037", name = "body-no-refs"))]
     BodyNoRefs,
     /// S038: body contains time-sensitive date/year patterns
+    #[strum(props(code = "S038", name = "time-sensitive"))]
     TimeSensitive,
     /// S039: metadata map value is not a string
+    #[strum(props(code = "S039", name = "metadata-not-string"))]
     MetadataNotString,
     /// S040: allowed-tools lists an unrecognized tool name
+    #[strum(props(code = "S040", name = "tools-unknown"))]
     ToolsUnknown,
     /// S041: context: fork set but body has no task instructions
+    #[strum(props(code = "S041", name = "fork-no-task"))]
     ForkNoTask,
     /// S042: disable-model-invocation: true with empty/missing description
+    #[strum(props(code = "S042", name = "dmi-empty-desc"))]
     DmiEmptyDesc,
     /// S043: Windows-style backslash paths in frontmatter fields
+    #[strum(props(code = "S043", name = "frontmatter-backslash"))]
     FrontmatterBackslash,
     /// S044: MCP tool reference without server prefix
+    #[strum(props(code = "S044", name = "mcp-tool-unqualified"))]
     McpToolUnqualified,
     /// S045: allowed-tools uses YAML list syntax instead of comma-separated scalar
+    #[strum(props(code = "S045", name = "tools-list-syntax"))]
     ToolsListSyntax,
     /// S046: Long skill body lacks workflow structure
+    #[strum(props(code = "S046", name = "body-no-workflow"))]
     BodyNoWorkflow,
     /// S047: Long skill body lacks examples or templates
+    #[strum(props(code = "S047", name = "body-no-examples"))]
     BodyNoExamples,
     /// S048: non-descriptive reference file name in skill directory
+    #[strum(props(code = "S048", name = "ref-name-generic"))]
     RefNameGeneric,
     /// S049: skill name not in gerund form
+    #[strum(props(code = "S049", name = "name-not-gerund"))]
     NameNotGerund,
     /// S050: skill description content is too vague/generic
+    #[strum(props(code = "S050", name = "desc-vague-content"))]
     DescVagueContent,
     /// S051: script-backed skill lacks dependency/package notes
+    #[strum(props(code = "S051", name = "script-deps-missing"))]
     ScriptDepsMissing,
     /// S052: script-backed skill lacks verification step
+    #[strum(props(code = "S052", name = "script-verify-missing"))]
     ScriptVerifyMissing,
     /// S053: terminology inconsistency — 3+ synonym variants used
+    #[strum(props(code = "S053", name = "terminology-inconsistent"))]
     TerminologyInconsistent,
     /// S054: skill description keywords not reflected in body
+    #[strum(props(code = "S054", name = "desc-body-misalign"))]
     DescBodyMisalign,
     /// S055: script file lacks error handling patterns
+    #[strum(props(code = "S055", name = "script-errhand-missing"))]
     ScriptErrhandMissing,
     /// S056: body lists alternatives without stating a default
+    #[strum(props(code = "S056", name = "body-no-default"))]
     BodyNoDefault,
     /// S057: undocumented magic number in code block
+    #[strum(props(code = "S057", name = "magic-number-undoc"))]
     MagicNumberUndoc,
     /// S058: Skill tool allowed without a clear invocation step
+    #[strum(props(code = "S058", name = "skill-invoke-missing"))]
     SkillInvokeMissing,
     /// S059: prompt invocation flag is not accepted by its shipped script
+    #[strum(props(code = "S059", name = "skill-flag-mismatch"))]
     SkillFlagMismatch,
     /// S060: awk positional field appears in a skill shell fence
+    #[strum(props(code = "S060", name = "awk-field-ref"))]
     AwkFieldRef,
     /// S061: grep-family probe in a skill shell fence is unbounded
+    #[strum(props(code = "S061", name = "unsafe-grep-probe"))]
     UnsafeGrepProbe,
     /// S062: always-loaded skill prompt closure exceeds configured budget
+    #[strum(props(code = "S062", name = "skill-closure-large"))]
     SkillClosureLarge,
     /// S063: model field value is not a recognized alias or model ID
+    #[strum(props(code = "S063", name = "model-invalid"))]
     ModelInvalid,
     /// S064: agent field present without context: fork
+    #[strum(props(code = "S064", name = "agent-no-fork"))]
     AgentNoFork,
     /// S065: agent value is not a built-in or existing custom agent
+    #[strum(props(code = "S065", name = "agent-unknown"))]
     AgentUnknown,
     /// S066: side-effect-named skill without disable-model-invocation: true
+    #[strum(props(code = "S066", name = "side-effect-auto"))]
     SideEffectAuto,
     /// S067: allowed-tools lists unscoped Bash (suggest Bash(…)-style scoping)
+    #[strum(props(code = "S067", name = "bash-unscoped"))]
     BashUnscoped,
     /// S068: more than 3 dynamic context injections in skill body
+    #[strum(props(code = "S068", name = "injection-overflow"))]
     InjectionOverflow,
     /// S069: argument-hint set but body never references $ARGUMENTS
+    #[strum(props(code = "S069", name = "hint-no-args"))]
     HintNoArgs,
     /// S070: unknown skill frontmatter field
+    #[strum(props(code = "S070", name = "unknown-fm-field"))]
     UnknownFmField,
     /// S071: paths field present but empty
+    #[strum(props(code = "S071", name = "paths-empty"))]
     PathsEmpty,
     /// S072: skill directory exceeds 8MB (platform upload limit)
+    #[strum(props(code = "S072", name = "skill-dir-oversized"))]
     SkillDirOversized,
     /// S073: skill file reference nested deeper than one level
+    #[strum(props(code = "S073", name = "skill-ref-nested"))]
     SkillRefNested,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
+    #[strum(props(code = "A001", name = "agents-dir-missing"))]
     AgentsDirMissing,
     /// A002: agent .md has malformed frontmatter
+    #[strum(props(code = "A002", name = "agent-frontmatter-malformed"))]
     AgentFrontmatterMalformed,
     /// A003: agent .md missing required frontmatter field (name or description)
+    #[strum(props(code = "A003", name = "agent-field-missing"))]
     AgentFieldMissing,
     /// A004: agents/ has no .md files
+    #[strum(props(code = "A004", name = "no-agent-files"))]
     NoAgentFiles,
     /// A005: reviewer-templates.md is missing
+    #[strum(props(code = "A005", name = "template-file-missing"))]
     TemplateFileMissing,
     /// A006: agent .md missing 'Derived from' marker
+    #[strum(props(code = "A006", name = "template-marker-missing"))]
     TemplateMarkerMissing,
     /// A007: agent-template count mismatch
+    #[strum(props(code = "A007", name = "template-count-mismatch"))]
     TemplateCountMismatch,
     /// A008: agent description exceeds 1024 characters
+    #[strum(props(code = "A008", name = "agent-desc-long"))]
     AgentDescLong,
     /// A009: agent description under 20 characters
+    #[strum(props(code = "A009", name = "agent-desc-short"))]
     AgentDescShort,
     /// A010: agent name contains characters outside [a-z0-9-]
+    #[strum(props(code = "A010", name = "agent-name-invalid"))]
     AgentNameInvalid,
     /// A011: agent description too similar to agent name
+    #[strum(props(code = "A011", name = "agent-desc-redundant"))]
     AgentDescRedundant,
     /// A012: agent prompt asks to read evidence without the Read tool
+    #[strum(props(code = "A012", name = "agent-read-mismatch"))]
     AgentReadMismatch,
     /// A013: machine-only agent output lacks fail-closed evidence handling
+    #[strum(props(code = "A013", name = "agent-output-unsafe"))]
     AgentOutputUnsafe,
     /// A014: agent `model` is not a recognized Claude Code model
+    #[strum(props(code = "A014", name = "agent-model-invalid"))]
     AgentModelInvalid,
     /// A015: agent `permissionMode` is not one of the allowed enum values
+    #[strum(props(code = "A015", name = "agent-permission-invalid"))]
     AgentPermissionInvalid,
     /// A016: agent `skills` entry does not exist on disk
+    #[strum(props(code = "A016", name = "agent-skill-missing"))]
     AgentSkillMissing,
     /// A017: a tool appears in both `tools` and `disallowedTools`
+    #[strum(props(code = "A017", name = "agent-tools-overlap"))]
     AgentToolsOverlap,
     /// A018: agent `memory` is not `user`/`project`/`local`
+    #[strum(props(code = "A018", name = "agent-memory-invalid"))]
     AgentMemoryInvalid,
     /// A019: agent `tools` lists an unrecognized tool name
+    #[strum(props(code = "A019", name = "agent-tools-unknown"))]
     AgentToolsUnknown,
     /// A020: agent `disallowedTools` lists an unrecognized tool name
+    #[strum(props(code = "A020", name = "agent-disallowed-unknown"))]
     AgentDisallowedUnknown,
     /// A021: agent `permissionMode: bypassPermissions` disables safety checks
+    #[strum(props(code = "A021", name = "agent-bypass-permissions"))]
     AgentBypassPermissions,
     /// A022: agent `skills` entry is not kebab-case
+    #[strum(props(code = "A022", name = "agent-skill-kebab"))]
     AgentSkillKebab,
     /// A023: agent `effort` is not `low`/`medium`/`high`/`xhigh`/`max`
+    #[strum(props(code = "A023", name = "agent-effort-invalid"))]
     AgentEffortInvalid,
     /// A024: agent `isolation` is not `worktree`
+    #[strum(props(code = "A024", name = "agent-isolation-invalid"))]
     AgentIsolationInvalid,
     /// A025: agent `background` is not a boolean
+    #[strum(props(code = "A025", name = "agent-background-invalid"))]
     AgentBackgroundInvalid,
     /// A026: agent `maxTurns` is not a positive integer
+    #[strum(props(code = "A026", name = "agent-maxturns-invalid"))]
     AgentMaxturnsInvalid,
     /// A027: unrecognized agent frontmatter field (possible typo)
+    #[strum(props(code = "A027", name = "agent-field-unknown"))]
     AgentFieldUnknown,
     /// A028: agent frontmatter uses a field unsupported for plugin agents
+    #[strum(props(code = "A028", name = "agent-field-unsupported"))]
     AgentFieldUnsupported,
 
     // ── Prompt content (Q) ───────────────────────────────────────
     /// Q001: generic filler instruction that provides no actionable guidance
+    #[strum(props(code = "Q001", name = "prompt-generic-filler"))]
     PromptGenericFiller,
     /// Q002: negative instruction without a nearby positive alternative
+    #[strum(props(code = "Q002", name = "prompt-negative-only"))]
     PromptNegativeOnly,
     /// Q003: weak language inside a critical or important section
+    #[strum(props(code = "Q003", name = "prompt-weak-critical"))]
     PromptWeakCritical,
     /// Q004: CLAUDE.md substantially duplicates README.md
+    #[strum(props(code = "Q004", name = "claude-readme-duplicate"))]
     ClaudeReadmeDuplicate,
 
     // ── Claude configuration (R/O/T) ─────────────────────────────
     /// R001: .claude/rules frontmatter paths contains an invalid glob
+    #[strum(props(code = "R001", name = "rules-glob-invalid"))]
     RulesGlobInvalid,
     /// R002: .claude/rules frontmatter contains an unrecognized field
+    #[strum(props(code = "R002", name = "rules-field-unknown"))]
     RulesFieldUnknown,
     /// O001: output style description is missing or blank
+    #[strum(props(code = "O001", name = "style-description-missing"))]
     OutputStyleDescriptionMissing,
     /// O002: output style keep-coding-instructions is not a boolean
+    #[strum(props(code = "O002", name = "style-instructions-invalid"))]
     OutputStyleKeepCodingInstructionsInvalid,
     /// O003: output style frontmatter contains an unrecognized field
+    #[strum(props(code = "O003", name = "style-field-unknown"))]
     OutputStyleFieldUnknown,
     /// O004: output style has no body after frontmatter
+    #[strum(props(code = "O004", name = "style-body-empty"))]
     OutputStyleBodyEmpty,
     /// O005: output style name exceeds 64 characters
+    #[strum(props(code = "O005", name = "style-name-long"))]
     OutputStyleNameTooLong,
     /// O006: output style frontmatter is missing or invalid YAML
+    #[strum(props(code = "O006", name = "style-frontmatter-invalid"))]
     OutputStyleFrontmatterInvalid,
     /// T001: settings prUrlTemplate is not a usable template string
+    #[strum(props(code = "T001", name = "pr-template-invalid"))]
     SettingsPrUrlTemplateInvalid,
     /// T002: settings channelsEnabled is not a boolean
+    #[strum(props(code = "T002", name = "channels-enabled-invalid"))]
     SettingsChannelsEnabledInvalid,
 
     // ── Shared instruction files (I) ──────────────────────────────
     /// I001: an AGENTS.md file is empty or whitespace-only
+    #[strum(props(code = "I001", name = "instruction-file-empty"))]
     InstructionFileEmpty,
     /// I002: an AGENTS.md file contains a potential hardcoded secret
+    #[strum(props(code = "I002", name = "instruction-file-secret"))]
     InstructionFileSecret,
     /// I003: an AGENTS.md file references a missing inline-code path
+    #[strum(props(code = "I003", name = "instruction-file-path"))]
     InstructionFilePathMissing,
     /// I004: an AGENTS.md file contains only generic guidance
+    #[strum(props(code = "I004", name = "instruction-file-generic"))]
     InstructionFileGenericGuidance,
     /// I005: an AGENTS.md file lacks project-specific structure
+    #[strum(props(code = "I005", name = "instruction-file-structure"))]
     InstructionFileMissingStructure,
 
     // ── Codex configuration (CX) ─────────────────────────────────
     /// CX001: .codex/config.toml is not valid TOML
+    #[strum(props(code = "CX001", name = "codex-toml-invalid"))]
     CodexTomlInvalid,
     /// CX002: project_doc_max_bytes is outside the supported range
+    #[strum(props(code = "CX002", name = "codex-doc-bytes"))]
     CodexProjectDocMaxBytes,
     /// CX003: project_doc_fallback_filenames is invalid
+    #[strum(props(code = "CX003", name = "codex-doc-names"))]
     CodexProjectDocFallbackNames,
     /// CX004: unknown Codex configuration key
+    #[strum(props(code = "CX004", name = "codex-key-unknown"))]
     CodexUnknownNestedKey,
     /// CX005: approval_policy is invalid
+    #[strum(props(code = "CX005", name = "codex-approval-policy"))]
     CodexApprovalPolicy,
     /// CX006: sandbox_mode is invalid
+    #[strum(props(code = "CX006", name = "codex-sandbox-mode"))]
     CodexSandboxMode,
     /// CX007: model_reasoning_effort is invalid
+    #[strum(props(code = "CX007", name = "codex-reasoning-effort"))]
     CodexReasoningEffort,
     /// CX008: model_verbosity is invalid
+    #[strum(props(code = "CX008", name = "codex-model-verbosity"))]
     CodexModelVerbosity,
     /// CX009: personality is invalid
+    #[strum(props(code = "CX009", name = "codex-personality"))]
     CodexPersonality,
     /// CX010: danger-full-access acknowledgement is missing
+    #[strum(props(code = "CX010", name = "codex-access-ack"))]
     CodexFullAccessAcknowledgment,
     /// CX011: shell_environment_policy.inherit is invalid
+    #[strum(props(code = "CX011", name = "codex-shell-inherit"))]
     CodexShellEnvironmentInherit,
     /// CX012: an MCP server lacks a command or URL
+    #[strum(props(code = "CX012", name = "codex-mcp-transport"))]
     CodexMcpServerTransport,
     /// CX013: an MCP configuration contains a hardcoded secret
+    #[strum(props(code = "CX013", name = "codex-secret-literal"))]
     CodexHardcodedSecret,
     /// CX014: cli_auth_credentials_store is invalid
+    #[strum(props(code = "CX014", name = "codex-cli-credentials"))]
     CodexCliCredentialsStore,
     /// CX015: sandbox_workspace_write.mode is invalid
+    #[strum(props(code = "CX015", name = "codex-write-mode"))]
     CodexWorkspaceWriteMode,
     /// CX016: model is not a string
+    #[strum(props(code = "CX016", name = "codex-model-type"))]
     CodexModelType,
     /// CX017: model_provider is not a string
+    #[strum(props(code = "CX017", name = "codex-provider-type"))]
     CodexModelProviderType,
     /// CX018: model_reasoning_summary is invalid
+    #[strum(props(code = "CX018", name = "codex-reasoning-summary"))]
     CodexReasoningSummary,
     /// CX019: history is not a TOML table
+    #[strum(props(code = "CX019", name = "codex-history-type"))]
     CodexHistoryType,
     /// CX020: tui is not a TOML table
+    #[strum(props(code = "CX020", name = "codex-tui-type"))]
     CodexTuiType,
     /// CX021: file_opener is not a string
+    #[strum(props(code = "CX021", name = "codex-opener-type"))]
     CodexFileOpenerType,
     /// CX022: mcp_oauth_credentials_store is invalid
+    #[strum(props(code = "CX022", name = "codex-mcp-credentials"))]
     CodexMcpCredentialsStore,
     /// CX023: model_context_window is not positive
+    #[strum(props(code = "CX023", name = "codex-context-window"))]
     CodexContextWindow,
     /// CX024: model_auto_compact_token_limit is not positive
+    #[strum(props(code = "CX024", name = "codex-compact-limit"))]
     CodexAutoCompactLimit,
     /// CX025: approval_policy table has an unknown field
+    #[strum(props(code = "CX025", name = "codex-approval-field"))]
     CodexApprovalPolicyField,
     /// CX026: approvals_reviewer is invalid
+    #[strum(props(code = "CX026", name = "codex-approval-reviewer"))]
     CodexApprovalsReviewer,
     /// CX027: service_tier is invalid
+    #[strum(props(code = "CX027", name = "codex-service-tier"))]
     CodexServiceTier,
     /// CX028: inline MCP bearer_token is forbidden
+    #[strum(props(code = "CX028", name = "codex-bearer-token"))]
     CodexInlineBearerToken,
     /// CX029: agents.max_threads conflicts with multi_agent_v2
+    #[strum(props(code = "CX029", name = "codex-agent-threads"))]
     CodexMultiAgentThreadLimit,
     /// CX030: app default_tools_approval_mode is invalid
+    #[strum(props(code = "CX030", name = "codex-app-approval"))]
     CodexAppApprovalMode,
     /// CX031: skills is not a TOML table
+    #[strum(props(code = "CX031", name = "codex-skills-type"))]
     CodexSkillsType,
     /// CX032: profile is not a string
+    #[strum(props(code = "CX032", name = "codex-profile-type"))]
     CodexProfileType,
     /// CX033: unknown top-level Codex configuration key
+    #[strum(props(code = "CX033", name = "codex-top-key"))]
     CodexTopLevelKey,
     /// CX034: unknown Codex feature flag
+    #[strum(props(code = "CX034", name = "codex-feature-key"))]
     CodexFeatureKey,
     /// CX035: unknown permissions.network field
+    #[strum(props(code = "CX035", name = "codex-network-field"))]
     CodexNetworkPermissionField,
     /// CX036: windows.sandbox is invalid
+    #[strum(props(code = "CX036", name = "codex-windows-sandbox"))]
     CodexWindowsSandbox,
     /// CX039: AGENTS.md exceeds Codex's hard size limit
+    #[strum(props(code = "CX039", name = "codex-agents-large"))]
     CodexAgentsTooLarge,
     /// CX040: AGENTS.md exceeds the configured Codex document budget
+    #[strum(props(code = "CX040", name = "codex-agents-limit"))]
     CodexAgentsDocLimit,
     /// CX042: AGENTS.override.md is tracked by Git
+    #[strum(props(code = "CX042", name = "codex-agents-override"))]
     CodexAgentsOverrideTracked,
     /// CX045: AGENTS.md explicitly contradicts a Codex config value
+    #[strum(props(code = "CX045", name = "codex-agents-conflict"))]
     CodexAgentsConfigConflict,
     /// CX046: a Codex plugin manifest is not at the repository root
+    #[strum(props(code = "CX046", name = "codex-plugin-path"))]
     CodexPluginManifestPath,
     /// CX047: .codex-plugin/plugin.json is not valid JSON
+    #[strum(props(code = "CX047", name = "codex-plugin-invalid"))]
     CodexPluginManifestInvalid,
     /// CX048: Codex plugin manifest name is missing or blank
+    #[strum(props(code = "CX048", name = "codex-name-missing"))]
     CodexPluginNameMissing,
     /// CX049: Codex plugin manifest name contains invalid characters
+    #[strum(props(code = "CX049", name = "codex-name-invalid"))]
     CodexPluginNameInvalid,
     /// CX050: Codex plugin component path lacks a ./ prefix
+    #[strum(props(code = "CX050", name = "codex-path-prefix"))]
     CodexPluginPathPrefix,
     /// CX051: Codex plugin component path contains traversal
+    #[strum(props(code = "CX051", name = "codex-path-traversal"))]
     CodexPluginPathTraversal,
     /// CX052: Codex plugin component path is a bare ./
+    #[strum(props(code = "CX052", name = "codex-path-bare"))]
     CodexPluginPathBare,
     /// CX053: Codex plugin has too many default prompts
+    #[strum(props(code = "CX053", name = "codex-prompt-count"))]
     CodexPluginDefaultPromptCount,
     /// CX054: Codex plugin default prompt exceeds Codex's character limit
+    #[strum(props(code = "CX054", name = "codex-prompt-length"))]
     CodexPluginDefaultPromptLength,
     /// CX055: Codex plugin default prompt is empty after whitespace normalization
+    #[strum(props(code = "CX055", name = "codex-prompt-empty"))]
     CodexPluginDefaultPromptEmpty,
     /// CX056: Codex plugin interface URL is not HTTP(S)
+    #[strum(props(code = "CX056", name = "codex-plugin-url"))]
     CodexPluginInterfaceUrl,
     /// CX057: Codex plugin interface asset path is unsafe
+    #[strum(props(code = "CX057", name = "codex-plugin-asset"))]
     CodexPluginInterfaceAssetPath,
     /// CX058: Codex plugin manifest uses the unsupported hooks field
+    #[strum(props(code = "CX058", name = "codex-plugin-hooks"))]
     CodexPluginHooksUnsupported,
     /// CX059: Codex plugin manifest description is missing or blank
+    #[strum(props(code = "CX059", name = "codex-plugin-description"))]
     CodexPluginDescriptionMissing,
     /// CX060: a Codex skill uses Claude-only frontmatter
+    #[strum(props(code = "CX060", name = "codex-skill-frontmatter"))]
     CodexSkillUnsupportedFrontmatter,
 
     // ── Cursor configuration (CU / CR) ───────────────────────────
     /// CU001: Cursor rule file has no instructions
+    #[strum(props(code = "CU001", name = "cursor-rule-empty"))]
     CursorRuleEmpty,
     /// CU002: Cursor .mdc rule lacks YAML frontmatter
+    #[strum(props(code = "CU002", name = "cursor-frontmatter-missing"))]
     CursorRuleFrontmatterMissing,
     /// CU003: Cursor rule frontmatter is invalid YAML
+    #[strum(props(code = "CU003", name = "cursor-frontmatter-invalid"))]
     CursorRuleFrontmatterInvalid,
     /// CU004: Cursor rule globs field contains an invalid pattern
+    #[strum(props(code = "CU004", name = "cursor-glob-invalid"))]
     CursorRuleGlobInvalid,
     /// CU005: Cursor rule frontmatter contains an unknown field
+    #[strum(props(code = "CU005", name = "cursor-field-unknown"))]
     CursorRuleFieldUnknown,
     /// CU006: legacy .cursorrules file is present
+    #[strum(props(code = "CU006", name = "cursor-legacy-rules"))]
     CursorLegacyRules,
     /// CU007: alwaysApply rule also declares globs
+    #[strum(props(code = "CU007", name = "cursor-always-globs"))]
     CursorAlwaysApplyGlobs,
     /// CU008: alwaysApply is not a boolean
+    #[strum(props(code = "CU008", name = "cursor-always-invalid"))]
     CursorAlwaysApplyInvalid,
     /// CU009: agent-requested Cursor rule lacks a description
+    #[strum(props(code = "CU009", name = "cursor-description-missing"))]
     CursorRuleDescriptionMissing,
     /// CU010: .cursor/hooks.json has an invalid schema
+    #[strum(props(code = "CU010", name = "cursor-hooks-invalid"))]
     CursorHooksSchemaInvalid,
     /// CU011: Cursor hook event is unknown
+    #[strum(props(code = "CU011", name = "cursor-event-unknown"))]
     CursorHookEventUnknown,
     /// CU012: Cursor hook entry lacks a command
+    #[strum(props(code = "CU012", name = "cursor-command-missing"))]
     CursorHookCommandMissing,
     /// CU013: Cursor hook type is invalid
+    #[strum(props(code = "CU013", name = "cursor-type-invalid"))]
     CursorHookTypeInvalid,
     /// CU014: Cursor subagent frontmatter is invalid
+    #[strum(props(code = "CU014", name = "cursor-agent-invalid"))]
     CursorAgentFrontmatterInvalid,
     /// CU015: Cursor subagent has no body
+    #[strum(props(code = "CU015", name = "cursor-body-empty"))]
     CursorAgentBodyEmpty,
     /// CU016: .cursor/environment.json has an invalid schema
+    #[strum(props(code = "CU016", name = "cursor-environment-invalid"))]
     CursorEnvironmentInvalid,
     /// CU017: Cursor hook entry field type is invalid
+    #[strum(props(code = "CU017", name = "cursor-hook-invalid"))]
     CursorHookFieldTypeInvalid,
     /// CU018: Cursor prompt hook lacks prompt
+    #[strum(props(code = "CU018", name = "cursor-prompt-missing"))]
     CursorPromptHookPromptMissing,
     /// CU019: Cursor prompt hook model is not a string
+    #[strum(props(code = "CU019", name = "cursor-model-invalid"))]
     CursorPromptHookModelInvalid,
     /// CR-SK-001: Cursor skill uses unsupported frontmatter
+    #[strum(props(code = "CR-SK-001", name = "cursor-skill-unsupported"))]
     CursorSkillFieldUnsupported,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
     /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
+    #[strum(props(code = "G001", name = "pwd-in-skill"))]
     PwdInSkill,
     /// G002: script reference missing on disk
+    #[strum(props(code = "G002", name = "script-ref-missing"))]
     ScriptRefMissing,
     /// G003: script file not executable
+    #[strum(props(code = "G003", name = "script-not-executable"))]
     ScriptNotExecutable,
     /// G004: dead script with no structured invocation reference
+    #[strum(props(code = "G004", name = "dead-script"))]
     DeadScript,
     /// G005: SECURITY.md is missing from repo root
+    #[strum(props(code = "G005", name = "security-md-missing"))]
     SecurityMdMissing,
     /// G006: TODO/FIXME/HACK/XXX marker in published skill content
+    #[strum(props(code = "G006", name = "todo-in-skill"))]
     TodoInSkill,
     /// G007: TODO/FIXME/HACK/XXX marker in agent .md body
+    #[strum(props(code = "G007", name = "todo-in-agent"))]
     TodoInAgent,
     /// G008: GitHub body or release notes are passed inline
+    #[strum(props(code = "G008", name = "gh-inline-body"))]
     GhInlineBody,
     /// G009: Bash global substitution uses an unsafe variable replacement
+    #[strum(props(code = "G009", name = "bash-replacement-unsafe"))]
     BashReplacementUnsafe,
     /// G010: shipped shell uses syntax unavailable in Bash 3.2
+    #[strum(props(code = "G010", name = "bash32-incompatible"))]
     Bash32Incompatible,
     /// G011: dynamic awk regex contains non-ASCII text
+    #[strum(props(code = "G011", name = "awk-regex-nonascii"))]
     AwkRegexNonascii,
 
     // ── Email (E) ─────────────────────────────────────────────────
     /// E001: email address is not a valid format
+    #[strum(props(code = "E001", name = "invalid-email-format"))]
     InvalidEmailFormat,
 
     // ── User Config (U) ───────────────────────────────────────────
     /// U001: userConfig must be an object
+    #[strum(props(code = "U001", name = "userconfig-not-object"))]
     UserconfigNotObject,
     /// U002: userConfig entry missing or invalid description
+    #[strum(props(code = "U002", name = "userconfig-desc-missing"))]
     UserconfigDescMissing,
     /// U003: userConfig key has no corresponding env var reference in scripts/
+    #[strum(props(code = "U003", name = "userconfig-env-missing"))]
     UserconfigEnvMissing,
     /// U004: userConfig sensitive field must be a boolean
+    #[strum(props(code = "U004", name = "userconfig-sensitive-type"))]
     UserconfigSensitiveType,
     /// U005: userConfig entry missing or invalid title
+    #[strum(props(code = "U005", name = "userconfig-title-missing"))]
     UserconfigTitleMissing,
     /// U006: userConfig entry missing or invalid type
+    #[strum(props(code = "U006", name = "userconfig-type-missing"))]
     UserconfigTypeMissing,
     /// U007: userConfig key is not a valid identifier
+    #[strum(props(code = "U007", name = "userconfig-key-invalid"))]
     UserconfigKeyInvalid,
 
     // ── Slack (K) ─────────────────────────────────────────────────
     /// K001: Slack fallback variable without corresponding CLAUDE_PLUGIN_OPTION_ reference
+    #[strum(props(code = "K001", name = "slack-fallback-mismatch"))]
     SlackFallbackMismatch,
 
     // ── Docs (D) ──────────────────────────────────────────────────
     /// D001: docs reference in CLAUDE.md canonical sources not found on disk
+    #[strum(props(code = "D001", name = "docs-ref-missing"))]
     DocsRefMissing,
     /// D002: CLAUDE.md exceeds 500 lines
+    #[strum(props(code = "D002", name = "claudemd-too-large"))]
     ClaudemdTooLarge,
     /// D003: TODO/FIXME/HACK/XXX marker in CLAUDE.md
+    #[strum(props(code = "D003", name = "todo-in-docs"))]
     TodoInDocs,
     /// D004: CLAUDE.md import closure exceeds configured budget
+    #[strum(props(code = "D004", name = "claude-import-large"))]
     ClaudeImportLarge,
     /// D005: inline-code repository path does not exist
+    #[strum(props(code = "D005", name = "inline-path-missing"))]
     InlinePathMissing,
 
     // ── MCP configuration (P) ──────────────────────────────────────
     /// P001: MCP configuration is not valid JSON
+    #[strum(props(code = "P001", name = "mcp-json-invalid"))]
     McpJsonInvalid,
     /// P009: stdio MCP server is missing its command
+    #[strum(props(code = "P009", name = "mcp-stdio-command"))]
     McpStdioCommandMissing,
     /// P010: HTTP/SSE MCP server is missing its URL
+    #[strum(props(code = "P010", name = "mcp-http-url"))]
     McpHttpUrlMissing,
     /// P011: MCP server type is not supported
+    #[strum(props(code = "P011", name = "mcp-type-invalid"))]
     McpTypeInvalid,
     /// P012: SSE transport is deprecated
+    #[strum(props(code = "P012", name = "mcp-sse-deprecated"))]
     McpSseDeprecated,
     /// P017: non-local HTTP MCP URL is not HTTPS
+    #[strum(props(code = "P017", name = "mcp-insecure-url"))]
     McpUrlNotHttps,
     /// P018: MCP environment contains a literal secret
+    #[strum(props(code = "P018", name = "mcp-env-secret"))]
     McpEnvSecretLiteral,
     /// P019: MCP command contains a dangerous shell pattern
+    #[strum(props(code = "P019", name = "mcp-command-dangerous"))]
     McpCommandDangerous,
     /// P022: MCP args is not an array of strings
+    #[strum(props(code = "P022", name = "mcp-args-invalid"))]
     McpArgsInvalid,
     /// P023: mcpServers has duplicate server names
+    #[strum(props(code = "P023", name = "mcp-duplicate-server"))]
     McpDuplicateServer,
     /// P024: MCP server configuration is empty
+    #[strum(props(code = "P024", name = "mcp-server-empty"))]
     McpServerEmpty,
     /// P025: MCP alwaysLoad is not a boolean
+    #[strum(props(code = "P025", name = "mcp-alwaysload-invalid"))]
     McpAlwaysLoadInvalid,
     /// P026: MCP server name is reserved by Claude Code
+    #[strum(props(code = "P026", name = "mcp-server-reserved"))]
     McpServerReserved,
 
     // ── Link/import integrity (L) ────────────────────────────────
     /// L001: @import target markdown file does not exist
+    #[strum(props(code = "L001", name = "import-path-missing"))]
     ImportPathMissing,
     /// L002: circular @import chain detected
+    #[strum(props(code = "L002", name = "circular-import"))]
     CircularImport,
     /// L003: @import chain depth exceeds 5 hops
+    #[strum(props(code = "L003", name = "import-depth-exceeded"))]
     ImportDepthExceeded,
     /// L004: duplicate @import of the same file
+    #[strum(props(code = "L004", name = "duplicate-import"))]
     DuplicateImport,
     /// L005: broken relative markdown link target
+    #[strum(props(code = "L005", name = "broken-markdown-link"))]
     BrokenMarkdownLink,
     /// L006: npm run script not defined in package.json
+    #[strum(props(code = "L006", name = "npm-script-missing"))]
     NpmScriptMissing,
 }
 
 impl LintRule {
     /// The short code, e.g. `"M001"`.
     pub fn code(self) -> &'static str {
-        match self {
-            Self::PluginJsonMissing => "M001",
-            Self::PluginJsonInvalid => "M002",
-            Self::PluginFieldMissing => "M003",
-            Self::PluginVersionFormat => "M004",
-            Self::MarketplaceJsonMissing => "M005",
-            Self::MarketplaceJsonInvalid => "M006",
-            Self::MarketplaceFieldMissing => "M007",
-            Self::MarketplacePluginsEmpty => "M008",
-            Self::MarketplacePluginInvalid => "M009",
-            Self::MarketplaceEnrichedMissing => "M010",
-            Self::PluginEnrichedMissing => "M011",
-            Self::ComponentPathNested => "M012",
-            Self::ComponentPathUnsafe => "M013",
-            Self::AuthorNameMissing => "M014",
-            Self::HomepageUrlInvalid => "M015",
-            Self::LspServerInvalid => "M016",
-            Self::ChannelServerMissing => "M017",
-
-            Self::HooksJsonMissing => "H001",
-            Self::HooksJsonInvalid => "H002",
-            Self::HooksKeyMissing => "H003",
-            Self::HookCommandMissing => "H004",
-            Self::HookNotExecutable => "H005",
-            Self::SettingsJsonInvalid => "H006",
-            Self::HooksArrayEmpty => "H007",
-            Self::HookEventInvalid => "H008",
-            Self::HookMatcherInvalid => "H009",
-            Self::HookTypeMissing => "H010",
-            Self::HookTypeUnknown => "H011",
-            Self::HookCommandRequired => "H012",
-            Self::HookPromptRequired => "H013",
-            Self::HookUrlRequired => "H014",
-            Self::HookServerRequired => "H015",
-            Self::HookToolRequired => "H016",
-            Self::HookTimeoutInvalid => "H017",
-            Self::HookAsyncInvalid => "H018",
-            Self::HookModelInvalid => "H019",
-            Self::HookOnceInvalid => "H020",
-            Self::HookIfInvalid => "H021",
-            Self::HookShellInvalid => "H022",
-            Self::HookCommandDangerous => "H023",
-            Self::HookHeadersInterpolated => "H024",
-            Self::SettingsLocalInvalid => "H025",
-
-            Self::FrontmatterYamlInvalid => "X001",
-            Self::UnclosedCodeFence => "X002",
-            Self::XmlTagUnclosed => "X003",
-            Self::XmlTagMismatched => "X004",
-            Self::XmlTagOrphan => "X005",
-
-            Self::SkillsDirMissing => "S001",
-            Self::SkillMdMissing => "S002",
-            Self::NoExportedSkills => "S003",
-            Self::FrontmatterMalformed => "S004",
-            Self::FrontmatterFieldMissing => "S005",
-            Self::FrontmatterNameMismatch => "S006",
-            Self::FrontmatterFieldEmpty => "S007",
-            Self::SharedMdMissing => "S008",
-            Self::NameTooLong => "S009",
-            Self::NameInvalidChars => "S010",
-            Self::NameBadHyphens => "S011",
-            Self::NameReservedWord => "S012",
-            Self::NameHasXml => "S013",
-            Self::DescTooLong => "S014",
-            Self::DescTruncated => "S015",
-            Self::DescUsesPerson => "S016",
-            Self::DescNoTrigger => "S017",
-            Self::DescHasXml => "S018",
-            Self::BodyTooLong => "S019",
-            Self::BodyEmpty => "S020",
-            Self::ConsecutiveBash => "S021",
-            Self::BackslashPath => "S022",
-            Self::BoolFieldInvalid => "S023",
-            Self::ContextFieldInvalid => "S024",
-            Self::EffortFieldInvalid => "S025",
-            Self::ShellFieldInvalid => "S026",
-            Self::SkillUnreachable => "S027",
-            Self::ArgsNoHint => "S028",
-            Self::NestedRefDeep => "S029",
-            Self::OrphanedSkillFiles => "S030",
-            Self::NonHttpsUrl => "S031",
-            Self::HardcodedSecret => "S032",
-            Self::NameVague => "S033",
-            Self::DescTooShort => "S034",
-            Self::CompatTooLong => "S035",
-            Self::RefNoToc => "S036",
-            Self::BodyNoRefs => "S037",
-            Self::TimeSensitive => "S038",
-            Self::MetadataNotString => "S039",
-            Self::ToolsUnknown => "S040",
-            Self::ForkNoTask => "S041",
-            Self::DmiEmptyDesc => "S042",
-            Self::FrontmatterBackslash => "S043",
-            Self::McpToolUnqualified => "S044",
-            Self::ToolsListSyntax => "S045",
-            Self::BodyNoWorkflow => "S046",
-            Self::BodyNoExamples => "S047",
-            Self::RefNameGeneric => "S048",
-            Self::NameNotGerund => "S049",
-            Self::DescVagueContent => "S050",
-            Self::ScriptDepsMissing => "S051",
-            Self::ScriptVerifyMissing => "S052",
-            Self::TerminologyInconsistent => "S053",
-            Self::DescBodyMisalign => "S054",
-            Self::ScriptErrhandMissing => "S055",
-            Self::BodyNoDefault => "S056",
-            Self::MagicNumberUndoc => "S057",
-            Self::SkillInvokeMissing => "S058",
-            Self::SkillFlagMismatch => "S059",
-            Self::AwkFieldRef => "S060",
-            Self::UnsafeGrepProbe => "S061",
-            Self::SkillClosureLarge => "S062",
-            Self::ModelInvalid => "S063",
-            Self::AgentNoFork => "S064",
-            Self::AgentUnknown => "S065",
-            Self::SideEffectAuto => "S066",
-            Self::BashUnscoped => "S067",
-            Self::InjectionOverflow => "S068",
-            Self::HintNoArgs => "S069",
-            Self::UnknownFmField => "S070",
-            Self::PathsEmpty => "S071",
-            Self::SkillDirOversized => "S072",
-            Self::SkillRefNested => "S073",
-
-            Self::AgentsDirMissing => "A001",
-            Self::AgentFrontmatterMalformed => "A002",
-            Self::AgentFieldMissing => "A003",
-            Self::NoAgentFiles => "A004",
-            Self::TemplateFileMissing => "A005",
-            Self::TemplateMarkerMissing => "A006",
-            Self::TemplateCountMismatch => "A007",
-            Self::AgentDescLong => "A008",
-            Self::AgentDescShort => "A009",
-            Self::AgentNameInvalid => "A010",
-            Self::AgentDescRedundant => "A011",
-            Self::AgentReadMismatch => "A012",
-            Self::AgentOutputUnsafe => "A013",
-            Self::AgentModelInvalid => "A014",
-            Self::AgentPermissionInvalid => "A015",
-            Self::AgentSkillMissing => "A016",
-            Self::AgentToolsOverlap => "A017",
-            Self::AgentMemoryInvalid => "A018",
-            Self::AgentToolsUnknown => "A019",
-            Self::AgentDisallowedUnknown => "A020",
-            Self::AgentBypassPermissions => "A021",
-            Self::AgentSkillKebab => "A022",
-            Self::AgentEffortInvalid => "A023",
-            Self::AgentIsolationInvalid => "A024",
-            Self::AgentBackgroundInvalid => "A025",
-            Self::AgentMaxturnsInvalid => "A026",
-            Self::AgentFieldUnknown => "A027",
-            Self::AgentFieldUnsupported => "A028",
-
-            Self::PromptGenericFiller => "Q001",
-            Self::PromptNegativeOnly => "Q002",
-            Self::PromptWeakCritical => "Q003",
-            Self::ClaudeReadmeDuplicate => "Q004",
-
-            Self::RulesGlobInvalid => "R001",
-            Self::RulesFieldUnknown => "R002",
-            Self::OutputStyleDescriptionMissing => "O001",
-            Self::OutputStyleKeepCodingInstructionsInvalid => "O002",
-            Self::OutputStyleFieldUnknown => "O003",
-            Self::OutputStyleBodyEmpty => "O004",
-            Self::OutputStyleNameTooLong => "O005",
-            Self::OutputStyleFrontmatterInvalid => "O006",
-            Self::SettingsPrUrlTemplateInvalid => "T001",
-            Self::SettingsChannelsEnabledInvalid => "T002",
-
-            Self::InstructionFileEmpty => "I001",
-            Self::InstructionFileSecret => "I002",
-            Self::InstructionFilePathMissing => "I003",
-            Self::InstructionFileGenericGuidance => "I004",
-            Self::InstructionFileMissingStructure => "I005",
-
-            Self::CodexTomlInvalid => "CX001",
-            Self::CodexProjectDocMaxBytes => "CX002",
-            Self::CodexProjectDocFallbackNames => "CX003",
-            Self::CodexUnknownNestedKey => "CX004",
-            Self::CodexApprovalPolicy => "CX005",
-            Self::CodexSandboxMode => "CX006",
-            Self::CodexReasoningEffort => "CX007",
-            Self::CodexModelVerbosity => "CX008",
-            Self::CodexPersonality => "CX009",
-            Self::CodexFullAccessAcknowledgment => "CX010",
-            Self::CodexShellEnvironmentInherit => "CX011",
-            Self::CodexMcpServerTransport => "CX012",
-            Self::CodexHardcodedSecret => "CX013",
-            Self::CodexCliCredentialsStore => "CX014",
-            Self::CodexWorkspaceWriteMode => "CX015",
-            Self::CodexModelType => "CX016",
-            Self::CodexModelProviderType => "CX017",
-            Self::CodexReasoningSummary => "CX018",
-            Self::CodexHistoryType => "CX019",
-            Self::CodexTuiType => "CX020",
-            Self::CodexFileOpenerType => "CX021",
-            Self::CodexMcpCredentialsStore => "CX022",
-            Self::CodexContextWindow => "CX023",
-            Self::CodexAutoCompactLimit => "CX024",
-            Self::CodexApprovalPolicyField => "CX025",
-            Self::CodexApprovalsReviewer => "CX026",
-            Self::CodexServiceTier => "CX027",
-            Self::CodexInlineBearerToken => "CX028",
-            Self::CodexMultiAgentThreadLimit => "CX029",
-            Self::CodexAppApprovalMode => "CX030",
-            Self::CodexSkillsType => "CX031",
-            Self::CodexProfileType => "CX032",
-            Self::CodexTopLevelKey => "CX033",
-            Self::CodexFeatureKey => "CX034",
-            Self::CodexNetworkPermissionField => "CX035",
-            Self::CodexWindowsSandbox => "CX036",
-            Self::CodexAgentsTooLarge => "CX039",
-            Self::CodexAgentsDocLimit => "CX040",
-            Self::CodexAgentsOverrideTracked => "CX042",
-            Self::CodexAgentsConfigConflict => "CX045",
-            Self::CodexPluginManifestPath => "CX046",
-            Self::CodexPluginManifestInvalid => "CX047",
-            Self::CodexPluginNameMissing => "CX048",
-            Self::CodexPluginNameInvalid => "CX049",
-            Self::CodexPluginPathPrefix => "CX050",
-            Self::CodexPluginPathTraversal => "CX051",
-            Self::CodexPluginPathBare => "CX052",
-            Self::CodexPluginDefaultPromptCount => "CX053",
-            Self::CodexPluginDefaultPromptLength => "CX054",
-            Self::CodexPluginDefaultPromptEmpty => "CX055",
-            Self::CodexPluginInterfaceUrl => "CX056",
-            Self::CodexPluginInterfaceAssetPath => "CX057",
-            Self::CodexPluginHooksUnsupported => "CX058",
-            Self::CodexPluginDescriptionMissing => "CX059",
-            Self::CodexSkillUnsupportedFrontmatter => "CX060",
-
-            Self::CursorRuleEmpty => "CU001",
-            Self::CursorRuleFrontmatterMissing => "CU002",
-            Self::CursorRuleFrontmatterInvalid => "CU003",
-            Self::CursorRuleGlobInvalid => "CU004",
-            Self::CursorRuleFieldUnknown => "CU005",
-            Self::CursorLegacyRules => "CU006",
-            Self::CursorAlwaysApplyGlobs => "CU007",
-            Self::CursorAlwaysApplyInvalid => "CU008",
-            Self::CursorRuleDescriptionMissing => "CU009",
-            Self::CursorHooksSchemaInvalid => "CU010",
-            Self::CursorHookEventUnknown => "CU011",
-            Self::CursorHookCommandMissing => "CU012",
-            Self::CursorHookTypeInvalid => "CU013",
-            Self::CursorAgentFrontmatterInvalid => "CU014",
-            Self::CursorAgentBodyEmpty => "CU015",
-            Self::CursorEnvironmentInvalid => "CU016",
-            Self::CursorHookFieldTypeInvalid => "CU017",
-            Self::CursorPromptHookPromptMissing => "CU018",
-            Self::CursorPromptHookModelInvalid => "CU019",
-            Self::CursorSkillFieldUnsupported => "CR-SK-001",
-
-            Self::PwdInSkill => "G001",
-            Self::ScriptRefMissing => "G002",
-            Self::ScriptNotExecutable => "G003",
-            Self::DeadScript => "G004",
-            Self::SecurityMdMissing => "G005",
-            Self::TodoInSkill => "G006",
-            Self::TodoInAgent => "G007",
-            Self::GhInlineBody => "G008",
-            Self::BashReplacementUnsafe => "G009",
-            Self::Bash32Incompatible => "G010",
-            Self::AwkRegexNonascii => "G011",
-
-            Self::InvalidEmailFormat => "E001",
-
-            Self::UserconfigNotObject => "U001",
-            Self::UserconfigDescMissing => "U002",
-            Self::UserconfigEnvMissing => "U003",
-            Self::UserconfigSensitiveType => "U004",
-            Self::UserconfigTitleMissing => "U005",
-            Self::UserconfigTypeMissing => "U006",
-            Self::UserconfigKeyInvalid => "U007",
-
-            Self::SlackFallbackMismatch => "K001",
-
-            Self::DocsRefMissing => "D001",
-            Self::ClaudemdTooLarge => "D002",
-            Self::TodoInDocs => "D003",
-            Self::ClaudeImportLarge => "D004",
-            Self::InlinePathMissing => "D005",
-
-            Self::McpJsonInvalid => "P001",
-            Self::McpStdioCommandMissing => "P009",
-            Self::McpHttpUrlMissing => "P010",
-            Self::McpTypeInvalid => "P011",
-            Self::McpSseDeprecated => "P012",
-            Self::McpUrlNotHttps => "P017",
-            Self::McpEnvSecretLiteral => "P018",
-            Self::McpCommandDangerous => "P019",
-            Self::McpArgsInvalid => "P022",
-            Self::McpDuplicateServer => "P023",
-            Self::McpServerEmpty => "P024",
-            Self::McpAlwaysLoadInvalid => "P025",
-            Self::McpServerReserved => "P026",
-
-            Self::ImportPathMissing => "L001",
-            Self::CircularImport => "L002",
-            Self::ImportDepthExceeded => "L003",
-            Self::DuplicateImport => "L004",
-            Self::BrokenMarkdownLink => "L005",
-            Self::NpmScriptMissing => "L006",
-        }
+        self.get_str("code")
+            .expect("every LintRule variant defines its code metadata")
     }
 
     /// The human-readable name, e.g. `"plugin-json-missing"`.
     pub fn name(self) -> &'static str {
-        match self {
-            Self::PluginJsonMissing => "plugin-json-missing",
-            Self::PluginJsonInvalid => "plugin-json-invalid",
-            Self::PluginFieldMissing => "plugin-field-missing",
-            Self::PluginVersionFormat => "plugin-version-format",
-            Self::MarketplaceJsonMissing => "marketplace-json-missing",
-            Self::MarketplaceJsonInvalid => "marketplace-json-invalid",
-            Self::MarketplaceFieldMissing => "marketplace-field-missing",
-            Self::MarketplacePluginsEmpty => "marketplace-plugins-empty",
-            Self::MarketplacePluginInvalid => "marketplace-plugin-invalid",
-            Self::MarketplaceEnrichedMissing => "marketplace-enriched-missing",
-            Self::PluginEnrichedMissing => "plugin-enriched-missing",
-            Self::ComponentPathNested => "component-path-nested",
-            Self::ComponentPathUnsafe => "component-path-unsafe",
-            Self::AuthorNameMissing => "author-name-missing",
-            Self::HomepageUrlInvalid => "homepage-url-invalid",
-            Self::LspServerInvalid => "lsp-server-invalid",
-            Self::ChannelServerMissing => "channel-server-missing",
-
-            Self::HooksJsonMissing => "hooks-json-missing",
-            Self::HooksJsonInvalid => "hooks-json-invalid",
-            Self::HooksKeyMissing => "hooks-key-missing",
-            Self::HookCommandMissing => "hook-command-missing",
-            Self::HookNotExecutable => "hook-not-executable",
-            Self::SettingsJsonInvalid => "settings-json-invalid",
-            Self::HooksArrayEmpty => "hooks-array-empty",
-            Self::HookEventInvalid => "hook-event-invalid",
-            Self::HookMatcherInvalid => "hook-matcher-invalid",
-            Self::HookTypeMissing => "hook-type-missing",
-            Self::HookTypeUnknown => "hook-type-unknown",
-            Self::HookCommandRequired => "hook-command-required",
-            Self::HookPromptRequired => "hook-prompt-required",
-            Self::HookUrlRequired => "hook-url-required",
-            Self::HookServerRequired => "hook-server-required",
-            Self::HookToolRequired => "hook-tool-required",
-            Self::HookTimeoutInvalid => "hook-timeout-invalid",
-            Self::HookAsyncInvalid => "hook-async-invalid",
-            Self::HookModelInvalid => "hook-model-invalid",
-            Self::HookOnceInvalid => "hook-once-invalid",
-            Self::HookIfInvalid => "hook-if-invalid",
-            Self::HookShellInvalid => "hook-shell-invalid",
-            Self::HookCommandDangerous => "hook-command-dangerous",
-            Self::HookHeadersInterpolated => "hook-headers-interpolated",
-            Self::SettingsLocalInvalid => "settings-local-invalid",
-
-            Self::FrontmatterYamlInvalid => "frontmatter-yaml-invalid",
-            Self::UnclosedCodeFence => "unclosed-code-fence",
-            Self::XmlTagUnclosed => "xml-tag-unclosed",
-            Self::XmlTagMismatched => "xml-tag-mismatched",
-            Self::XmlTagOrphan => "xml-tag-orphan",
-
-            Self::SkillsDirMissing => "skills-dir-missing",
-            Self::SkillMdMissing => "skill-md-missing",
-            Self::NoExportedSkills => "no-exported-skills",
-            Self::FrontmatterMalformed => "frontmatter-malformed",
-            Self::FrontmatterFieldMissing => "frontmatter-field-missing",
-            Self::FrontmatterNameMismatch => "frontmatter-name-mismatch",
-            Self::FrontmatterFieldEmpty => "frontmatter-field-empty",
-            Self::SharedMdMissing => "shared-md-missing",
-            Self::NameTooLong => "name-too-long",
-            Self::NameInvalidChars => "name-invalid-chars",
-            Self::NameBadHyphens => "name-bad-hyphens",
-            Self::NameReservedWord => "name-reserved-word",
-            Self::NameHasXml => "name-has-xml",
-            Self::DescTooLong => "desc-too-long",
-            Self::DescTruncated => "desc-truncated",
-            Self::DescUsesPerson => "desc-uses-person",
-            Self::DescNoTrigger => "desc-no-trigger",
-            Self::DescHasXml => "desc-has-xml",
-            Self::BodyTooLong => "body-too-long",
-            Self::BodyEmpty => "body-empty",
-            Self::ConsecutiveBash => "consecutive-bash",
-            Self::BackslashPath => "backslash-path",
-            Self::BoolFieldInvalid => "bool-field-invalid",
-            Self::ContextFieldInvalid => "context-field-invalid",
-            Self::EffortFieldInvalid => "effort-field-invalid",
-            Self::ShellFieldInvalid => "shell-field-invalid",
-            Self::SkillUnreachable => "skill-unreachable",
-            Self::ArgsNoHint => "args-no-hint",
-            Self::NestedRefDeep => "nested-ref-deep",
-            Self::OrphanedSkillFiles => "orphaned-skill-files",
-            Self::NonHttpsUrl => "non-https-url",
-            Self::HardcodedSecret => "hardcoded-secret",
-            Self::NameVague => "name-vague",
-            Self::DescTooShort => "desc-too-short",
-            Self::CompatTooLong => "compat-too-long",
-            Self::RefNoToc => "ref-no-toc",
-            Self::BodyNoRefs => "body-no-refs",
-            Self::TimeSensitive => "time-sensitive",
-            Self::MetadataNotString => "metadata-not-string",
-            Self::ToolsUnknown => "tools-unknown",
-            Self::ForkNoTask => "fork-no-task",
-            Self::DmiEmptyDesc => "dmi-empty-desc",
-            Self::FrontmatterBackslash => "frontmatter-backslash",
-            Self::McpToolUnqualified => "mcp-tool-unqualified",
-            Self::ToolsListSyntax => "tools-list-syntax",
-            Self::BodyNoWorkflow => "body-no-workflow",
-            Self::BodyNoExamples => "body-no-examples",
-            Self::RefNameGeneric => "ref-name-generic",
-            Self::NameNotGerund => "name-not-gerund",
-            Self::DescVagueContent => "desc-vague-content",
-            Self::ScriptDepsMissing => "script-deps-missing",
-            Self::ScriptVerifyMissing => "script-verify-missing",
-            Self::TerminologyInconsistent => "terminology-inconsistent",
-            Self::DescBodyMisalign => "desc-body-misalign",
-            Self::ScriptErrhandMissing => "script-errhand-missing",
-            Self::BodyNoDefault => "body-no-default",
-            Self::MagicNumberUndoc => "magic-number-undoc",
-            Self::SkillInvokeMissing => "skill-invoke-missing",
-            Self::SkillFlagMismatch => "skill-flag-mismatch",
-            Self::AwkFieldRef => "awk-field-ref",
-            Self::UnsafeGrepProbe => "unsafe-grep-probe",
-            Self::SkillClosureLarge => "skill-closure-large",
-            Self::ModelInvalid => "model-invalid",
-            Self::AgentNoFork => "agent-no-fork",
-            Self::AgentUnknown => "agent-unknown",
-            Self::SideEffectAuto => "side-effect-auto",
-            Self::BashUnscoped => "bash-unscoped",
-            Self::InjectionOverflow => "injection-overflow",
-            Self::HintNoArgs => "hint-no-args",
-            Self::UnknownFmField => "unknown-fm-field",
-            Self::PathsEmpty => "paths-empty",
-            Self::SkillDirOversized => "skill-dir-oversized",
-            Self::SkillRefNested => "skill-ref-nested",
-
-            Self::AgentsDirMissing => "agents-dir-missing",
-            Self::AgentFrontmatterMalformed => "agent-frontmatter-malformed",
-            Self::AgentFieldMissing => "agent-field-missing",
-            Self::NoAgentFiles => "no-agent-files",
-            Self::TemplateFileMissing => "template-file-missing",
-            Self::TemplateMarkerMissing => "template-marker-missing",
-            Self::TemplateCountMismatch => "template-count-mismatch",
-            Self::AgentDescLong => "agent-desc-long",
-            Self::AgentDescShort => "agent-desc-short",
-            Self::AgentNameInvalid => "agent-name-invalid",
-            Self::AgentDescRedundant => "agent-desc-redundant",
-            Self::AgentReadMismatch => "agent-read-mismatch",
-            Self::AgentOutputUnsafe => "agent-output-unsafe",
-            Self::AgentModelInvalid => "agent-model-invalid",
-            Self::AgentPermissionInvalid => "agent-permission-invalid",
-            Self::AgentSkillMissing => "agent-skill-missing",
-            Self::AgentToolsOverlap => "agent-tools-overlap",
-            Self::AgentMemoryInvalid => "agent-memory-invalid",
-            Self::AgentToolsUnknown => "agent-tools-unknown",
-            Self::AgentDisallowedUnknown => "agent-disallowed-unknown",
-            Self::AgentBypassPermissions => "agent-bypass-permissions",
-            Self::AgentSkillKebab => "agent-skill-kebab",
-            Self::AgentEffortInvalid => "agent-effort-invalid",
-            Self::AgentIsolationInvalid => "agent-isolation-invalid",
-            Self::AgentBackgroundInvalid => "agent-background-invalid",
-            Self::AgentMaxturnsInvalid => "agent-maxturns-invalid",
-            Self::AgentFieldUnknown => "agent-field-unknown",
-            Self::AgentFieldUnsupported => "agent-field-unsupported",
-
-            Self::PromptGenericFiller => "prompt-generic-filler",
-            Self::PromptNegativeOnly => "prompt-negative-only",
-            Self::PromptWeakCritical => "prompt-weak-critical",
-            Self::ClaudeReadmeDuplicate => "claude-readme-duplicate",
-
-            Self::RulesGlobInvalid => "rules-glob-invalid",
-            Self::RulesFieldUnknown => "rules-field-unknown",
-            Self::OutputStyleDescriptionMissing => "style-description-missing",
-            Self::OutputStyleKeepCodingInstructionsInvalid => "style-instructions-invalid",
-            Self::OutputStyleFieldUnknown => "style-field-unknown",
-            Self::OutputStyleBodyEmpty => "style-body-empty",
-            Self::OutputStyleNameTooLong => "style-name-long",
-            Self::OutputStyleFrontmatterInvalid => "style-frontmatter-invalid",
-            Self::SettingsPrUrlTemplateInvalid => "pr-template-invalid",
-            Self::SettingsChannelsEnabledInvalid => "channels-enabled-invalid",
-
-            Self::InstructionFileEmpty => "instruction-file-empty",
-            Self::InstructionFileSecret => "instruction-file-secret",
-            Self::InstructionFilePathMissing => "instruction-file-path",
-            Self::InstructionFileGenericGuidance => "instruction-file-generic",
-            Self::InstructionFileMissingStructure => "instruction-file-structure",
-
-            Self::CodexTomlInvalid => "codex-toml-invalid",
-            Self::CodexProjectDocMaxBytes => "codex-doc-bytes",
-            Self::CodexProjectDocFallbackNames => "codex-doc-names",
-            Self::CodexUnknownNestedKey => "codex-key-unknown",
-            Self::CodexApprovalPolicy => "codex-approval-policy",
-            Self::CodexSandboxMode => "codex-sandbox-mode",
-            Self::CodexReasoningEffort => "codex-reasoning-effort",
-            Self::CodexModelVerbosity => "codex-model-verbosity",
-            Self::CodexPersonality => "codex-personality",
-            Self::CodexFullAccessAcknowledgment => "codex-access-ack",
-            Self::CodexShellEnvironmentInherit => "codex-shell-inherit",
-            Self::CodexMcpServerTransport => "codex-mcp-transport",
-            Self::CodexHardcodedSecret => "codex-secret-literal",
-            Self::CodexCliCredentialsStore => "codex-cli-credentials",
-            Self::CodexWorkspaceWriteMode => "codex-write-mode",
-            Self::CodexModelType => "codex-model-type",
-            Self::CodexModelProviderType => "codex-provider-type",
-            Self::CodexReasoningSummary => "codex-reasoning-summary",
-            Self::CodexHistoryType => "codex-history-type",
-            Self::CodexTuiType => "codex-tui-type",
-            Self::CodexFileOpenerType => "codex-opener-type",
-            Self::CodexMcpCredentialsStore => "codex-mcp-credentials",
-            Self::CodexContextWindow => "codex-context-window",
-            Self::CodexAutoCompactLimit => "codex-compact-limit",
-            Self::CodexApprovalPolicyField => "codex-approval-field",
-            Self::CodexApprovalsReviewer => "codex-approval-reviewer",
-            Self::CodexServiceTier => "codex-service-tier",
-            Self::CodexInlineBearerToken => "codex-bearer-token",
-            Self::CodexMultiAgentThreadLimit => "codex-agent-threads",
-            Self::CodexAppApprovalMode => "codex-app-approval",
-            Self::CodexSkillsType => "codex-skills-type",
-            Self::CodexProfileType => "codex-profile-type",
-            Self::CodexTopLevelKey => "codex-top-key",
-            Self::CodexFeatureKey => "codex-feature-key",
-            Self::CodexNetworkPermissionField => "codex-network-field",
-            Self::CodexWindowsSandbox => "codex-windows-sandbox",
-            Self::CodexAgentsTooLarge => "codex-agents-large",
-            Self::CodexAgentsDocLimit => "codex-agents-limit",
-            Self::CodexAgentsOverrideTracked => "codex-agents-override",
-            Self::CodexAgentsConfigConflict => "codex-agents-conflict",
-            Self::CodexPluginManifestPath => "codex-plugin-path",
-            Self::CodexPluginManifestInvalid => "codex-plugin-invalid",
-            Self::CodexPluginNameMissing => "codex-name-missing",
-            Self::CodexPluginNameInvalid => "codex-name-invalid",
-            Self::CodexPluginPathPrefix => "codex-path-prefix",
-            Self::CodexPluginPathTraversal => "codex-path-traversal",
-            Self::CodexPluginPathBare => "codex-path-bare",
-            Self::CodexPluginDefaultPromptCount => "codex-prompt-count",
-            Self::CodexPluginDefaultPromptLength => "codex-prompt-length",
-            Self::CodexPluginDefaultPromptEmpty => "codex-prompt-empty",
-            Self::CodexPluginInterfaceUrl => "codex-plugin-url",
-            Self::CodexPluginInterfaceAssetPath => "codex-plugin-asset",
-            Self::CodexPluginHooksUnsupported => "codex-plugin-hooks",
-            Self::CodexPluginDescriptionMissing => "codex-plugin-description",
-            Self::CodexSkillUnsupportedFrontmatter => "codex-skill-frontmatter",
-
-            Self::CursorRuleEmpty => "cursor-rule-empty",
-            Self::CursorRuleFrontmatterMissing => "cursor-frontmatter-missing",
-            Self::CursorRuleFrontmatterInvalid => "cursor-frontmatter-invalid",
-            Self::CursorRuleGlobInvalid => "cursor-glob-invalid",
-            Self::CursorRuleFieldUnknown => "cursor-field-unknown",
-            Self::CursorLegacyRules => "cursor-legacy-rules",
-            Self::CursorAlwaysApplyGlobs => "cursor-always-globs",
-            Self::CursorAlwaysApplyInvalid => "cursor-always-invalid",
-            Self::CursorRuleDescriptionMissing => "cursor-description-missing",
-            Self::CursorHooksSchemaInvalid => "cursor-hooks-invalid",
-            Self::CursorHookEventUnknown => "cursor-event-unknown",
-            Self::CursorHookCommandMissing => "cursor-command-missing",
-            Self::CursorHookTypeInvalid => "cursor-type-invalid",
-            Self::CursorAgentFrontmatterInvalid => "cursor-agent-invalid",
-            Self::CursorAgentBodyEmpty => "cursor-body-empty",
-            Self::CursorEnvironmentInvalid => "cursor-environment-invalid",
-            Self::CursorHookFieldTypeInvalid => "cursor-hook-invalid",
-            Self::CursorPromptHookPromptMissing => "cursor-prompt-missing",
-            Self::CursorPromptHookModelInvalid => "cursor-model-invalid",
-            Self::CursorSkillFieldUnsupported => "cursor-skill-unsupported",
-
-            Self::PwdInSkill => "pwd-in-skill",
-            Self::ScriptRefMissing => "script-ref-missing",
-            Self::ScriptNotExecutable => "script-not-executable",
-            Self::DeadScript => "dead-script",
-            Self::SecurityMdMissing => "security-md-missing",
-            Self::TodoInSkill => "todo-in-skill",
-            Self::TodoInAgent => "todo-in-agent",
-            Self::GhInlineBody => "gh-inline-body",
-            Self::BashReplacementUnsafe => "bash-replacement-unsafe",
-            Self::Bash32Incompatible => "bash32-incompatible",
-            Self::AwkRegexNonascii => "awk-regex-nonascii",
-
-            Self::InvalidEmailFormat => "invalid-email-format",
-
-            Self::UserconfigNotObject => "userconfig-not-object",
-            Self::UserconfigDescMissing => "userconfig-desc-missing",
-            Self::UserconfigEnvMissing => "userconfig-env-missing",
-            Self::UserconfigSensitiveType => "userconfig-sensitive-type",
-            Self::UserconfigTitleMissing => "userconfig-title-missing",
-            Self::UserconfigTypeMissing => "userconfig-type-missing",
-            Self::UserconfigKeyInvalid => "userconfig-key-invalid",
-
-            Self::SlackFallbackMismatch => "slack-fallback-mismatch",
-
-            Self::DocsRefMissing => "docs-ref-missing",
-            Self::ClaudemdTooLarge => "claudemd-too-large",
-            Self::TodoInDocs => "todo-in-docs",
-            Self::ClaudeImportLarge => "claude-import-large",
-            Self::InlinePathMissing => "inline-path-missing",
-
-            Self::McpJsonInvalid => "mcp-json-invalid",
-            Self::McpStdioCommandMissing => "mcp-stdio-command",
-            Self::McpHttpUrlMissing => "mcp-http-url",
-            Self::McpTypeInvalid => "mcp-type-invalid",
-            Self::McpSseDeprecated => "mcp-sse-deprecated",
-            Self::McpUrlNotHttps => "mcp-insecure-url",
-            Self::McpEnvSecretLiteral => "mcp-env-secret",
-            Self::McpCommandDangerous => "mcp-command-dangerous",
-            Self::McpArgsInvalid => "mcp-args-invalid",
-            Self::McpDuplicateServer => "mcp-duplicate-server",
-            Self::McpServerEmpty => "mcp-server-empty",
-            Self::McpAlwaysLoadInvalid => "mcp-alwaysload-invalid",
-            Self::McpServerReserved => "mcp-server-reserved",
-
-            Self::ImportPathMissing => "import-path-missing",
-            Self::CircularImport => "circular-import",
-            Self::ImportDepthExceeded => "import-depth-exceeded",
-            Self::DuplicateImport => "duplicate-import",
-            Self::BrokenMarkdownLink => "broken-markdown-link",
-            Self::NpmScriptMissing => "npm-script-missing",
-        }
+        self.get_str("name")
+            .expect("every LintRule variant defines its name metadata")
     }
 
     /// Whether this rule is a "too-long" length-cap rule, excluded from
@@ -1392,301 +1077,15 @@ impl LintRule {
     }
 }
 
-/// Every variant of [`LintRule`], for iteration and exhaustiveness checks.
-pub const ALL_RULES: &[LintRule] = &[
-    LintRule::PluginJsonMissing,
-    LintRule::PluginJsonInvalid,
-    LintRule::PluginFieldMissing,
-    LintRule::PluginVersionFormat,
-    LintRule::MarketplaceJsonMissing,
-    LintRule::MarketplaceJsonInvalid,
-    LintRule::MarketplaceFieldMissing,
-    LintRule::MarketplacePluginsEmpty,
-    LintRule::MarketplacePluginInvalid,
-    LintRule::MarketplaceEnrichedMissing,
-    LintRule::PluginEnrichedMissing,
-    LintRule::ComponentPathNested,
-    LintRule::ComponentPathUnsafe,
-    LintRule::AuthorNameMissing,
-    LintRule::HomepageUrlInvalid,
-    LintRule::LspServerInvalid,
-    LintRule::ChannelServerMissing,
-    LintRule::HooksJsonMissing,
-    LintRule::HooksJsonInvalid,
-    LintRule::HooksKeyMissing,
-    LintRule::HookCommandMissing,
-    LintRule::HookNotExecutable,
-    LintRule::SettingsJsonInvalid,
-    LintRule::HooksArrayEmpty,
-    LintRule::HookEventInvalid,
-    LintRule::HookMatcherInvalid,
-    LintRule::HookTypeMissing,
-    LintRule::HookTypeUnknown,
-    LintRule::HookCommandRequired,
-    LintRule::HookPromptRequired,
-    LintRule::HookUrlRequired,
-    LintRule::HookServerRequired,
-    LintRule::HookToolRequired,
-    LintRule::HookTimeoutInvalid,
-    LintRule::HookAsyncInvalid,
-    LintRule::HookModelInvalid,
-    LintRule::HookOnceInvalid,
-    LintRule::HookIfInvalid,
-    LintRule::HookShellInvalid,
-    LintRule::HookCommandDangerous,
-    LintRule::HookHeadersInterpolated,
-    LintRule::SettingsLocalInvalid,
-    LintRule::FrontmatterYamlInvalid,
-    LintRule::UnclosedCodeFence,
-    LintRule::XmlTagUnclosed,
-    LintRule::XmlTagMismatched,
-    LintRule::XmlTagOrphan,
-    LintRule::SkillsDirMissing,
-    LintRule::SkillMdMissing,
-    LintRule::NoExportedSkills,
-    LintRule::FrontmatterMalformed,
-    LintRule::FrontmatterFieldMissing,
-    LintRule::FrontmatterNameMismatch,
-    LintRule::FrontmatterFieldEmpty,
-    LintRule::SharedMdMissing,
-    LintRule::NameTooLong,
-    LintRule::NameInvalidChars,
-    LintRule::NameBadHyphens,
-    LintRule::NameReservedWord,
-    LintRule::NameHasXml,
-    LintRule::DescTooLong,
-    LintRule::DescTruncated,
-    LintRule::DescUsesPerson,
-    LintRule::DescNoTrigger,
-    LintRule::DescHasXml,
-    LintRule::BodyTooLong,
-    LintRule::BodyEmpty,
-    LintRule::ConsecutiveBash,
-    LintRule::BackslashPath,
-    LintRule::BoolFieldInvalid,
-    LintRule::ContextFieldInvalid,
-    LintRule::EffortFieldInvalid,
-    LintRule::ShellFieldInvalid,
-    LintRule::SkillUnreachable,
-    LintRule::ArgsNoHint,
-    LintRule::NestedRefDeep,
-    LintRule::OrphanedSkillFiles,
-    LintRule::NonHttpsUrl,
-    LintRule::HardcodedSecret,
-    LintRule::NameVague,
-    LintRule::DescTooShort,
-    LintRule::CompatTooLong,
-    LintRule::RefNoToc,
-    LintRule::BodyNoRefs,
-    LintRule::TimeSensitive,
-    LintRule::MetadataNotString,
-    LintRule::ToolsUnknown,
-    LintRule::ForkNoTask,
-    LintRule::DmiEmptyDesc,
-    LintRule::FrontmatterBackslash,
-    LintRule::McpToolUnqualified,
-    LintRule::ToolsListSyntax,
-    LintRule::BodyNoWorkflow,
-    LintRule::BodyNoExamples,
-    LintRule::RefNameGeneric,
-    LintRule::NameNotGerund,
-    LintRule::DescVagueContent,
-    LintRule::ScriptDepsMissing,
-    LintRule::ScriptVerifyMissing,
-    LintRule::TerminologyInconsistent,
-    LintRule::DescBodyMisalign,
-    LintRule::ScriptErrhandMissing,
-    LintRule::BodyNoDefault,
-    LintRule::MagicNumberUndoc,
-    LintRule::SkillInvokeMissing,
-    LintRule::SkillFlagMismatch,
-    LintRule::AwkFieldRef,
-    LintRule::UnsafeGrepProbe,
-    LintRule::SkillClosureLarge,
-    LintRule::ModelInvalid,
-    LintRule::AgentNoFork,
-    LintRule::AgentUnknown,
-    LintRule::SideEffectAuto,
-    LintRule::BashUnscoped,
-    LintRule::InjectionOverflow,
-    LintRule::HintNoArgs,
-    LintRule::UnknownFmField,
-    LintRule::PathsEmpty,
-    LintRule::SkillDirOversized,
-    LintRule::SkillRefNested,
-    LintRule::AgentsDirMissing,
-    LintRule::AgentFrontmatterMalformed,
-    LintRule::AgentFieldMissing,
-    LintRule::NoAgentFiles,
-    LintRule::TemplateFileMissing,
-    LintRule::TemplateMarkerMissing,
-    LintRule::TemplateCountMismatch,
-    LintRule::AgentDescLong,
-    LintRule::AgentDescShort,
-    LintRule::AgentNameInvalid,
-    LintRule::AgentDescRedundant,
-    LintRule::AgentReadMismatch,
-    LintRule::AgentOutputUnsafe,
-    LintRule::AgentModelInvalid,
-    LintRule::AgentPermissionInvalid,
-    LintRule::AgentSkillMissing,
-    LintRule::AgentToolsOverlap,
-    LintRule::AgentMemoryInvalid,
-    LintRule::AgentToolsUnknown,
-    LintRule::AgentDisallowedUnknown,
-    LintRule::AgentBypassPermissions,
-    LintRule::AgentSkillKebab,
-    LintRule::AgentEffortInvalid,
-    LintRule::AgentIsolationInvalid,
-    LintRule::AgentBackgroundInvalid,
-    LintRule::AgentMaxturnsInvalid,
-    LintRule::AgentFieldUnknown,
-    LintRule::AgentFieldUnsupported,
-    LintRule::PromptGenericFiller,
-    LintRule::PromptNegativeOnly,
-    LintRule::PromptWeakCritical,
-    LintRule::ClaudeReadmeDuplicate,
-    LintRule::RulesGlobInvalid,
-    LintRule::RulesFieldUnknown,
-    LintRule::OutputStyleDescriptionMissing,
-    LintRule::OutputStyleKeepCodingInstructionsInvalid,
-    LintRule::OutputStyleFieldUnknown,
-    LintRule::OutputStyleBodyEmpty,
-    LintRule::OutputStyleNameTooLong,
-    LintRule::OutputStyleFrontmatterInvalid,
-    LintRule::SettingsPrUrlTemplateInvalid,
-    LintRule::SettingsChannelsEnabledInvalid,
-    LintRule::InstructionFileEmpty,
-    LintRule::InstructionFileSecret,
-    LintRule::InstructionFilePathMissing,
-    LintRule::InstructionFileGenericGuidance,
-    LintRule::InstructionFileMissingStructure,
-    LintRule::CodexTomlInvalid,
-    LintRule::CodexProjectDocMaxBytes,
-    LintRule::CodexProjectDocFallbackNames,
-    LintRule::CodexUnknownNestedKey,
-    LintRule::CodexApprovalPolicy,
-    LintRule::CodexSandboxMode,
-    LintRule::CodexReasoningEffort,
-    LintRule::CodexModelVerbosity,
-    LintRule::CodexPersonality,
-    LintRule::CodexFullAccessAcknowledgment,
-    LintRule::CodexShellEnvironmentInherit,
-    LintRule::CodexMcpServerTransport,
-    LintRule::CodexHardcodedSecret,
-    LintRule::CodexCliCredentialsStore,
-    LintRule::CodexWorkspaceWriteMode,
-    LintRule::CodexModelType,
-    LintRule::CodexModelProviderType,
-    LintRule::CodexReasoningSummary,
-    LintRule::CodexHistoryType,
-    LintRule::CodexTuiType,
-    LintRule::CodexFileOpenerType,
-    LintRule::CodexMcpCredentialsStore,
-    LintRule::CodexContextWindow,
-    LintRule::CodexAutoCompactLimit,
-    LintRule::CodexApprovalPolicyField,
-    LintRule::CodexApprovalsReviewer,
-    LintRule::CodexServiceTier,
-    LintRule::CodexInlineBearerToken,
-    LintRule::CodexMultiAgentThreadLimit,
-    LintRule::CodexAppApprovalMode,
-    LintRule::CodexSkillsType,
-    LintRule::CodexProfileType,
-    LintRule::CodexTopLevelKey,
-    LintRule::CodexFeatureKey,
-    LintRule::CodexNetworkPermissionField,
-    LintRule::CodexWindowsSandbox,
-    LintRule::CodexAgentsTooLarge,
-    LintRule::CodexAgentsDocLimit,
-    LintRule::CodexAgentsOverrideTracked,
-    LintRule::CodexAgentsConfigConflict,
-    LintRule::CodexPluginManifestPath,
-    LintRule::CodexPluginManifestInvalid,
-    LintRule::CodexPluginNameMissing,
-    LintRule::CodexPluginNameInvalid,
-    LintRule::CodexPluginPathPrefix,
-    LintRule::CodexPluginPathTraversal,
-    LintRule::CodexPluginPathBare,
-    LintRule::CodexPluginDefaultPromptCount,
-    LintRule::CodexPluginDefaultPromptLength,
-    LintRule::CodexPluginDefaultPromptEmpty,
-    LintRule::CodexPluginInterfaceUrl,
-    LintRule::CodexPluginInterfaceAssetPath,
-    LintRule::CodexPluginHooksUnsupported,
-    LintRule::CodexPluginDescriptionMissing,
-    LintRule::CodexSkillUnsupportedFrontmatter,
-    LintRule::CursorRuleEmpty,
-    LintRule::CursorRuleFrontmatterMissing,
-    LintRule::CursorRuleFrontmatterInvalid,
-    LintRule::CursorRuleGlobInvalid,
-    LintRule::CursorRuleFieldUnknown,
-    LintRule::CursorLegacyRules,
-    LintRule::CursorAlwaysApplyGlobs,
-    LintRule::CursorAlwaysApplyInvalid,
-    LintRule::CursorRuleDescriptionMissing,
-    LintRule::CursorHooksSchemaInvalid,
-    LintRule::CursorHookEventUnknown,
-    LintRule::CursorHookCommandMissing,
-    LintRule::CursorHookTypeInvalid,
-    LintRule::CursorAgentFrontmatterInvalid,
-    LintRule::CursorAgentBodyEmpty,
-    LintRule::CursorEnvironmentInvalid,
-    LintRule::CursorHookFieldTypeInvalid,
-    LintRule::CursorPromptHookPromptMissing,
-    LintRule::CursorPromptHookModelInvalid,
-    LintRule::CursorSkillFieldUnsupported,
-    LintRule::PwdInSkill,
-    LintRule::ScriptRefMissing,
-    LintRule::ScriptNotExecutable,
-    LintRule::DeadScript,
-    LintRule::SecurityMdMissing,
-    LintRule::TodoInSkill,
-    LintRule::TodoInAgent,
-    LintRule::GhInlineBody,
-    LintRule::BashReplacementUnsafe,
-    LintRule::Bash32Incompatible,
-    LintRule::AwkRegexNonascii,
-    LintRule::InvalidEmailFormat,
-    LintRule::UserconfigNotObject,
-    LintRule::UserconfigDescMissing,
-    LintRule::UserconfigEnvMissing,
-    LintRule::UserconfigSensitiveType,
-    LintRule::UserconfigTitleMissing,
-    LintRule::UserconfigTypeMissing,
-    LintRule::UserconfigKeyInvalid,
-    LintRule::SlackFallbackMismatch,
-    LintRule::DocsRefMissing,
-    LintRule::ClaudemdTooLarge,
-    LintRule::TodoInDocs,
-    LintRule::ClaudeImportLarge,
-    LintRule::InlinePathMissing,
-    LintRule::McpJsonInvalid,
-    LintRule::McpStdioCommandMissing,
-    LintRule::McpHttpUrlMissing,
-    LintRule::McpTypeInvalid,
-    LintRule::McpSseDeprecated,
-    LintRule::McpUrlNotHttps,
-    LintRule::McpEnvSecretLiteral,
-    LintRule::McpCommandDangerous,
-    LintRule::McpArgsInvalid,
-    LintRule::McpDuplicateServer,
-    LintRule::McpServerEmpty,
-    LintRule::McpAlwaysLoadInvalid,
-    LintRule::McpServerReserved,
-    LintRule::ImportPathMissing,
-    LintRule::CircularImport,
-    LintRule::ImportDepthExceeded,
-    LintRule::DuplicateImport,
-    LintRule::BrokenMarkdownLink,
-    LintRule::NpmScriptMissing,
-];
+/// Every variant of [`LintRule`], derived from the enum declaration.
+pub const ALL_RULES: &[LintRule] = LintRule::VARIANTS;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use regex::Regex;
     use std::collections::{HashMap, HashSet};
+    use strum::IntoEnumIterator;
 
     #[derive(Debug)]
     struct DocumentedRule {
@@ -1800,12 +1199,12 @@ mod tests {
 
     #[test]
     fn all_rules_count_matches_enum() {
-        // If a variant is added to LintRule but not to ALL_RULES, code()/name()
-        // will still compile (match is exhaustive), but this test will catch it.
+        let iterated: Vec<_> = LintRule::iter().collect();
+        assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
             286,
-            "ALL_RULES length must match enum variant count"
+            "every enum variant must be registered"
         );
     }
 
