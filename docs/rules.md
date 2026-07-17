@@ -209,7 +209,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | S070 | `unknown-fm-field` | Unknown skill frontmatter field (typo catcher) | Always | warn |
 | S071 | `paths-empty` | `paths` field is present but empty | Always | warn |
 | S072 | `skill-dir-oversized` | Skill directory exceeds 8MB platform upload limit | Always | warn |
-| S073 | `skill-ref-nested` | Skill-relative `.md` link nested deeper than one directory level | Always | suppressed |
+| S073 | `skill-ref-nested` | Skill-relative `.md` link nested deeper than one directory level | Always | error |
 
 ### Extended Frontmatter (S035, S039--S040, S042--S045, S067)
 
@@ -289,9 +289,9 @@ only when both root `CLAUDE.md` and `README.md` exist.
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | Q001 | `prompt-generic-filler` | Generic instruction that adds no actionable guidance | Always | warn |
-| Q002 | `prompt-negative-only` | `don't`/`do not`/`never`/`avoid` without `instead`/`rather`/`prefer` within three prose lines | Always | suppressed |
-| Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | suppressed |
-| Q004 | `claude-readme-duplicate` | More than 40% of normalized `CLAUDE.md` prose lines also occur in `README.md` (at least three shared lines) | Always | suppressed |
+| Q002 | `prompt-negative-only` | `don't`/`do not`/`never`/`avoid` without `instead`/`rather`/`prefer` within three prose lines | Always | error |
+| Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | error |
+| Q004 | `claude-readme-duplicate` | More than 40% of normalized `CLAUDE.md` prose lines also occur in `README.md` (at least three shared lines) | Always | error |
 
 Q001 recognizes: `be helpful`, `be accurate`, `be concise`, `follow
 instructions`, `do your best`, `be professional`, `use best judgment`, and
@@ -329,8 +329,8 @@ metadata, dependencies, and conventional build output.
 | I001 | `instruction-file-empty` | `AGENTS.md` is empty or whitespace-only | Always | error |
 | I002 | `instruction-file-secret` | `AGENTS.md` contains a potential hardcoded credential | Always | error |
 | I003 | `instruction-file-path` | Backtick-quoted path in `AGENTS.md` is missing | Always | warn |
-| I004 | `instruction-file-generic` | `AGENTS.md` is generic-only | Always | suppressed |
-| I005 | `instruction-file-structure` | `AGENTS.md` lacks project-specific structure | Always | suppressed |
+| I004 | `instruction-file-generic` | `AGENTS.md` is generic-only | Always | error |
+| I005 | `instruction-file-structure` | `AGENTS.md` lacks project-specific structure | Always | error |
 
 The former CX037, CX038, CX041, CX043, and CX044 identifiers and names remain
 accepted as configuration aliases for these shared rules.
@@ -362,8 +362,8 @@ schema and are covered by the unknown-key rules.
 | CX030–CX032 | — | Invalid app approval mode, skills table, or profile type | Always | error/warn |
 | CX033 | `codex-top-key` | Unknown top-level Codex key | Always | warn |
 | CX034 | `codex-feature-key` | Unknown Codex feature flag | Always | warn |
-| CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | suppressed |
-| CX036 | `codex-windows-sandbox` | Invalid Windows sandbox mode | Always | suppressed |
+| CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | error |
+| CX036 | `codex-windows-sandbox` | Invalid Windows sandbox mode | Always | error |
 
 ### Codex Instruction, Plugin, and Skill Rules (CX)
 
@@ -376,7 +376,7 @@ active; the shared instruction rules above run independently.
 | CX039 | `codex-agents-large` | `AGENTS.md` exceeds 100,000 bytes | Always | warn |
 | CX040 | `codex-agents-limit` | `AGENTS.md` exceeds the effective Codex document limit | Always | warn |
 | CX042 | `codex-agents-override` | Root `AGENTS.override.md` is tracked by Git | Always | warn |
-| CX045 | `codex-agents-conflict` | Explicit `AGENTS.md` setting conflicts with `.codex/config.toml` | Always | suppressed |
+| CX045 | `codex-agents-conflict` | Explicit `AGENTS.md` setting conflicts with `.codex/config.toml` | Always | error |
 | CX046 | `codex-plugin-path` | Codex plugin manifest is not at `.codex-plugin/plugin.json` | Always | error |
 | CX047 | `codex-plugin-invalid` | `.codex-plugin/plugin.json` is invalid JSON | Always | error |
 | CX048--CX049 | — | Missing/invalid Codex plugin name | Always | error |
@@ -419,7 +419,7 @@ They run in both Basic and Plugin modes.
 | CU016 | `cursor-environment-invalid` | `.cursor/environment.json` schema is invalid | Always | error |
 | CU017 | `cursor-hook-invalid` | Cursor hook timeout, loop limit, or fail-closed type is invalid | Always | warn |
 | CU018 | `cursor-prompt-missing` | Prompt hook lacks `prompt` | Always | warn |
-| CU019 | `cursor-model-invalid` | Prompt hook `model` is not a string | Always | suppressed |
+| CU019 | `cursor-model-invalid` | Prompt hook `model` is not a string | Always | error |
 | CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses frontmatter unsupported by Cursor | Always | warn |
 
 ## Hygiene / Scripts Rules (G)
