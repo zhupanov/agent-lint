@@ -5,6 +5,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::validators::common::is_valid_http_url;
 use serde_json::Value;
 use std::path::{Component, Path};
 
@@ -198,29 +199,13 @@ fn validate_interface_urls(
         let Some(value) = interface.get(field) else {
             continue;
         };
-        if !value.as_str().is_some_and(valid_http_url) {
+        if !value.as_str().is_some_and(is_valid_http_url) {
             diag.report(
                 LintRule::CodexPluginInterfaceUrl,
                 &format!("{display}: interface.{field} must be a valid http(s) URL"),
             );
         }
     }
-}
-
-fn valid_http_url(value: &str) -> bool {
-    let Some(rest) = value
-        .strip_prefix("https://")
-        .or_else(|| value.strip_prefix("http://"))
-    else {
-        return false;
-    };
-    !rest.is_empty()
-        && !rest.contains(char::is_whitespace)
-        && !rest
-            .split(['/', '?', '#'])
-            .next()
-            .unwrap_or_default()
-            .is_empty()
 }
 
 fn validate_interface_assets(
