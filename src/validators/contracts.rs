@@ -2,8 +2,9 @@
 
 use crate::config::{ExcludeSet, PromptMetricCaps, PromptSourceBudget};
 use crate::diagnostic::DiagnosticCollector;
-use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs, markdown_fences};
+use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs};
 use crate::frontmatter;
+use crate::markdown::MarkdownDocument;
 use crate::prompt_budget::{
     INLINE_CODE, MARKDOWN_LINK, normalize_repo_relative, resolve_repo_reference,
 };
@@ -269,7 +270,8 @@ fn validate_agent_contracts(
         let Some(content) = read_text(&path, exclude) else {
             continue;
         };
-        let body = frontmatter::extract_body(&content);
+        let document = MarkdownDocument::parse(&content);
+        let body = document.body();
         let read_line = first_matching_line(body, &READ_INTENT);
         if let (Some(tools), Some(line)) = (frontmatter_explicit_tools(&content), read_line) {
             let suppressed = has_reasoned_marker(&content, "lint-agent-tool-contract: ok");
@@ -331,7 +333,8 @@ fn validate_skill_contracts(
         let Some(content) = read_text(&path, exclude) else {
             continue;
         };
-        let body = frontmatter::extract_body(&content);
+        let document = MarkdownDocument::parse(&content);
+        let body = document.body();
         if frontmatter_tools(&content, "allowed-tools")
             .is_some_and(|tools| tools.iter().any(|tool| tool == "Skill"))
         {
@@ -360,7 +363,7 @@ fn validate_skill_contracts(
             }
         }
 
-        for fence in markdown_fences(&content) {
+        for fence in document.fences() {
             if !is_shell_language(&fence.info) {
                 continue;
             }
@@ -2403,7 +2406,7 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
 
     #[test]
     fn robust_fences_keep_embedded_short_delimiters_inside() {
-        let fences = markdown_fences("````bash\necho hi\n```\necho still\n````\n");
+        let fences = crate::fence::markdown_fences("````bash\necho hi\n```\necho still\n````\n");
         assert_eq!(fences.len(), 1);
         assert_eq!(fences[0].body.len(), 3);
     }

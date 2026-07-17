@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
 use regex::Regex;
@@ -11,10 +12,6 @@ use std::sync::LazyLock;
 static RE_SHARED_MD_REF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._/-]+\.md").unwrap()
 });
-
-/// Relative markdown link targets nested deeper than one directory level.
-static RE_RELATIVE_MD_LINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\]\((?:\./)?([^)]+\.md)\)").unwrap());
 
 const SKILL_DIR_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
 
@@ -29,6 +26,9 @@ pub struct SkillInfo {
     pub fm_lines: Vec<String>,
     /// Body content after the frontmatter closing delimiter.
     pub body: String,
+    /// Shared Markdown facts for this file. Content validators must consume
+    /// this rather than parse the body again.
+    pub document: MarkdownDocument,
     /// Whether the skill directory contains a non-empty `scripts/` subdirectory.
     pub has_scripts_dir: bool,
 }
@@ -58,13 +58,14 @@ pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
             Ok(c) => c,
             Err(_) => continue,
         };
+        let document = MarkdownDocument::parse(content);
 
-        let fm_lines = match frontmatter::extract_frontmatter(&content) {
-            Some(lines) => lines,
+        let fm_lines = match document.frontmatter() {
+            Some(lines) => lines.to_vec(),
             None => continue, // S004 fires from existing validator
         };
 
-        let body = frontmatter::extract_body(&content).to_string();
+        let body = document.body().to_string();
         let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
 
         let scripts_dir = path.join("scripts");
@@ -77,6 +78,7 @@ pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
             dir_name,
             fm_lines,
             body,
+            document,
             has_scripts_dir,
         });
     }
@@ -175,8 +177,9 @@ fn validate_skill_frontmatter_in_dir(
             Ok(c) => c,
             Err(_) => continue,
         };
+        let document = MarkdownDocument::parse(content);
 
-        let fm_lines = match frontmatter::extract_frontmatter(&content) {
+        let fm_lines = match document.frontmatter() {
             Some(lines) => lines,
             None => {
                 diag.report(
@@ -186,13 +189,13 @@ fn validate_skill_frontmatter_in_dir(
                     ),
                 );
                 // X002–X005 still apply to the markdown file when frontmatter is broken.
-                super::markdown_structure::check_markdown_structure(&skill_path, &content, diag);
+                super::markdown_structure::check_markdown_document(&skill_path, &document, diag);
                 continue;
             }
         };
 
         // X001: strict YAML parse; CC-SK-010: hooks schema when present.
-        match frontmatter::parse_yaml_strict(&fm_lines) {
+        match frontmatter::parse_yaml_strict(fm_lines) {
             Ok(yaml) => {
                 if !platform_neutral && let Some(hooks) = yaml.get("hooks") {
                     super::hook_schema::validate_frontmatter_hooks(
@@ -211,18 +214,18 @@ fn validate_skill_frontmatter_in_dir(
         }
 
         // X002–X005: fence / XML structure on the full file.
-        super::markdown_structure::check_markdown_structure(&skill_path, &content, diag);
+        super::markdown_structure::check_markdown_document(&skill_path, &document, diag);
 
         if !platform_neutral {
             // S072: skill directory size limit.
             check_skill_dir_size(&path, &skill_path, diag);
 
             // S073: relative .md refs nested deeper than one level.
-            check_skill_ref_depth(&skill_path, &content, diag);
+            check_skill_ref_depth(&skill_path, &document, diag);
         }
 
-        let name = frontmatter::get_field(&fm_lines, "name");
-        let desc = frontmatter::get_field(&fm_lines, "description");
+        let name = frontmatter::get_field(fm_lines, "name");
+        let desc = frontmatter::get_field(fm_lines, "description");
 
         if name.is_none() {
             diag.report(
@@ -259,7 +262,7 @@ fn validate_skill_frontmatter_in_dir(
             let prefix = format!("{field}:");
             let field_present = fm_lines.iter().any(|line| line.starts_with(&prefix));
             if field_present {
-                let val = frontmatter::get_field(&fm_lines, field);
+                let val = frontmatter::get_field(fm_lines, field);
                 if val.is_none() {
                     // For allowed-tools: suppress S007 if YAML list items follow (S045 handles that case)
                     if *field == "allowed-tools" {
@@ -308,10 +311,13 @@ fn check_skill_dir_size(dir: &Path, skill_path: &str, diag: &mut DiagnosticColle
     }
 }
 
-fn check_skill_ref_depth(skill_path: &str, content: &str, diag: &mut DiagnosticCollector) {
-    let body = frontmatter::extract_body(content);
-    for caps in RE_RELATIVE_MD_LINK.captures_iter(body) {
-        let target = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+fn check_skill_ref_depth(
+    skill_path: &str,
+    document: &MarkdownDocument,
+    diag: &mut DiagnosticCollector,
+) {
+    for link in document.links() {
+        let target = link.destination.as_str();
         if target.starts_with("http://")
             || target.starts_with("https://")
             || target.starts_with('/')
