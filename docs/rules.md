@@ -435,8 +435,15 @@ They run in both Basic and Plugin modes.
 | G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin | warn |
 | G008 | `gh-inline-body` | Shipped script passes a GitHub body or release notes inline instead of using a file-backed option | Always | warn |
 | G009 | `bash-replacement-unsafe` | Bash global substitution uses a variable replacement that can reinterpret `&` | Always | error |
-| G010 | `bash32-incompatible` | Shipped shell uses syntax unavailable in macOS Bash 3.2 | Always | suppressed |
-| G011 | `awk-regex-nonascii` | Dynamic awk regex contains non-ASCII text with implementation-dependent behavior | Always | suppressed |
+| G010 | `bash32-incompatible` | Shipped shell uses syntax unavailable in macOS Bash 3.2 | Always | error |
+| G011 | `awk-regex-nonascii` | Dynamic awk regex contains non-ASCII text with implementation-dependent behavior | Always | error |
+
+G009-G011 use conventional script discovery unless `[lint].script-inventory`
+is configured. An explicit inventory supports `.sh`, `.inc.bash`, and `.awk`
+files, remains authoritative when global exclusions match an entry, and is
+scanned in deterministic order on every run. G010 and G011 are hard errors by
+default; listing `error = ["G010", "G011"]` explicitly is also supported when a
+repository wants its portability policy visible in configuration.
 
 ## Email Rules (E)
 

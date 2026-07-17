@@ -131,7 +131,12 @@ fn main() {
 
     let exclude = lint_config.build_exclude_set();
     let targets = DetectedSurfaces::discover(&exclude).resolve(lint_config.platforms);
-    let mode = match detect_mode_for_targets(targets) {
+    let mode = match detect_mode_for_targets(targets).or_else(|| {
+        lint_config
+            .script_inventory
+            .is_some()
+            .then_some(LintMode::Basic)
+    }) {
         Some(mode) => mode,
         None => {
             if list_scripts {
@@ -144,9 +149,18 @@ fn main() {
 
     // --list-scripts: print discovered script paths and exit.
     if list_scripts {
-        let scripts = validators::hygiene::collect_script_paths(mode, &exclude);
-        for path in &scripts {
-            println!("{path}");
+        if let Some(scripts) = &lint_config.script_inventory {
+            for path in scripts
+                .iter()
+                .filter(|path| path.ends_with(".sh") || path.ends_with(".inc.bash"))
+            {
+                println!("{path}");
+            }
+        } else {
+            let scripts = validators::hygiene::collect_script_paths(mode, &exclude);
+            for path in &scripts {
+                println!("{path}");
+            }
         }
         std::process::exit(0);
     }

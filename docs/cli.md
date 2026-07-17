@@ -51,3 +51,9 @@ agent-lint --list-scripts . | xargs -r shellcheck
 ```
 
 The wrapper script `scripts/shellcheck-scripts.sh` automates this.
+
+When `[lint].script-inventory` is configured, this flag prints its validated,
+sorted `.sh` and `.inc.bash` entries; standalone `.awk` entries remain part of
+G011's scope but are not sent to shell-oriented consumers. Pre-commit runs the
+linter without filenames, so G009-G011 deterministically inspect the complete
+configured inventory rather than only the files staged in an invocation.

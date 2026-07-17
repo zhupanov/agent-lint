@@ -17,6 +17,7 @@ claude-import-max-lines = 120               # enable D004 per-import budget
 claude-import-total-max-lines = 400          # enable D004 total budget
 instruction-files = ["AGENTS.md", "SECURITY.md", "CLAUDE.md"]
 inline-path-prefixes = ["src/", "docs/", "skills/", "scripts/"]
+script-inventory = "scripts/portable-scripts.txt" # optional G009-G011 scope
 
 [platforms]
 cursor = true   # force-enable Cursor checks; false disables them
@@ -37,10 +38,19 @@ codex = false   # disable Codex checks even when Codex files exist
 | `claude-import-total-max-lines` | positive integer | Enables D004 with a total recursive `@`-import closure budget |
 | `instruction-files` | string array | Repository-relative Markdown files scanned by D005 |
 | `inline-path-prefixes` | string array | Repository-relative prefixes, each ending in `/`, recognized by D005 |
+| `script-inventory` | string | Repository-relative newline-delimited inventory used by G009-G011 |
 
 Closure limits are disabled when omitted. The two D004 limits may be used
 independently. Import and Markdown-reference traversal is recursive, bounded,
 and counts each file once.
+
+When `script-inventory` is set, blank lines and full-line `#` comments are
+ignored and every other line must name an existing regular `.sh`, `.inc.bash`,
+or `.awk` file beneath the repository root. Entries are sorted and deduplicated;
+they do not need to be tracked by Git. The inventory becomes the authoritative
+scope for G009-G011, so those rules scan every listed file on every invocation,
+including pre-commit runs. Invalid, unreadable, escaping, symlinked, missing, or
+unsupported entries make configuration loading fail with exit code 2.
 
 ## Platform Activation
 
@@ -75,8 +85,10 @@ multiple lists: `suppress` > `error` > `warn`.
 ## File Exclusion
 
 The `exclude` option accepts a list of glob patterns. Files matching any
-pattern are completely invisible to the linter -- no rules are checked
-and no diagnostics are produced for them.
+pattern are invisible to file-walking validators. The sole explicit-scope
+exception is G009-G011: a path named by `script-inventory` is still scanned by
+those rules. This lets repositories retain broad exclusions needed by unrelated
+rules without silently weakening their portability inventory.
 
 **Glob semantics** (matching `.gitignore` conventions):
 
@@ -85,10 +97,11 @@ and no diagnostics are produced for them.
 - `docs/*.md` matches `docs/readme.md` but **not** `docs/sub/nested.md`
 - `docs/**/*.md` matches both `docs/readme.md` and `docs/sub/nested.md`
 
-**Scope**: File exclusion applies to file-walking validators (skills,
-agents, scripts, docs). It does **not** apply to fixed-path structural
-checks (e.g., `plugin.json` must exist, `SECURITY.md` must exist). Use
-`suppress` to suppress those rules instead.
+**Scope**: File exclusion applies to file-walking validators (skills, agents,
+scripts, docs), except for explicit G009-G011 inventory entries as described
+above. It does **not** apply to fixed-path structural checks (e.g.,
+`plugin.json` must exist, `SECURITY.md` must exist). Use `suppress` to suppress
+those rules instead.
 
 ## Default Severity
 

@@ -6,7 +6,7 @@ use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs, markdown
 use crate::frontmatter;
 use crate::rules::LintRule;
 use regex::Regex;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
@@ -47,20 +47,88 @@ static PLAIN_MD_PATH: LazyLock<Regex> = LazyLock::new(|| {
 static ALWAYS_LOAD_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:\b(?:read|load|open)\b.*\b(?:before|first|completely|always|entire|required|must)\b|\b(?:before|first|always|required|must)\b.*\b(?:read|load|open)\b|^\s*@)").unwrap()
 });
-static QUOTED_HEREDOC: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"<<-?\s*(?:'([A-Za-z_][A-Za-z0-9_]*)'|\"([A-Za-z_][A-Za-z0-9_]*)\")"#).unwrap()
+static HEREDOC: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"<<-?\s*(?:'([A-Za-z_][A-Za-z0-9_]*)'|\"([A-Za-z_][A-Za-z0-9_]*)\"|([A-Za-z_][A-Za-z0-9_]*))"#,
+    )
+    .unwrap()
 });
 static BASH_REPLACEMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{[A-Za-z_][A-Za-z0-9_]*//[^/]*/(?:\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_])")
         .unwrap()
 });
-static EMPTY_ARRAY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|[\s;|&({])([A-Za-z_][A-Za-z0-9_]*)=\(\s*\)").unwrap());
+static ARRAY_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[\s;|&({])([A-Za-z_][A-Za-z0-9_]*)\+?=\(([^)]*)\)").unwrap()
+});
 static ARRAY_LENGTH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$\{#([A-Za-z_][A-Za-z0-9_]*)\[@\]\}").unwrap());
 static IF_THEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|[\s;])if\s+.*(?:^|[\s;])then(?:[\s;]|$)").unwrap());
 static FI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[\s;])fi(?:[\s;]|$)").unwrap());
+static EXIT_OR_RETURN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|;)\s*(?:exit|return)(?:\s|;|$)").unwrap());
+static POSITIVE_ARRAY_COMPARISON: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:-gt|-ne|>|!=)\s*0(?:\s|\]|\)|;|$)").unwrap());
+static EMPTY_ARRAY_COMPARISON: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:(?:-eq|-le|==)\s*0|(?:^|\s)=\s*0)(?:\s|\]|\)|;|$)").unwrap());
+static AWK_COMMAND: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*(?:command\s+)?awk(?:\s|$)").unwrap()
+});
+static AWK_VALUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"-v\s+[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:'([^']*)'|\"([^\"]*)\"|([^\s'\"\\]+))"#)
+        .unwrap()
+});
+static AWK_REGEX_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[^A-Za-z0-9_])(?:match|gsub|sub|split)\s*\(|\s!?~\s").unwrap()
+});
+static BASH32_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
+    [
+        (
+            r"(?:^|[\s;|&({])declare\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*A[A-Za-z]*(?:[\s;|&)]|$)",
+            "declare -A associative arrays",
+        ),
+        (
+            r"(?:^|[\s;|&({])typeset\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*A[A-Za-z]*(?:[\s;|&)]|$)",
+            "typeset -A associative arrays",
+        ),
+        (
+            r"(?:^|[\s;|&({])(?:mapfile|readarray)(?:[\s;|&)]|$)",
+            "mapfile/readarray",
+        ),
+        (
+            r"\$\{[!A-Za-z_@*][A-Za-z0-9_]*(?:\^\^?|,,?)",
+            "parameter case conversion",
+        ),
+        (
+            r"(?:^|[\s;|&({])declare\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*n[A-Za-z]*(?:[\s;|&)]|$)",
+            "declare -n nameref",
+        ),
+        (
+            r"(?:^|[\s;|&({])local\s+(?:-[A-Za-z]+\s+)*-[A-Za-z]*n[A-Za-z]*(?:[\s;|&)]|$)",
+            "local -n nameref",
+        ),
+        (r"&>>", "&>> append-all redirection"),
+        (
+            r"(?:^|[\s;|&({])coproc(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*\{",
+            "coproc",
+        ),
+        (
+            r"\$\{[!A-Za-z_@*][A-Za-z0-9_]*\[\s*-[0-9]",
+            "negative array index",
+        ),
+        (
+            r"\{(?:-?[0-9]+|[A-Za-z])\.\.(?:-?[0-9]+|[A-Za-z])\.\.-?[0-9]",
+            "stepped brace expansion",
+        ),
+        (
+            r"(?:^|[\s;|&(])(?:if|elif)\s+(?:!\s+)?command\s+(?:grep|egrep|fgrep|rg|ripgrep)(?:[\s;|&)]|$)",
+            "if/elif command grep-family condition",
+        ),
+    ]
+    .into_iter()
+    .map(|(pattern, label)| (Regex::new(pattern).unwrap(), label))
+    .collect()
+});
 static FORWARDED_ARRAY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^[^#\n]*(?:exec\s+)?[^\n]*"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}""#).unwrap()
 });
@@ -1103,7 +1171,31 @@ fn validate_npm_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     }
 }
 
-fn scoped_scripts(include_public: bool) -> Vec<PathBuf> {
+#[derive(Clone, Copy, Default)]
+struct ScriptScope {
+    portability: bool,
+    ignore_exclude: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScriptKind {
+    Shell,
+    Awk,
+    Other,
+}
+
+fn script_kind(path: &Path) -> ScriptKind {
+    let value = path.to_string_lossy();
+    if value.ends_with(".sh") || value.ends_with(".inc.bash") {
+        ScriptKind::Shell
+    } else if value.ends_with(".awk") {
+        ScriptKind::Awk
+    } else {
+        ScriptKind::Other
+    }
+}
+
+fn conventionally_scoped_scripts(include_public: bool) -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from(".claude/skills")];
     if include_public {
         roots.extend([PathBuf::from("scripts"), PathBuf::from("skills")]);
@@ -1115,12 +1207,12 @@ fn scoped_scripts(include_public: bool) -> Vec<PathBuf> {
         }
         for entry in WalkDir::new(root).into_iter().flatten() {
             let path = entry.path();
-            let extension = path.extension().and_then(|value| value.to_str());
             if path.is_file()
                 && !path.is_symlink()
-                && matches!(extension, Some("sh" | "py" | "awk"))
+                && (matches!(script_kind(path), ScriptKind::Shell | ScriptKind::Awk)
+                    || path.extension().and_then(|value| value.to_str()) == Some("py"))
                 && (path.components().any(|part| part.as_os_str() == "scripts")
-                    || extension == Some("awk"))
+                    || script_kind(path) == ScriptKind::Awk)
             {
                 paths.insert(path.to_path_buf());
             }
@@ -1129,114 +1221,336 @@ fn scoped_scripts(include_public: bool) -> Vec<PathBuf> {
     paths.into_iter().collect()
 }
 
+fn script_scopes(
+    diag: &DiagnosticCollector,
+    include_public: bool,
+) -> BTreeMap<PathBuf, ScriptScope> {
+    let has_inventory = diag.config().script_inventory.is_some();
+    let mut paths = BTreeMap::new();
+    for path in conventionally_scoped_scripts(include_public) {
+        paths.insert(
+            path,
+            ScriptScope {
+                portability: !has_inventory,
+                ignore_exclude: false,
+            },
+        );
+    }
+    if let Some(inventory) = &diag.config().script_inventory {
+        for value in inventory {
+            paths
+                .entry(PathBuf::from(value))
+                .and_modify(|scope| {
+                    scope.portability = true;
+                    scope.ignore_exclude = true;
+                })
+                .or_insert(ScriptScope {
+                    portability: true,
+                    ignore_exclude: true,
+                });
+        }
+    }
+    paths
+}
+
+#[derive(Default)]
+struct BashArrayState {
+    empty: HashSet<String>,
+    known_nonempty: HashSet<String>,
+    guards: Vec<ArrayGuard>,
+    depth: usize,
+}
+
+struct ArrayGuard {
+    depth: usize,
+    positive: HashSet<String>,
+    empty_exit: HashSet<String>,
+    exits: bool,
+}
+
+impl BashArrayState {
+    fn scan_line(
+        &mut self,
+        path: &Path,
+        line_number: usize,
+        line: &str,
+        suppress_diagnostic: bool,
+        diag: &mut DiagnosticCollector,
+    ) {
+        for capture in ARRAY_ASSIGNMENT.captures_iter(line) {
+            let name = capture[1].to_string();
+            let values = capture[2].trim();
+            if values.is_empty() {
+                self.empty.insert(name.clone());
+                self.known_nonempty.remove(&name);
+            } else {
+                self.empty.remove(&name);
+                self.known_nonempty.insert(name.clone());
+            }
+            self.guards.iter_mut().for_each(|guard| {
+                guard.positive.remove(&name);
+                guard.empty_exit.remove(&name);
+            });
+        }
+
+        let names: HashSet<_> = ARRAY_LENGTH
+            .captures_iter(line)
+            .map(|capture| capture[1].to_string())
+            .collect();
+        let opens = IF_THEN.is_match(line);
+        if opens {
+            self.depth += 1;
+            let positive = if is_positive_array_guard(line) {
+                names.clone()
+            } else {
+                HashSet::new()
+            };
+            let empty_exit = if is_empty_array_guard(line) {
+                names.clone()
+            } else {
+                HashSet::new()
+            };
+            self.guards.push(ArrayGuard {
+                depth: self.depth,
+                positive,
+                empty_exit,
+                exits: false,
+            });
+        }
+
+        for name in self.empty.clone() {
+            if self.known_nonempty.contains(&name)
+                || names.contains(&name)
+                || self
+                    .guards
+                    .iter()
+                    .any(|guard| guard.depth <= self.depth && guard.positive.contains(&name))
+            {
+                continue;
+            }
+            for suffix in ["@", "*"] {
+                let expansion = format!("${{{name}[{suffix}]}}");
+                if !suppress_diagnostic
+                    && line.contains(&expansion)
+                    && !safe_conditional_array_expansion(line, &name, suffix)
+                {
+                    diag.report(
+                        LintRule::Bash32Incompatible,
+                        &format!(
+                            "{}:{line_number}: Bash 3.2 incompatible unguarded empty-array expansion {expansion}",
+                            path.display()
+                        ),
+                    );
+                }
+            }
+        }
+
+        if EXIT_OR_RETURN.is_match(line) {
+            for guard in &mut self.guards {
+                if guard.depth == self.depth && !guard.empty_exit.is_empty() {
+                    guard.exits = true;
+                }
+            }
+        }
+
+        if FI.is_match(line) && self.depth > 0 {
+            let depth = self.depth;
+            let completed: Vec<_> = self
+                .guards
+                .iter()
+                .enumerate()
+                .filter(|(_, guard)| guard.depth == depth)
+                .map(|(index, _)| index)
+                .collect();
+            for index in completed.into_iter().rev() {
+                let guard = self.guards.remove(index);
+                if guard.exits {
+                    for name in guard.empty_exit {
+                        self.empty.remove(&name);
+                        self.known_nonempty.insert(name);
+                    }
+                }
+            }
+            self.depth -= 1;
+        }
+    }
+}
+
+fn is_positive_array_guard(line: &str) -> bool {
+    POSITIVE_ARRAY_COMPARISON.is_match(line)
+}
+
+fn is_empty_array_guard(line: &str) -> bool {
+    EMPTY_ARRAY_COMPARISON.is_match(line)
+}
+
+fn safe_conditional_array_expansion(line: &str, name: &str, suffix: &str) -> bool {
+    line.contains(&format!("${{{name}[{suffix}]+\"${{{name}[{suffix}]}}\"}}"))
+}
+
+struct HeredocState {
+    delimiter: String,
+    awk: bool,
+    quoted: bool,
+}
+
+fn heredoc_state(line: &str, awk: bool) -> Option<HeredocState> {
+    let captures = HEREDOC.captures(line)?;
+    let quoted = captures.get(1).is_some() || captures.get(2).is_some();
+    let delimiter = captures
+        .get(1)
+        .or_else(|| captures.get(2))
+        .or_else(|| captures.get(3))?
+        .as_str()
+        .to_string();
+    Some(HeredocState {
+        delimiter,
+        awk,
+        quoted,
+    })
+}
+
+fn closes_heredoc(line: &str, delimiter: &str) -> bool {
+    line.trim() == delimiter
+}
+
 fn validate_script_contracts(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     include_public: bool,
 ) {
-    for path in scoped_scripts(include_public) {
-        let Some(content) = read_text(&path, exclude) else {
+    for (path, scope) in script_scopes(diag, include_public) {
+        let content = if scope.ignore_exclude {
+            (!path.is_symlink())
+                .then(|| fs::read_to_string(&path).ok())
+                .flatten()
+        } else {
+            read_text(&path, exclude)
+        };
+        let Some(content) = content else {
             continue;
         };
-        let mut heredoc: Option<String> = None;
+        let kind = script_kind(&path);
+        let mut heredoc: Option<HeredocState> = None;
+        let mut continuation = String::new();
+        let mut awk_single_body = false;
         let mut previous = "";
-        let mut empty_arrays = HashSet::new();
-        let mut array_guard_depth: HashMap<String, usize> = HashMap::new();
-        let mut zero_exit_guards: HashMap<String, (usize, bool)> = HashMap::new();
-        let mut proven_nonempty = HashSet::new();
-        let mut shell_depth = 0;
-        for (index, line) in content.lines().enumerate() {
-            if let Some(delimiter) = &heredoc {
-                if line.trim() == delimiter {
-                    heredoc = None;
+        let mut arrays = BashArrayState::default();
+        for (index, raw) in content.lines().enumerate() {
+            let continued = raw.trim_end().ends_with('\\');
+            if continued {
+                if !continuation.is_empty() {
+                    continuation.push(' ');
                 }
-                previous = line;
+                continuation.push_str(raw.trim_end().trim_end_matches('\\'));
                 continue;
             }
-            if let Some(capture) = QUOTED_HEREDOC.captures(line) {
-                heredoc = capture
-                    .get(1)
-                    .or_else(|| capture.get(2))
-                    .map(|value| value.as_str().to_string());
+            let line = if continuation.is_empty() {
+                raw.to_string()
+            } else {
+                continuation.push(' ');
+                continuation.push_str(raw);
+                std::mem::take(&mut continuation)
+            };
+            let line_number = index + 1;
+
+            if let Some(active) = &heredoc {
+                if closes_heredoc(&line, &active.delimiter) {
+                    heredoc = None;
+                    previous = raw;
+                    continue;
+                }
+                if scope.portability && active.awk {
+                    validate_awk_body(&path, line_number, &line, diag);
+                } else if scope.portability && !active.quoted && kind == ScriptKind::Shell {
+                    validate_bash_replacement(&path, line_number, &line, previous, diag);
+                }
+                previous = raw;
+                continue;
             }
-            if !line.trim_start().starts_with('#') {
-                for capture in EMPTY_ARRAY.captures_iter(line) {
-                    empty_arrays.insert(capture[1].to_string());
+
+            if awk_single_body {
+                if scope.portability {
+                    validate_awk_body(&path, line_number, &line, diag);
                 }
-                let opens_guard = IF_THEN.is_match(line);
-                for capture in ARRAY_LENGTH.captures_iter(line) {
-                    if opens_guard {
-                        array_guard_depth.insert(capture[1].to_string(), shell_depth + 1);
-                        if line.contains("-eq 0") || line.contains("== 0") {
-                            zero_exit_guards
-                                .insert(capture[1].to_string(), (shell_depth + 1, false));
-                        }
+                if line.matches('\'').count() % 2 == 1 {
+                    awk_single_body = false;
+                }
+                previous = raw;
+                continue;
+            }
+
+            if line.trim_start().starts_with('#') {
+                previous = raw;
+                continue;
+            }
+
+            if kind != ScriptKind::Awk {
+                validate_gh_inline(&path, line_number, &line, diag);
+            }
+            if scope.portability {
+                match kind {
+                    ScriptKind::Shell => {
+                        validate_bash_replacement(&path, line_number, &line, previous, diag);
+                        let bash32_suppressed = has_reasoned_marker(&line, "lint-bash32: ok");
+                        arrays.scan_line(&path, line_number, &line, bash32_suppressed, diag);
+                        validate_bash32(&path, line_number, &line, diag);
+                        validate_awk_command(&path, line_number, &line, diag);
                     }
-                }
-                if matches!(line.split_whitespace().next(), Some("exit" | "return")) {
-                    for (depth, exits) in zero_exit_guards.values_mut() {
-                        if shell_depth >= *depth {
-                            *exits = true;
-                        }
-                    }
-                }
-                for name in &empty_arrays {
-                    let expands = line.contains(&format!("${{{name}[@]}}"))
-                        || line.contains(&format!("${{{name}[*]}}"));
-                    let guarded = array_guard_depth
-                        .get(name)
-                        .is_some_and(|guard_depth| shell_depth >= *guard_depth);
-                    if expands
-                        && !guarded
-                        && !proven_nonempty.contains(name)
-                        && !ARRAY_LENGTH.is_match(line)
-                    {
-                        diag.report(
-                            LintRule::Bash32Incompatible,
-                            &format!(
-                                "{}:{}: Bash 3.2 incompatible unguarded empty-array expansion for {name}",
-                                path.display(),
-                                index + 1
-                            ),
-                        );
-                    }
-                }
-                validate_gh_inline(&path, index + 1, line, diag);
-                if BASH_REPLACEMENT.is_match(line)
-                    && !has_reasoned_marker(line, "lint-renderer-safe: ok")
-                    && !has_reasoned_marker(previous, "lint-renderer-safe: ok")
-                {
-                    diag.report(
-                        LintRule::BashReplacementUnsafe,
-                        &format!(
-                            "{}:{}: unsafe Bash global substitution with a variable replacement",
-                            path.display(),
-                            index + 1
-                        ),
-                    );
-                }
-                validate_bash32(&path, index + 1, line, diag);
-                validate_awk_nonascii(&path, index + 1, line, diag);
-                if opens_guard {
-                    shell_depth += 1;
-                }
-                if FI.is_match(line) {
-                    let completed: Vec<_> = zero_exit_guards
-                        .iter()
-                        .filter(|(_, (depth, _))| *depth == shell_depth)
-                        .map(|(name, (_, exits))| (name.clone(), *exits))
-                        .collect();
-                    for (name, exits) in completed {
-                        zero_exit_guards.remove(&name);
-                        if exits {
-                            proven_nonempty.insert(name);
-                        }
-                    }
-                    shell_depth = shell_depth.saturating_sub(1);
+                    ScriptKind::Awk => validate_awk_body(&path, line_number, &line, diag),
+                    ScriptKind::Other => {}
                 }
             }
-            previous = line;
+
+            let is_awk_command = kind == ScriptKind::Shell && AWK_COMMAND.is_match(&line);
+            heredoc = heredoc_state(&line, is_awk_command);
+            if scope.portability
+                && is_awk_command
+                && heredoc.is_none()
+                && line.matches('\'').count() % 2 == 1
+            {
+                awk_single_body = true;
+            }
+            previous = raw;
         }
+        if !continuation.is_empty() && scope.portability {
+            let line_number = content.lines().count();
+            match kind {
+                ScriptKind::Shell => {
+                    validate_bash_replacement(&path, line_number, &continuation, previous, diag);
+                    let bash32_suppressed = has_reasoned_marker(&continuation, "lint-bash32: ok");
+                    arrays.scan_line(&path, line_number, &continuation, bash32_suppressed, diag);
+                    validate_bash32(&path, line_number, &continuation, diag);
+                    validate_awk_command(&path, line_number, &continuation, diag);
+                    if awk_single_body {
+                        validate_awk_body(&path, line_number, &continuation, diag);
+                    }
+                }
+                ScriptKind::Awk => validate_awk_body(&path, line_number, &continuation, diag),
+                ScriptKind::Other => {}
+            }
+        }
+    }
+}
+
+fn validate_bash_replacement(
+    path: &Path,
+    line_number: usize,
+    line: &str,
+    previous: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    if BASH_REPLACEMENT.is_match(line)
+        && !has_reasoned_marker(line, "lint-renderer-safe: ok")
+        && !has_reasoned_marker(previous, "lint-renderer-safe: ok")
+    {
+        diag.report(
+            LintRule::BashReplacementUnsafe,
+            &format!(
+                "{}:{line_number}: unsafe Bash global substitution with a variable replacement",
+                path.display()
+            ),
+        );
     }
 }
 
@@ -1267,34 +1581,8 @@ fn validate_bash32(path: &Path, line_number: usize, line: &str, diag: &mut Diagn
     if has_reasoned_marker(line, "lint-bash32: ok") {
         return;
     }
-    let patterns = [
-        (
-            r"\b(?:declare|typeset)\s+-[A-Za-z]*A\b",
-            "associative arrays",
-        ),
-        (r"\b(?:mapfile|readarray)\b", "mapfile/readarray"),
-        (
-            r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\^\^?|,,?)",
-            "parameter case conversion",
-        ),
-        (r"\b(?:declare|local)\s+-[A-Za-z]*n\b", "namerefs"),
-        (r"&>>", "append-all redirection"),
-        (r"\bcoproc\b", "coproc"),
-        (
-            r"\$\{[A-Za-z_][A-Za-z0-9_]*\[\s*-[0-9]",
-            "negative array indexes",
-        ),
-        (
-            r"\{[A-Za-z0-9-]+\.\.[A-Za-z0-9-]+\.\.-?[0-9]+\}",
-            "stepped brace expansion",
-        ),
-        (
-            r"\b(?:if|elif)\s+!?\s*command\s+(?:grep|egrep|fgrep|rg|ripgrep)\b",
-            "grep-family command conditions",
-        ),
-    ];
-    for (pattern, label) in patterns {
-        if Regex::new(pattern).unwrap().is_match(line) {
+    for (pattern, label) in BASH32_PATTERNS.iter() {
+        if pattern.is_match(line) {
             diag.report(
                 LintRule::Bash32Incompatible,
                 &format!(
@@ -1306,32 +1594,51 @@ fn validate_bash32(path: &Path, line_number: usize, line: &str, diag: &mut Diagn
     }
 }
 
-fn validate_awk_nonascii(
+fn validate_awk_command(
     path: &Path,
     line_number: usize,
     line: &str,
     diag: &mut DiagnosticCollector,
 ) {
-    if line.is_ascii() || has_reasoned_marker(line, "lint-awk-multibyte-regex: ok") {
+    if line.is_ascii()
+        || has_reasoned_marker(line, "lint-awk-multibyte-regex: ok")
+        || !AWK_COMMAND.is_match(line)
+    {
         return;
     }
-    let dynamic_value = line.contains("awk") && line.contains("-v ");
-    let regex_body = path.extension().and_then(|value| value.to_str()) == Some("awk")
-        || line.contains("match(")
-        || line.contains("sub(")
-        || line.contains("gsub(")
-        || line.contains("split(")
-        || line.contains(" ~ ")
-        || line.contains(" !~ ");
-    if dynamic_value || regex_body {
+    if AWK_VALUE.captures_iter(line).any(|capture| {
+        capture
+            .get(1)
+            .or_else(|| capture.get(2))
+            .or_else(|| capture.get(3))
+            .is_some_and(|value| !value.as_str().is_ascii())
+    }) {
         diag.report(
             LintRule::AwkRegexNonascii,
             &format!(
-                "{}:{line_number}: non-ASCII text in a dynamic awk regex is not portable",
+                "{}:{line_number}: non-ASCII awk -v value may be used as an implementation-dependent regex",
                 path.display()
             ),
         );
     }
+    validate_awk_body(path, line_number, line, diag);
+}
+
+fn validate_awk_body(path: &Path, line_number: usize, line: &str, diag: &mut DiagnosticCollector) {
+    if line.is_ascii()
+        || line.trim_start().starts_with('#')
+        || has_reasoned_marker(line, "lint-awk-multibyte-regex: ok")
+        || !AWK_REGEX_CONTEXT.is_match(line)
+    {
+        return;
+    }
+    diag.report(
+        LintRule::AwkRegexNonascii,
+        &format!(
+            "{}:{line_number}: non-ASCII text in an awk regex context is not portable",
+            path.display()
+        ),
+    );
 }
 
 #[cfg(test)]
@@ -1708,6 +2015,250 @@ mod tests {
                 .diagnostics()
                 .iter()
                 .any(|item| item.rule == LintRule::Bash32Incompatible)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn bash32_ports_forbidden_and_negative_larch_fixtures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("scripts").unwrap();
+        fs::write(
+            "scripts/contracts.inc.bash",
+            r#"# shellcheck shell=bash
+# declare -A documentation is ignored
+declare -A seen=()
+typeset -x -A legacy=()
+mapfile -t rows < input
+readarray -t more < input
+printf '%s' "${NAME^^}" "${NAME^}" "${NAME,,}" "${NAME,}"
+declare -n ref=target
+local -x -n inner=target
+cmd &>>log
+coproc WORKER { cat; }
+arr=(a b); printf '%s' "${arr[-1]}"
+printf '%s' {1..10..2}
+if command grep -q needle file; then :; fi
+elif command rg -q needle .; then :; fi
+if ( command grep -q needle file ) 2>/dev/null; then :; fi
+safe="${MYVAR//[^A-Za-z0-9_-]/_}"
+declare -A reviewed=() # lint-bash32: ok intentional compatibility shim
+declare -A no_reason=() # lint-bash32: ok
+"#,
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::with_config_silent(LintConfig::default());
+        validate_script_contracts(&mut diag, &ExcludeSet::default(), true);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::Bash32Incompatible)
+            .collect();
+        for label in [
+            "declare -A associative arrays",
+            "typeset -A associative arrays",
+            "mapfile/readarray",
+            "parameter case conversion",
+            "declare -n nameref",
+            "local -n nameref",
+            "&>> append-all redirection",
+            "coproc",
+            "negative array index",
+            "stepped brace expansion",
+            "if/elif command grep-family condition",
+        ] {
+            assert!(
+                findings.iter().any(|item| item.message.contains(label)),
+                "missing fixture for {label}"
+            );
+        }
+        assert!(findings.iter().any(|item| item.message.contains(":19:")));
+        assert!(!findings.iter().any(|item| item.message.contains(":18:")));
+        assert!(!findings.iter().any(|item| item.message.contains(":16:")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn bash32_empty_array_analysis_tracks_guards_assignments_and_safe_expansion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("scripts").unwrap();
+        fs::write(
+            "scripts/arrays.sh",
+            r#"items=()
+printf '%s\n' "${items[@]}"
+if [ "${#items[@]}" -gt 0 ]; then
+  printf '%s\n' "${items[@]}"
+fi
+printf '%s\n' "${items[*]}"
+items=(one)
+printf '%s\n' "${items[@]}"
+items=()
+printf '%s\n' ${items[@]+"${items[@]}"}
+if [ "${#items[@]}" -eq 0 ]; then
+  exit 0
+fi
+printf '%s\n' "${items[@]}"
+other=()
+if [ "${#other[@]}" -gt 0 ]; then
+  printf '%s\n' "${other[@]}"
+fi
+printf '%s\n' "${other[@]}"
+suppressed=() # lint-bash32: ok state still must be tracked
+printf '%s\n' "${suppressed[@]}"
+reverse=()
+if [ "${#reverse[@]}" != 0 ]; then
+  exit 0
+fi
+printf '%s\n' "${reverse[@]}"
+"#,
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::with_config_silent(LintConfig::default());
+        validate_script_contracts(&mut diag, &ExcludeSet::default(), true);
+        let lines: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::Bash32Incompatible)
+            .map(|item| item.message.clone())
+            .collect();
+        assert_eq!(lines.len(), 5, "unexpected findings: {lines:?}");
+        for line in [2, 6, 19, 21, 26] {
+            assert!(
+                lines
+                    .iter()
+                    .any(|message| message.contains(&format!(":{line}:"))),
+                "missing line {line}: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn awk_ports_continuation_heredoc_multiline_and_display_fixtures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("scripts").unwrap();
+        fs::write(
+            "scripts/awk.sh",
+            r#"# awk -v label='テスト' 'BEGIN { print label }'
+awk -v label='テスト' 'BEGIN { print label }'
+awk 'BEGIN { printf "テスト\n" }'
+awk -v label = \
+  'テスト' 'BEGIN { print label }'
+cat <<'DOC'
+awk -v ignored='テスト' 'BEGIN { print ignored }'
+DOC
+awk -f - <<'AWK'
+BEGIN { if (match($0, "—")) print "hit" }
+AWK
+awk 'BEGIN {
+  if ($0 !~ "—") print
+  gsub("—", "-", $0)
+  sub("—", "-", $0)
+  split($0, parts, "—")
+}' | cat
+awk -v reviewed='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok display only
+awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
+"#,
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::with_config_silent(LintConfig::default());
+        validate_script_contracts(&mut diag, &ExcludeSet::default(), true);
+        let lines: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::AwkRegexNonascii)
+            .map(|item| item.message.clone())
+            .collect();
+        for line in [2, 5, 10, 13, 14, 15, 16, 19] {
+            assert!(
+                lines
+                    .iter()
+                    .any(|message| message.contains(&format!(":{line}:"))),
+                "missing line {line}: {lines:?}"
+            );
+        }
+        for line in [1, 3, 7, 18] {
+            assert!(
+                !lines
+                    .iter()
+                    .any(|message| message.contains(&format!(":{line}:"))),
+                "unexpected line {line}: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn explicit_inventory_scans_untracked_excluded_files_and_limits_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("portable").unwrap();
+        fs::write(
+            "portable/inventory.txt",
+            "portable/in-scope.sh\nportable/helper.inc.bash\nportable/rules.awk\n",
+        )
+        .unwrap();
+        fs::write(
+            "portable/in-scope.sh",
+            "declare -A bad=()\nout=${text//x/$replacement}\n",
+        )
+        .unwrap();
+        fs::write("portable/helper.inc.bash", "mapfile -t rows < input\n").unwrap();
+        fs::write("portable/rules.awk", "BEGIN { match($0, \"—\") }\n").unwrap();
+        fs::write("portable/out-of-scope.sh", "declare -A hidden=()\n").unwrap();
+        fs::write(
+            "agent-lint.toml",
+            "[lint]\nerror = [\"G010\", \"G011\"]\nscript-inventory = \"portable/inventory.txt\"\nexclude = [\"portable/**\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(".").unwrap();
+        let exclude = config.build_exclude_set();
+        let mut diag = DiagnosticCollector::with_config_silent(config);
+        validate_script_contracts(&mut diag, &exclude, false);
+
+        for rule in [
+            LintRule::BashReplacementUnsafe,
+            LintRule::Bash32Incompatible,
+            LintRule::AwkRegexNonascii,
+        ] {
+            assert!(
+                diag.diagnostics().iter().any(|item| item.rule == rule),
+                "missing {rule:?}"
+            );
+        }
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.message.contains("out-of-scope"))
+        );
+
+        let mut all_config = LintConfig::load(".").unwrap();
+        all_config
+            .suppress
+            .extend([LintRule::Bash32Incompatible, LintRule::AwkRegexNonascii]);
+        all_config.apply_cli_mode(crate::config::CliMode::All);
+        let all_exclude = all_config.build_exclude_set();
+        let mut all_diag = DiagnosticCollector::with_config_silent(all_config);
+        validate_script_contracts(&mut all_diag, &all_exclude, false);
+        assert!(
+            all_diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::Bash32Incompatible)
+        );
+        assert!(
+            all_diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::AwkRegexNonascii)
         );
     }
 

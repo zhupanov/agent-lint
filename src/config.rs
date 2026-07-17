@@ -70,6 +70,8 @@ struct RawLintSection {
         rename = "inline-path-prefixes"
     )]
     inline_path_prefixes: Vec<String>,
+    #[serde(default, rename = "script-inventory")]
+    script_inventory: Option<String>,
 }
 
 const fn default_desc_truncated_max_chars() -> usize {
@@ -110,6 +112,7 @@ impl Default for RawLintSection {
             claude_import_total_max_lines: None,
             instruction_files: default_instruction_files(),
             inline_path_prefixes: default_inline_path_prefixes(),
+            script_inventory: None,
         }
     }
 }
@@ -130,6 +133,9 @@ pub struct LintConfig {
     pub claude_import_total_max_lines: Option<usize>,
     pub instruction_files: Vec<String>,
     pub inline_path_prefixes: Vec<String>,
+    /// Explicit repository-relative script paths used by G009-G011. `None`
+    /// selects conventional script discovery instead.
+    pub script_inventory: Option<Vec<String>>,
     pub platforms: PlatformOverrides,
 }
 
@@ -146,6 +152,7 @@ impl Default for LintConfig {
             claude_import_total_max_lines: None,
             instruction_files: default_instruction_files(),
             inline_path_prefixes: default_inline_path_prefixes(),
+            script_inventory: None,
             platforms: PlatformOverrides::default(),
         }
     }
@@ -254,6 +261,12 @@ impl LintConfig {
             .map_err(|message| format!("{}: {message}", path.display()))?;
         validate_relative_paths(&section.inline_path_prefixes, "inline-path-prefixes", true)
             .map_err(|message| format!("{}: {message}", path.display()))?;
+        let script_inventory = section
+            .script_inventory
+            .as_deref()
+            .map(|inventory| load_script_inventory(Path::new(repo_root), inventory))
+            .transpose()
+            .map_err(|message| format!("{}: {message}", path.display()))?;
 
         // Parse error list first (user-explicit error promotions).
         let mut error = HashSet::new();
@@ -309,6 +322,7 @@ impl LintConfig {
             claude_import_total_max_lines: section.claude_import_total_max_lines,
             instruction_files: section.instruction_files,
             inline_path_prefixes: section.inline_path_prefixes,
+            script_inventory,
             platforms: PlatformOverrides {
                 cursor: platforms.cursor,
                 codex: platforms.codex,
@@ -369,6 +383,66 @@ impl LintConfig {
         // Patterns were already validated in load(), so unwrap is safe.
         ExcludeSet::new(&self.exclude).expect("exclude patterns were validated at load time")
     }
+}
+
+fn load_script_inventory(root: &Path, inventory: &str) -> Result<Vec<String>, String> {
+    validate_relative_paths(&[inventory.to_string()], "script-inventory", false)?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve repository root: {error}"))?;
+    let inventory_path = canonical_root.join(inventory);
+    validate_inventory_file(
+        &canonical_root,
+        &inventory_path,
+        &format!("script-inventory '{inventory}'"),
+    )?;
+    let content = std::fs::read_to_string(&inventory_path).map_err(|error| {
+        format!("script-inventory '{inventory}' cannot be read as UTF-8: {error}")
+    })?;
+    let mut paths = Vec::new();
+    for (index, raw) in content.lines().enumerate() {
+        let value = raw.trim();
+        if value.is_empty() || value.starts_with('#') {
+            continue;
+        }
+        validate_relative_paths(&[value.to_string()], "script-inventory", false)
+            .map_err(|message| format!("{message} on line {}", index + 1))?;
+        if !is_supported_script_path(value) {
+            return Err(format!(
+                "script-inventory entry '{value}' on line {} must end in .sh, .inc.bash, or .awk",
+                index + 1
+            ));
+        }
+        let script_path = canonical_root.join(value);
+        validate_inventory_file(
+            &canonical_root,
+            &script_path,
+            &format!("script-inventory entry '{value}' on line {}", index + 1),
+        )?;
+        paths.push(normalize_path(value));
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn validate_inventory_file(root: &Path, path: &Path, label: &str) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("{label} cannot be read: {error}"))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(format!("{label} must be a regular file"));
+    }
+    let canonical = path
+        .canonicalize()
+        .map_err(|error| format!("{label} cannot be resolved: {error}"))?;
+    if !canonical.starts_with(root) {
+        return Err(format!("{label} resolves outside the repository root"));
+    }
+    Ok(())
+}
+
+fn is_supported_script_path(path: &str) -> bool {
+    path.ends_with(".sh") || path.ends_with(".inc.bash") || path.ends_with(".awk")
 }
 
 fn validate_relative_paths(
@@ -716,6 +790,80 @@ mod tests {
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
         assert!(config.exclude.is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn script_inventory_loads_supported_untracked_paths_deterministically() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+        for path in ["z.sh", "helper.inc.bash", "rules.awk"] {
+            std::fs::write(tmp.path().join("scripts").join(path), "# fixture\n").unwrap();
+        }
+        std::fs::write(
+            tmp.path().join("scripts/inventory.txt"),
+            "# explicit scope\nscripts/z.sh\nscripts/rules.awk\nscripts/helper.inc.bash\nscripts/z.sh\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nscript-inventory = \"scripts/inventory.txt\"\n",
+        )
+        .unwrap();
+
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(
+            config.script_inventory.unwrap(),
+            [
+                "scripts/helper.inc.bash",
+                "scripts/rules.awk",
+                "scripts/z.sh"
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn invalid_script_inventory_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("notes.md"), "notes\n").unwrap();
+        std::fs::write(tmp.path().join("inventory.txt"), "../outside.sh\n").unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nscript-inventory = \"inventory.txt\"\n",
+        )
+        .unwrap();
+        let traversal = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(traversal.contains("safe repository-relative"));
+
+        std::fs::write(tmp.path().join("inventory.txt"), "notes.md\n").unwrap();
+        let extension = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(extension.contains("must end in .sh, .inc.bash, or .awk"));
+
+        std::fs::write(tmp.path().join("inventory.txt"), "missing.sh\n").unwrap();
+        let missing = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(missing.contains("cannot be read"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn script_inventory_rejects_parent_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("escaped.sh"), "printf ok\n").unwrap();
+        symlink(outside.path(), tmp.path().join("linked")).unwrap();
+        std::fs::write(tmp.path().join("inventory.txt"), "linked/escaped.sh\n").unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nscript-inventory = \"inventory.txt\"\n",
+        )
+        .unwrap();
+
+        let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(error.contains("resolves outside the repository root"));
     }
 
     #[test]

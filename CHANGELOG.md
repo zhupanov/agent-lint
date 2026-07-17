@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.6.0] - 2026-07-16
+
+### Added
+
+- Added an explicit, validated script inventory for deterministic G009-G011
+  scans of `.sh`, `.inc.bash`, and standalone `.awk` files
+- Ported Bash 3.2 empty-array flow analysis and awk command/body parsing for
+  continuations, heredocs, multiline programs, and regex-only non-ASCII checks
+
+### Changed
+
+- Enabled G010 and G011 as compiled-default errors
+- Made explicit portability inventories authoritative even when unrelated
+  global exclusion globs match an inventoried file
+
 ## [2.4.0] - 2026-07-16
 
 ### Added
