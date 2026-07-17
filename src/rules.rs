@@ -1685,7 +1685,118 @@ pub const ALL_RULES: &[LintRule] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
+    use regex::Regex;
+    use std::collections::{HashMap, HashSet};
+
+    #[derive(Debug)]
+    struct DocumentedRule {
+        line_number: usize,
+        name: Option<String>,
+    }
+
+    fn rule_code_parts(code: &str) -> Option<(&str, u16)> {
+        let digit_start = code
+            .char_indices()
+            .rev()
+            .take_while(|(_, character)| character.is_ascii_digit())
+            .last()
+            .map(|(index, _)| index)?;
+        let (prefix, suffix) = code.split_at(digit_start);
+        if prefix.is_empty()
+            || !prefix
+                .chars()
+                .all(|character| character.is_ascii_uppercase() || character == '-')
+            || suffix.len() != 3
+        {
+            return None;
+        }
+        suffix.parse().ok().map(|number| (prefix, number))
+    }
+
+    fn documented_rule_rows(documentation: &str) -> HashMap<String, DocumentedRule> {
+        let mut rules = HashMap::new();
+        let rule_row =
+            Regex::new(r"^\|\s*(.*?)\s*\|\s*(.*?)\s*\|").expect("rule row regex is valid");
+
+        for (line_number, line) in documentation.lines().enumerate() {
+            let Some(captures) = rule_row.captures(line) else {
+                continue;
+            };
+            let code_cell = captures.get(1).expect("rule code capture exists").as_str();
+            let name_cell = captures.get(2).expect("rule name capture exists").as_str();
+
+            let (first_code, last_code) = if let Some((first, last)) = code_cell.split_once('–') {
+                (first, Some(last))
+            } else if let Some((first, last)) = code_cell.split_once("--") {
+                (first, Some(last))
+            } else {
+                (code_cell, None)
+            };
+            let Some((prefix, first_number)) = rule_code_parts(first_code) else {
+                continue;
+            };
+            let last_number = match last_code {
+                Some(last_code) => {
+                    let (last_prefix, last_number) =
+                        rule_code_parts(last_code).unwrap_or_else(|| {
+                            panic!(
+                                "docs/rules.md:{}: invalid rule code range {code_cell}",
+                                line_number + 1
+                            )
+                        });
+                    assert_eq!(
+                        prefix,
+                        last_prefix,
+                        "docs/rules.md:{}: rule code range {code_cell} changes prefix",
+                        line_number + 1
+                    );
+                    assert!(
+                        first_number <= last_number,
+                        "docs/rules.md:{}: rule code range {code_cell} is descending",
+                        line_number + 1
+                    );
+                    last_number
+                }
+                None => first_number,
+            };
+
+            let name = if first_number == last_number {
+                Some(
+                    name_cell
+                        .strip_prefix('`')
+                        .and_then(|name| name.strip_suffix('`'))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "docs/rules.md:{}: rule row for {first_code} must use a backticked name",
+                                line_number + 1
+                            )
+                        })
+                        .to_owned(),
+                )
+            } else {
+                None
+            };
+
+            for number in first_number..=last_number {
+                let code = format!("{prefix}{number:03}");
+                assert!(
+                    rules
+                        .insert(
+                            code.clone(),
+                            DocumentedRule {
+                                line_number: line_number + 1,
+                                name: name.clone(),
+                            },
+                        )
+                        .is_none(),
+                    "docs/rules.md:{}: duplicate documented rule code {code}",
+                    line_number + 1
+                );
+            }
+        }
+
+        rules
+    }
 
     #[test]
     fn all_rules_count_matches_enum() {
@@ -1766,6 +1877,53 @@ mod tests {
         for rule in ALL_RULES {
             assert_eq!(LintRule::from_code_or_name(rule.code()), Some(*rule));
             assert_eq!(LintRule::from_code_or_name(rule.name()), Some(*rule));
+        }
+    }
+
+    #[test]
+    fn rules_documentation_matches_registry() {
+        let documented = documented_rule_rows(include_str!("../docs/rules.md"));
+
+        assert_eq!(
+            documented.len(),
+            ALL_RULES.len(),
+            "docs/rules.md must document every registered rule code"
+        );
+
+        for rule in ALL_RULES {
+            let documented_rule = documented.get(rule.code()).unwrap_or_else(|| {
+                panic!(
+                    "docs/rules.md is missing {} ({}) from the rule registry",
+                    rule.code(),
+                    rule.name()
+                )
+            });
+            if let Some(documented_name) = &documented_rule.name {
+                assert_eq!(
+                    documented_name,
+                    rule.name(),
+                    "docs/rules.md documents {} with the wrong rule name",
+                    rule.code()
+                );
+            }
+        }
+
+        for (code, documented_rule) in documented {
+            let rule = LintRule::from_code_or_name(&code).unwrap_or_else(|| {
+                panic!(
+                    "docs/rules.md:{} documents {code}, but it has no implementation",
+                    documented_rule.line_number
+                )
+            });
+            if let Some(documented_name) = documented_rule.name {
+                assert_eq!(
+                    rule.name(),
+                    documented_name,
+                    "docs/rules.md:{} documents {code} with `{documented_name}`, but the registry names it `{}`",
+                    documented_rule.line_number,
+                    rule.name()
+                );
+            }
         }
     }
 
