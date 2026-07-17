@@ -1,7 +1,10 @@
-.PHONY: lint shellcheck shellcheck-skills markdownlint jsonlint actionlint clippy fmt setup cargo-test cargo-clippy
+.PHONY: lint shellcheck shellcheck-skills markdownlint jsonlint actionlint clippy fmt setup cargo-test cargo-clippy test-check-bump-version
 
-lint:
+lint: test-check-bump-version
 	pre-commit run --all-files
+
+test-check-bump-version:
+	bash scripts/test-check-bump-version.sh
 
 shellcheck:
 	pre-commit run shellcheck --all-files
