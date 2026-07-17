@@ -2,12 +2,12 @@ use crate::config::ExcludeSet;
 use crate::context::LintMode;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use regex::Regex;
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
-use walkdir::WalkDir;
 
 static RE_SCRIPT_PUB: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/(scripts|skills|\.claude/skills)/[a-zA-Z0-9._/-]+\.sh")
@@ -95,17 +95,12 @@ fn strip_trailing_yaml_comment(line: &str) -> String {
 /// and `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh` are recognised as references.
 pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<String> {
     let mut candidates: Vec<PathBuf> = vec![PathBuf::from("Makefile")];
-    if let Ok(entries) = fs::read_dir(".") {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".mk") {
-                    candidates.push(path);
-                }
-            }
+    for entry in crate::traversal::shallow_files(Path::new("."), Path::new("."), None).entries {
+        let path = entry.path;
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && name.ends_with(".mk")
+        {
+            candidates.push(path);
         }
     }
     let mut out = Vec::new();
@@ -130,12 +125,9 @@ pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &Excl
         if !base.is_dir() {
             continue;
         }
-        for entry in WalkDir::new(base).into_iter().flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let display_path = path.display().to_string();
+        for entry in traversal::recursive_files(base, Path::new("."), Some(exclude)).entries {
+            let path = &entry.path;
+            let display_path = entry.display;
             if exclude.is_excluded(&display_path) {
                 continue;
             }
@@ -229,12 +221,9 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclud
         return;
     }
 
-    for entry in WalkDir::new(base).into_iter().flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let display_path = path.display().to_string();
+    for entry in traversal::recursive_files(base, Path::new("."), Some(exclude)).entries {
+        let path = &entry.path;
+        let display_path = entry.display;
         if exclude.is_excluded(&display_path) {
             continue;
         }
@@ -306,22 +295,21 @@ pub fn expand_script_dirs(patterns: &[&str]) -> Vec<PathBuf> {
                 let mut next = Vec::new();
                 if *seg == "*" {
                     for base in &candidates {
-                        let read_dir = if base.as_os_str().is_empty() {
-                            fs::read_dir(".")
+                        let directory = if base.as_os_str().is_empty() {
+                            Path::new(".")
                         } else {
-                            fs::read_dir(base)
+                            base.as_path()
                         };
-                        if let Ok(entries) = read_dir {
-                            for entry in entries.flatten() {
-                                if entry.path().is_dir() {
-                                    let child = if base.as_os_str().is_empty() {
-                                        PathBuf::from(entry.file_name())
-                                    } else {
-                                        base.join(entry.file_name())
-                                    };
-                                    next.push(child);
-                                }
-                            }
+                        for entry in
+                            crate::traversal::shallow_directories(directory, Path::new("."), None)
+                                .entries
+                        {
+                            let child = if base.as_os_str().is_empty() {
+                                PathBuf::from(entry.path.file_name().unwrap_or_default())
+                            } else {
+                                base.join(entry.path.file_name().unwrap_or_default())
+                            };
+                            next.push(child);
                         }
                     }
                 } else {
@@ -373,15 +361,8 @@ pub fn collect_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<String>
     };
     let mut paths = BTreeSet::new();
     for dir in expand_script_dirs(patterns) {
-        let entries = match fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
+        for entry in crate::traversal::shallow_files(&dir, Path::new("."), None).entries {
+            let path = entry.path;
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.ends_with(".sh") {
                     let display = path.display().to_string();
@@ -399,16 +380,8 @@ pub fn collect_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<String>
 fn check_sh_executability(dir: &Path, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     use std::os::unix::fs::PermissionsExt;
 
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for entry in crate::traversal::shallow_files(dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) if n.ends_with(".sh") => n.to_string(),
             _ => continue,

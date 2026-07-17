@@ -7,6 +7,7 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::traversal;
 use globset::Glob;
 use serde_json::Value as JsonValue;
 use serde_yaml::{Mapping, Value as YamlValue};
@@ -85,23 +86,16 @@ fn validate_markdown_directory<F>(
         return;
     }
 
-    let entries = match fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+    for entry in traversal::shallow_files(dir, Path::new("."), Some(exclude)).entries {
+        let path = entry.path;
+        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
             continue;
         }
-        let path = path.to_string_lossy().replace('\\', "/");
-        if exclude.is_excluded(&path) {
-            continue;
-        }
+        let display = entry.display;
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
-        validate(&path, &content, diag);
+        validate(&display, &content, diag);
     }
 }
 

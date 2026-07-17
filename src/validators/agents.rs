@@ -2,6 +2,7 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::traversal;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -83,16 +84,8 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 
     let mut found = 0;
     let mut excluded_count = 0;
-    let entries = match fs::read_dir(agents_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) if n.ends_with(".md") => n.to_string(),
             _ => continue,
@@ -153,16 +146,8 @@ pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
     if !agents_dir.is_dir() {
         return;
     }
-    let entries = match fs::read_dir(agents_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) if n.ends_with(".md") => n.to_string(),
             _ => continue,
@@ -632,16 +617,8 @@ pub fn validate_agent_template_alignment(diag: &mut DiagnosticCollector, exclude
         return;
     }
 
-    let entries = match fs::read_dir(agents_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) if n.ends_with(".md") => n.to_string(),
             _ => continue,
@@ -696,18 +673,14 @@ pub fn validate_agent_template_count(diag: &mut DiagnosticCollector, exclude: &E
 
     // Count agents/*.md files
     let mut agent_count = 0;
-    if let Ok(entries) = fs::read_dir(agents_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.ends_with(".md") {
-                        let agent_path = format!("agents/{name}");
-                        if !exclude.is_excluded(&agent_path) {
-                            agent_count += 1;
-                        }
-                    }
-                }
+    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
+        let path = entry.path;
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && name.ends_with(".md")
+        {
+            let agent_path = format!("agents/{name}");
+            if !exclude.is_excluded(&agent_path) {
+                agent_count += 1;
             }
         }
     }

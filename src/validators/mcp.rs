@@ -2,12 +2,12 @@ use crate::config::ExcludeSet;
 use crate::context::LintContext;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::LazyLock;
-use walkdir::WalkDir;
 
 const RESERVED_SERVER_NAMES: &[&str] = &["workspace"];
 
@@ -64,21 +64,14 @@ pub fn validate_mcp_configs(
 
 fn mcp_config_paths(ctx: &LintContext) -> Vec<std::path::PathBuf> {
     let mut paths = HashSet::new();
-    for entry in WalkDir::new(&ctx.base_path)
-        .into_iter()
-        .filter_entry(|entry| entry.file_name() != ".git")
-        .flatten()
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy();
+    for entry in traversal::recursive_files(&ctx.base_path, &ctx.base_path, None).entries {
+        let name = entry.path.file_name().unwrap_or_default().to_string_lossy();
         if name == ".mcp.json"
             || name.ends_with(".mcp.json")
-            || entry.path() == ctx.base_path.join(".claude/settings.json")
-            || entry.path() == ctx.base_path.join(".claude/settings.local.json")
+            || entry.path == ctx.base_path.join(".claude/settings.json")
+            || entry.path == ctx.base_path.join(".claude/settings.local.json")
         {
-            paths.insert(entry.into_path());
+            paths.insert(entry.path);
         }
     }
     let mut paths: Vec<_> = paths.into_iter().collect();

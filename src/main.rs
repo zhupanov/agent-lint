@@ -9,6 +9,7 @@ mod prompt_budget;
 mod rules;
 #[cfg(test)]
 mod test_helpers;
+mod traversal;
 mod validators;
 
 use clap::{ArgGroup, Parser};
@@ -286,13 +287,14 @@ fn detect_mode_for_targets(targets: ValidationTargets) -> Option<LintMode> {
 }
 
 fn has_mcp_config() -> bool {
-    walkdir::WalkDir::new(".")
-        .into_iter()
-        .filter_entry(|entry| entry.file_name() != ".git")
-        .flatten()
+    traversal::recursive_files(std::path::Path::new("."), std::path::Path::new("."), None)
+        .entries
+        .iter()
         .any(|entry| {
-            entry.file_type().is_file()
-                && entry.file_name().to_string_lossy().ends_with(".mcp.json")
+            entry
+                .path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with(".mcp.json"))
         })
 }
 

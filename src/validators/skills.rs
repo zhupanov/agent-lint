@@ -2,11 +2,11 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::traversal;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
-use walkdir::WalkDir;
 
 static RE_SHARED_MD_REF: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._/-]+\.md").unwrap()
@@ -37,7 +37,15 @@ pub struct SkillInfo {
 /// Skips `shared/` subdirectory and excluded paths. Returns empty vec if dir doesn't exist.
 pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
     let dir = Path::new(base_dir);
-    let subdirs = super::walk::read_subdirs(dir, base_dir, exclude, true);
+    let subdirs = traversal::shallow_directories(dir, Path::new("."), None)
+        .entries
+        .into_iter()
+        .filter_map(|entry| {
+            let name = entry.path.file_name()?.to_str()?.to_string();
+            (name != "shared" && !exclude.is_excluded(&format!("{base_dir}/{name}/SKILL.md")))
+                .then_some((entry.path, name))
+        })
+        .collect::<Vec<_>>();
 
     let mut skills = Vec::new();
     for (path, dir_name) in subdirs {
@@ -60,10 +68,9 @@ pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
         let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
 
         let scripts_dir = path.join("scripts");
-        let has_scripts_dir = scripts_dir.is_dir()
-            && fs::read_dir(&scripts_dir)
-                .ok()
-                .is_some_and(|mut e| matches!(e.next(), Some(Ok(_))));
+        let has_scripts_dir = !traversal::shallow_entries(&scripts_dir, Path::new("."), None)
+            .entries
+            .is_empty();
 
         skills.push(SkillInfo {
             path: skill_path,
@@ -85,16 +92,8 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 
     let mut skill_count = 0;
     let mut excluded_count = 0;
-    let entries = match fs::read_dir(skills_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(skills_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -153,16 +152,8 @@ fn validate_skill_frontmatter_in_dir(
         return;
     }
 
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
+        let path = entry.path;
         let dir_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -302,11 +293,9 @@ fn validate_skill_frontmatter_in_dir(
 
 fn check_skill_dir_size(dir: &Path, skill_path: &str, diag: &mut DiagnosticCollector) {
     let mut total = 0u64;
-    for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
-        if entry.file_type().is_file() {
-            if let Ok(meta) = entry.metadata() {
-                total = total.saturating_add(meta.len());
-            }
+    for entry in traversal::recursive_files(dir, Path::new("."), None).entries {
+        if let Ok(meta) = entry.path.metadata() {
+            total = total.saturating_add(meta.len());
         }
     }
     if total > SKILL_DIR_SIZE_LIMIT {
@@ -355,16 +344,8 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &E
         return;
     }
 
-    let entries = match fs::read_dir(skills_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(skills_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let dir_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,

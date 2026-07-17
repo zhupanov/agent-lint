@@ -2,12 +2,12 @@ use crate::config::ExcludeSet;
 use crate::context::{LintContext, ManifestState, collect_json_strings};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
-use walkdir::WalkDir;
 
 use super::scripts::{
     RE_SCRIPT_DIR_REF, RE_SCRIPT_PLACEHOLDER, RE_SCRIPTS_EXTRACT, RE_SCRIPTS_PATH,
@@ -45,15 +45,8 @@ pub fn validate_dead_scripts(
         if !base.is_dir() {
             continue;
         }
-        for entry in WalkDir::new(base).into_iter().flatten() {
-            if !entry.path().is_file() {
-                continue;
-            }
-            let entry_display = entry.path().display().to_string();
-            if exclude.is_excluded(&entry_display) {
-                continue;
-            }
-            let content = match fs::read_to_string(entry.path()) {
+        for entry in traversal::recursive_files(base, Path::new("."), Some(exclude)).entries {
+            let content = match fs::read_to_string(&entry.path) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
@@ -98,15 +91,8 @@ pub fn validate_dead_scripts(
         }
     }
 
-    for entry in WalkDir::new(scripts_dir).into_iter().flatten() {
-        if !entry.path().is_file() {
-            continue;
-        }
-        let script_display = entry.path().display().to_string();
-        if exclude.is_excluded(&script_display) {
-            continue;
-        }
-        let content = match fs::read_to_string(entry.path()) {
+    for entry in traversal::recursive_files(scripts_dir, Path::new("."), Some(exclude)).entries {
+        let content = match fs::read_to_string(&entry.path) {
             Ok(c) => c,
             Err(_) => continue,
         };
@@ -122,25 +108,20 @@ pub fn validate_dead_scripts(
         if !base.is_dir() {
             continue;
         }
-        if let Ok(entries) = fs::read_dir(base) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
-                }
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if !name.ends_with(".yaml") && !name.ends_with(".yml") {
-                    continue;
-                }
-                let content = match fs::read_to_string(&path) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                let stripped = strip_yaml_comments(&content);
-                for cap in RE_SCRIPTS_PATH.find_iter(&stripped) {
-                    if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
-                        references.insert(m.as_str().to_string());
-                    }
+        for entry in traversal::shallow_files(base, Path::new("."), Some(exclude)).entries {
+            let path = entry.path;
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !name.ends_with(".yaml") && !name.ends_with(".yml") {
+                continue;
+            }
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let stripped = strip_yaml_comments(&content);
+            for cap in RE_SCRIPTS_PATH.find_iter(&stripped) {
+                if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
+                    references.insert(m.as_str().to_string());
                 }
             }
         }
@@ -185,15 +166,8 @@ pub fn validate_dead_scripts(
 
     let shared_dir = Path::new("skills/shared");
     if shared_dir.is_dir() {
-        for entry in WalkDir::new(shared_dir).into_iter().flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let shared_display = path.display().to_string();
-            if exclude.is_excluded(&shared_display) {
-                continue;
-            }
+        for entry in traversal::recursive_files(shared_dir, Path::new("."), Some(exclude)).entries {
+            let path = &entry.path;
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !name.ends_with(".md") {
                 continue;
@@ -211,28 +185,21 @@ pub fn validate_dead_scripts(
         }
     }
 
-    if let Ok(entries) = fs::read_dir(scripts_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            let name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) if n.ends_with(".sh") => n.to_string(),
-                _ => continue,
-            };
-            let key = format!("scripts/{name}");
-            if exclude.is_excluded(&key) {
-                continue;
-            }
-            if !references.contains(&key) {
-                diag.report(
-                    LintRule::DeadScript,
-                    &format!(
-                        "dead script (no structured invocation reference found): scripts/{name}"
-                    ),
-                );
-            }
+    for entry in traversal::shallow_files(scripts_dir, Path::new("."), Some(exclude)).entries {
+        let path = entry.path;
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) if n.ends_with(".sh") => n.to_string(),
+            _ => continue,
+        };
+        let key = format!("scripts/{name}");
+        if exclude.is_excluded(&key) {
+            continue;
+        }
+        if !references.contains(&key) {
+            diag.report(
+                LintRule::DeadScript,
+                &format!("dead script (no structured invocation reference found): scripts/{name}"),
+            );
         }
     }
 }

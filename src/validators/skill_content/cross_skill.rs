@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::collections::HashSet;
@@ -90,16 +91,8 @@ pub(super) fn validate_orphaned_skill_files(
         return;
     }
 
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
+        let path = entry.path;
         let dir_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -125,16 +118,8 @@ pub(super) fn validate_orphaned_skill_files(
         };
 
         // Check each file in scripts/
-        let script_entries = match fs::read_dir(&scripts_dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        for script_entry in script_entries.flatten() {
-            let script_path = script_entry.path();
-            if !script_path.is_file() {
-                continue;
-            }
+        for script_entry in traversal::shallow_files(&scripts_dir, Path::new("."), None).entries {
+            let script_path = script_entry.path;
             let script_name = match script_path.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,
@@ -221,16 +206,8 @@ pub(super) fn validate_generic_ref_names(
         return;
     }
 
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
+        let path = entry.path;
         let dir_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -244,16 +221,8 @@ pub(super) fn validate_generic_ref_names(
             continue;
         }
 
-        let skill_entries = match fs::read_dir(&path) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        for file_entry in skill_entries.flatten() {
-            let file_path = file_entry.path();
-            if !file_path.is_file() {
-                continue;
-            }
+        for file_entry in traversal::shallow_files(&path, Path::new("."), None).entries {
+            let file_path = file_entry.path;
             let file_name = match file_path.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,

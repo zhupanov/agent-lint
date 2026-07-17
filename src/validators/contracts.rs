@@ -8,12 +8,12 @@ use crate::prompt_budget::{
     INLINE_CODE, MARKDOWN_LINK, normalize_repo_relative, resolve_repo_reference,
 };
 use crate::rules::LintRule;
+use crate::traversal;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
-use walkdir::WalkDir;
 
 static READ_INTENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:read|open)\s+(?:the|each|every|all|any|its|their|this|that)\b[^.\n]{0,60}\b(?:file|files|bundle|bundles|path|paths|diff|diffs|body|bodies|artifact|artifacts|markdown|log|logs)\b|\buse\s+(?:the\s+)?Read\b").unwrap()
@@ -168,23 +168,19 @@ fn scoped_agent_files(include_public: bool) -> Vec<PathBuf> {
 }
 
 fn one_level_files(root: &str, filename: &str) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(root) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path().join(filename))
+    crate::traversal::shallow_directories(Path::new(root), Path::new("."), None)
+        .entries
+        .into_iter()
+        .map(|entry| entry.path.join(filename))
         .filter(|path| path.is_file())
         .collect()
 }
 
 fn direct_markdown_files(root: &str) -> Vec<PathBuf> {
-    let Ok(entries) = fs::read_dir(root) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path())
+    crate::traversal::shallow_files(Path::new(root), Path::new("."), None)
+        .entries
+        .into_iter()
+        .map(|entry| entry.path)
         .filter(|path| {
             path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("md")
         })
@@ -738,10 +734,9 @@ fn validate_reference_consecutive_bash(
             continue;
         }
         let mut paths = Vec::new();
-        for entry in WalkDir::new(&root).into_iter().flatten() {
-            let path = entry.path();
-            if !path.is_file()
-                || path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+        for entry in traversal::recursive_files(&root, Path::new("."), Some(exclude)).entries {
+            let path = entry.path;
+            if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
                 || path.extension().and_then(|value| value.to_str()) != Some("md")
                 || !path
                     .components()
@@ -749,7 +744,7 @@ fn validate_reference_consecutive_bash(
             {
                 continue;
             }
-            paths.push(path.to_path_buf());
+            paths.push(path);
         }
         paths.sort();
         for path in paths {
@@ -1181,16 +1176,15 @@ fn conventionally_scoped_scripts(include_public: bool) -> Vec<PathBuf> {
         if !root.is_dir() {
             continue;
         }
-        for entry in WalkDir::new(root).into_iter().flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && !path.is_symlink()
-                && (matches!(script_kind(path), ScriptKind::Shell | ScriptKind::Awk)
+        for entry in traversal::recursive_files(&root, Path::new("."), None).entries {
+            let path = entry.path;
+            if !path.is_symlink()
+                && (matches!(script_kind(&path), ScriptKind::Shell | ScriptKind::Awk)
                     || path.extension().and_then(|value| value.to_str()) == Some("py"))
                 && (path.components().any(|part| part.as_os_str() == "scripts")
-                    || script_kind(path) == ScriptKind::Awk)
+                    || script_kind(&path) == ScriptKind::Awk)
             {
-                paths.insert(path.to_path_buf());
+                paths.insert(path);
             }
         }
     }

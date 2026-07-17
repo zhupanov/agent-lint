@@ -3,6 +3,7 @@ use crate::context::LintMode;
 use crate::fence::CodeFenceTracker;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::traversal;
 use crate::validators::skills::collect_skills;
 use regex::Regex;
 use std::fs;
@@ -126,15 +127,8 @@ fn fix_executability_scripts(mode: LintMode, exclude: &ExcludeSet) -> bool {
     let mut fixed = false;
     for pattern in dirs {
         for dir in glob_dirs(pattern) {
-            let entries = match fs::read_dir(&dir) {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_file() {
-                    continue;
-                }
+            for entry in traversal::shallow_files(&dir, Path::new("."), None).entries {
+                let path = entry.path;
                 let name = match path.file_name().and_then(|n| n.to_str()) {
                     Some(n) if n.ends_with(".sh") => n,
                     _ => continue,
@@ -202,16 +196,10 @@ fn glob_dirs(pattern: &str) -> Vec<std::path::PathBuf> {
         return vec![];
     }
     let mut result = Vec::new();
-    if let Ok(entries) = fs::read_dir(base) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let candidate = path.join(suffix);
-            if candidate.is_dir() {
-                result.push(candidate);
-            }
+    for entry in traversal::shallow_directories(base, Path::new("."), None).entries {
+        let candidate = entry.path.join(suffix);
+        if candidate.is_dir() {
+            result.push(candidate);
         }
     }
     result
@@ -226,15 +214,8 @@ fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet) -> bool {
         if !dir.is_dir() {
             continue;
         }
-        let entries = match fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
+        for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
+            let path = entry.path;
             let dir_name = match path.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
                 None => continue,
@@ -890,15 +871,8 @@ fn fix_pwd_in_skill(exclude: &ExcludeSet) -> bool {
         return false;
     }
     let mut fixed = false;
-    let entries = match fs::read_dir(skills_dir) {
-        Ok(e) => e,
-        Err(_) => return false,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
+    for entry in traversal::shallow_directories(skills_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,

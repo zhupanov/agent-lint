@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::traversal;
 use std::fs;
 use std::path::Path;
 
@@ -23,16 +24,8 @@ pub fn validate_slack_fallback_consistency(diag: &mut DiagnosticCollector, exclu
         ("LARCH_SLACK_USER_ID", "CLAUDE_PLUGIN_OPTION_SLACK_USER_ID"),
     ];
 
-    let entries = match fs::read_dir(scripts_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
+    for entry in traversal::shallow_files(scripts_dir, Path::new("."), None).entries {
+        let path = entry.path;
         let name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) if n.ends_with(".sh") => n.to_string(),
             _ => continue,
