@@ -219,13 +219,13 @@ default-warning rules) to errors, except too-long rules (`name-too-long`,
 and matching per-file overrides stay suppressed.
 
 **`--all`**: Forces every rule to fire as an error. Global and per-file
-suppression plus the `warn` list are bypassed entirely -- all 286 rules are promoted to errors. File
-exclusions (`exclude`) remain in effect. Note: `--all` applies to rules
-emittable by the detected lint mode. In Basic mode (Claude, Cursor, Codex, or standalone
-MCP configuration),
-plugin-only rules are not dispatched regardless of `--all`. Because override
-suppression is intentionally disabled, unused-override warnings are also not
-reported in this mode.
+suppression plus the `warn` list are bypassed entirely -- all registered rules
+are promoted to errors. File exclusions (`exclude`) remain in effect. Note:
+`--all` applies to rules emittable by the detected lint mode. In Basic mode
+(Claude, Cursor, Codex, or standalone MCP configuration), plugin-only rules are
+not dispatched regardless of `--all`. Because override suppression is
+intentionally disabled, unused-override warnings are also not reported in this
+mode.
 
 ## Behavior Without Config
 

@@ -2,6 +2,8 @@ mod autofix;
 mod config;
 mod context;
 mod diagnostic;
+#[cfg(test)]
+mod documentation_consistency;
 mod fence;
 mod frontmatter;
 mod markdown;

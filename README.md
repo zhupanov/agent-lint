@@ -8,10 +8,8 @@
 
 ## Features
 
-- **286 lint rules** across 20 categories (Manifest, Hooks, Skills, Agents,
-  Prompt Content, Claude Rules, Output Styles, Settings, Cursor Rules, Cursor
-  Skills, Instruction Files, Hygiene, Email, User Config, MCP, Codex, Slack,
-  Docs, Markdown Structure, Link/import integrity)
+- **Complete lint-rule registry**, documented in the
+  [rules reference](docs/rules.md)
 - **Two lint modes**:
   - **Basic mode** -- validates detected Claude, Cursor, Codex, and standalone
     MCP configuration
@@ -29,9 +27,9 @@ The recommended ways to use agent-lint are via
 ### GitHub Action
 
 ```yaml
-- uses: zhupanov/agent-lint@v2
+- uses: zhupanov/agent-lint@v3
   with:
-    version: "2.6.0"
+    version: "3.0.1"
     path: "."
 ```
 
@@ -45,12 +43,12 @@ Add to your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/zhupanov/agent-lint
-    rev: v2.6.0  # pin to exact version
+    rev: v3.0.1  # pin to exact version
     hooks:
       - id: agent-lint
 ```
 
-> **Pin to an exact version** (e.g., `rev: v2.6.0`) to protect your
+> **Pin to an exact version** (e.g., `rev: v3.0.1`) to protect your
 > workflow from breaking changes. agent-lint is under active development
 > and minor/patch releases may change lint behavior. Run
 > `pre-commit autoupdate` when you are ready to upgrade.
@@ -87,13 +85,14 @@ machine-readable `--closure-report`.
 
 ## Lint Rules
 
-Agent Lint ships **286 rules** organized into 19 categories:
+Agent Lint ships 286 rules organized into 20 code-prefix categories. A category
+is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 17 | `plugin.json` and `marketplace.json` validation, component path safety |
 | Hooks | H | 25 | `hooks.json` / `settings.json` hook paths and hook object schema |
-| Skills | S | 75 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
+| Skills | S | 73 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
 | Agents | A | 28 | Agent frontmatter, field values, tool/evidence contracts, templates, description quality |
 | Prompt Content | Q | 4 | Fence-aware quality checks shared by Claude instructions, skill bodies, and agent bodies |
 | Claude Rules | R | 2 | `.claude/rules/` frontmatter `paths` globs and fields |
@@ -103,7 +102,8 @@ Agent Lint ships **286 rules** organized into 19 categories:
 | Email | E | 1 | Email format validation |
 | User Config | U | 7 | `userConfig` structure, key format, and env var mapping |
 | MCP | P | 13 | MCP server configuration, transport, security, and compatibility |
-| Codex | CX | 60 | Codex configuration, instructions, plugins, and skills |
+| Codex | CX | 55 | Codex configuration, instructions, plugins, and skills |
+| Shared Instruction Files | I | 5 | Shared instruction-file content, secrets, path references, and structure |
 | Cursor Rules | CU | 19 | Cursor rules, hooks, subagents, and cloud environment configuration |
 | Cursor Skills | CR-SK | 1 | Unsupported Cursor skill frontmatter fields |
 | Slack | K | 1 | Slack fallback consistency |
@@ -119,9 +119,20 @@ rules, see **[docs/rules.md](docs/rules.md)**.
 | Mode | Trigger | Scope |
 |------|---------|-------|
 | **Basic** | Claude, Cursor, Codex, or MCP configuration is present | Detected platform configuration plus always-mode Claude rules |
-| **Plugin** | `.claude-plugin/` directory exists | All 286 rules including manifest, agents, hygiene, MCP, and plugin-only S- and L-rules |
+| **Plugin** | `.claude-plugin/` directory exists | All registered rules including manifest, agents, hygiene, MCP, and plugin-only S- and L-rules |
 
 If no supported agent or MCP configuration exists, the tool prints "Nothing to lint" and exits 0.
+
+## Scope and Non-Goals
+
+Agent Lint performs deterministic static validation of repository configuration
+and documentation. It does not execute or evaluate an agent at runtime, and a
+clean lint result is not a safety or correctness proof for an agent, model,
+tool, command, or deployment.
+
+[Larch](https://github.com/character-ai/larch) is the separate downstream
+`character-ai/larch` repository. It consumes related lint behavior, but
+"Larch" is not another name for Agent Lint.
 
 ## Configuration
 

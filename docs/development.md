@@ -40,7 +40,7 @@ src/
 +-- context.rs           # LintContext, ManifestState, LintMode
 +-- diagnostic.rs        # DiagnosticCollector, structured subjects, config-aware filtering
 +-- frontmatter.rs       # YAML frontmatter extraction
-+-- rules.rs             # Central LintRule enum (286 rules, codes, names)
++-- rules.rs             # Central LintRule enum, codes, names, and defaults
 +-- test_helpers.rs      # Shared test utilities
 +-- validators/
     +-- mod.rs           # run_all -> run_basic / run_plugin dispatch
@@ -132,7 +132,7 @@ Runs on pull requests to `main` and `workflow_dispatch`:
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
 - **self-lint** -- runs agent-lint against its own repo and validates
   `--list-scripts` output
-- **e2e-test** -- runs the released `zhupanov/agent-lint@v2` GitHub Action
+- **e2e-test** -- runs the released `zhupanov/agent-lint@v3` GitHub Action
   against this repository in default, pedantic, and all modes, serving as
   both end-to-end validation and a reference model for users adding CI
 
@@ -143,6 +143,7 @@ Triggered only by `workflow_dispatch`, normally by the repository-local
 
 1. **build** -- cross-compiles for Linux (x86_64, aarch64 musl) and macOS
    (aarch64)
-2. **release** -- creates a GitHub Release with tarballs and checksums;
-   on a new release, also moves the floating `v2` tag forward so `@v2`
-   action references always resolve to the newest version
+2. **release** -- creates a GitHub Release with tarballs and checksums
+3. **floating-major promotion** -- after the workflow succeeds, moves the
+   floating `v3` tag forward so `@v3` action references resolve to the newest
+   3.x release

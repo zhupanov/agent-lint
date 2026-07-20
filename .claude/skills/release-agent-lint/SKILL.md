@@ -132,9 +132,9 @@ Only after that workflow succeeds, update the floating major tag locally using
 the operator's already-authenticated `origin` remote. This avoids relying on
 the default Actions token, which GitHub blocks from moving a ref across a
 workflow-file change. The immutable version tag and release remain created by
-the workflow; `v2` is a final local promotion step. Fetch the version tag,
-force-update the annotated major tag, push it, and verify the remote peeled
-commit equals the version tag's commit before declaring success.
+the workflow; the floating major tag is a final local promotion step. Fetch the
+version tag, force-update the annotated major tag, push it, and verify the
+remote peeled commit equals the version tag's commit before declaring success.
 
 ```bash
 MAJOR=${NEW_VERSION%%.*}
@@ -171,9 +171,9 @@ unknown state, then verify the release and tag explicitly before proceeding.
 Check the release state explicitly: the version tag, GitHub Release, uploaded
 artifacts, and floating major tag must all agree. A failure after GitHub Release
 creation can leave a partial release: for example, the version tag and release
-may exist while the floating `v2` tag remains on the previous release. Repair
-that state with the local major-tag promotion step above; keep `v2` promotion
-outside the Actions workflow.
+may exist while the floating major tag remains on the previous release. Repair
+that state with the local major-tag promotion step above; keep major-tag
+promotion outside the Actions workflow.
 
 Fix the workflow in a separate PR, wait for its checks, merge it according to
 repository policy, and only then explicitly re-dispatch the release workflow
