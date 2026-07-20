@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/zhupanov/agent-lint/main/schemas/diagnostic-output-v1.schema.json",
+  "title": "agent-lint diagnostic output v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema_version",
+    "agent_lint_version",
+    "analysis_root",
+    "mode",
+    "strictness",
+    "selected_rules",
+    "active_platforms",
+    "status",
+    "counts",
+    "diagnostics",
+    "notices"
+  ],
+  "properties": {
+    "$schema": { "const": "https://raw.githubusercontent.com/zhupanov/agent-lint/main/schemas/diagnostic-output-v1.schema.json" },
+    "schema_version": { "const": 1 },
+    "agent_lint_version": { "type": "string", "minLength": 1 },
+    "analysis_root": { "const": "." },
+    "mode": {
+      "oneOf": [
+        { "type": "string", "enum": ["basic", "plugin"] },
+        { "type": "null" }
+      ]
+    },
+    "strictness": { "type": "string", "enum": ["normal", "pedantic", "all"] },
+    "selected_rules": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rule" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        { "type": "null" }
+      ]
+    },
+    "active_platforms": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["claude", "cursor", "codex"] },
+      "uniqueItems": true
+    },
+    "status": { "type": "string", "enum": ["clean", "warnings", "errors", "usage-error"] },
+    "counts": { "$ref": "#/$defs/counts" },
+    "diagnostics": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/diagnostic" }
+    },
+    "notices": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/notice" }
+    }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["errors", "warnings", "suppressed", "notices"],
+      "properties": {
+        "errors": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "suppressed": { "type": "integer", "minimum": 0 },
+        "notices": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "name", "severity", "message"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["error", "warning"] },
+        "subject_path": { "type": "string", "minLength": 1, "pattern": "^[^/]" },
+        "location": { "$ref": "#/$defs/location" },
+        "message": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "string" },
+        "suggestion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start"],
+      "properties": {
+        "start": { "$ref": "#/$defs/position" },
+        "end": { "$ref": "#/$defs/position" }
+      }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "notice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "severity", "message"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["warning", "error"] },
+        "message": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -388,11 +388,26 @@ impl LintConfig {
     /// - Missing file → default (empty) config.
     /// - Malformed TOML or unknown rule code/name → `Err(msg)`.
     pub fn load(repo_root: impl AsRef<Path>) -> Result<Self, String> {
-        let repo_root = repo_root.as_ref();
+        Self::load_inner(repo_root.as_ref(), true)
+    }
+
+    /// Load configuration without writing compatibility warnings and keep
+    /// error labels repository-relative. Machine renderers collect warnings
+    /// as structured notices and avoid disclosing the absolute analysis root.
+    pub fn load_quiet(repo_root: impl AsRef<Path>) -> Result<Self, String> {
+        Self::load_inner(repo_root.as_ref(), false)
+    }
+
+    fn load_inner(repo_root: &Path, emit_warnings: bool) -> Result<Self, String> {
         let path = repo_root.join("agent-lint.toml");
+        let display_path = if emit_warnings {
+            path.to_string_lossy()
+        } else {
+            "agent-lint.toml".into()
+        };
         if !path.is_file() {
             let legacy = repo_root.join("claude-lint.toml");
-            if legacy.is_file() {
+            if emit_warnings && legacy.is_file() {
                 eprintln!(
                     "warning: found 'claude-lint.toml' which is no longer read; rename it to 'agent-lint.toml'"
                 );
@@ -401,10 +416,10 @@ impl LintConfig {
         }
 
         let content = std::fs::read_to_string(&path)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            .map_err(|e| format!("cannot read {display_path}: {e}"))?;
 
         let raw: RawConfig =
-            toml::from_str(&content).map_err(|e| format!("{}: {e}", path.display()))?;
+            toml::from_str(&content).map_err(|e| format!("{display_path}: {e}"))?;
 
         let section = raw.lint.unwrap_or_default();
         let platforms = raw.platforms.unwrap_or_default();
@@ -412,7 +427,7 @@ impl LintConfig {
         if section.desc_truncated_max_chars == 0 {
             return Err(format!(
                 "{}: desc-truncated-max-chars must be greater than zero",
-                path.display()
+                display_path
             ));
         }
         for (name, value) in [
@@ -426,29 +441,29 @@ impl LintConfig {
             if value == Some(0) {
                 return Err(format!(
                     "{}: {name} must be greater than zero",
-                    path.display()
+                    display_path
                 ));
             }
         }
         validate_relative_paths(&section.instruction_files, "instruction-files", false)
-            .map_err(|message| format!("{}: {message}", path.display()))?;
+            .map_err(|message| format!("{display_path}: {message}"))?;
         validate_relative_paths(&section.inline_path_prefixes, "inline-path-prefixes", true)
-            .map_err(|message| format!("{}: {message}", path.display()))?;
+            .map_err(|message| format!("{display_path}: {message}"))?;
         let claude_import_path_budgets =
             load_import_path_budgets(Path::new(repo_root), section.claude_import_path_budgets)
-                .map_err(|message| format!("{}: {message}", path.display()))?;
+                .map_err(|message| format!("{display_path}: {message}"))?;
         let prompt_source_budgets =
             load_prompt_source_budgets(Path::new(repo_root), section.prompt_source_budgets)
-                .map_err(|message| format!("{}: {message}", path.display()))?;
+                .map_err(|message| format!("{display_path}: {message}"))?;
         let script_inventory = section
             .script_inventory
             .as_deref()
             .map(|inventory| load_script_inventory(Path::new(repo_root), inventory))
             .transpose()
-            .map_err(|message| format!("{}: {message}", path.display()))?;
+            .map_err(|message| format!("{display_path}: {message}"))?;
 
         let overrides = load_overrides(section.overrides)
-            .map_err(|message| format!("{}: {message}", path.display()))?;
+            .map_err(|message| format!("{display_path}: {message}"))?;
 
         // Parse error list first (user-explicit error promotions).
         let mut error = HashSet::new();
@@ -456,7 +471,7 @@ impl LintConfig {
             let rule = LintRule::from_code_or_name(entry).ok_or_else(|| {
                 format!(
                     "{}: unknown rule in error list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
-                    path.display()
+                    display_path
                 )
             })?;
             error.insert(rule);
@@ -468,7 +483,7 @@ impl LintConfig {
             let rule = LintRule::from_code_or_name(entry).ok_or_else(|| {
                 format!(
                     "{}: unknown rule in warn list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
-                    path.display()
+                    display_path
                 )
             })?;
             if !error.contains(&rule) {
@@ -482,7 +497,7 @@ impl LintConfig {
             let rule = LintRule::from_code_or_name(entry).ok_or_else(|| {
                 format!(
                     "{}: unknown rule in suppress list: '{entry}'. Use a valid code (e.g. M001) or name (e.g. plugin-json-missing).",
-                    path.display()
+                    display_path
                 )
             })?;
             error.remove(&rule);
@@ -491,7 +506,7 @@ impl LintConfig {
         }
 
         // Validate exclude patterns at load time (compile a throwaway GlobSet).
-        ExcludeSet::new(&section.exclude).map_err(|e| format!("{}: {e}", path.display()))?;
+        ExcludeSet::new(&section.exclude).map_err(|e| format!("{display_path}: {e}"))?;
 
         Ok(Self {
             suppress,

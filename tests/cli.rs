@@ -1,5 +1,7 @@
 use std::process::{Command, Output};
 
+use serde_json::Value;
+
 fn run(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_agent-lint"))
         .args(args)
@@ -30,6 +32,39 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+fn json(output: &Output) -> Value {
+    let stderr = stderr(output);
+    assert!(
+        stderr.is_empty(),
+        "machine output wrote to stderr: {stderr}"
+    );
+    json_document(output)
+}
+
+fn json_document(output: &Output) -> Value {
+    let value: Value = serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
+    let schema: Value =
+        serde_json::from_str(include_str!("../schemas/diagnostic-output-v1.schema.json")).unwrap();
+    let validator = jsonschema::validator_for(&schema).expect("checked-in output schema compiles");
+    if let Err(error) = validator.validate(&value) {
+        panic!("JSON output failed schema validation: {error}\n{value:#}");
+    }
+    value
+}
+
+fn init_git(path: &std::path::Path) {
+    let output = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(path)
+        .output()
+        .expect("git init runs");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        stderr(&output)
+    );
+}
+
 #[test]
 fn help_succeeds_and_lists_supported_options() {
     let output = run(&["--help"]);
@@ -38,6 +73,7 @@ fn help_succeeds_and_lists_supported_options() {
     assert!(stdout.contains("Usage: agent-lint"));
     assert!(stdout.contains("--autofix"));
     assert!(stdout.contains("--only"));
+    assert!(stdout.contains("--format"));
 }
 
 #[test]
@@ -69,6 +105,321 @@ fn conflicting_operations_are_a_usage_error() {
     let output = run(&["--list-scripts", "--closure-report"]);
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr(&output).contains("cannot be used with"));
+}
+
+#[test]
+fn format_conflicts_with_commands_that_own_stdout() {
+    for operation in ["--list-scripts", "--closure-report"] {
+        let output = run(&["--format", "json", operation]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(stderr(&output).contains("cannot be used with"));
+    }
+}
+
+#[test]
+fn json_clean_run_is_schema_valid_and_deterministic() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude")).unwrap();
+
+    let first = run_in(tmp.path(), &["--format", "json", "."]);
+    let second = run_in(tmp.path(), &["--format", "json", "."]);
+    assert!(first.status.success());
+    assert!(second.status.success());
+    let first = json(&first);
+    let second = json(&second);
+    assert_eq!(first, second);
+    assert_eq!(first["schema_version"], 1);
+    assert_eq!(first["analysis_root"], ".");
+    assert_eq!(first["mode"], "basic");
+    assert_eq!(first["strictness"], "normal");
+    assert!(first["selected_rules"].is_null());
+    assert_eq!(first["active_platforms"], serde_json::json!(["claude"]));
+    assert_eq!(first["status"], "clean");
+    assert_eq!(first["counts"]["errors"], 0);
+    assert_eq!(first["counts"]["warnings"], 0);
+    assert_eq!(first["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn json_no_work_run_is_clean_with_no_selected_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert!(output.status.success());
+    let report = json(&output);
+    assert_eq!(report["status"], "clean");
+    assert!(report["mode"].is_null());
+    assert_eq!(report["active_platforms"], serde_json::json!([]));
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn json_lists_forced_platforms_in_stable_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncursor = true\ncodex = true\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    let report = json(&output);
+    assert_eq!(report["mode"], "basic");
+    assert_eq!(
+        report["active_platforms"],
+        serde_json::json!(["claude", "cursor", "codex"])
+    );
+}
+
+#[test]
+fn json_reports_focused_rule_selection_and_only_emits_selected_rules() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "H001,M001", "."],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let report = json(&output);
+    assert_eq!(
+        report["selected_rules"],
+        serde_json::json!([
+            { "code": "M001", "name": "plugin-json-missing" },
+            { "code": "H001", "name": "hooks-json-missing" }
+        ])
+    );
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| matches!(diagnostic["code"].as_str(), Some("M001" | "H001")))
+    );
+}
+
+#[test]
+fn json_mixed_run_has_structured_rule_fields_and_unchanged_exit_status() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+
+    let text = run_in(tmp.path(), &["."]);
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert_eq!(text.status.code(), Some(1));
+    assert_eq!(output.status.code(), text.status.code());
+    let report = json(&output);
+    assert_eq!(report["status"], "errors");
+    assert!(report["counts"]["errors"].as_u64().unwrap() > 0);
+    assert!(report["counts"]["warnings"].as_u64().unwrap() > 0);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "M001"
+            && diagnostic["name"] == "plugin-json-missing"
+            && diagnostic["severity"] == "error"
+            && diagnostic["subject_path"] == ".claude-plugin/plugin.json"
+    }));
+}
+
+#[test]
+fn json_preserves_structured_locations_without_fabricating_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/example/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: example\ndescription: Use when checking an intentionally broken fenced block\n---\n```bash\necho broken\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    let located = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "X002")
+        .expect("unclosed fence diagnostic is present");
+    assert_eq!(located["subject_path"], ".claude/skills/example/SKILL.md");
+    assert_eq!(located["location"]["start"]["line"], 5);
+    assert!(located["location"]["start"].get("column").is_none());
+}
+
+#[test]
+fn json_pathless_finding_has_no_subject_or_location() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(tmp.path().join("AGENTS.md"), "first line\nsecond line\n").unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.prompt-source-budgets]]
+name = "agents"
+roots = ["AGENTS.md"]
+root-max-lines = 1
+"#,
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    let report = json(&output);
+    let diagnostic = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "S062")
+        .expect("prompt budget diagnostic is present");
+    assert!(diagnostic.get("subject_path").is_none());
+    assert!(diagnostic.get("location").is_none());
+}
+
+#[test]
+fn json_configuration_failure_is_one_document_and_exit_two() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(tmp.path().join("agent-lint.toml"), "not valid toml {{{\n").unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert_eq!(output.status.code(), Some(2));
+    let report = json(&output);
+    assert_eq!(report["status"], "usage-error");
+    assert_eq!(report["counts"]["errors"], 0);
+    assert_eq!(report["notices"][0]["kind"], "configuration");
+    assert_eq!(report["notices"][0]["severity"], "error");
+    let message = report["notices"][0]["message"].as_str().unwrap();
+    assert!(message.starts_with("agent-lint.toml:"));
+    assert!(!message.contains(tmp.path().to_string_lossy().as_ref()));
+
+    let text = run_in(tmp.path(), &["."]);
+    assert_eq!(text.status.code(), Some(2));
+    assert!(stderr(&text).contains(tmp.path().to_string_lossy().as_ref()));
+}
+
+#[test]
+fn json_setup_failure_is_one_document_and_exit_two() {
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("missing");
+    let output = run(&["--format", "json", missing.to_string_lossy().as_ref()]);
+    assert_eq!(output.status.code(), Some(2));
+    let report = json(&output);
+    assert_eq!(report["status"], "usage-error");
+    assert_eq!(report["notices"][0]["kind"], "setup");
+}
+
+#[test]
+fn json_autofix_serializes_only_the_final_validation() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    write_skill(tmp.path(), "fixed", "http://current.invalid");
+
+    let output = run_in(tmp.path(), &["--autofix", "--format", "json", "."]);
+    assert!(output.status.success());
+    assert!(stderr(&output).contains("fixed[S031/non-https-url]"));
+    let report = json_document(&output);
+    assert!(
+        !report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "S031")
+    );
+    let fixed = std::fs::read_to_string(tmp.path().join(".claude/skills/fixed/SKILL.md")).unwrap();
+    assert!(fixed.contains("https://current.invalid"));
+}
+
+#[test]
+fn text_and_json_strictness_modes_validate_and_preserve_gating() {
+    for format in ["text", "json"] {
+        for strictness in [None, Some("--pedantic"), Some("--all")] {
+            let tmp = tempfile::tempdir().unwrap();
+            init_git(tmp.path());
+            std::fs::write(tmp.path().join("budget.md"), "first line\nsecond line\n").unwrap();
+            std::fs::write(
+                tmp.path().join("agent-lint.toml"),
+                r#"[lint]
+[[lint.prompt-source-budgets]]
+name = "budget"
+roots = ["budget.md"]
+root-max-lines = 1
+"#,
+            )
+            .unwrap();
+            let mut args = vec!["--format", format];
+            if let Some(strictness) = strictness {
+                args.push(strictness);
+            }
+            args.push(".");
+            let output = run_in(tmp.path(), &args);
+            let expected_exit = if strictness.is_none() { 0 } else { 1 };
+            assert_eq!(output.status.code(), Some(expected_exit));
+            if format == "json" {
+                let report = json(&output);
+                let expected_status = if strictness.is_none() {
+                    "warnings"
+                } else {
+                    "errors"
+                };
+                assert_eq!(report["status"], expected_status);
+            } else {
+                assert!(stderr(&output).contains("Lint:"));
+            }
+        }
+    }
+}
+
+#[test]
+fn json_unused_override_is_a_structured_notice() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = ["missing.md"]
+suppress = ["M001"]
+reason = "stale exception"
+"#,
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert!(output.status.success());
+    let report = json(&output);
+    assert_eq!(report["notices"][0]["kind"], "unused-override");
+    assert_eq!(report["notices"][0]["severity"], "warning");
+    assert_eq!(report["counts"]["notices"], 1);
+}
+
+#[test]
+fn json_counts_suppressed_diagnostics_without_rendering_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    write_skill(tmp.path(), "suppressed", "http://legacy.invalid");
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = [".claude/skills/suppressed/SKILL.md"]
+suppress = ["S031"]
+"#,
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert!(output.status.success());
+    let report = json(&output);
+    assert_eq!(report["counts"]["suppressed"], 1);
+    assert!(
+        !report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "S031")
+    );
 }
 
 #[test]
