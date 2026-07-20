@@ -3,7 +3,7 @@
 //! - X002: unclosed code fence
 //! - X003/X004/X005: XML tag balance (fence-aware, skips inline code)
 
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::fence::LineClass;
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
@@ -41,10 +41,11 @@ pub(crate) fn check_markdown_document(
     diag: &mut DiagnosticCollector,
 ) {
     if let Some(line) = document.unclosed_fence_line() {
-        diag.report_at(
+        diag.report_at_with(
             LintRule::UnclosedCodeFence,
             path,
             &format!("{path}:{line}: unclosed code fence"),
+            DiagnosticMetadata::at_line(line),
         );
     }
     check_xml_balance(path, document, diag);
@@ -136,7 +137,19 @@ mod tests {
     fn unclosed_fence_reports_opener_line() {
         let mut diag = DiagnosticCollector::new_all_enabled();
         check_markdown_structure("f.md", "# Hi\n```bash\necho hi\n", &mut diag);
-        assert!(codes(&diag).iter().any(|c| c == "X002"));
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::UnclosedCodeFence)
+            .unwrap();
+        assert_eq!(
+            diagnostic.subject_path.as_deref(),
+            Some(std::path::Path::new("f.md"))
+        );
+        assert_eq!(
+            diagnostic.location.map(|location| location.start()),
+            Some(crate::diagnostic::SourcePosition::line(2))
+        );
     }
 
     #[test]

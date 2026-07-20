@@ -1,5 +1,6 @@
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::Write;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use crate::config::LintConfig;
@@ -12,7 +13,189 @@ pub enum Severity {
     Warning,
 }
 
-/// A single lint diagnostic with rule identity and resolved severity.
+/// A one-based source position.
+///
+/// A missing column means that only the line is known. Unknown coordinates are
+/// never inferred from the human message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourcePosition {
+    line: usize,
+    column: Option<usize>,
+}
+
+impl SourcePosition {
+    pub fn line(line: usize) -> Self {
+        assert!(line > 0, "source lines are one-based");
+        Self { line, column: None }
+    }
+
+    pub fn point(line: usize, column: usize) -> Self {
+        assert!(line > 0, "source lines are one-based");
+        assert!(column > 0, "source columns are one-based");
+        Self {
+            line,
+            column: Some(column),
+        }
+    }
+
+    #[allow(dead_code)] // public output access for renderer leaves
+    pub fn line_number(self) -> usize {
+        self.line
+    }
+
+    #[allow(dead_code)] // public output access for renderer leaves
+    pub fn column_number(self) -> Option<usize> {
+        self.column
+    }
+}
+
+/// A source span whose start is inclusive and whose optional end is exclusive.
+///
+/// Positions use one-based Unicode scalar columns. A point has no end. A range
+/// always has columns at both ends so its exclusive boundary is unambiguous.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceSpan {
+    start: SourcePosition,
+    end: Option<SourcePosition>,
+}
+
+impl SourceSpan {
+    pub fn line(line: usize) -> Self {
+        Self {
+            start: SourcePosition::line(line),
+            end: None,
+        }
+    }
+
+    #[allow(dead_code)] // reporting API for validators as they migrate
+    pub fn point(line: usize, column: usize) -> Self {
+        Self {
+            start: SourcePosition::point(line, column),
+            end: None,
+        }
+    }
+
+    #[allow(dead_code)] // reporting API for validators as they migrate
+    pub fn range(
+        start_line: usize,
+        start_column: usize,
+        end_line: usize,
+        end_column: usize,
+    ) -> Self {
+        let start = SourcePosition::point(start_line, start_column);
+        let end = SourcePosition::point(end_line, end_column);
+        assert!(
+            (end_line, end_column) >= (start_line, start_column),
+            "source range end precedes its start"
+        );
+        Self {
+            start,
+            end: Some(end),
+        }
+    }
+
+    /// Convert a UTF-8 byte range into a one-based, end-exclusive source span.
+    /// Returns `None` for out-of-bounds offsets or non-character boundaries.
+    pub fn from_byte_range(source: &str, range: Range<usize>) -> Option<Self> {
+        if range.start > range.end
+            || range.end > source.len()
+            || !source.is_char_boundary(range.start)
+            || !source.is_char_boundary(range.end)
+        {
+            return None;
+        }
+        let start = position_at_offset(source, range.start);
+        let end = position_at_offset(source, range.end);
+        Some(Self {
+            start,
+            end: Some(end),
+        })
+    }
+
+    #[allow(dead_code)] // public output access for renderer leaves
+    pub fn start(self) -> SourcePosition {
+        self.start
+    }
+
+    #[allow(dead_code)] // public output access for renderer leaves
+    pub fn end(self) -> Option<SourcePosition> {
+        self.end
+    }
+}
+
+fn position_at_offset(source: &str, offset: usize) -> SourcePosition {
+    let prefix = &source[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit_once('\n')
+        .map_or(prefix, |(_, current_line)| current_line)
+        .chars()
+        .count()
+        + 1;
+    SourcePosition::point(line, column)
+}
+
+#[allow(dead_code)] // used by the incremental evidence reporting API
+const MAX_EVIDENCE_BYTES: usize = 512;
+#[allow(dead_code)] // used by the incremental evidence reporting API
+const REDACTED_EVIDENCE: &str = "[redacted: possible secret]";
+
+/// Optional renderer-independent details supplied by a validator.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiagnosticMetadata {
+    location: Option<SourceSpan>,
+    evidence: Option<String>,
+    suggestion: Option<String>,
+}
+
+impl DiagnosticMetadata {
+    pub fn at_line(line: usize) -> Self {
+        Self::default().with_location(SourceSpan::line(line))
+    }
+
+    #[allow(dead_code)] // reporting API for validators as they migrate
+    pub fn at_point(line: usize, column: usize) -> Self {
+        Self::default().with_location(SourceSpan::point(line, column))
+    }
+
+    pub fn with_location(mut self, location: SourceSpan) -> Self {
+        self.location = Some(location);
+        self
+    }
+
+    /// Attach bounded display evidence. Values matching the shared possible-
+    /// secret heuristic are replaced with a stable redaction marker.
+    #[allow(dead_code)] // reporting API for validators as they migrate
+    pub fn with_evidence(mut self, evidence: impl AsRef<str>) -> Self {
+        self.evidence = Some(safe_evidence(evidence.as_ref()));
+        self
+    }
+
+    #[allow(dead_code)] // reporting API for validators as they migrate
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestion = Some(suggestion.into());
+        self
+    }
+}
+
+#[allow(dead_code)] // used by the incremental evidence reporting API
+fn safe_evidence(evidence: &str) -> String {
+    if crate::sensitive::contains_sensitive_evidence(evidence) {
+        return REDACTED_EVIDENCE.to_string();
+    }
+    let evidence = evidence.trim();
+    if evidence.len() <= MAX_EVIDENCE_BYTES {
+        return evidence.to_string();
+    }
+    let mut end = MAX_EVIDENCE_BYTES - '…'.len_utf8();
+    while !evidence.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &evidence[..end])
+}
+
+/// A single lint diagnostic with rule identity, resolved severity, and
+/// renderer-independent structured metadata.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub rule: LintRule,
@@ -21,6 +204,12 @@ pub struct Diagnostic {
     pub subject_path: Option<PathBuf>,
     #[allow(dead_code)] // read by #[cfg(test)] accessors and available via diagnostics()
     pub message: String,
+    #[allow(dead_code)] // consumed by renderer leaves through diagnostics()
+    pub location: Option<SourceSpan>,
+    #[allow(dead_code)] // consumed by renderer leaves through diagnostics()
+    pub evidence: Option<String>,
+    #[allow(dead_code)] // consumed by renderer leaves through diagnostics()
+    pub suggestion: Option<String>,
 }
 
 /// Collects lint diagnostics, applying configuration-based filtering.
@@ -34,7 +223,6 @@ pub struct DiagnosticCollector {
     suppressed_count: usize,
     used_overrides: HashSet<(usize, LintRule)>,
     current_subject_path: Option<PathBuf>,
-    writer: Box<dyn Write>,
 }
 
 impl DiagnosticCollector {
@@ -53,7 +241,6 @@ impl DiagnosticCollector {
             suppressed_count: 0,
             used_overrides: HashSet::new(),
             current_subject_path: None,
-            writer: Box::new(io::sink()),
         }
     }
 
@@ -83,7 +270,6 @@ impl DiagnosticCollector {
             suppressed_count: 0,
             used_overrides: HashSet::new(),
             current_subject_path: None,
-            writer: Box::new(io::sink()),
         }
     }
 
@@ -95,21 +281,13 @@ impl DiagnosticCollector {
             suppressed_count: 0,
             used_overrides: HashSet::new(),
             current_subject_path: None,
-            writer: Box::new(io::stderr()),
         }
     }
 
-    /// Create a collector that collects diagnostics silently (no stderr output).
+    /// Create a collector for a validation pass that will not be rendered.
     /// Used by the autofix loop to re-validate without spamming stderr.
     pub fn with_config_silent(config: LintConfig) -> Self {
-        Self {
-            config,
-            diagnostics: Vec::new(),
-            suppressed_count: 0,
-            used_overrides: HashSet::new(),
-            current_subject_path: None,
-            writer: Box::new(io::sink()),
-        }
+        Self::with_config(config)
     }
 
     /// Report a diagnostic for the given rule. Checks config and default
@@ -117,14 +295,36 @@ impl DiagnosticCollector {
     /// user warn > compiled default severity.
     pub fn report(&mut self, rule: LintRule, msg: &str) {
         let path = self.current_subject_path.clone();
-        self.report_inner(rule, path.as_deref(), msg);
+        self.report_inner(rule, path.as_deref(), msg, DiagnosticMetadata::default());
     }
 
     /// Report a diagnostic owned by one concrete repository path. The path is
     /// normalized and matched against per-file overrides before severity is
     /// resolved; display text remains unchanged.
     pub fn report_at(&mut self, rule: LintRule, path: impl AsRef<Path>, msg: &str) {
-        self.report_inner(rule, Some(path.as_ref()), msg);
+        self.report_inner(
+            rule,
+            Some(path.as_ref()),
+            msg,
+            DiagnosticMetadata::default(),
+        );
+    }
+
+    /// Report within the current subject scope with optional structured data.
+    pub fn report_with(&mut self, rule: LintRule, msg: &str, metadata: DiagnosticMetadata) {
+        let path = self.current_subject_path.clone();
+        self.report_inner(rule, path.as_deref(), msg, metadata);
+    }
+
+    /// Report for a concrete path with optional structured data.
+    pub fn report_at_with(
+        &mut self,
+        rule: LintRule,
+        path: impl AsRef<Path>,
+        msg: &str,
+        metadata: DiagnosticMetadata,
+    ) {
+        self.report_inner(rule, Some(path.as_ref()), msg, metadata);
     }
 
     /// Run a file validator with an explicit diagnostic subject. Calls to
@@ -143,7 +343,13 @@ impl DiagnosticCollector {
         result
     }
 
-    fn report_inner(&mut self, rule: LintRule, path: Option<&Path>, msg: &str) {
+    fn report_inner(
+        &mut self,
+        rule: LintRule,
+        path: Option<&Path>,
+        msg: &str,
+        metadata: DiagnosticMetadata,
+    ) {
         // User suppress always wins — suppress and count.
         if self.config.suppress.contains(&rule) {
             self.suppressed_count += 1;
@@ -176,31 +382,41 @@ impl DiagnosticCollector {
             }
         };
 
-        let label = match severity {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-        };
-
-        let _ = writeln!(
-            self.writer,
-            "{label}[{}/{}]: {msg}",
-            rule.code(),
-            rule.name()
-        );
-
         self.diagnostics.push(Diagnostic {
             rule,
             severity,
             subject_path: path.map(|path| PathBuf::from(self.config.normalize_subject_path(path))),
             message: msg.to_string(),
+            location: metadata.location,
+            evidence: metadata.evidence,
+            suggestion: metadata.suggestion,
         });
+    }
+
+    /// Render collected diagnostics in the stable human-readable format.
+    /// Structured metadata is deliberately not appended, preserving the
+    /// existing text contract while other renderers consume `diagnostics()`.
+    pub fn render_text(&self, writer: &mut impl Write) {
+        for diagnostic in &self.diagnostics {
+            let label = match diagnostic.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            };
+            let _ = writeln!(
+                writer,
+                "{label}[{}/{}]: {}",
+                diagnostic.rule.code(),
+                diagnostic.rule.name(),
+                diagnostic.message
+            );
+        }
     }
 
     /// Emit one non-failing warning for each configured `(override, rule)`
     /// pair that suppressed no diagnostic in this visible lint pass.
-    pub fn emit_unused_override_warnings(&mut self) {
+    pub fn emit_unused_override_warnings(&self, writer: &mut impl Write) {
         for warning in self.unused_override_warnings() {
-            let _ = writeln!(self.writer, "{warning}");
+            let _ = writeln!(writer, "{warning}");
         }
     }
 
@@ -563,5 +779,111 @@ suppress = ["M001", "H001"]
         assert_eq!(diag.suppressed_count(), 2);
         assert_eq!(diag.error_count(), 0);
         assert_eq!(diag.warning_count(), 0);
+    }
+
+    #[test]
+    fn structured_metadata_covers_path_point_range_evidence_and_suggestion() {
+        let mut diag = DiagnosticCollector::new();
+        diag.report_at(LintRule::PluginJsonMissing, "path-only.json", "path only");
+        diag.report_at_with(
+            LintRule::PluginJsonMissing,
+            "point.json",
+            "point",
+            DiagnosticMetadata::at_point(3, 7),
+        );
+        diag.report_at_with(
+            LintRule::PluginJsonMissing,
+            "range.json",
+            "range",
+            DiagnosticMetadata::default()
+                .with_location(SourceSpan::range(4, 2, 4, 6))
+                .with_evidence("bad value")
+                .with_suggestion("use a supported value"),
+        );
+
+        let path_only = &diag.diagnostics()[0];
+        assert_eq!(
+            path_only.subject_path.as_deref(),
+            Some(Path::new("path-only.json"))
+        );
+        assert_eq!(path_only.location, None);
+
+        let point = diag.diagnostics()[1].location.unwrap();
+        assert_eq!(point.start().line_number(), 3);
+        assert_eq!(point.start().column_number(), Some(7));
+        assert_eq!(point.end(), None);
+
+        let ranged = &diag.diagnostics()[2];
+        let range = ranged.location.unwrap();
+        assert_eq!(range.start(), SourcePosition::point(4, 2));
+        assert_eq!(range.end(), Some(SourcePosition::point(4, 6)));
+        assert_eq!(ranged.evidence.as_deref(), Some("bad value"));
+        assert_eq!(ranged.suggestion.as_deref(), Some("use a supported value"));
+    }
+
+    #[test]
+    fn no_location_is_not_inferred_from_path_like_message_text() {
+        let mut diag = DiagnosticCollector::new();
+        diag.report(
+            LintRule::PluginJsonMissing,
+            "other/place.md:91:4 looks path-like",
+        );
+
+        let diagnostic = &diag.diagnostics()[0];
+        assert_eq!(diagnostic.subject_path, None);
+        assert_eq!(diagnostic.location, None);
+    }
+
+    #[test]
+    fn byte_ranges_use_unicode_columns_and_exclusive_ends() {
+        let span = SourceSpan::from_byte_range("αx\nz", 0..2).unwrap();
+        assert_eq!(span.start(), SourcePosition::point(1, 1));
+        assert_eq!(span.end(), Some(SourcePosition::point(1, 2)));
+
+        let multiline = SourceSpan::from_byte_range("αx\nz", 2..4).unwrap();
+        assert_eq!(multiline.start(), SourcePosition::point(1, 2));
+        assert_eq!(multiline.end(), Some(SourcePosition::point(2, 1)));
+    }
+
+    #[test]
+    fn evidence_is_bounded_and_possible_secrets_are_redacted() {
+        let secret = "token = 'this-is-a-sensitive-value'";
+        let metadata = DiagnosticMetadata::default().with_evidence(secret);
+        assert_eq!(metadata.evidence.as_deref(), Some(REDACTED_EVIDENCE));
+        assert!(!metadata.evidence.as_deref().unwrap().contains(secret));
+
+        let mut diag = DiagnosticCollector::new();
+        diag.report_with(LintRule::PluginJsonMissing, "safe message", metadata);
+        let mut rendered = Vec::new();
+        diag.render_text(&mut rendered);
+        assert!(!String::from_utf8(rendered).unwrap().contains(secret));
+
+        let short_secret = DiagnosticMetadata::default().with_evidence("API_KEY=short-value");
+        assert_eq!(short_secret.evidence.as_deref(), Some(REDACTED_EVIDENCE));
+
+        let metadata = DiagnosticMetadata::default().with_evidence("é".repeat(400));
+        let evidence = metadata.evidence.unwrap();
+        assert!(evidence.len() <= MAX_EVIDENCE_BYTES);
+        assert!(evidence.ends_with('…'));
+    }
+
+    #[test]
+    fn text_is_rendered_after_collection_in_the_stable_format() {
+        let mut diag = DiagnosticCollector::new();
+        diag.report_at_with(
+            LintRule::PluginJsonMissing,
+            "config.json",
+            "canonical message",
+            DiagnosticMetadata::at_line(8)
+                .with_evidence("safe evidence")
+                .with_suggestion("fix it"),
+        );
+
+        let mut rendered = Vec::new();
+        diag.render_text(&mut rendered);
+        assert_eq!(
+            String::from_utf8(rendered).unwrap(),
+            "error[M001/plugin-json-missing]: canonical message\n"
+        );
     }
 }

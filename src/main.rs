@@ -8,6 +8,7 @@ mod markdown;
 mod platforms;
 mod prompt_budget;
 mod rules;
+mod sensitive;
 #[cfg(test)]
 mod test_helpers;
 mod traversal;
@@ -194,7 +195,12 @@ fn run_lint(
 
     validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
 
-    diag.emit_unused_override_warnings();
+    {
+        let stderr = std::io::stderr();
+        let mut stderr = stderr.lock();
+        diag.render_text(&mut stderr);
+        diag.emit_unused_override_warnings(&mut stderr);
+    }
 
     let errors = diag.error_count();
     let warnings = diag.warning_count();

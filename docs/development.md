@@ -86,6 +86,22 @@ stays in `autofix.rs`. A new file-attributable validator or fixer must test
 that an exact-path override suppresses only its rule and that autofix leaves a
 suppressed candidate byte-for-byte unchanged.
 
+Diagnostics may also carry a `SourceSpan`, bounded evidence, and a suggestion.
+Public source lines and columns are one-based Unicode-scalar positions. A
+range start is inclusive and its end is exclusive; a point or line-only
+location has no end. Unknown locations and columns remain absent and must not
+be recovered from the human message. The message remains the canonical
+explanation and fallback for renderers.
+
+Validators add optional fields through `DiagnosticMetadata` and
+`report_with`/`report_at_with`. Evidence is limited to 512 UTF-8 bytes. Values
+that match the shared sensitive-evidence heuristic are stored as
+`[redacted: possible secret]` rather than copied into the diagnostic. The
+collector resolves policy and stores diagnostics during validation; rendering
+happens afterward. The default text renderer intentionally emits only the
+existing severity, rule identity, and canonical message, so this model adds no
+text-output compatibility change. Silent autofix passes are never rendered.
+
 ## JSON Schema validation pilots
 
 Use JSON Schema only for a configuration surface's structural contract: object
