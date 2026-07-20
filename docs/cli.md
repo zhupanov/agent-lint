@@ -1,7 +1,8 @@
 # CLI Reference
 
 ```text
-agent-lint [--pedantic | --all] [--autofix | --list-scripts | --closure-report] [PATH]
+agent-lint [--pedantic | --all] [--only RULE[,RULE]...]...
+           [--autofix | --list-scripts | --closure-report] [PATH]
 ```
 
 If `PATH` is omitted, the current directory is used. The tool detects the
@@ -21,6 +22,7 @@ themselves.
 | `--list-scripts` | List discovered script paths and exit |
 | `--closure-report` | Print configured prompt-source budget measurements as deterministic JSON and exit |
 | `--autofix` | Fix auto-fixable violations in-place and report remaining issues |
+| `--only RULE[,RULE]...` | Run only named rule codes or canonical names; repeatable |
 | `--pedantic` | Promote warnings to errors (except too-long rules) |
 | `--all` | Force every rule to error, ignoring config overrides |
 
@@ -31,6 +33,32 @@ themselves.
 | `0` | Success (no errors, or only warnings) |
 | `1` | Lint errors found |
 | `2` | Invalid arguments or setup error (not a git repo, bad config, etc.) |
+
+## `--only`
+
+Use `--only` for a focused lint run. Values may be comma-delimited, repeated,
+or both, and may use the same canonical rule codes and names accepted by
+`agent-lint.toml`:
+
+```bash
+agent-lint --only Q002,A026 .
+agent-lint --only prompt-negative-only --only agent-maxturns-invalid .
+```
+
+Duplicate identifiers are normalized. Selected rules run in deterministic
+registry order, independent of the order supplied on the command line. An
+unknown or empty identifier is an invalid invocation and exits 2.
+
+Focused selection does not skip repository discovery, input parsing, or
+configuration validation. Selected rules retain their configured severity,
+global suppression, and matching per-file suppression. `--pedantic` promotes
+selected eligible warnings only. `--all` enables selected rules as errors and
+retains its normal behavior of ignoring suppression, without enabling
+unselected rules. Suppressed counts and unused-override warnings consider only
+selected rules.
+
+With `--autofix`, only selected rules can trigger mutations, and the final
+validation pass uses the same selection.
 
 ## `--autofix`
 

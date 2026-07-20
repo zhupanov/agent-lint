@@ -18,6 +18,9 @@ rules) to errors, except for suppressed rules and too-long rules
 `--all` forces
 every rule to error regardless of config. See
 [configuration](configuration.md) for details.
+Use repeatable, comma-delimited `--only` values to run a focused set by code or
+canonical name; selected rules retain the active strictness and suppression
+policy.
 
 **Mode column key:**
 
