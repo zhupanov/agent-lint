@@ -39,6 +39,7 @@ src/
 +-- config.rs            # agent-lint.toml loading and rule resolution
 +-- context.rs           # LintContext, ManifestState, LintMode
 +-- diagnostic.rs        # DiagnosticCollector, structured subjects, config-aware filtering
++-- json_output.rs       # Versioned JSON adapter over structured diagnostics
 +-- frontmatter.rs       # YAML frontmatter extraction
 +-- rules.rs             # Central LintRule enum, codes, names, and defaults
 +-- test_helpers.rs      # Shared test utilities

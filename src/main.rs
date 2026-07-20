@@ -6,6 +6,7 @@ mod diagnostic;
 mod documentation_consistency;
 mod fence;
 mod frontmatter;
+mod json_output;
 mod markdown;
 mod platforms;
 mod prompt_budget;
@@ -17,7 +18,7 @@ mod traversal;
 mod validators;
 mod yaml;
 
-use clap::{ArgGroup, CommandFactory, Parser, error::ErrorKind};
+use clap::{ArgGroup, CommandFactory, Parser, ValueEnum, error::ErrorKind};
 use config::{CliMode, LintConfig, RunPolicy};
 use context::{LintContext, LintMode};
 use diagnostic::DiagnosticCollector;
@@ -60,9 +61,30 @@ struct Cli {
     #[arg(long, value_name = "RULE[,RULE]...")]
     only: Vec<String>,
 
+    /// Select human-readable or versioned JSON diagnostic output
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = OutputFormat::Text,
+        conflicts_with_all = ["list_scripts", "closure_report"]
+    )]
+    format: OutputFormat,
+
     /// Repository directory to lint
     #[arg(value_name = "PATH", default_value = ".")]
     target: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Text,
+    Json,
+}
+
+struct OutputContext {
+    strictness: CliMode,
+    format: OutputFormat,
+    notices: Vec<json_output::Notice>,
 }
 
 fn main() {
@@ -82,16 +104,32 @@ fn main() {
     });
 
     // Resolve repo root from the target path.
-    let repo_root = match resolve_repo_root(&cli.target) {
+    let resolved_root = match resolve_repo_root(&cli.target) {
         Ok(root) => root,
         Err(msg) => {
-            eprintln!("ERROR: {msg}");
+            emit_usage_error(cli.format, cli_mode, &run_policy, "setup", &msg);
             std::process::exit(2);
         }
     };
+    let repo_root = resolved_root.path;
+    let mut notices = Vec::new();
+    if resolved_root.used_fallback {
+        let message = "not a git repository, using target directory as root";
+        if cli.format == OutputFormat::Text {
+            eprintln!("warning: {message}");
+        } else {
+            notices.push(json_output::Notice::warning("repository-root", message));
+        }
+    }
 
     if std::env::set_current_dir(&repo_root).is_err() {
-        eprintln!("ERROR: cannot cd to repo root: {}", repo_root.display());
+        emit_usage_error(
+            cli.format,
+            cli_mode,
+            &run_policy,
+            "setup",
+            &format!("cannot cd to repo root: {}", repo_root.display()),
+        );
         std::process::exit(2);
     }
 
@@ -107,14 +145,41 @@ fn main() {
             println!("[]");
             std::process::exit(0);
         }
-        println!("Nothing to lint (no supported agent configuration or MCP configuration found).");
+        if cli.format == OutputFormat::Json {
+            json_output::write_report(
+                None,
+                cli_mode,
+                &run_policy,
+                ValidationTargets::default(),
+                None,
+                notices,
+            );
+        } else {
+            println!(
+                "Nothing to lint (no supported agent configuration or MCP configuration found)."
+            );
+        }
         std::process::exit(0);
     }
 
-    let mut lint_config = match LintConfig::load(&repo_root) {
+    if cli.format == OutputFormat::Json
+        && !Path::new("agent-lint.toml").is_file()
+        && Path::new("claude-lint.toml").is_file()
+    {
+        notices.push(json_output::Notice::warning(
+            "legacy-configuration",
+            "found 'claude-lint.toml' which is no longer read; rename it to 'agent-lint.toml'",
+        ));
+    }
+    let loaded_config = if cli.format == OutputFormat::Json {
+        LintConfig::load_quiet(&repo_root)
+    } else {
+        LintConfig::load(&repo_root)
+    };
+    let mut lint_config = match loaded_config {
         Ok(cfg) => cfg,
         Err(msg) => {
-            eprintln!("ERROR: {msg}");
+            emit_usage_error(cli.format, cli_mode, &run_policy, "configuration", &msg);
             std::process::exit(2);
         }
     };
@@ -135,7 +200,11 @@ fn main() {
             if cli.list_scripts {
                 std::process::exit(0);
             }
-            println!("Nothing to lint (no Claude, Cursor, Codex, or MCP configuration found).");
+            if cli.format == OutputFormat::Json {
+                json_output::write_report(None, cli_mode, &run_policy, targets, None, notices);
+            } else {
+                println!("Nothing to lint (no Claude, Cursor, Codex, or MCP configuration found).");
+            }
             std::process::exit(0);
         }
     };
@@ -166,6 +235,11 @@ fn main() {
             &run_policy,
             &exclude,
             targets,
+            OutputContext {
+                strictness: cli_mode,
+                format: cli.format,
+                notices,
+            },
         );
     } else {
         run_lint(
@@ -175,6 +249,11 @@ fn main() {
             &run_policy,
             &exclude,
             targets,
+            OutputContext {
+                strictness: cli_mode,
+                format: cli.format,
+                notices,
+            },
         );
     }
 }
@@ -215,17 +294,37 @@ fn run_lint(
     run_policy: &RunPolicy,
     exclude: &config::ExcludeSet,
     targets: ValidationTargets,
+    output: OutputContext,
 ) {
+    let OutputContext {
+        strictness,
+        format,
+        mut notices,
+    } = output;
     let ctx = LintContext::new(repo_root, mode);
     let mut diag = DiagnosticCollector::with_run_policy(lint_config, run_policy.clone());
 
     validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
 
-    {
+    if format == OutputFormat::Text {
         let stderr = std::io::stderr();
         let mut stderr = stderr.lock();
         diag.render_text(&mut stderr);
         diag.emit_unused_override_warnings(&mut stderr);
+    } else {
+        notices.extend(
+            diag.unused_override_warnings()
+                .into_iter()
+                .map(|warning| json_output::Notice::warning("unused-override", warning)),
+        );
+        json_output::write_report(
+            Some(mode),
+            strictness,
+            run_policy,
+            targets,
+            Some(&diag),
+            notices,
+        );
     }
 
     let errors = diag.error_count();
@@ -233,25 +332,31 @@ fn run_lint(
     let suppressed = diag.suppressed_count();
 
     if errors == 0 && warnings == 0 {
-        if matches!(ctx.mode, LintMode::Plugin) {
-            println!("Plugin structure OK");
-        } else {
-            println!("Config OK");
-        }
-        if suppressed > 0 {
-            eprintln!("({suppressed} suppressed)");
+        if format == OutputFormat::Text {
+            if matches!(ctx.mode, LintMode::Plugin) {
+                println!("Plugin structure OK");
+            } else {
+                println!("Config OK");
+            }
+            if suppressed > 0 {
+                eprintln!("({suppressed} suppressed)");
+            }
         }
         std::process::exit(0);
     } else if errors == 0 {
-        eprintln!("Lint: {warnings} warning(s)");
-        if suppressed > 0 {
-            eprintln!("({suppressed} suppressed)");
+        if format == OutputFormat::Text {
+            eprintln!("Lint: {warnings} warning(s)");
+            if suppressed > 0 {
+                eprintln!("({suppressed} suppressed)");
+            }
         }
         std::process::exit(0);
     } else {
-        eprintln!("Lint: {errors} error(s), {warnings} warning(s)");
-        if suppressed > 0 {
-            eprintln!("({suppressed} suppressed)");
+        if format == OutputFormat::Text {
+            eprintln!("Lint: {errors} error(s), {warnings} warning(s)");
+            if suppressed > 0 {
+                eprintln!("({suppressed} suppressed)");
+            }
         }
         std::process::exit(1);
     }
@@ -266,6 +371,7 @@ fn run_autofix(
     run_policy: &RunPolicy,
     exclude: &config::ExcludeSet,
     targets: ValidationTargets,
+    output: OutputContext,
 ) {
     // Autofix loop: silently re-validate, fix one rule at a time
     for _ in 0..MAX_FIX_ITERATIONS {
@@ -301,8 +407,16 @@ fn run_autofix(
         }
     }
 
-    // Final validation pass with normal stderr output
-    run_lint(repo_root, mode, lint_config, run_policy, exclude, targets);
+    // Final validation pass through the selected visible renderer.
+    run_lint(
+        repo_root,
+        mode,
+        lint_config,
+        run_policy,
+        exclude,
+        targets,
+        output,
+    );
 }
 
 /// Detect lint mode based on Claude, Codex, Cursor, or MCP configuration.
@@ -337,7 +451,13 @@ fn has_mcp_config() -> bool {
         })
 }
 
-fn resolve_repo_root(target: &Path) -> Result<PathBuf, String> {
+#[derive(Debug)]
+struct ResolvedRoot {
+    path: PathBuf,
+    used_fallback: bool,
+}
+
+fn resolve_repo_root(target: &Path) -> Result<ResolvedRoot, String> {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(target)
@@ -348,15 +468,35 @@ fn resolve_repo_root(target: &Path) -> Result<PathBuf, String> {
         if output.status.success() {
             let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
             if !root.as_os_str().is_empty() {
-                return Ok(root);
+                return Ok(ResolvedRoot {
+                    path: root,
+                    used_fallback: false,
+                });
             }
         }
     }
 
     // Git unavailable or not a git repo — fall back to the target directory.
-    eprintln!("warning: not a git repository, using target directory as root");
     std::fs::canonicalize(target)
+        .map(|path| ResolvedRoot {
+            path,
+            used_fallback: true,
+        })
         .map_err(|e| format!("cannot resolve path '{}': {e}", target.display()))
+}
+
+fn emit_usage_error(
+    format: OutputFormat,
+    strictness: CliMode,
+    run_policy: &RunPolicy,
+    kind: &'static str,
+    message: &str,
+) {
+    if format == OutputFormat::Json {
+        json_output::write_usage_error(strictness, run_policy, kind, message);
+    } else {
+        eprintln!("ERROR: {message}");
+    }
 }
 
 #[cfg(test)]
@@ -520,8 +660,9 @@ mod tests {
         let result = resolve_repo_root(Path::new(env!("CARGO_MANIFEST_DIR")));
         assert!(result.is_ok());
         let root = result.unwrap();
-        assert!(!root.as_os_str().is_empty());
-        assert!(root.join(".git").exists());
+        assert!(!root.path.as_os_str().is_empty());
+        assert!(root.path.join(".git").exists());
+        assert!(!root.used_fallback);
     }
 
     #[test]
@@ -532,7 +673,8 @@ mod tests {
         let root = result.unwrap();
         // The returned path should be the canonicalized temp dir.
         let expected = tmp.path().canonicalize().unwrap();
-        assert_eq!(root, expected);
+        assert_eq!(root.path, expected);
+        assert!(root.used_fallback);
     }
 
     #[test]

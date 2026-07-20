@@ -81,8 +81,11 @@ If `PATH` is omitted, the current directory is used. The tool detects the
 repo root and selects Basic or Plugin mode automatically based on the
 configuration it finds.
 
-See [CLI Reference](docs/cli.md) for flags, exit codes, autofix, and the
-machine-readable `--closure-report`, including focused `--only` runs.
+See [CLI Reference](docs/cli.md) for flags, exit codes, autofix, focused
+`--only` runs, and machine-readable output. Use
+`agent-lint --format json .` for the versioned diagnostic payload; its
+checked-in schema and examples are in
+[JSON Diagnostic Output](docs/json-output.md).
 
 ## Lint Rules
 
@@ -159,7 +162,8 @@ See [Configuration docs](docs/configuration.md) for the full reference.
 | Document | Description |
 |----------|-------------|
 | [Rules Reference](docs/rules.md) | Complete rule table with codes, names, defaults, and auto-fixable rules |
-| [CLI Reference](docs/cli.md) | Flags, exit codes, `--only`, `--autofix`, `--list-scripts`, `--closure-report` |
+| [CLI Reference](docs/cli.md) | Flags, exit codes, `--only`, diagnostic formats, `--autofix`, and utility commands |
+| [JSON Output](docs/json-output.md) | Versioned machine-readable diagnostic schema and examples |
 | [GitHub Action](docs/github-action.md) | Action inputs, token configuration, adding CI to your repo |
 | [Configuration](docs/configuration.md) | `agent-lint.toml` format, rule identifiers, per-file suppression, file exclusion, strictness modes |
 | [YAML parser policy](docs/yaml.md) | Parser selection, compatibility behavior, and input limits |

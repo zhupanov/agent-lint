@@ -2,6 +2,7 @@
 
 ```text
 agent-lint [--pedantic | --all] [--only RULE[,RULE]...]...
+           [--format text|json]
            [--autofix | --list-scripts | --closure-report] [PATH]
 ```
 
@@ -23,6 +24,7 @@ themselves.
 | `--closure-report` | Print configured prompt-source budget measurements as deterministic JSON and exit |
 | `--autofix` | Fix auto-fixable violations in-place and report remaining issues |
 | `--only RULE[,RULE]...` | Run only named rule codes or canonical names; repeatable |
+| `--format text\|json` | Select human-readable text or versioned JSON diagnostic output |
 | `--pedantic` | Promote warnings to errors (except too-long rules) |
 | `--all` | Force every rule to error, ignoring config overrides |
 
@@ -60,12 +62,25 @@ selected rules.
 With `--autofix`, only selected rules can trigger mutations, and the final
 validation pass uses the same selection.
 
+## `--format`
+
+The default `--format text` behavior is unchanged. `--format json` writes one
+versioned JSON document to stdout and preserves the same exit status as text
+mode. It conflicts with `--list-scripts` and `--closure-report`, which own
+separate stdout contracts.
+
+See [JSON Diagnostic Output](json-output.md) for the schema, field semantics,
+setup-error representation, and clean, mixed, pathless, configuration-failure,
+and autofix examples.
+
 ## `--autofix`
 
 When `--autofix` is provided, agent-lint attempts to automatically fix
 violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
-any remaining issues with normal exit semantics (exit 1 if errors remain).
+any remaining issues with normal exit semantics (exit 1 if errors remain). With
+`--format json`, stdout contains only the final validation document; fix
+progress may be written to stderr.
 Configured per-file suppressions apply to both diagnosis and mutation, so a
 fixer never changes a file where that rule is suppressed. Unused-override
 warnings are emitted only by the final visible pass.
