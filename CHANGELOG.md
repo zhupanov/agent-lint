@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [3.0.1] - 2026-07-17
+
+### Added
+
+- Added config-only per-file rule suppression overrides with structured
+  diagnostic subjects and suppression-aware autofix behavior
+
+### Changed
+
+- Documented the administrator squash-merge procedure for release pull requests
+
+## [3.0.0] - 2026-07-17
+
+### Added
+
+- Added a version-bump verification harness
+- Added JSON Schema validation for Cursor cloud environment structure
+
+### Changed
+
+- Replaced manual CLI parsing with `clap` and derived rule-registry metadata
+  with `strum`
+- Centralized filesystem traversal and exclusion handling
+- Replaced the deprecated YAML parser with `noyalib`
+- Replaced custom Markdown parsing with a shared Comrak document model
+- Centralized HTTP(S) URL validation with the `url` crate
+
 ## [2.7.0] - 2026-07-17
 
 ### Added

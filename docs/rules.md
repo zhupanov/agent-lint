@@ -1,8 +1,9 @@
 # Lint Rules Reference
 
-Agent Lint ships 286 rules across 19 categories. Every rule has a unique
-code (e.g., `M001`) and a human-readable name (e.g., `plugin-json-missing`).
-Either form can be used in `agent-lint.toml` to configure rule severity.
+Agent Lint ships 286 rules organized into 20 code-prefix categories. A category
+is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
+`M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
+be used in `agent-lint.toml` to configure rule severity.
 
 **Default column key:**
 

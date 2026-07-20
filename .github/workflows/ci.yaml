@@ -99,20 +99,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Agent Lint (default)
-        uses: zhupanov/agent-lint@v2
+        uses: zhupanov/agent-lint@v3
         with:
-          version: "2.5.0"
+          version: "3.0.1"
           path: "."
       - name: Agent Lint (pedantic)
-        uses: zhupanov/agent-lint@v2
+        uses: zhupanov/agent-lint@v3
         with:
-          version: "2.5.0"
+          version: "3.0.1"
           path: "."
           pedantic: "true"
       - name: Agent Lint (all)
-        uses: zhupanov/agent-lint@v2
+        uses: zhupanov/agent-lint@v3
         with:
-          version: "2.5.0"
+          version: "3.0.1"
           path: "."
           all: "true"
 
