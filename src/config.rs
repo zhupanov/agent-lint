@@ -18,6 +18,85 @@ pub enum CliMode {
     All,
 }
 
+/// Invocation-scoped rule policy resolved from CLI strictness and `--only`.
+///
+/// A focused selection is stored in canonical registry order so duplicate and
+/// reordered CLI identifiers cannot affect validation or autofix ordering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPolicy {
+    mode: CliMode,
+    selected_rules: Option<Vec<LintRule>>,
+    selected_set: Option<HashSet<LintRule>>,
+}
+
+impl Default for RunPolicy {
+    fn default() -> Self {
+        Self {
+            mode: CliMode::Normal,
+            selected_rules: None,
+            selected_set: None,
+        }
+    }
+}
+
+impl RunPolicy {
+    /// Resolve repeated and comma-delimited `--only` values through the
+    /// canonical rule registry lookup path.
+    pub fn resolve(mode: CliMode, only_values: &[String]) -> Result<Self, String> {
+        if only_values.is_empty() {
+            return Ok(Self {
+                mode,
+                ..Self::default()
+            });
+        }
+
+        let mut selected_set = HashSet::new();
+        for value in only_values {
+            for raw_identifier in value.split(',') {
+                let identifier = raw_identifier.trim();
+                let rule = LintRule::from_code_or_name(identifier).ok_or_else(|| {
+                    format!(
+                        "invalid rule identifier '{identifier}' for --only; use a canonical code or name"
+                    )
+                })?;
+                selected_set.insert(rule);
+            }
+        }
+
+        let selected_rules = ALL_RULES
+            .iter()
+            .copied()
+            .filter(|rule| selected_set.contains(rule))
+            .collect();
+        Ok(Self {
+            mode,
+            selected_rules: Some(selected_rules),
+            selected_set: Some(selected_set),
+        })
+    }
+
+    pub fn selects(&self, rule: LintRule) -> bool {
+        self.selected_set
+            .as_ref()
+            .is_none_or(|selected| selected.contains(&rule))
+    }
+
+    pub fn effective_rules(&self) -> &[LintRule] {
+        self.selected_rules.as_deref().unwrap_or(ALL_RULES)
+    }
+
+    pub fn is_focused(&self) -> bool {
+        self.selected_rules.is_some()
+    }
+
+    pub fn registry_rank(&self, rule: LintRule) -> Option<usize> {
+        self.selected_rules
+            .as_ref()?
+            .iter()
+            .position(|selected| *selected == rule)
+    }
+}
+
 /// Raw TOML structure for deserialization.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -447,16 +526,27 @@ impl LintConfig {
     /// - `All`: clears suppress/warn, fills error with all rules. Overrides
     ///   all TOML severity config. File exclusions (`exclude`) are not
     ///   affected — `--all` changes rule severity, not file selection.
+    #[cfg(test)]
     pub fn apply_cli_mode(&mut self, mode: CliMode) {
+        let policy = RunPolicy {
+            mode,
+            ..RunPolicy::default()
+        };
+        self.apply_run_policy(&policy);
+    }
+
+    /// Apply invocation strictness to the effective rule set. Focused runs do
+    /// not promote or enable rules outside their explicit selection.
+    pub fn apply_run_policy(&mut self, policy: &RunPolicy) {
         use crate::rules::DefaultSeverity;
-        match mode {
+        match policy.mode {
             CliMode::Normal => {}
             CliMode::Pedantic => {
                 // Promote user-warn rules to error (except too-long).
                 let to_promote: Vec<_> = self
                     .warn
                     .iter()
-                    .filter(|r| !r.is_too_long())
+                    .filter(|r| policy.selects(**r) && !r.is_too_long())
                     .copied()
                     .collect();
                 for r in to_promote {
@@ -465,7 +555,7 @@ impl LintConfig {
                 }
                 // Promote default-warning rules to error (except too-long
                 // and already-suppressed).
-                for r in ALL_RULES {
+                for r in policy.effective_rules() {
                     if r.default_severity() == DefaultSeverity::Warning
                         && !r.is_too_long()
                         && !self.suppress.contains(r)
@@ -478,7 +568,7 @@ impl LintConfig {
                 self.suppress.clear();
                 self.warn.clear();
                 self.error.clear();
-                for r in ALL_RULES {
+                for r in policy.effective_rules() {
                     self.error.insert(*r);
                 }
                 self.overrides_enabled = false;
@@ -891,6 +981,52 @@ fn validate_relative_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn focused_policy_resolves_codes_names_duplicates_and_registry_order() {
+        let policy = RunPolicy::resolve(
+            CliMode::Normal,
+            &[
+                "Q002,A026".to_string(),
+                "prompt-negative-only".to_string(),
+                "agent-maxturns-invalid".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            policy.effective_rules(),
+            &[LintRule::AgentMaxturnsInvalid, LintRule::PromptNegativeOnly]
+        );
+        assert!(policy.selects(LintRule::PromptNegativeOnly));
+        assert!(!policy.selects(LintRule::PluginJsonMissing));
+    }
+
+    #[test]
+    fn focused_policy_rejects_unknown_and_empty_identifiers() {
+        for (value, invalid) in [("X999", "X999"), ("M001,,H001", "''"), ("", "''")] {
+            let error = RunPolicy::resolve(CliMode::Normal, &[value.to_string()]).unwrap_err();
+            assert!(error.contains(invalid), "unexpected error: {error}");
+        }
+    }
+
+    #[test]
+    fn focused_strictness_transforms_only_selected_rules() {
+        let mut pedantic = LintConfig {
+            warn: HashSet::from([LintRule::SecurityMdMissing, LintRule::NameVague]),
+            ..LintConfig::default()
+        };
+        let pedantic_policy = RunPolicy::resolve(CliMode::Pedantic, &["G005".to_string()]).unwrap();
+        pedantic.apply_run_policy(&pedantic_policy);
+        assert!(pedantic.error.contains(&LintRule::SecurityMdMissing));
+        assert!(!pedantic.error.contains(&LintRule::NameVague));
+        assert!(pedantic.warn.contains(&LintRule::NameVague));
+
+        let mut all = LintConfig::default();
+        let all_policy = RunPolicy::resolve(CliMode::All, &["G005".to_string()]).unwrap();
+        all.apply_run_policy(&all_policy);
+        assert_eq!(all.error, HashSet::from([LintRule::SecurityMdMissing]));
+    }
 
     #[test]
     #[serial_test::serial]

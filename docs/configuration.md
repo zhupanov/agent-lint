@@ -151,6 +151,11 @@ name** (e.g., `plugin-json-missing`). In normal mode, disposition precedence
 is global `suppress`, matching override `suppress`, global `error`, global
 `warn`, then the compiled default.
 
+The CLI accepts the same identifiers through repeatable, comma-delimited
+`--only` values for invocation-scoped focused execution. Selection is not
+persisted in this file. See the [CLI reference](cli.md#--only) for its
+interaction with suppression, strictness modes, autofix, and unused overrides.
+
 ## Per-file Suppression Overrides
 
 Each `[[lint.overrides]]` table requires non-empty `files` and `suppress`
@@ -226,6 +231,10 @@ are promoted to errors. File exclusions (`exclude`) remain in effect. Note:
 not dispatched regardless of `--all`. Because override suppression is
 intentionally disabled, unused-override warnings are also not reported in this
 mode.
+
+When `--only` is also present, either strictness mode transforms only the
+selected rules. In particular, `--all --only ...` does not enable rules outside
+the focused selection.
 
 ## Behavior Without Config
 

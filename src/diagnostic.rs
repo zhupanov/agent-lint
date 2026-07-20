@@ -3,7 +3,7 @@ use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use crate::config::LintConfig;
+use crate::config::{LintConfig, RunPolicy};
 use crate::rules::{DefaultSeverity, LintRule};
 
 /// Diagnostic severity after config resolution.
@@ -219,6 +219,7 @@ pub struct Diagnostic {
 /// (compiled-in default: error or silently skipped).
 pub struct DiagnosticCollector {
     config: LintConfig,
+    run_policy: RunPolicy,
     diagnostics: Vec<Diagnostic>,
     suppressed_count: usize,
     used_overrides: HashSet<(usize, LintRule)>,
@@ -237,6 +238,7 @@ impl DiagnosticCollector {
     pub fn new() -> Self {
         Self {
             config: LintConfig::default(),
+            run_policy: RunPolicy::default(),
             diagnostics: Vec::new(),
             suppressed_count: 0,
             used_overrides: HashSet::new(),
@@ -266,6 +268,7 @@ impl DiagnosticCollector {
         };
         Self {
             config,
+            run_policy: RunPolicy::default(),
             diagnostics: Vec::new(),
             suppressed_count: 0,
             used_overrides: HashSet::new(),
@@ -274,9 +277,16 @@ impl DiagnosticCollector {
     }
 
     /// Create a collector with the given configuration.
+    #[cfg(test)]
     pub fn with_config(config: LintConfig) -> Self {
+        Self::with_run_policy(config, RunPolicy::default())
+    }
+
+    /// Create a collector with resolved configuration and invocation policy.
+    pub fn with_run_policy(config: LintConfig, run_policy: RunPolicy) -> Self {
         Self {
             config,
+            run_policy,
             diagnostics: Vec::new(),
             suppressed_count: 0,
             used_overrides: HashSet::new(),
@@ -286,6 +296,7 @@ impl DiagnosticCollector {
 
     /// Create a collector for a validation pass that will not be rendered.
     /// Used by the autofix loop to re-validate without spamming stderr.
+    #[cfg(test)]
     pub fn with_config_silent(config: LintConfig) -> Self {
         Self::with_config(config)
     }
@@ -350,6 +361,12 @@ impl DiagnosticCollector {
         msg: &str,
         metadata: DiagnosticMetadata,
     ) {
+        // Selection is independent of severity and suppression. Unselected
+        // reports do not participate in any diagnostic accounting.
+        if !self.run_policy.selects(rule) {
+            return;
+        }
+
         // User suppress always wins — suppress and count.
         if self.config.suppress.contains(&rule) {
             self.suppressed_count += 1;
@@ -382,7 +399,7 @@ impl DiagnosticCollector {
             }
         };
 
-        self.diagnostics.push(Diagnostic {
+        let diagnostic = Diagnostic {
             rule,
             severity,
             subject_path: path.map(|path| PathBuf::from(self.config.normalize_subject_path(path))),
@@ -390,7 +407,21 @@ impl DiagnosticCollector {
             location: metadata.location,
             evidence: metadata.evidence,
             suggestion: metadata.suggestion,
-        });
+        };
+        if let Some(rank) = self.run_policy.registry_rank(rule) {
+            let insert_at = self
+                .diagnostics
+                .iter()
+                .position(|existing| {
+                    self.run_policy
+                        .registry_rank(existing.rule)
+                        .is_some_and(|existing_rank| existing_rank > rank)
+                })
+                .unwrap_or(self.diagnostics.len());
+            self.diagnostics.insert(insert_at, diagnostic);
+        } else {
+            self.diagnostics.push(diagnostic);
+        }
     }
 
     /// Render collected diagnostics in the stable human-readable format.
@@ -426,8 +457,19 @@ impl DiagnosticCollector {
             return warnings;
         }
         for (index, entry) in self.config.overrides.iter().enumerate() {
-            let mut rules: Vec<_> = entry.suppress.iter().copied().collect();
-            rules.sort_by_key(|rule| rule.code());
+            let mut rules: Vec<_> = if self.run_policy.is_focused() {
+                self.run_policy
+                    .effective_rules()
+                    .iter()
+                    .copied()
+                    .filter(|rule| entry.suppress.contains(rule))
+                    .collect()
+            } else {
+                entry.suppress.iter().copied().collect()
+            };
+            if !self.run_policy.is_focused() {
+                rules.sort_by_key(|rule| rule.code());
+            }
             for rule in rules {
                 if self.used_overrides.contains(&(index, rule)) {
                     continue;
@@ -518,6 +560,45 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert_eq!(diag.warning_count(), 0);
         assert_eq!(diag.suppressed_count(), 0);
+    }
+
+    #[test]
+    fn focused_collector_filters_before_suppression_and_orders_by_registry() {
+        let config = LintConfig {
+            suppress: HashSet::from([LintRule::PluginJsonMissing]),
+            ..LintConfig::default()
+        };
+        let policy =
+            RunPolicy::resolve(crate::config::CliMode::Normal, &["H001,G005".to_string()]).unwrap();
+        let mut diag = DiagnosticCollector::with_run_policy(config, policy);
+
+        diag.report(LintRule::SecurityMdMissing, "security");
+        diag.report(LintRule::PluginJsonMissing, "unselected and suppressed");
+        diag.report(LintRule::HooksJsonMissing, "hooks");
+
+        assert_eq!(diag.suppressed_count(), 0);
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.rule)
+                .collect::<Vec<_>>(),
+            vec![LintRule::HooksJsonMissing, LintRule::SecurityMdMissing]
+        );
+    }
+
+    #[test]
+    fn focused_unused_override_reporting_ignores_unselected_entries() {
+        let config = config_with_overrides(
+            "[lint]\n[[lint.overrides]]\nfiles = [\"missing.md\"]\nsuppress = [\"M001\", \"H001\"]\n",
+        );
+        let policy =
+            RunPolicy::resolve(crate::config::CliMode::Normal, &["H001".to_string()]).unwrap();
+        let diag = DiagnosticCollector::with_run_policy(config, policy);
+
+        let warnings = diag.unused_override_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("H001/hooks-json-missing"));
+        assert!(!warnings[0].contains("M001"));
     }
 
     #[test]

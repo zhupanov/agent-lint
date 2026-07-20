@@ -16,6 +16,7 @@
   - **Plugin mode** -- runs the full rule suite when `.claude-plugin/` is
     present
 - **Configurable** -- suppress or downgrade rules via `agent-lint.toml`
+- **Focused execution** -- run selected rules by code or name with `--only`
 - **GitHub Action** for CI integration
 - **Cross-platform** binaries (Linux x86_64/aarch64, macOS aarch64)
 
@@ -81,7 +82,7 @@ repo root and selects Basic or Plugin mode automatically based on the
 configuration it finds.
 
 See [CLI Reference](docs/cli.md) for flags, exit codes, autofix, and the
-machine-readable `--closure-report`.
+machine-readable `--closure-report`, including focused `--only` runs.
 
 ## Lint Rules
 
@@ -158,7 +159,7 @@ See [Configuration docs](docs/configuration.md) for the full reference.
 | Document | Description |
 |----------|-------------|
 | [Rules Reference](docs/rules.md) | Complete rule table with codes, names, defaults, and auto-fixable rules |
-| [CLI Reference](docs/cli.md) | Flags, exit codes, `--autofix`, `--list-scripts`, `--closure-report` |
+| [CLI Reference](docs/cli.md) | Flags, exit codes, `--only`, `--autofix`, `--list-scripts`, `--closure-report` |
 | [GitHub Action](docs/github-action.md) | Action inputs, token configuration, adding CI to your repo |
 | [Configuration](docs/configuration.md) | `agent-lint.toml` format, rule identifiers, per-file suppression, file exclusion, strictness modes |
 | [YAML parser policy](docs/yaml.md) | Parser selection, compatibility behavior, and input limits |

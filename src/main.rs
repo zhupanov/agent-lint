@@ -17,8 +17,8 @@ mod traversal;
 mod validators;
 mod yaml;
 
-use clap::{ArgGroup, Parser};
-use config::{CliMode, LintConfig};
+use clap::{ArgGroup, CommandFactory, Parser, error::ErrorKind};
+use config::{CliMode, LintConfig, RunPolicy};
 use context::{LintContext, LintMode};
 use diagnostic::DiagnosticCollector;
 use platforms::{DetectedSurfaces, ValidationTargets};
@@ -56,6 +56,10 @@ struct Cli {
     #[arg(long)]
     autofix: bool,
 
+    /// Run only these rule codes or names (repeatable and comma-delimited)
+    #[arg(long, value_name = "RULE[,RULE]...")]
+    only: Vec<String>,
+
     /// Repository directory to lint
     #[arg(value_name = "PATH", default_value = ".")]
     target: PathBuf,
@@ -71,6 +75,11 @@ fn main() {
     } else {
         CliMode::Normal
     };
+    let run_policy = RunPolicy::resolve(cli_mode, &cli.only).unwrap_or_else(|message| {
+        Cli::command()
+            .error(ErrorKind::ValueValidation, message)
+            .exit()
+    });
 
     // Resolve repo root from the target path.
     let repo_root = match resolve_repo_root(&cli.target) {
@@ -110,7 +119,7 @@ fn main() {
         }
     };
 
-    lint_config.apply_cli_mode(cli_mode);
+    lint_config.apply_run_policy(&run_policy);
 
     if cli.closure_report {
         run_closure_report(&lint_config);
@@ -150,9 +159,23 @@ fn main() {
     }
 
     if cli.autofix {
-        run_autofix(&repo_root, mode, lint_config, &exclude, targets);
+        run_autofix(
+            &repo_root,
+            mode,
+            lint_config,
+            &run_policy,
+            &exclude,
+            targets,
+        );
     } else {
-        run_lint(&repo_root, mode, lint_config, &exclude, targets);
+        run_lint(
+            &repo_root,
+            mode,
+            lint_config,
+            &run_policy,
+            &exclude,
+            targets,
+        );
     }
 }
 
@@ -189,11 +212,12 @@ fn run_lint(
     repo_root: &Path,
     mode: LintMode,
     lint_config: LintConfig,
+    run_policy: &RunPolicy,
     exclude: &config::ExcludeSet,
     targets: ValidationTargets,
 ) {
     let ctx = LintContext::new(repo_root, mode);
-    let mut diag = DiagnosticCollector::with_config(lint_config);
+    let mut diag = DiagnosticCollector::with_run_policy(lint_config, run_policy.clone());
 
     validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
 
@@ -239,13 +263,15 @@ fn run_autofix(
     repo_root: &Path,
     mode: LintMode,
     lint_config: LintConfig,
+    run_policy: &RunPolicy,
     exclude: &config::ExcludeSet,
     targets: ValidationTargets,
 ) {
     // Autofix loop: silently re-validate, fix one rule at a time
     for _ in 0..MAX_FIX_ITERATIONS {
         let ctx = LintContext::new(repo_root, mode);
-        let mut diag = DiagnosticCollector::with_config_silent(lint_config.clone());
+        let mut diag =
+            DiagnosticCollector::with_run_policy(lint_config.clone(), run_policy.clone());
         validators::run_all_with_targets(&ctx, &mut diag, exclude, targets);
 
         // Collect unique auto-fixable rules that have violations
@@ -276,7 +302,7 @@ fn run_autofix(
     }
 
     // Final validation pass with normal stderr output
-    run_lint(repo_root, mode, lint_config, exclude, targets);
+    run_lint(repo_root, mode, lint_config, run_policy, exclude, targets);
 }
 
 /// Detect lint mode based on Claude, Codex, Cursor, or MCP configuration.
