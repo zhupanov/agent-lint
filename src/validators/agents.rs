@@ -1,5 +1,5 @@
 use crate::config::ExcludeSet;
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::traversal;
@@ -210,9 +210,10 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
             }
         }
         Err((line, msg)) => {
-            diag.report(
+            diag.report_with(
                 LintRule::FrontmatterYamlInvalid,
                 &format!("{agent_path}:{line}: frontmatter is not valid YAML: {msg}"),
+                DiagnosticMetadata::at_line(line),
             );
         }
     }

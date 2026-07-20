@@ -1,5 +1,5 @@
 use crate::config::ExcludeSet;
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
@@ -211,10 +211,11 @@ fn validate_skill_frontmatter_in_dir(
                 }
             }
             Err((line, msg)) => {
-                diag.report_at(
+                diag.report_at_with(
                     LintRule::FrontmatterYamlInvalid,
                     &skill_path,
                     &format!("{skill_path}:{line}: frontmatter is not valid YAML: {msg}"),
+                    DiagnosticMetadata::at_line(line),
                 );
             }
         }
@@ -697,15 +698,22 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            diag.diagnostics()
-                .iter()
-                .any(|d| d.rule == LintRule::FrontmatterYamlInvalid),
-            "expected X001: {:?}",
-            diag.diagnostics()
-                .iter()
-                .map(|d| d.message.as_str())
-                .collect::<Vec<_>>()
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::FrontmatterYamlInvalid)
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected X001: {:?}",
+                    diag.diagnostics()
+                        .iter()
+                        .map(|diagnostic| diagnostic.message.as_str())
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(
+            diagnostic.location.map(|location| location.start()),
+            Some(crate::diagnostic::SourcePosition::line(3))
         );
     }
 

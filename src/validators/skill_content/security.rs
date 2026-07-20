@@ -1,25 +1,12 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::sensitive::contains_possible_secret;
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::sync::LazyLock;
 
 // S031: Non-HTTPS URLs
 static RE_HTTP: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"http://[a-zA-Z0-9]").unwrap());
-
-// S032: Secret patterns
-static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    vec![
-        Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(),
-        Regex::new(r"ghp_[a-zA-Z0-9]{36,}").unwrap(),
-        Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}").unwrap(),
-        Regex::new(
-            r#"(?i)(api[_\-]?key|api[_\-]?secret|api[_\-]?token)\s*[=:]\s*["']?[A-Za-z0-9]{20,}"#,
-        )
-        .unwrap(),
-        Regex::new(r#"(?i)(password|secret|token)\s*[=:]\s*["'][^"']{8,}"#).unwrap(),
-    ]
-});
 
 pub(super) fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     if info.body.trim().is_empty() {
@@ -49,15 +36,10 @@ pub(super) fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticColl
     }
 
     // S032: hardcoded secrets
-    if has_hardcoded_secret(&info.body) {
+    if contains_possible_secret(&info.body) {
         diag.report(
             LintRule::HardcodedSecret,
             &format!("{}: potential hardcoded secret/API key detected", info.path),
         );
     }
-}
-
-/// Shared conservative secret heuristic for configuration values.
-pub(crate) fn has_hardcoded_secret(content: &str) -> bool {
-    SECRET_PATTERNS.iter().any(|re| re.is_match(content))
 }

@@ -3,8 +3,8 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::sensitive::contains_possible_secret;
 use crate::traversal;
-use crate::validators::skill_content::security::has_hardcoded_secret;
 use std::path::Path;
 
 const CODEX_DEFAULT_MAX_BYTES: usize = 32_768;
@@ -52,7 +52,7 @@ fn validate_shared_rules(
             &format!("{display} is empty or whitespace-only"),
         );
     }
-    if has_hardcoded_secret(content) {
+    if contains_possible_secret(content) {
         diag.report(
             LintRule::InstructionFileSecret,
             &format!("{display} contains a potential hardcoded secret/API key"),

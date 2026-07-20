@@ -1,10 +1,10 @@
 //! Validation for an optional project `.codex/config.toml`.
 
 use crate::config::ExcludeSet;
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::rules::LintRule;
+use crate::sensitive::contains_possible_secret;
 use crate::validators::codex_constants::*;
-use crate::validators::skill_content::security::has_hardcoded_secret;
 use toml::Value;
 use toml::value::Table;
 
@@ -21,9 +21,16 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let value: Value = match content.parse() {
         Ok(value) => value,
         Err(error) => {
-            diag.report(
+            let metadata = error
+                .span()
+                .and_then(|span| SourceSpan::from_byte_range(&content, span))
+                .map(|location| DiagnosticMetadata::default().with_location(location))
+                .unwrap_or_default();
+            diag.report_at_with(
                 LintRule::CodexTomlInvalid,
+                CONFIG_PATH,
                 &format!("{CONFIG_PATH} is not valid TOML: {error}"),
+                metadata,
             );
             return;
         }
@@ -429,13 +436,13 @@ fn validate_suppressed_windows(diag: &mut DiagnosticCollector, value: Option<&Va
 
 fn table_contains_secret(table: &Table) -> bool {
     table.iter().any(|(key, value)| {
-        has_hardcoded_secret(&format!("{key} = {value}")) || value_contains_secret(value)
+        contains_possible_secret(&format!("{key} = {value}")) || value_contains_secret(value)
     })
 }
 
 fn value_contains_secret(value: &Value) -> bool {
     match value {
-        Value::String(value) => has_hardcoded_secret(value),
+        Value::String(value) => contains_possible_secret(value),
         Value::Array(values) => values.iter().any(value_contains_secret),
         Value::Table(values) => table_contains_secret(values),
         _ => false,
@@ -475,7 +482,17 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn malformed_toml_reports_cx001() {
-        assert!(has(&with_config("[broken"), LintRule::CodexTomlInvalid));
+        let diag = with_config("[broken");
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::CodexTomlInvalid)
+            .unwrap();
+        assert_eq!(
+            diagnostic.subject_path.as_deref(),
+            Some(std::path::Path::new(CONFIG_PATH))
+        );
+        assert!(diagnostic.location.is_some());
     }
 
     #[test]
