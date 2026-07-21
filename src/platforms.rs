@@ -12,6 +12,7 @@ use std::path::Path;
 pub struct DetectedSurfaces {
     pub cursor: bool,
     pub codex: bool,
+    pub claude_md: bool,
     pub agents_md: bool,
     pub agent_skills: bool,
 }
@@ -20,6 +21,7 @@ pub struct DetectedSurfaces {
 pub struct ValidationTargets {
     pub cursor: bool,
     pub codex: bool,
+    pub claude_md: bool,
     pub agents_md: bool,
     pub agent_skills: bool,
 }
@@ -30,6 +32,7 @@ impl DetectedSurfaces {
         Self {
             cursor: cursor_surface_exists(exclude),
             codex: codex_surface_exists(exclude),
+            claude_md: is_included_file("CLAUDE.md", exclude),
             agents_md: agents_md_surface_exists(exclude),
             agent_skills: agent_skills_surface_exists(exclude),
         }
@@ -39,6 +42,7 @@ impl DetectedSurfaces {
         ValidationTargets {
             cursor: overrides.cursor.unwrap_or(self.cursor),
             codex: overrides.codex.unwrap_or(self.codex),
+            claude_md: self.claude_md,
             agents_md: self.agents_md,
             agent_skills: self.agent_skills,
         }
@@ -47,7 +51,7 @@ impl DetectedSurfaces {
 
 impl ValidationTargets {
     pub fn has_work(self) -> bool {
-        self.cursor || self.codex || self.agents_md || self.agent_skills
+        self.cursor || self.codex || self.claude_md || self.agents_md || self.agent_skills
     }
 }
 
@@ -107,26 +111,50 @@ mod tests {
     #[serial_test::serial]
     fn discovers_every_supported_surface() {
         let cases = [
-            (".cursorrules", true, false, false, false),
-            (".cursor/rules/project.md", true, false, false, false),
-            (".cursor/rules/project.mdc", true, false, false, false),
-            (".cursor/hooks.json", true, false, false, false),
-            (".cursor/agents/reviewer.md", true, false, false, false),
-            (".cursor/environment.json", true, false, false, false),
+            (".cursorrules", true, false, false, false, false),
+            (".cursor/rules/project.md", true, false, false, false, false),
+            (
+                ".cursor/rules/project.mdc",
+                true,
+                false,
+                false,
+                false,
+                false,
+            ),
+            (".cursor/hooks.json", true, false, false, false, false),
+            (
+                ".cursor/agents/reviewer.md",
+                true,
+                false,
+                false,
+                false,
+                false,
+            ),
+            (".cursor/environment.json", true, false, false, false, false),
             (
                 ".cursor/skills/reviewer/SKILL.md",
                 true,
                 false,
                 false,
                 false,
+                false,
             ),
-            (".codex/config.toml", false, true, false, false),
-            (".codex-plugin/plugin.json", false, true, false, false),
-            ("AGENTS.md", false, false, true, false),
-            ("nested/AGENTS.md", false, false, true, false),
-            ("AGENTS.override.md", false, true, false, false),
+            (".codex/config.toml", false, true, false, false, false),
+            (
+                ".codex-plugin/plugin.json",
+                false,
+                true,
+                false,
+                false,
+                false,
+            ),
+            ("CLAUDE.md", false, false, true, false, false),
+            ("AGENTS.md", false, false, false, true, false),
+            ("nested/AGENTS.md", false, false, false, true, false),
+            ("AGENTS.override.md", false, true, false, false, false),
             (
                 ".agents/skills/reviewer/SKILL.md",
+                false,
                 false,
                 false,
                 false,
@@ -134,7 +162,7 @@ mod tests {
             ),
         ];
 
-        for (path, cursor, codex, agents_md, agent_skills) in cases {
+        for (path, cursor, codex, claude_md, agents_md, agent_skills) in cases {
             let _guard = CwdGuard::new();
             let tmp = tempfile::tempdir().unwrap();
             std::env::set_current_dir(tmp.path()).unwrap();
@@ -147,6 +175,7 @@ mod tests {
                 DetectedSurfaces {
                     cursor,
                     codex,
+                    claude_md,
                     agents_md,
                     agent_skills,
                 },
@@ -190,6 +219,7 @@ mod tests {
         let detected = DetectedSurfaces {
             cursor: true,
             codex: true,
+            claude_md: true,
             agents_md: true,
             agent_skills: true,
         };
@@ -202,6 +232,7 @@ mod tests {
             DetectedSurfaces {
                 cursor: true,
                 codex: true,
+                claude_md: true,
                 agents_md: true,
                 agent_skills: true,
             }
@@ -211,6 +242,7 @@ mod tests {
             ValidationTargets {
                 cursor: false,
                 codex: true,
+                claude_md: true,
                 agents_md: true,
                 agent_skills: true,
             }

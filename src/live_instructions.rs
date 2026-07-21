@@ -15,8 +15,10 @@ pub enum InstructionSurfaceKind {
     Skill,
     Agent,
     AgentsMd,
+    CodexAgentsOverride,
     CursorRule,
     CursorLegacyRule,
+    CursorSkill,
 }
 
 /// A repository-relative, typed view of live instruction prose.

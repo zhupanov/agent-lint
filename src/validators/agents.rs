@@ -254,6 +254,11 @@ fn validate_agent_file(
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
     let markdown = MarkdownDocument::parse(content);
+    let prompt_document = LiveInstructionDocument::new(
+        Path::new(agent_path),
+        InstructionSurfaceKind::Agent,
+        &markdown,
+    );
     let fm_lines = match markdown.frontmatter() {
         Some(lines) => lines,
         None => {
@@ -265,6 +270,7 @@ fn validate_agent_file(
             );
             // X002–X005 still apply when frontmatter is broken.
             super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
+            prompt_pass.validate(&prompt_document, diag);
             return;
         }
     };
@@ -363,12 +369,7 @@ fn validate_agent_file(
         parsed_frontmatter.as_ref(),
         max_turns,
     );
-    let prompt_document = LiveInstructionDocument::new(
-        Path::new(agent_path),
-        InstructionSurfaceKind::Agent,
-        &markdown,
-    )
-    .with_outer_max_turns(max_turns);
+    let prompt_document = prompt_document.with_outer_max_turns(max_turns);
     if let Some(parsed_frontmatter) = parsed_frontmatter.as_ref() {
         check_agent_stop_control(
             diag,

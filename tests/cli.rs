@@ -142,6 +142,123 @@ fn json_clean_run_is_schema_valid_and_deterministic() {
 }
 
 #[test]
+fn prompt_analysis_covers_all_supported_live_instruction_surfaces() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+
+    let files = [
+        ("CLAUDE.md", "Retry until success.\n"),
+        ("nested/CLAUDE.md", "Retry until success.\n"),
+        (
+            ".agents/skills/shared/SKILL.md",
+            "---\nname: shared\ndescription: Shared skill used for prompt coverage tests\n---\nRetry until success.\n",
+        ),
+        (".claude/agents/reviewer.md", "Retry until success.\n"),
+        (
+            ".cursor/rules/retry.mdc",
+            "---\ndescription: [unclosed\n---\nRetry until success.\n",
+        ),
+        (".cursor/agents/reviewer.md", "Retry until success.\n"),
+        (
+            ".cursor/skills/reviewer/SKILL.md",
+            "---\nname: reviewer\ndescription: Cursor skill used for prompt coverage tests\n---\nRetry until success.\n",
+        ),
+        ("AGENTS.override.md", "Retry until success.\n"),
+        (
+            "nested/excluded/CLAUDE.md",
+            "```text\nRetry until success.\n```\n",
+        ),
+        (
+            ".agents/skills/shared-quote/SKILL.md",
+            "---\nname: shared-quote\ndescription: Shared quoted skill used for prompt coverage tests\n---\n> Retry until success.\n",
+        ),
+        (".claude/agents/quoted.md", "> Retry until success.\n"),
+        (
+            ".cursor/rules/quoted.mdc",
+            "---\ndescription: quoted rule\n---\n> Retry until success.\n",
+        ),
+        (".cursor/agents/quoted.md", "> Retry until success.\n"),
+        (
+            ".cursor/skills/quoted/SKILL.md",
+            "---\nname: quoted\ndescription: Cursor quoted skill used for prompt coverage tests\n---\n> Retry until success.\n",
+        ),
+    ];
+    for (relative, content) in files {
+        let path = tmp.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert_eq!(output.status.code(), Some(1));
+    let report = json(&output);
+    let q005_paths: std::collections::BTreeSet<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == "Q005")
+        .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        q005_paths,
+        [
+            ".agents/skills/shared/SKILL.md",
+            ".claude/agents/reviewer.md",
+            ".cursor/agents/reviewer.md",
+            ".cursor/rules/retry.mdc",
+            ".cursor/skills/reviewer/SKILL.md",
+            "AGENTS.override.md",
+            "CLAUDE.md",
+            "nested/CLAUDE.md",
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| {
+                diagnostic["code"] == "CU003"
+                    && diagnostic["subject_path"] == ".cursor/rules/retry.mdc"
+            })
+    );
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| {
+                diagnostic["code"] == "A002"
+                    && diagnostic["subject_path"] == ".claude/agents/reviewer.md"
+            })
+    );
+}
+
+#[test]
+fn prompt_analysis_excludes_quoted_codex_override_prose() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("AGENTS.override.md"),
+        "> Retry until success.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert!(output.status.success());
+    let report = json(&output);
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| { diagnostic["code"] != "Q005" })
+    );
+}
+
+#[test]
 fn q006_json_pairs_are_complete_stable_and_exclude_non_output_shape_prose() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

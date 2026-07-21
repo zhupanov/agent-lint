@@ -237,13 +237,13 @@ fn validate_optional_surfaces(
         );
     }
     if targets.agent_skills {
-        skills::validate_agent_skill_frontmatter(diag, exclude);
+        skills::validate_agent_skill_frontmatter_with_prompt_pass(diag, exclude, prompt_pass);
     }
     if targets.codex {
         diag.with_subject_path(".codex/config.toml", |diag| {
             codex_config::validate_config(diag, exclude);
         });
-        codex_surfaces::validate(diag, exclude);
+        codex_surfaces::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
     if targets.cursor {
         cursor::validate_with_prompt_pass(diag, exclude, prompt_pass);
@@ -333,6 +333,7 @@ mod tests {
             ValidationTargets {
                 cursor: false,
                 codex: true,
+                claude_md: false,
                 agents_md: false,
                 agent_skills: false,
             },
@@ -355,6 +356,7 @@ mod tests {
             ValidationTargets {
                 cursor: true,
                 codex: false,
+                claude_md: false,
                 agents_md: false,
                 agent_skills: false,
             },
