@@ -478,7 +478,7 @@ pub enum LintRule {
     /// Q001: generic filler instruction that provides no actionable guidance
     #[strum(props(code = "Q001", name = "prompt-generic-filler"))]
     PromptGenericFiller,
-    /// Q002: negative instruction without a nearby positive alternative
+    /// Q002: operative style negative without a nearby positive alternative
     #[strum(props(code = "Q002", name = "prompt-negative-only"))]
     PromptNegativeOnly,
     /// Q003: weak language inside a critical or important section

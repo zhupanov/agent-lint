@@ -13,6 +13,13 @@ pub(crate) static RE_NAME_INVALID: LazyLock<Regex> =
 pub(crate) static RE_TODO_MARKER: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b(TODO|FIXME|HACK|XXX)\b").unwrap());
 
+/// Evidence-integrity prohibition required by A013 and exempted by Q002.
+/// Keeping the accepted verbs here prevents the two rule contracts from
+/// drifting into contradictory diagnostics.
+pub(crate) static NEVER_INVENT_PROHIBITION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:never|do\s+not|don't)\s+(?:invent|fabricate|guess)\b").unwrap()
+});
+
 /// Shared enum: accepted values for a `shell` field.
 /// Used by skill_content frontmatter validation (S026) and hook schema
 /// validation (H022), which must stay in agreement.
