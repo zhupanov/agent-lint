@@ -4,7 +4,9 @@
 //! agree about which hook commands refer to a repository file.
 
 use serde_json::Value;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
+
+use crate::script_paths::extract_command_references;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HookCommandPath {
@@ -79,98 +81,21 @@ fn collect_command_value_paths(command: &Value, paths: &mut Vec<HookCommandPath>
 }
 
 fn extract_paths_from_command(command: &str, paths: &mut Vec<HookCommandPath>) {
-    let mut offset = 0;
-    while let Some(candidate) = next_reference(command, offset) {
-        offset = candidate.end;
-        let rel = Path::new(&candidate.path);
-        if is_repository_relative(rel) {
+    for candidate in extract_command_references(command, 0) {
+        if !candidate.path.as_os_str().is_empty() {
             paths.push(HookCommandPath {
                 reference: candidate.reference,
-                path: rel.to_path_buf(),
+                path: candidate.path,
             });
         }
     }
-}
-
-struct ReferenceCandidate {
-    reference: String,
-    path: String,
-    end: usize,
-}
-
-fn next_reference(command: &str, start: usize) -> Option<ReferenceCandidate> {
-    const PREFIXES: &[(&str, &str)] = &[
-        ("\"${CLAUDE_PLUGIN_ROOT}\"/", "\"${CLAUDE_PLUGIN_ROOT}\"/"),
-        ("\"${CLAUDE_PROJECT_DIR}\"/", "\"${CLAUDE_PROJECT_DIR}\"/"),
-        ("\"$CLAUDE_PLUGIN_ROOT/", "\"$CLAUDE_PLUGIN_ROOT/"),
-        ("\"$CLAUDE_PROJECT_DIR/", "\"$CLAUDE_PROJECT_DIR/"),
-        ("\"$PWD/", "\"$PWD/"),
-        ("\"${CLAUDE_PLUGIN_ROOT}/", "\"${CLAUDE_PLUGIN_ROOT}/"),
-        ("\"${CLAUDE_PROJECT_DIR}/", "\"${CLAUDE_PROJECT_DIR}/"),
-        ("${CLAUDE_PLUGIN_ROOT}/", "${CLAUDE_PLUGIN_ROOT}/"),
-        ("${CLAUDE_PROJECT_DIR}/", "${CLAUDE_PROJECT_DIR}/"),
-        ("$CLAUDE_PLUGIN_ROOT/", "$CLAUDE_PLUGIN_ROOT/"),
-        ("$CLAUDE_PROJECT_DIR/", "$CLAUDE_PROJECT_DIR/"),
-        ("$PWD/", "$PWD/"),
-    ];
-
-    let tail = &command[start..];
-    let (relative_start, prefix) = PREFIXES
-        .iter()
-        .filter_map(|(needle, prefix)| tail.find(needle).map(|index| (index, *prefix)))
-        .min_by_key(|(index, _)| *index)?;
-    let match_start = start + relative_start;
-    let path_start = match_start + prefix.len();
-    let whole_path_is_quoted = prefix.starts_with('"') && !prefix.contains("}\"/");
-    let path_end = if whole_path_is_quoted {
-        command[path_start..]
-            .find('"')
-            .map(|index| path_start + index)
-            .unwrap_or(command.len())
-    } else {
-        command[path_start..]
-            .find(is_shell_path_delimiter)
-            .map(|index| path_start + index)
-            .unwrap_or(command.len())
-    };
-    let path = &command[path_start..path_end];
-    if path.is_empty() {
-        return next_reference(command, path_start);
-    }
-    let end = if whole_path_is_quoted && path_end < command.len() {
-        path_end + '"'.len_utf8()
-    } else {
-        path_end
-    };
-    Some(ReferenceCandidate {
-        reference: command[match_start..end].to_string(),
-        path: path.to_string(),
-        end,
-    })
-}
-
-fn is_shell_path_delimiter(character: char) -> bool {
-    character.is_whitespace()
-        || matches!(
-            character,
-            '"' | '\'' | '`' | ';' | '|' | '&' | '<' | '>' | '(' | ')'
-        )
-}
-
-fn is_repository_relative(path: &Path) -> bool {
-    !path.as_os_str().is_empty()
-        && path.components().all(|component| {
-            !matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::path::Path;
 
     #[test]
     fn extracts_documented_forms_only_from_command_positions() {

@@ -145,12 +145,14 @@ impl ManifestState {
 
 /// Recursively collect all string values from a JSON value.
 /// Equivalent to jq '.. | strings'.
+#[cfg(test)]
 pub(crate) fn collect_json_strings(value: &Value) -> Vec<String> {
     let mut result = Vec::new();
     collect_json_strings_inner(value, &mut result);
     result
 }
 
+#[cfg(test)]
 fn collect_json_strings_inner(value: &Value, out: &mut Vec<String>) {
     match value {
         Value::String(s) => out.push(s.clone()),

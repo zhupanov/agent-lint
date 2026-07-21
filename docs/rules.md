@@ -538,8 +538,8 @@ They run in both Basic and Plugin modes.
 |------|------|-------------|------|---------|
 | G001 | `pwd-in-skill` | `SKILL.md` uses `$PWD/` or hardcoded path instead of `${CLAUDE_PLUGIN_ROOT}/` | Plugin | error |
 | G002 | `script-ref-missing` | Script reference missing on disk | Always | error |
-| G003 | `script-not-executable` | Script file not executable | Always | error |
-| G004 | `dead-script` | Dead script with no structured invocation reference | Plugin | error |
+| G003 | `script-not-executable` | Directly executed script file is not executable (Unix only) | Always | error |
+| G004 | `dead-script` | Script has no executable invocation reference | Plugin | warn |
 | G005 | `security-md-missing` | `SECURITY.md` is missing from repo root | Plugin | warn |
 | G006 | `todo-in-skill` | `TODO`/`FIXME`/`HACK`/`XXX` marker in published skill body | Plugin | warn |
 | G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin | warn |
@@ -547,6 +547,8 @@ They run in both Basic and Plugin modes.
 | G009 | `bash-replacement-unsafe` | Bash global substitution uses a variable replacement that can reinterpret `&` | Always | error |
 | G010 | `bash32-incompatible` | Shipped shell uses syntax unavailable in macOS Bash 3.2 | Always | error |
 | G011 | `awk-regex-nonascii` | Dynamic awk regex contains non-ASCII text with implementation-dependent behavior | Always | error |
+
+G002 resolves `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD` forms lexically within the repository. Escaping `..` paths are unresolvable; symlink targets are intentionally not audited. G003 is Unix-only and applies only when a regular file is invoked directly; interpreter-launched and sourced files do not require an execute bit. G004 is a warning because static reachability is incomplete; use the existing reason-bearing per-file suppression for intentional inventory entries.
 
 G009-G011 use conventional script discovery unless `[lint].script-inventory`
 is configured. An explicit inventory supports `.sh`, `.inc.bash`, and `.awk`

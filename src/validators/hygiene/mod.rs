@@ -7,9 +7,11 @@ mod todo;
 pub use dead_scripts::validate_dead_scripts;
 pub use pwd::validate_pwd_hygiene;
 pub use scripts::collect_script_paths;
+#[cfg(test)]
 pub use scripts::validate_executability;
 pub use scripts::validate_private_executability;
 pub use scripts::validate_private_script_references;
+#[cfg(test)]
 pub use scripts::validate_script_references;
 pub use security_md::validate_security_md;
 pub use todo::validate_todo_in_agents;
@@ -93,6 +95,12 @@ mod tests {
         std::fs::create_dir_all("scripts").unwrap();
         let script = tmp.path().join("scripts/test.sh");
         std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        std::fs::create_dir_all("skills/example").unwrap();
+        std::fs::write(
+            "skills/example/SKILL.md",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/test.sh\n",
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -112,6 +120,12 @@ mod tests {
         std::fs::create_dir_all("scripts").unwrap();
         let script = tmp.path().join("scripts/test.sh");
         std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        std::fs::create_dir_all("skills/example").unwrap();
+        std::fs::write(
+            "skills/example/SKILL.md",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/test.sh\n",
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -132,6 +146,11 @@ mod tests {
         std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
         let script = tmp.path().join(".claude/skills/my-skill/scripts/helper.sh");
         std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "Run $PWD/.claude/skills/my-skill/scripts/helper.sh\n",
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -151,6 +170,11 @@ mod tests {
         std::fs::create_dir_all(".claude/skills/my-skill/scripts").unwrap();
         let script = tmp.path().join(".claude/skills/my-skill/scripts/helper.sh");
         std::fs::write(&script, "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            ".claude/skills/my-skill/SKILL.md",
+            "Run $PWD/.claude/skills/my-skill/scripts/helper.sh\n",
+        )
+        .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -560,6 +584,96 @@ mod tests {
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn g002_suppression_is_scoped_to_each_source_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for skill in ["a", "b"] {
+            std::fs::create_dir_all(format!("skills/{skill}")).unwrap();
+            std::fs::write(
+                format!("skills/{skill}/SKILL.md"),
+                "Run ${CLAUDE_PLUGIN_ROOT}/scripts/missing.py\n",
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            "agent-lint.toml",
+            "[[lint.overrides]]\nfiles = [\"skills/a/SKILL.md\"]\nsuppress = [\"G002\"]\nreason = \"intentional first occurrence\"\n",
+        )
+        .unwrap();
+
+        let config = crate::config::LintConfig::load(".").unwrap();
+        let mut diag = crate::diagnostic::DiagnosticCollector::with_config(config);
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.suppressed_count(), 1);
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new("skills/b/SKILL.md"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn g003_only_requires_directly_executed_non_shell_scripts() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/example").unwrap();
+        std::fs::write("scripts/direct.py", "#!/usr/bin/env python3\n").unwrap();
+        std::fs::write("scripts/interpreted.py", "print('ok')\n").unwrap();
+        for path in ["scripts/direct.py", "scripts/interpreted.py"] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        std::fs::write(
+            "skills/example/SKILL.md",
+            "Run \"${CLAUDE_PROJECT_DIR}\"/scripts/direct.py\nRun python3 ${CLAUDE_PLUGIN_ROOT}/scripts/interpreted.py\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_executability(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new("scripts/direct.py"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn g004_agent_invocation_is_live_but_comments_and_self_references_are_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write("scripts/agent-live.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "scripts/comment-dead.sh",
+            "# ${CLAUDE_PLUGIN_ROOT}/scripts/comment-dead.sh\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "agents/reviewer.md",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/agent-live.sh\n",
+        )
+        .unwrap();
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new("scripts/comment-dead.sh"))
+        );
     }
 
     // expand_script_dirs tests

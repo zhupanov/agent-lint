@@ -1083,7 +1083,7 @@ impl LintRule {
             Self::InvalidEmailFormat |
 
             // ── Default-warning: hygiene ─────────────────────────────
-            Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
+            Self::DeadScript | Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
             Self::GhInlineBody |
 
             // ── Default-warning: docs ────────────────────────────────
@@ -1378,8 +1378,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            119,
-            "Expected 119 default-warning rules, got {}",
+            120,
+            "Expected 120 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1453,8 +1453,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            172,
-            "Expected 172 default-error rules, got {}",
+            171,
+            "Expected 171 default-error rules, got {}",
             errors.len()
         );
     }

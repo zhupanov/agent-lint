@@ -1,7 +1,10 @@
 use crate::config::ExcludeSet;
 use crate::context::LintMode;
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::rules::LintRule;
+use crate::script_paths::{
+    Invocation, ScriptReference, extract_bare_script_references, extract_command_references,
+};
 use crate::traversal;
 use regex::Regex;
 use std::collections::{BTreeSet, HashSet};
@@ -9,37 +12,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-static RE_SCRIPT_PUB: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/(scripts|skills|\.claude/skills)/[a-zA-Z0-9._/-]+\.sh")
-        .unwrap()
-});
-static RE_SCRIPT_PRIV: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\$PWD/\.claude/skills/[a-zA-Z0-9._/-]+\.sh").unwrap());
-pub(super) static RE_SCRIPT_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-\$PWD\}/\.claude/skills/[a-zA-Z0-9._/-]+\.sh")
-        .unwrap()
-});
-pub(super) static RE_SCRIPT_DIR_REF: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\$SCRIPT_DIR/[a-zA-Z0-9._-]+\.sh").unwrap());
-pub(super) static RE_SCRIPTS_PATH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(^|[^a-zA-Z0-9._/-])scripts/[a-zA-Z0-9._-]+\.sh").unwrap());
-pub(super) static RE_SCRIPTS_EXTRACT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"scripts/[a-zA-Z0-9._-]+\.sh").unwrap());
-
-/// Directory patterns for Plugin mode script discovery (V10, --list-scripts).
+/// Directory patterns used by `--list-scripts` and conventional script
+/// discovery.
 pub const PLUGIN_SCRIPT_DIRS: &[&str] =
     &["scripts", "skills/*/scripts", ".claude/skills/*/scripts"];
-
-/// Directory patterns for Basic mode script discovery (V10-adapted, --list-scripts).
 pub const BASIC_SCRIPT_DIRS: &[&str] = &[".claude/skills/*/scripts"];
 
 static RE_FULL_HASH_COMMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[[:space:]]*#").unwrap());
 
-/// Strip `#` comments from content that uses `#` as its comment character
-/// (YAML, Makefile, shell). Drops full-comment lines and trailing comments,
-/// respecting single/double quotes. Shared by the YAML-workflow and Makefile
-/// reference extraction in G004 (dead scripts) and V9 (script references).
 pub(super) fn strip_yaml_comments(content: &str) -> String {
     content
         .lines()
@@ -50,317 +31,310 @@ pub(super) fn strip_yaml_comments(content: &str) -> String {
 }
 
 fn strip_trailing_yaml_comment(line: &str) -> String {
-    let mut in_quote: Option<char> = None;
-    let mut prev_was_ws = false;
-    let mut skip_next = false;
-
-    for (byte_pos, ch) in line.char_indices() {
-        if skip_next {
-            skip_next = false;
-            prev_was_ws = ch.is_whitespace();
-            continue;
+    let mut quote = None;
+    let mut previous_ws = false;
+    for (index, character) in line.char_indices() {
+        match quote {
+            Some(q) if character == q => quote = None,
+            Some(_) => {}
+            None if matches!(character, '\'' | '"') => quote = Some(character),
+            None if character == '#' && previous_ws => return line[..index].trim_end().to_string(),
+            None => {}
         }
-        match in_quote {
-            Some(q) => {
-                if q == '"' && ch == '\\' {
-                    skip_next = true;
-                } else if q == '\'' && ch == '\'' {
-                    let rest = &line[byte_pos + ch.len_utf8()..];
-                    if rest.starts_with('\'') {
-                        skip_next = true;
-                    } else {
-                        in_quote = None;
-                    }
-                } else if ch == q {
-                    in_quote = None;
-                }
-            }
-            None => {
-                if ch == '"' || ch == '\'' {
-                    in_quote = Some(ch);
-                } else if ch == '#' && prev_was_ws {
-                    return line[..byte_pos].trim_end().to_string();
-                }
-            }
-        }
-        prev_was_ws = ch.is_whitespace();
+        previous_ws = character.is_whitespace();
     }
-
     line.to_string()
 }
 
-/// Read the repo-root `Makefile` and any root-level `*.mk` files and return
-/// their `#`-comment-stripped contents. Used by G004 (dead scripts) and V9
-/// (script references) so Make-target invocations like `bash scripts/foo.sh`
-/// and `${CLAUDE_PLUGIN_ROOT}/scripts/foo.sh` are recognised as references.
 pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<(String, String)> {
-    let mut candidates: Vec<PathBuf> = vec![PathBuf::from("Makefile")];
-    for entry in crate::traversal::shallow_files(Path::new("."), Path::new("."), None).entries {
-        let path = entry.path;
-        if let Some(name) = path.file_name().and_then(|n| n.to_str())
-            && name.ends_with(".mk")
+    let mut candidates = vec![PathBuf::from("Makefile")];
+    for entry in traversal::shallow_files(Path::new("."), Path::new("."), None).entries {
+        if entry
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".mk"))
         {
-            candidates.push(path);
+            candidates.push(entry.path);
         }
     }
-    let mut out = Vec::new();
-    for path in candidates {
-        let display = path.display().to_string();
-        if exclude.is_excluded(&display) {
-            continue;
-        }
-        if let Ok(content) = fs::read_to_string(&path) {
-            out.push((display, strip_yaml_comments(&content)));
-        }
-    }
-    out
+    candidates
+        .into_iter()
+        .filter_map(|path| {
+            let display = path.display().to_string();
+            (!exclude.is_excluded(&display))
+                .then(|| {
+                    fs::read_to_string(path)
+                        .ok()
+                        .map(|content| (display, strip_yaml_comments(&content)))
+                })
+                .flatten()
+        })
+        .collect()
 }
 
-/// V9: Script reference integrity.
-pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let mut seen = HashSet::new();
-
-    for dir in &["skills", ".claude/skills"] {
+/// A source-owned reference. The source path remains the G002 diagnostic
+/// subject, while the normalized target is consumed by G003/G004.
+pub(crate) fn collect_references(
+    mode: LintMode,
+    exclude: &ExcludeSet,
+) -> Vec<(String, ScriptReference)> {
+    let mut sources = match mode {
+        LintMode::Plugin => vec![
+            "skills",
+            "agents",
+            ".claude/skills",
+            ".claude/agents",
+            "scripts",
+            ".github/workflows",
+        ],
+        LintMode::Basic => vec![".claude/skills", ".claude/agents"],
+    };
+    let mut references = Vec::new();
+    for dir in sources.drain(..) {
         let base = Path::new(dir);
         if !base.is_dir() {
             continue;
         }
         for entry in traversal::recursive_files(base, Path::new("."), Some(exclude)).entries {
-            let path = &entry.path;
-            let display_path = entry.display;
-            if exclude.is_excluded(&display_path) {
+            let source = entry.display;
+            if exclude.is_excluded(&source) {
                 continue;
             }
-            let content = match fs::read_to_string(path) {
-                Ok(c) => c,
-                Err(_) => continue,
+            let Ok(content) = fs::read_to_string(entry.path) else {
+                continue;
             };
-
-            for cap in RE_SCRIPT_PUB.find_iter(&content) {
-                let reference = cap.as_str().to_string();
-                if seen.insert(reference.clone()) {
-                    let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
-                    if !Path::new(&rel).is_file() {
-                        diag.report_at(
-                            LintRule::ScriptRefMissing,
-                            &display_path,
-                            &format!(
-                                "script reference missing on disk: {reference} (expected {rel})"
-                            ),
-                        );
-                    }
+            let fragments = if source.ends_with(".md") {
+                markdown_command_fragments(&content)
+            } else {
+                command_line_fragments(&strip_yaml_comments(&content))
+            };
+            for (line, fragment) in fragments {
+                if !is_executable_fragment(&fragment) {
+                    continue;
                 }
-            }
-
-            for cap in RE_SCRIPT_PRIV.find_iter(&content) {
-                let reference = cap.as_str().to_string();
-                if seen.insert(reference.clone()) {
-                    let rel = reference.replace("$PWD/", "");
-                    if !Path::new(&rel).is_file() {
-                        diag.report_at(
-                            LintRule::ScriptRefMissing,
-                            &display_path,
-                            &format!(
-                                "script reference missing on disk: {reference} (expected {rel})"
-                            ),
-                        );
-                    }
-                }
-            }
-
-            for cap in RE_SCRIPT_PLACEHOLDER.find_iter(&content) {
-                let reference = cap.as_str().to_string();
-                if seen.insert(reference.clone()) {
-                    let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
-                    if !Path::new(&rel).is_file() {
-                        diag.report_at(
-                            LintRule::ScriptRefMissing,
-                            &display_path,
-                            &format!(
-                                "script reference missing on disk: {reference} (expected {rel})"
-                            ),
-                        );
-                    }
-                }
+                references.extend(
+                    extract_command_references(&fragment, line)
+                        .into_iter()
+                        .map(|reference| (source.clone(), reference)),
+                );
+                references.extend(
+                    extract_bare_script_references(&fragment, line)
+                        .into_iter()
+                        .map(|reference| (source.clone(), reference)),
+                );
             }
         }
     }
-
-    // Also scan the Makefile and any *.mk so Make-target invocations are
-    // validated for existence (V9). Comments are stripped first so
-    // commented-out references are not mistaken for live invocations.
-    for (source_path, content) in collect_makefile_contents(exclude) {
-        for cap in RE_SCRIPT_PUB.find_iter(&content) {
-            let reference = cap.as_str().to_string();
-            if seen.insert(reference.clone()) {
-                let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
-                if !Path::new(&rel).is_file() {
-                    diag.report_at(
-                        LintRule::ScriptRefMissing,
-                        &source_path,
-                        &format!("script reference missing on disk: {reference} (expected {rel})"),
+    if mode == LintMode::Plugin {
+        for (source, content) in collect_makefile_contents(exclude) {
+            for (line, fragment) in command_line_fragments(&content) {
+                if is_executable_fragment(&fragment) {
+                    references.extend(
+                        extract_command_references(&fragment, line)
+                            .into_iter()
+                            .map(|reference| (source.clone(), reference)),
                     );
-                }
-            }
-        }
-        for cap in RE_SCRIPTS_PATH.find_iter(&content) {
-            if let Some(m) = RE_SCRIPTS_EXTRACT.find(cap.as_str()) {
-                let reference = m.as_str().to_string();
-                if seen.insert(reference.clone()) && !Path::new(&reference).is_file() {
-                    diag.report_at(
-                        LintRule::ScriptRefMissing,
-                        &source_path,
-                        &format!("script reference missing on disk: {reference}"),
+                    references.extend(
+                        extract_bare_script_references(&fragment, line)
+                            .into_iter()
+                            .map(|reference| (source.clone(), reference)),
                     );
                 }
             }
         }
     }
+    references
 }
 
-/// V9-adapted: Script reference integrity for private .claude/skills/ only.
-pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let mut seen = HashSet::new();
-    let base = Path::new(".claude/skills");
-    if !base.is_dir() {
-        return;
-    }
+fn command_line_fragments(content: &str) -> Vec<(usize, String)> {
+    content
+        .lines()
+        .enumerate()
+        .map(|(index, line)| (index + 1, line.to_string()))
+        .collect()
+}
 
-    for entry in traversal::recursive_files(base, Path::new("."), Some(exclude)).entries {
-        let path = &entry.path;
-        let display_path = entry.display;
-        if exclude.is_excluded(&display_path) {
+/// Markdown prose is not executable.  Inline code and balanced code fences
+/// are explicit command positions and retain their source line for diagnostics.
+fn markdown_command_fragments(content: &str) -> Vec<(usize, String)> {
+    let mut fragments = Vec::new();
+    for fence in crate::fence::markdown_fences(content) {
+        fragments.extend(fence.body);
+    }
+    for (index, line) in content.lines().enumerate() {
+        if line.trim_start().starts_with("Run ") || line.trim_start().starts_with("Execute ") {
+            fragments.push((index + 1, line.trim_start().to_string()));
+        }
+        let mut rest = line;
+        while let Some(start) = rest.find('`') {
+            let after = &rest[start + 1..];
+            let Some(end) = after.find('`') else {
+                break;
+            };
+            fragments.push((index + 1, after[..end].to_string()));
+            rest = &after[end + 1..];
+        }
+    }
+    fragments
+}
+
+fn is_executable_fragment(fragment: &str) -> bool {
+    let first = fragment
+        .trim_start()
+        .trim_matches('"')
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    !matches!(
+        first,
+        "" | "#" | "echo" | "printf" | "cat" | "grep" | "sed" | "awk"
+    )
+}
+
+/// G002: missing or unsafe script references. Dedupe includes the source path
+/// so collector policy is applied independently for every source file.
+#[cfg(test)]
+pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    validate_script_references_for_mode(LintMode::Plugin, diag, exclude);
+}
+
+pub fn validate_script_references_for_mode(
+    mode: LintMode,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    let mut seen = HashSet::new();
+    for (source, reference) in collect_references(mode, exclude) {
+        if !seen.insert((source.clone(), reference.path.clone())) {
             continue;
         }
-        let content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        for cap in RE_SCRIPT_PRIV.find_iter(&content) {
-            let reference = cap.as_str().to_string();
-            if seen.insert(reference.clone()) {
-                let rel = reference.replace("$PWD/", "");
-                if !Path::new(&rel).is_file() {
-                    diag.report_at(
-                        LintRule::ScriptRefMissing,
-                        &display_path,
-                        &format!("script reference missing on disk: {reference} (expected {rel})"),
-                    );
-                }
-            }
-        }
-
-        for cap in RE_SCRIPT_PLACEHOLDER.find_iter(&content) {
-            let reference = cap.as_str().to_string();
-            if seen.insert(reference.clone()) {
-                let rel = reference.replace("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/", "");
-                if !Path::new(&rel).is_file() {
-                    diag.report_at(
-                        LintRule::ScriptRefMissing,
-                        &display_path,
-                        &format!("script reference missing on disk: {reference} (expected {rel})"),
-                    );
-                }
-            }
+        if reference.path.as_os_str().is_empty() || !reference.path.is_file() {
+            let expected = reference.path.display().to_string();
+            diag.report_at_with(
+                LintRule::ScriptRefMissing,
+                &source,
+                &format!(
+                    "script reference missing on disk or unsafe at line {}: {} (expected {})",
+                    reference.line,
+                    reference.reference,
+                    if expected.is_empty() {
+                        "an in-repository path"
+                    } else {
+                        &expected
+                    }
+                ),
+                DiagnosticMetadata::default()
+                    .with_evidence(reference.reference)
+                    .with_suggestion("use a normalized path within the repository"),
+            );
         }
     }
 }
 
-/// V10: Executability -- every .sh file under scripts/, skills/*/scripts/,
-/// and .claude/skills/*/scripts/ must be chmod +x.
+pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    validate_script_references_for_mode(LintMode::Basic, diag, exclude);
+}
+
+/// Direct invocation, not a conventional filename or directory, determines
+/// G003 scope. Interpreter-launched and sourced files need no execute bit.
+pub(crate) fn direct_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<PathBuf> {
+    let mut paths = BTreeSet::new();
+    for (_, reference) in collect_references(mode, exclude) {
+        if reference.invocation == Invocation::Direct
+            && !reference.path.as_os_str().is_empty()
+            && reference.path.is_file()
+        {
+            paths.insert(reference.path);
+        }
+    }
+    paths.into_iter().collect()
+}
+
 #[cfg(unix)]
+#[cfg(test)]
 pub fn validate_executability(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    check_executability_in_dirs(
-        &["scripts", "skills/*/scripts", ".claude/skills/*/scripts"],
-        diag,
-        exclude,
-    );
+    validate_executability_for_mode(LintMode::Plugin, diag, exclude);
 }
 
-#[cfg(not(unix))]
-pub fn validate_executability(_diag: &mut DiagnosticCollector, _exclude: &ExcludeSet) {}
-
-/// V10-adapted: Executability for private .claude/skills/*/scripts/*.sh only.
 #[cfg(unix)]
-pub fn validate_private_executability(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    check_executability_in_dirs(&[".claude/skills/*/scripts"], diag, exclude);
+pub fn validate_executability_for_mode(
+    mode: LintMode,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    for path in direct_script_paths(mode, exclude) {
+        if let Ok(meta) = path.metadata()
+            && meta.permissions().mode() & 0o111 == 0
+        {
+            diag.report_at_with(
+                LintRule::ScriptNotExecutable,
+                &path,
+                &format!(
+                    "directly executed script is not executable: {}",
+                    path.display()
+                ),
+                DiagnosticMetadata::default()
+                    .with_evidence(path.display().to_string())
+                    .with_suggestion("run chmod +x on this file"),
+            );
+        }
+    }
 }
 
 #[cfg(not(unix))]
-pub fn validate_private_executability(_diag: &mut DiagnosticCollector, _exclude: &ExcludeSet) {}
+pub fn validate_executability_for_mode(
+    _mode: LintMode,
+    _diag: &mut DiagnosticCollector,
+    _exclude: &ExcludeSet,
+) {
+}
 
-/// Expand glob-like directory patterns into concrete directory paths.
-/// Supports multiple `*` wildcards (e.g., `skills/*/nested/*/scripts`).
+pub fn validate_private_executability(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    validate_executability_for_mode(LintMode::Basic, diag, exclude);
+}
+
 pub fn expand_script_dirs(patterns: &[&str]) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     for pattern in patterns {
-        if pattern.contains('*') {
-            let segments: Vec<&str> = pattern.split('/').collect();
-            let mut candidates = vec![PathBuf::new()];
-            for seg in &segments {
-                let mut next = Vec::new();
-                if *seg == "*" {
-                    for base in &candidates {
-                        let directory = if base.as_os_str().is_empty() {
-                            Path::new(".")
+        let mut candidates = vec![PathBuf::new()];
+        for segment in pattern.split('/') {
+            let mut next = Vec::new();
+            for base in &candidates {
+                if segment == "*" {
+                    let directory = if base.as_os_str().is_empty() {
+                        Path::new(".")
+                    } else {
+                        base.as_path()
+                    };
+                    for entry in
+                        traversal::shallow_directories(directory, Path::new("."), None).entries
+                    {
+                        next.push(if base.as_os_str().is_empty() {
+                            PathBuf::from(entry.path.file_name().unwrap_or_default())
                         } else {
-                            base.as_path()
-                        };
-                        for entry in
-                            crate::traversal::shallow_directories(directory, Path::new("."), None)
-                                .entries
-                        {
-                            let child = if base.as_os_str().is_empty() {
-                                PathBuf::from(entry.path.file_name().unwrap_or_default())
-                            } else {
-                                base.join(entry.path.file_name().unwrap_or_default())
-                            };
-                            next.push(child);
-                        }
+                            base.join(entry.path.file_name().unwrap_or_default())
+                        });
                     }
                 } else {
-                    for base in &candidates {
-                        let child = if base.as_os_str().is_empty() {
-                            PathBuf::from(seg)
-                        } else {
-                            base.join(seg)
-                        };
-                        if child.is_dir() {
-                            next.push(child);
-                        }
+                    let child = if base.as_os_str().is_empty() {
+                        PathBuf::from(segment)
+                    } else {
+                        base.join(segment)
+                    };
+                    if child.is_dir() {
+                        next.push(child);
                     }
                 }
-                candidates = next;
             }
-            for c in candidates {
-                if c.is_dir() {
-                    dirs.push(c);
-                }
-            }
-        } else {
-            let dir = Path::new(pattern);
-            if dir.is_dir() {
-                dirs.push(dir.to_path_buf());
-            }
+            candidates = next;
         }
+        dirs.extend(candidates);
     }
     dirs
 }
 
-#[cfg(unix)]
-pub fn check_executability_in_dirs(
-    patterns: &[&str],
-    diag: &mut DiagnosticCollector,
-    exclude: &ExcludeSet,
-) {
-    for dir in expand_script_dirs(patterns) {
-        check_sh_executability(&dir, diag, exclude);
-    }
-}
-
-/// Collect all .sh script paths for the given lint mode.
-/// Returns sorted, deduplicated repo-relative paths.
 pub fn collect_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<String> {
     let patterns = match mode {
         LintMode::Plugin => PLUGIN_SCRIPT_DIRS,
@@ -368,46 +342,19 @@ pub fn collect_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<String>
     };
     let mut paths = BTreeSet::new();
     for dir in expand_script_dirs(patterns) {
-        for entry in crate::traversal::shallow_files(&dir, Path::new("."), None).entries {
-            let path = entry.path;
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with(".sh") {
-                    let display = path.display().to_string();
-                    if !exclude.is_excluded(&display) {
-                        paths.insert(display);
-                    }
-                }
+        for entry in traversal::shallow_files(&dir, Path::new("."), None).entries {
+            let display = entry.path.display().to_string();
+            if is_supported_script_file(&entry.path) && !exclude.is_excluded(&display) {
+                paths.insert(display);
             }
         }
     }
     paths.into_iter().collect()
 }
 
-#[cfg(unix)]
-fn check_sh_executability(dir: &Path, diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    use std::os::unix::fs::PermissionsExt;
-
-    for entry in crate::traversal::shallow_files(dir, Path::new("."), None).entries {
-        let path = entry.path;
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) if n.ends_with(".sh") => n.to_string(),
-            _ => continue,
-        };
-
-        let display_path = path.display().to_string();
-        if exclude.is_excluded(&display_path) {
-            continue;
-        }
-
-        if let Ok(meta) = path.metadata() {
-            if meta.permissions().mode() & 0o111 == 0 {
-                diag.report_at(
-                    LintRule::ScriptNotExecutable,
-                    &path,
-                    &format!("script not executable: {}", path.display()),
-                );
-                let _ = name;
-            }
-        }
-    }
+fn is_supported_script_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        None | Some("sh" | "py" | "js" | "mjs" | "inc.bash")
+    )
 }

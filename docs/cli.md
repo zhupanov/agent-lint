@@ -90,8 +90,11 @@ rules.
 
 ## `--list-scripts`
 
-Outputs discovered shell scripts, one per line. Useful for piping to
-external tools:
+Outputs discovered script paths, one per line. It includes `.sh`, `.py`,
+`.js`, `.mjs`, `.inc.bash`, and extensionless files in the configured script
+directories. With an explicit inventory, it preserves the existing shell-only
+listing contract; choose a downstream tool appropriate for each path.
+For shell-only repositories it remains useful for piping to external tools:
 
 ```bash
 agent-lint --list-scripts . | xargs -r shellcheck
