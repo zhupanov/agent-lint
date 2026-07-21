@@ -2,6 +2,7 @@ use crate::config::{ExcludeSet, LintConfig};
 use crate::context::LintMode;
 use crate::fence::CodeFenceTracker;
 use crate::frontmatter;
+use crate::hook_commands::extract_hook_command_paths;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::skills::collect_skills;
@@ -62,22 +63,17 @@ fn log_fix(rule: LintRule, msg: &str) {
 
 #[cfg(unix)]
 fn fix_executability_hooks(mode: LintMode, config: &LintConfig) -> bool {
-    use crate::context::collect_json_strings;
-
-    if mode != LintMode::Plugin {
-        return false;
-    }
-
     let mut fixed = false;
-    let re_plugin = Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh").unwrap();
-    let re_pwd = Regex::new(r"\$PWD/[a-zA-Z0-9._/-]+\.sh").unwrap();
+    let json_paths: &[&str] = match mode {
+        LintMode::Basic => &[".claude/settings.json", ".claude/settings.local.json"],
+        LintMode::Plugin => &[
+            "hooks/hooks.json",
+            ".claude/settings.json",
+            ".claude/settings.local.json",
+        ],
+    };
 
-    // Check every JSON surface whose hook paths H005 validates.
-    for json_path in &[
-        "hooks/hooks.json",
-        ".claude/settings.json",
-        ".claude/settings.local.json",
-    ] {
+    for json_path in json_paths {
         let content = match fs::read_to_string(json_path) {
             Ok(c) => c,
             Err(_) => continue,
@@ -86,40 +82,34 @@ fn fix_executability_hooks(mode: LintMode, config: &LintConfig) -> bool {
             Ok(v) => v,
             Err(_) => continue,
         };
-        let strings = collect_json_strings(&val);
-
-        for raw in &strings {
-            for cap in re_plugin.find_iter(raw) {
-                let reference = cap.as_str();
-                let rel = reference.replacen("${CLAUDE_PLUGIN_ROOT}/", "", 1);
-                if is_suppressed(config, LintRule::HookNotExecutable, &rel) {
-                    continue;
-                }
-                if make_executable(&rel) {
-                    log_fix(
-                        LintRule::HookNotExecutable,
-                        &format!("made executable: {rel}"),
-                    );
-                    fixed = true;
-                }
+        for reference in extract_hook_command_paths(&val) {
+            if is_suppressed(config, LintRule::HookNotExecutable, &reference.path) {
+                continue;
             }
-            for cap in re_pwd.find_iter(raw) {
-                let reference = cap.as_str();
-                let rel = reference.replacen("$PWD/", "", 1);
-                if is_suppressed(config, LintRule::HookNotExecutable, &rel) {
-                    continue;
-                }
-                if make_executable(&rel) {
-                    log_fix(
-                        LintRule::HookNotExecutable,
-                        &format!("made executable: {rel}"),
-                    );
-                    fixed = true;
-                }
+            if make_hook_executable(&reference.path) {
+                log_fix(
+                    LintRule::HookNotExecutable,
+                    &format!("made executable: {}", reference.path.display()),
+                );
+                fixed = true;
             }
         }
     }
     fixed
+}
+
+#[cfg(unix)]
+fn make_hook_executable(path: &Path) -> bool {
+    let Ok(repo_root) = std::env::current_dir().and_then(std::fs::canonicalize) else {
+        return false;
+    };
+    let Ok(resolved) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    if !resolved.starts_with(repo_root) {
+        return false;
+    }
+    make_executable(resolved.to_str().unwrap_or(""))
 }
 
 #[cfg(not(unix))]
@@ -1050,6 +1040,79 @@ mod tests {
         ));
         assert_ne!(
             std::fs::metadata("scripts/local-hook.sh")
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn fix_executability_hooks_in_basic_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/hooks").unwrap();
+        std::fs::write(".claude/hooks/check.py", "#!/usr/bin/env python3\n").unwrap();
+        std::fs::set_permissions(
+            ".claude/hooks/check.py",
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/settings.json",
+            r#"{"hooks":[{"command":"\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/check.py"}]}"#,
+        )
+        .unwrap();
+
+        assert!(fix_executability_hooks(
+            LintMode::Basic,
+            &LintConfig::default()
+        ));
+        assert!(!fix_executability_hooks(
+            LintMode::Basic,
+            &LintConfig::default()
+        ));
+        assert_ne!(
+            std::fs::metadata(".claude/hooks/check.py")
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn fix_executability_hooks_does_not_follow_external_symlink() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let external = tempfile::NamedTempFile::new().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude").unwrap();
+        std::fs::set_permissions(external.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        symlink(external.path(), ".claude/external-hook").unwrap();
+        std::fs::write(
+            ".claude/settings.json",
+            r#"{"hooks":[{"command":"$PWD/.claude/external-hook"}]}"#,
+        )
+        .unwrap();
+
+        assert!(!fix_executability_hooks(
+            LintMode::Basic,
+            &LintConfig::default()
+        ));
+        assert_eq!(
+            std::fs::metadata(external.path())
                 .unwrap()
                 .permissions()
                 .mode()

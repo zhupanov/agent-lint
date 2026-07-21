@@ -1325,6 +1325,36 @@ reason = "legacy endpoint is externally owned"
     assert!(!stderr.contains("unused-override"), "stderr: {stderr}");
 }
 
+#[cfg(unix)]
+#[test]
+fn basic_mode_hook_autofix_is_idempotent() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude/hooks")).unwrap();
+    let script = tmp.path().join(".claude/hooks/check.py");
+    std::fs::write(&script, "#!/usr/bin/env python3\n").unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude/settings.json"),
+        r#"{"hooks":[{"command":"\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/check.py"}]}"#,
+    )
+    .unwrap();
+
+    let first = run_in(tmp.path(), &["--autofix", "--only", "H005", "."]);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    assert!(stderr(&first).contains("fixed[H005/hook-not-executable]"));
+    assert_ne!(
+        std::fs::metadata(&script).unwrap().permissions().mode() & 0o111,
+        0
+    );
+
+    let second = run_in(tmp.path(), &["--autofix", "--only", "H005", "."]);
+    assert!(second.status.success(), "stderr: {}", stderr(&second));
+    assert!(!stderr(&second).contains("fixed[H005/hook-not-executable]"));
+}
+
 #[test]
 fn autofix_leaves_suppressed_file_unchanged_and_fixes_unsuppressed_file() {
     let tmp = tempfile::tempdir().unwrap();
