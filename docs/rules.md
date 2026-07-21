@@ -246,8 +246,8 @@ H008--H024 codes with a `… frontmatter` path label.
 | S028 | `args-no-hint` | Body uses `$ARGUMENTS` but frontmatter has no `argument-hint` field | Always | error |
 | S029 | `nested-ref-deep` | Referenced shared `.md` itself references other shared `.md` files | Plugin | warn |
 | S030 | `orphaned-skill-files` | Files in skill `scripts/` not referenced from any skill-local `.md` (with name-boundary matching) | Always | error |
-| S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content | Always | error |
-| S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | Always | error |
+| S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content | All skill surfaces | error |
+| S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | All skill surfaces | error |
 | S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no headings (levels 1–6, outside fences) | Plugin | warn |
 | S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Always | warn |
 | S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin | warn |
@@ -702,7 +702,7 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 | desc-has-xml | S018 | Strip XML tags from description |
 | consecutive-bash | S021 | Merge adjacent bash blocks |
 | backslash-path | S022 | Replace `\` with `/` in body |
-| non-https-url | S031 | `http://` → `https://` |
+| non-https-url | S031 | `http://` → `https://` (Claude surfaces only: `skills/` and `.claude/skills/`; `.agents/skills/` and `.cursor/skills/` report diagnostics without rewriting) |
 | frontmatter-backslash | S043 | Replace `\` with `/` in frontmatter |
 | tools-list-syntax | S045 | YAML list → comma-separated scalar |
 | pwd-in-skill | G001 | `$PWD/` → `${CLAUDE_PLUGIN_ROOT}/` |

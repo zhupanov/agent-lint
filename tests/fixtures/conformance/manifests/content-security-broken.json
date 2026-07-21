@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "content-security-broken",
+  "covers": ["content-security", "json", "basic-mode"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S031,S032", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "S031", "name": "non-https-url", "severity": "error", "subject_path": ".cursor/skills/leaky/SKILL.md" },
+    { "code": "S032", "name": "hardcoded-secret", "severity": "error", "subject_path": ".agents/skills/leaky/SKILL.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}
