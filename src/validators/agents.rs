@@ -8,6 +8,7 @@ use crate::traversal;
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -349,11 +350,14 @@ fn validate_agent_file(
     }
 
     check_agent_field_values(diag, agent_path, fm_lines);
+    let max_turns = frontmatter::get_field(fm_lines, "maxTurns")
+        .and_then(|turns| parse_valid_max_turns(&turns));
     let prompt_document = LiveInstructionDocument::new(
         Path::new(agent_path),
         InstructionSurfaceKind::Agent,
         &markdown,
-    );
+    )
+    .with_outer_max_turns(max_turns);
     if frontmatter_is_valid {
         check_agent_stop_control(diag, agent_path, fm_lines, &markdown);
     }
@@ -492,12 +496,20 @@ fn get_field_items(fm_lines: &[String], key: &str) -> Vec<String> {
     items
 }
 
-/// A positive `maxTurns` is an explicit, schema-validated agent turn bound.
+/// Parse a positive `maxTurns` as an explicit, schema-validated agent turn bound.
+fn parse_valid_max_turns(value: &str) -> Option<NonZeroU64> {
+    value
+        .chars()
+        .all(|character| character.is_ascii_digit())
+        .then(|| value.parse::<u64>().ok())
+        .flatten()
+        .and_then(NonZeroU64::new)
+}
+
 fn has_valid_max_turns(fm_lines: &[String]) -> bool {
-    frontmatter::get_field(fm_lines, "maxTurns").is_some_and(|turns| {
-        turns.chars().all(|c| c.is_ascii_digit())
-            && turns.parse::<u64>().is_ok_and(|turns| turns >= 1)
-    })
+    frontmatter::get_field(fm_lines, "maxTurns")
+        .and_then(|turns| parse_valid_max_turns(&turns))
+        .is_some()
 }
 
 /// Return whether an explicitly declared tool can perform execution-like work.
@@ -666,7 +678,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
 
     // A026: maxTurns must be a positive integer (CC-AG-017).
     if let Some(turns) = frontmatter::get_field(fm_lines, "maxTurns") {
-        if !has_valid_max_turns(fm_lines) {
+        if parse_valid_max_turns(&turns).is_none() {
             diag.report(
                 LintRule::AgentMaxturnsInvalid,
                 &format!(

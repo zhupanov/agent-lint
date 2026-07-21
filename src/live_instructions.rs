@@ -5,6 +5,7 @@
 //! facts to prompt-content rules.
 
 use crate::markdown::{MarkdownDocument, MarkdownHeading, MarkdownProseLine};
+use std::num::NonZeroU64;
 use std::path::Path;
 
 /// The live-instruction surface that supplied a Markdown document.
@@ -23,6 +24,7 @@ pub struct LiveInstructionDocument<'a> {
     subject_path: &'a Path,
     surface_kind: InstructionSurfaceKind,
     markdown: &'a MarkdownDocument,
+    outer_max_turns: Option<NonZeroU64>,
 }
 
 impl<'a> LiveInstructionDocument<'a> {
@@ -35,7 +37,16 @@ impl<'a> LiveInstructionDocument<'a> {
             subject_path,
             surface_kind,
             markdown,
+            outer_max_turns: None,
         }
+    }
+
+    /// Record a validated positive agent-level `maxTurns` bound supplied by the owning
+    /// surface. Prompt-content rules can use this fact without reparsing or
+    /// interpreting frontmatter themselves.
+    pub fn with_outer_max_turns(mut self, max_turns: Option<NonZeroU64>) -> Self {
+        self.outer_max_turns = max_turns;
+        self
     }
 
     pub fn subject_path(&self) -> &Path {
@@ -63,6 +74,10 @@ impl<'a> LiveInstructionDocument<'a> {
     /// Source-positioned headings used to determine Markdown sections.
     pub fn headings(&self) -> &[MarkdownHeading] {
         self.markdown.headings()
+    }
+
+    pub fn has_outer_execution_bound(&self) -> bool {
+        self.outer_max_turns.is_some()
     }
 }
 
