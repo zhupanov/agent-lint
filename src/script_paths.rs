@@ -10,6 +10,7 @@ pub(crate) enum Invocation {
     Direct,
     Interpreter,
     Sourced,
+    Mention,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,6 +175,11 @@ fn invocation_for(command: &str, reference_start: usize) -> Invocation {
         "bash" | "sh" | "zsh" | "fish" | "python" | "python3" | "node" | "ruby" | "perl"
     ) {
         Invocation::Interpreter
+    } else if preceding.contains('=')
+        || first.starts_with('-')
+        || matches!(first, "[[" | "[" | "test" | "if" | "while")
+    {
+        Invocation::Mention
     } else {
         Invocation::Direct
     }

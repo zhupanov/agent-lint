@@ -8,6 +8,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::scripts::collect_references;
+use crate::script_paths::Invocation;
 
 /// G004 is deliberately a warning: lexical reachability cannot prove that a
 /// dynamically dispatched script is dead. Per-file suppression and the
@@ -19,7 +20,7 @@ pub fn validate_dead_scripts(
 ) {
     let mut references = BTreeSet::new();
     for (source, reference) in collect_references(LintMode::Plugin, exclude) {
-        if reference.path.as_os_str().is_empty() {
+        if reference.path.as_os_str().is_empty() || reference.invocation == Invocation::Mention {
             continue;
         }
         // A script mentioning its own name is documentation, not reachability.
