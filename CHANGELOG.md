@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Unified S008/S029/S036 shared-Markdown reference recognition into one
+  scanner: brace-less `$CLAUDE_PLUGIN_ROOT/...` forms, exact `.md` token
+  boundaries (no `.md.backup` / `.mdx` / `.md/child` prefix truncation), and
+  HTML-comment dormancy. S008 dedupes per normalized target and attaches the
+  first live occurrence's line
+- X001 messages no longer embed YAML-relative `at line N, column M` parser
+  coordinates; structured file location remains authoritative (with column
+  when the parser supplies one)
+- S004 names UTF-8 BOM-caused malformed frontmatter and always reports line 1;
+  S005–S007 attach structured lines for locatable simple top-level keys
+- Soft-retired S001 registry wording and `docs/development.md` module note to
+  match the S049 convention (`S002-S008` for the skills layout module)
+
 - **BREAKING**: S055 (`script-errhand-missing`) recursively inspects
   shell/Python scripts under each public skill's `scripts/` tree (including
   `.bash` and extensionless shebang files), requires both statement-level

@@ -154,7 +154,7 @@ would require a block parser.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| S001 | `skills-dir-missing` | `skills/` directory is missing (deprecated — no longer fires) | Plugin | error |
+| S001 | `skills-dir-missing` | `skills/` directory is missing (deprecated — no longer fires; config alias retained) | Plugin | error |
 | S002 | `skill-md-missing` | `skills/{name}/` missing `SKILL.md` | Plugin | error |
 | S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin | error |
 | S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Always | error |

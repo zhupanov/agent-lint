@@ -5,15 +5,10 @@ use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
-use regex::Regex;
+use crate::validators::shared_md_refs;
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
-
-static RE_SHARED_MD_REF: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/skills/shared/[a-zA-Z0-9._/-]+\.md").unwrap()
-});
-
 const SKILL_DIR_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// Pre-parsed data for a single SKILL.md file.
@@ -196,6 +191,7 @@ fn validate_skill_frontmatter_in_dir(
             Ok(c) => c,
             Err(_) => continue,
         };
+        let bom_before_delimiter = has_utf8_bom_before_opening_delimiter(&content);
         let document = MarkdownDocument::parse(content);
         if let Some(prompt_pass) = prompt_pass.as_deref_mut() {
             let prompt_document = LiveInstructionDocument::new(
@@ -209,12 +205,17 @@ fn validate_skill_frontmatter_in_dir(
         let fm_lines = match document.frontmatter() {
             Some(lines) => lines,
             None => {
-                diag.report_at(
+                let mut message = format!(
+                    "{skill_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
+                );
+                if bom_before_delimiter {
+                    message.push_str(": file starts with a UTF-8 byte-order mark; remove it");
+                }
+                diag.report_at_with(
                     LintRule::FrontmatterMalformed,
                     &skill_path,
-                    &format!(
-                        "{skill_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
-                    ),
+                    &message,
+                    DiagnosticMetadata::at_line(1),
                 );
                 // X002–X005 still apply to the markdown file when frontmatter is broken.
                 super::markdown_structure::check_markdown_document(&skill_path, &document, diag);
@@ -236,12 +237,19 @@ fn validate_skill_frontmatter_in_dir(
                 }
                 Some(yaml)
             }
-            Err((line, msg)) => {
+            Err(err) => {
+                let metadata = match err.column {
+                    Some(column) => DiagnosticMetadata::at_point(err.file_line, column),
+                    None => DiagnosticMetadata::at_line(err.file_line),
+                };
                 diag.report_at_with(
                     LintRule::FrontmatterYamlInvalid,
                     &skill_path,
-                    &format!("{skill_path}:{line}: frontmatter is not valid YAML: {msg}"),
-                    DiagnosticMetadata::at_line(line),
+                    &format!(
+                        "{skill_path}:{}: frontmatter is not valid YAML: {}",
+                        err.file_line, err.message
+                    ),
+                    metadata,
                 );
                 None
             }
@@ -277,33 +285,40 @@ fn validate_skill_frontmatter_in_dir(
             .map_or_else(|| raw_desc.is_some(), |_| canonical_desc.is_some());
 
         if !name_is_valid {
-            diag.report_at(
+            let metadata = s005_location(fm_lines, parsed_frontmatter.as_ref(), "name");
+            diag.report_at_with(
                 LintRule::FrontmatterFieldMissing,
                 &skill_path,
                 &format!(
                     "{skill_path}: required frontmatter field 'name' is missing or not a non-empty string"
                 ),
+                metadata,
             );
         }
         if !desc_is_valid {
-            diag.report_at(
+            let metadata = s005_location(fm_lines, parsed_frontmatter.as_ref(), "description");
+            diag.report_at_with(
                 LintRule::FrontmatterFieldMissing,
                 &skill_path,
                 &format!(
                     "{skill_path}: required frontmatter field 'description' is missing or not a non-empty string"
                 ),
+                metadata,
             );
         }
 
         if check_name_match {
             if let Some(n) = canonical_name {
                 if n != dir_name {
-                    diag.report_at(
+                    let metadata = frontmatter::simple_top_level_key_line(fm_lines, "name")
+                        .map_or_else(DiagnosticMetadata::default, DiagnosticMetadata::at_line);
+                    diag.report_at_with(
                         LintRule::FrontmatterNameMismatch,
                         &skill_path,
                         &format!(
                             "{skill_path}: frontmatter name '{n}' does not match directory '{dir_name}'"
                         ),
+                        metadata,
                     );
                 }
             }
@@ -347,10 +362,12 @@ fn validate_skill_frontmatter_in_dir(
                             continue; // S045 in frontmatter_extended.rs handles this
                         }
                     }
-                    diag.report_at(
+                    diag.report_at_with(
                         LintRule::FrontmatterFieldEmpty,
                         &skill_path,
                         &format!("{skill_path}: optional field '{field}' is present but empty"),
+                        frontmatter::simple_top_level_key_line(fm_lines, field)
+                            .map_or_else(DiagnosticMetadata::default, DiagnosticMetadata::at_line),
                     );
                 }
             }
@@ -431,7 +448,7 @@ fn has_uri_scheme(target: &str) -> bool {
 }
 
 /// V15: Validate shared markdown reference integrity.
-/// Every `${CLAUDE_PLUGIN_ROOT}/skills/shared/**/*.md` path referenced from
+/// Every `$CLAUDE_PLUGIN_ROOT/skills/shared/**/*.md` path referenced from
 /// `skills/*/SKILL.md` must exist on disk.
 pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills_dir = Path::new("skills");
@@ -464,20 +481,57 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &E
             Err(_) => continue,
         };
 
-        for cap in RE_SHARED_MD_REF.find_iter(&content) {
-            let reference = cap.as_str();
-            let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
-            if !Path::new(&rel).is_file() {
-                diag.report_at(
+        let mut seen = HashSet::new();
+        for shared_ref in shared_md_refs::find_shared_md_refs(&content, "skills") {
+            if !seen.insert(shared_ref.relative_path.clone()) {
+                continue;
+            }
+            if !Path::new(&shared_ref.relative_path).is_file() {
+                diag.report_at_with(
                     LintRule::SharedMdMissing,
                     &skill_path,
                     &format!(
-                        "shared markdown reference missing on disk: {reference} (in {skill_path}, expected {rel})"
+                        "shared markdown reference missing on disk: {} (in {skill_path}, expected {})",
+                        shared_ref.reference, shared_ref.relative_path
                     ),
+                    DiagnosticMetadata::at_line(shared_ref.line),
                 );
             }
         }
     }
+}
+
+fn has_utf8_bom_before_opening_delimiter(content: &str) -> bool {
+    const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+    let bytes = content.as_bytes();
+    if !bytes.starts_with(BOM) {
+        return false;
+    }
+    content[BOM.len()..]
+        .lines()
+        .next()
+        .is_some_and(|line| line == "---")
+}
+
+/// S005 keeps a structured line only when the required key is present but not a
+/// usable non-empty string. Absent or non-locatable keys stay file-level.
+fn s005_location(
+    fm_lines: &[String],
+    parsed: Option<&crate::yaml::Value>,
+    key: &str,
+) -> DiagnosticMetadata {
+    let present = parsed.map_or_else(
+        || frontmatter::field_exists(fm_lines, key),
+        |yaml| {
+            yaml.as_mapping()
+                .is_some_and(|mapping| mapping.get(key).is_some())
+        },
+    );
+    if !present {
+        return DiagnosticMetadata::default();
+    }
+    frontmatter::simple_top_level_key_line(fm_lines, key)
+        .map_or_else(DiagnosticMetadata::default, DiagnosticMetadata::at_line)
 }
 
 #[cfg(test)]
@@ -852,8 +906,21 @@ mod tests {
                 )
             });
         assert_eq!(
-            diagnostic.location.map(|location| location.start()),
-            Some(crate::diagnostic::SourcePosition::line(3))
+            diagnostic
+                .location
+                .map(|location| location.start().line_number()),
+            Some(3)
+        );
+        assert!(
+            !diagnostic.message.contains("at line"),
+            "message must not embed parser coordinates: {}",
+            diagnostic.message
+        );
+        let file_line_hits = diagnostic.message.matches(":3:").count();
+        assert_eq!(
+            file_line_hits, 1,
+            "file line must appear exactly once: {}",
+            diagnostic.message
         );
     }
 
@@ -1186,6 +1253,222 @@ mod tests {
                 ".claude/skills/quoted-empty/SKILL.md".to_string(),
                 ".claude/skills/quoted-key/SKILL.md".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s008_dedupes_and_locates_missing_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: s\n---\n\
+             See ${CLAUDE_PLUGIN_ROOT}/skills/shared/missing.md\n\
+             And again ${CLAUDE_PLUGIN_ROOT}/skills/shared/missing.md\n\
+             Brace-less $CLAUDE_PLUGIN_ROOT/skills/shared/missing.md\n\
+             Only brace-less $CLAUDE_PLUGIN_ROOT/skills/shared/unbraced-missing.md\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
+        let missing: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::SharedMdMissing)
+            .collect();
+        assert_eq!(missing.len(), 2, "{missing:?}");
+        let first = missing
+            .iter()
+            .find(|d| d.message.contains("shared/missing.md"))
+            .expect("missing.md");
+        assert_eq!(
+            first
+                .location
+                .map(|location| location.start().line_number()),
+            Some(5)
+        );
+        let unbraced = missing
+            .iter()
+            .find(|d| d.message.contains("unbraced-missing.md"))
+            .expect("unbraced");
+        assert!(unbraced.message.contains("$CLAUDE_PLUGIN_ROOT/"));
+        assert_eq!(
+            unbraced
+                .location
+                .map(|location| location.start().line_number()),
+            Some(8)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s008_ignores_commented_and_prefix_tokens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write("skills/shared/prefix.md", "# Prefix\n").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: s\n---\n\
+             <!-- ${CLAUDE_PLUGIN_ROOT}/skills/shared/commented.md -->\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/prefix.md.backup\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/prefix.mdx\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/prefix.md/child\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_shared_md_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::SharedMdMissing),
+            "{:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s004_bom_hint_and_line_location() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/bom").unwrap();
+        let mut bom_content = vec![0xEF, 0xBB, 0xBF];
+        bom_content.extend_from_slice(b"---\nname: bom\ndescription: s\n---\nBody\n");
+        std::fs::write("skills/bom/SKILL.md", bom_content).unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        let bom = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::FrontmatterMalformed)
+            .expect("S004");
+        assert!(
+            bom.message
+                .contains("file starts with a UTF-8 byte-order mark; remove it"),
+            "{}",
+            bom.message
+        );
+        assert_eq!(
+            bom.location.map(|location| location.start().line_number()),
+            Some(1)
+        );
+
+        std::fs::create_dir_all("skills/plain").unwrap();
+        std::fs::write("skills/plain/SKILL.md", "no frontmatter\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        let plain = diag
+            .diagnostics()
+            .iter()
+            .find(|d| {
+                d.rule == LintRule::FrontmatterMalformed
+                    && d.subject_path.as_deref()
+                        == Some(std::path::Path::new("skills/plain/SKILL.md"))
+            })
+            .expect("plain S004");
+        assert!(
+            !plain.message.contains("byte-order mark"),
+            "{}",
+            plain.message
+        );
+        assert_eq!(
+            plain
+                .location
+                .map(|location| location.start().line_number()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s005_s006_s007_structured_locations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/empty-name").unwrap();
+        std::fs::write(
+            "skills/empty-name/SKILL.md",
+            "---\nname:\ndescription: A valid description for routing\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all("skills/missing-desc").unwrap();
+        std::fs::write(
+            "skills/missing-desc/SKILL.md",
+            "---\nname: missing-desc\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all("skills/wrong-name").unwrap();
+        std::fs::write(
+            "skills/wrong-name/SKILL.md",
+            "---\nname: other\ndescription: A valid description for routing\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all("skills/empty-optional").unwrap();
+        std::fs::write(
+            "skills/empty-optional/SKILL.md",
+            "---\nname: empty-optional\ndescription: A valid description for routing\nargument-hint:\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+
+        let empty_name = diag
+            .diagnostics()
+            .iter()
+            .find(|d| {
+                d.rule == LintRule::FrontmatterFieldMissing
+                    && d.subject_path.as_deref()
+                        == Some(std::path::Path::new("skills/empty-name/SKILL.md"))
+                    && d.message.contains("'name'")
+            })
+            .expect("S005 empty name");
+        assert_eq!(
+            empty_name.location.map(|l| l.start().line_number()),
+            Some(2)
+        );
+
+        let missing_desc = diag
+            .diagnostics()
+            .iter()
+            .find(|d| {
+                d.rule == LintRule::FrontmatterFieldMissing
+                    && d.subject_path.as_deref()
+                        == Some(std::path::Path::new("skills/missing-desc/SKILL.md"))
+            })
+            .expect("S005 missing description");
+        assert!(missing_desc.location.is_none());
+
+        let mismatch = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::FrontmatterNameMismatch)
+            .expect("S006");
+        assert_eq!(mismatch.location.map(|l| l.start().line_number()), Some(2));
+
+        let empty_optional = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::FrontmatterFieldEmpty)
+            .expect("S007");
+        assert_eq!(
+            empty_optional.location.map(|l| l.start().line_number()),
+            Some(4)
         );
     }
 }

@@ -1594,15 +1594,30 @@ mod tests {
     // ── S029: nested-ref-deep ───────────────────────────────────────
 
     #[test]
-    fn test_shared_ref_regex_uses_base_dir() {
-        let re = cross_skill::shared_ref_regex("skills");
-        assert!(re.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md"));
-        assert!(re.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/sub/util.md"));
-        assert!(!re.is_match("${CLAUDE_PLUGIN_ROOT}/other/shared/helpers.md"));
+    fn test_shared_md_refs_use_base_dir() {
+        use crate::validators::shared_md_refs::find_shared_md_refs;
 
-        let re2 = cross_skill::shared_ref_regex(".claude/skills");
-        assert!(re2.is_match("${CLAUDE_PLUGIN_ROOT}/.claude/skills/shared/helpers.md"));
-        assert!(!re2.is_match("${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md"));
+        let skills = find_shared_md_refs(
+            "${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/sub/util.md\n\
+             ${CLAUDE_PLUGIN_ROOT}/other/shared/helpers.md\n",
+            "skills",
+        );
+        assert_eq!(
+            skills
+                .iter()
+                .map(|r| r.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            ["skills/shared/helpers.md", "skills/shared/sub/util.md"]
+        );
+
+        let claude = find_shared_md_refs(
+            "${CLAUDE_PLUGIN_ROOT}/.claude/skills/shared/helpers.md\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/helpers.md\n",
+            ".claude/skills",
+        );
+        assert_eq!(claude.len(), 1);
+        assert_eq!(claude[0].relative_path, ".claude/skills/shared/helpers.md");
     }
 
     #[test]
@@ -1723,6 +1738,51 @@ mod tests {
             .filter(|e| e.contains("no headings for navigation"))
             .count();
         assert_eq!(toc_count, 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s029_s036_ignore_prefix_and_commented_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // Truncated-on-old-regex target that nests and is long/heading-free.
+        let long = "line\n".repeat(101);
+        std::fs::write(
+            "skills/shared/prefix.md",
+            format!("{long}See ${{CLAUDE_PLUGIN_ROOT}}/skills/shared/other.md\n"),
+        )
+        .unwrap();
+        std::fs::write("skills/shared/other.md", "# Other\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing shared-ref token boundaries\n---\n\
+             <!-- ${CLAUDE_PLUGIN_ROOT}/skills/shared/prefix.md -->\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/prefix.md.backup\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/prefix.mdx\n\
+             ${CLAUDE_PLUGIN_ROOT}/skills/shared/prefix.md/child\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("itself references")),
+            "S029 must ignore comment/prefix tokens: {:?}",
+            diag.errors()
+        );
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("no headings for navigation")),
+            "S036 must ignore comment/prefix tokens: {:?}",
+            diag.errors()
+        );
     }
 
     // ── S030: orphaned-skill-files ───────────────────────────────────

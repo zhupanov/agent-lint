@@ -291,11 +291,18 @@ fn validate_agent_file(
             }
             agent_frontmatter
         }
-        Err((line, msg)) => {
+        Err(err) => {
+            let metadata = match err.column {
+                Some(column) => DiagnosticMetadata::at_point(err.file_line, column),
+                None => DiagnosticMetadata::at_line(err.file_line),
+            };
             diag.report_with(
                 LintRule::FrontmatterYamlInvalid,
-                &format!("{agent_path}:{line}: frontmatter is not valid YAML: {msg}"),
-                DiagnosticMetadata::at_line(line),
+                &format!(
+                    "{agent_path}:{}: frontmatter is not valid YAML: {}",
+                    err.file_line, err.message
+                ),
+                metadata,
             );
             None
         }

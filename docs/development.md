@@ -48,7 +48,7 @@ src/
     +-- manifest.rs      # M001-M021: plugin.json & marketplace.json, component paths
     +-- hooks.rs         # H001-H007, H025: discovered plugin hooks, settings.json, settings.local.json
     +-- hook_schema.rs   # H008-H024: shared hook object schema engine
-    +-- skills.rs        # S001-S008: skills layout & frontmatter
+    +-- skills.rs        # S002-S008: skills layout & frontmatter
     +-- skill_content/   # S009-S057, S063-S071: name, description, body, MCP, execution fields, security
     +-- contracts.rs     # A012-A013, S058-S062, G008-G011, D004-D005, L001-L005
     +-- npm_scripts.rs   # L006

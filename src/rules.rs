@@ -180,7 +180,8 @@ pub enum LintRule {
     XmlTagOrphan,
 
     // ── Skills (S) ────────────────────────────────────────────────
-    /// S001: skills/ directory is missing
+    /// S001: skills/ directory is missing (deprecated — no longer fires;
+    /// retained so existing config identifiers keep parsing)
     #[strum(props(code = "S001", name = "skills-dir-missing"))]
     SkillsDirMissing,
     /// S002: skills/{name}/ missing SKILL.md

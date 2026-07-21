@@ -3,6 +3,7 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::validators::shared_md_refs::{contains_shared_md_ref, find_shared_md_refs};
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::collections::HashSet;
@@ -19,17 +20,8 @@ static RE_GENERIC_REF_NAME: LazyLock<Regex> = LazyLock::new(|| {
 
 const REF_NO_TOC_THRESHOLD: usize = 100;
 
-/// Build a regex matching `${CLAUDE_PLUGIN_ROOT}/<base_dir>/shared/<path>.md` references.
-pub(super) fn shared_ref_regex(base_dir: &str) -> Regex {
-    Regex::new(&format!(
-        r"\$\{{CLAUDE_PLUGIN_ROOT\}}/{}/shared/[a-zA-Z0-9._/-]+\.md",
-        regex::escape(base_dir)
-    ))
-    .unwrap()
-}
-
 /// S029: Check for deeply nested shared markdown references.
-/// Matches `${CLAUDE_PLUGIN_ROOT}/<base_dir>/shared/*.md` references.
+/// Matches `$CLAUDE_PLUGIN_ROOT/<base_dir>/shared/*.md` references.
 pub(super) fn validate_nested_references(
     base_dir: &str,
     skills: &[SkillInfo],
@@ -40,41 +32,38 @@ pub(super) fn validate_nested_references(
         return;
     }
 
-    let re_shared = shared_ref_regex(base_dir);
-
     // Cache: which shared .md files are nested (avoids re-reading files from disk)
     let mut checked: HashSet<String> = HashSet::new();
     let mut nested: HashSet<String> = HashSet::new();
 
     for info in skills {
         // Find shared-md references in this skill's body
-        for cap in re_shared.find_iter(&info.body) {
-            let reference = cap.as_str();
-            let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
-            let rel_path = Path::new(&rel);
+        for shared_ref in find_shared_md_refs(&info.body, base_dir) {
+            let rel = &shared_ref.relative_path;
+            let rel_path = Path::new(rel);
 
             if !rel_path.is_file() {
                 continue; // S008 handles missing refs
             }
 
             // Check the file once for nesting, cache result
-            if !checked.contains(&rel) {
+            if !checked.contains(rel) {
                 checked.insert(rel.clone());
                 if let Ok(content) = fs::read_to_string(rel_path) {
-                    if re_shared.is_match(&content) {
+                    if contains_shared_md_ref(&content, base_dir) {
                         nested.insert(rel.clone());
                     }
                 }
             }
 
             // Report for every referencing skill (not just the first)
-            if nested.contains(&rel) {
+            if nested.contains(rel) {
                 diag.report_at(
                     LintRule::NestedRefDeep,
                     &info.path,
                     &format!(
                         "{}: references {} which itself references other shared .md files (keep references one level deep)",
-                        info.path, reference
+                        info.path, shared_ref.reference
                     ),
                 );
             }
@@ -202,24 +191,21 @@ pub(super) fn validate_ref_no_toc(
         return;
     }
 
-    let re_shared = shared_ref_regex(base_dir);
-
     let mut checked: HashSet<String> = HashSet::new();
 
     for info in skills {
-        for cap in re_shared.find_iter(&info.body) {
-            let reference = cap.as_str();
-            let rel = reference.replace("${CLAUDE_PLUGIN_ROOT}/", "");
+        for shared_ref in find_shared_md_refs(&info.body, base_dir) {
+            let rel = &shared_ref.relative_path;
 
             if !checked.insert(rel.clone()) {
                 continue;
             }
 
-            if exclude.is_excluded(&rel) {
+            if exclude.is_excluded(rel) {
                 continue;
             }
 
-            let rel_path = Path::new(&rel);
+            let rel_path = Path::new(rel);
             if !rel_path.is_file() {
                 continue;
             }
@@ -232,10 +218,10 @@ pub(super) fn validate_ref_no_toc(
                     if !has_headings {
                         diag.report_at(
                             LintRule::RefNoToc,
-                            &rel,
+                            rel,
                             &format!(
                                 "{}: references {} ({} lines) which has no headings for navigation",
-                                info.path, reference, line_count
+                                info.path, shared_ref.reference, line_count
                             ),
                         );
                     }
