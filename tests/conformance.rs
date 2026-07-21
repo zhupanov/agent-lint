@@ -15,6 +15,8 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "codex",
     "cursor-legacy",
     "cursor-mdc",
+    "cursor-hooks-basic",
+    "cursor-hooks-plugin",
     "global-suppression",
     "json",
     "mcp",

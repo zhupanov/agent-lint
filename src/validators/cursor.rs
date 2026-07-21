@@ -46,6 +46,7 @@ const HOOK_EVENTS: &[&str] = &[
     "afterAgentThought",
     "beforeTabFileRead",
     "afterTabFileEdit",
+    "workspaceOpen",
 ];
 
 /// Local-only schema for Cursor's cloud development environment file. Keep
@@ -346,12 +347,15 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         );
         return;
     };
-    if root.get("version").and_then(JsonValue::as_i64).is_none() {
+    if !root
+        .get("version")
+        .is_some_and(|version| version.is_number() && version.as_f64() == Some(1.0))
+    {
         report(
             diag,
             LintRule::CursorHooksSchemaInvalid,
             PATH,
-            "'version' must be an integer",
+            "'version' must be numeric schema version 1",
         );
     }
     let Some(hooks) = root.get("hooks").and_then(JsonValue::as_object) else {
@@ -392,10 +396,13 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                 );
                 continue;
             };
-            if entry
-                .get("command")
-                .and_then(JsonValue::as_str)
-                .is_none_or(|value| value.trim().is_empty())
+            let type_value = entry.get("type");
+            let hook_type = type_value.and_then(JsonValue::as_str);
+            if (type_value.is_none() || hook_type == Some("command"))
+                && entry
+                    .get("command")
+                    .and_then(JsonValue::as_str)
+                    .is_none_or(|value| value.trim().is_empty())
             {
                 report(
                     diag,
@@ -429,6 +436,10 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                     "failClosed",
                     entry.get("failClosed").is_none_or(JsonValue::is_boolean),
                 ),
+                (
+                    "matcher",
+                    entry.get("matcher").is_none_or(JsonValue::is_string),
+                ),
             ] {
                 if !valid {
                     report(
@@ -439,21 +450,28 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                     );
                 }
             }
-            if entry.get("type").and_then(JsonValue::as_str) == Some("prompt") {
-                if !entry.contains_key("prompt") {
+            if hook_type == Some("prompt") {
+                if entry
+                    .get("prompt")
+                    .and_then(JsonValue::as_str)
+                    .is_none_or(|value| value.trim().is_empty())
+                {
                     report(
                         diag,
                         LintRule::CursorPromptHookPromptMissing,
                         PATH,
-                        &format!("{label} is missing 'prompt'"),
+                        &format!("{label} is missing a non-empty 'prompt'"),
                     );
                 }
-                if entry.get("model").is_some_and(|value| !value.is_string()) {
+                if entry
+                    .get("model")
+                    .is_some_and(|value| value.as_str().is_none_or(|model| model.trim().is_empty()))
+                {
                     report(
                         diag,
                         LintRule::CursorPromptHookModelInvalid,
                         PATH,
-                        &format!("{label}.model must be a string"),
+                        &format!("{label}.model must be a non-empty string"),
                     );
                 }
             }
@@ -763,16 +781,119 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn hooks_validate_schema_events_and_prompt_fields() {
+    fn documented_hook_events_are_accepted() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
-        std::fs::write(tmp.path().join(".cursor/hooks.json"), r#"{"version":"1","hooks":{"unknown":[{"type":"prompt","timeout":"fast","loop_limit":false,"failClosed":"yes","model":1},{"type":"agent","command":"echo invalid"}]}}"#).unwrap();
-        let codes = codes_for(tmp.path());
-        for expected in [
-            "CU010", "CU011", "CU012", "CU013", "CU017", "CU018", "CU019",
-        ] {
-            assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
+        let documented_events = [
+            "sessionStart",
+            "sessionEnd",
+            "preToolUse",
+            "postToolUse",
+            "postToolUseFailure",
+            "subagentStart",
+            "subagentStop",
+            "beforeShellExecution",
+            "afterShellExecution",
+            "beforeMCPExecution",
+            "afterMCPExecution",
+            "beforeReadFile",
+            "afterFileEdit",
+            "beforeSubmitPrompt",
+            "preCompact",
+            "stop",
+            "afterAgentResponse",
+            "afterAgentThought",
+            "beforeTabFileRead",
+            "afterTabFileEdit",
+            "workspaceOpen",
+        ];
+        assert_eq!(HOOK_EVENTS, documented_events);
+
+        let mut hooks = serde_json::Map::new();
+        for event in documented_events {
+            hooks.insert(event.to_string(), json!([{"command": "echo hook"}]));
         }
+        hooks.insert(
+            "beforeShellExecution".to_string(),
+            json!([{
+                "type": "prompt",
+                "prompt": "Allow read-only commands?",
+                "timeout": 10,
+                "futureCursorField": {"accepted": true}
+            }]),
+        );
+        std::fs::write(
+            tmp.path().join(".cursor/hooks.json"),
+            serde_json::to_string(&json!({"version": 1.0, "hooks": hooks})).unwrap(),
+        )
+        .unwrap();
+        assert!(codes_for(tmp.path()).is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn hooks_validate_schema_and_entry_shapes() {
+        let cases = [
+            ("null", vec!["CU010"]),
+            ("{", vec!["CU010"]),
+            (r#"{"hooks": {}}"#, vec!["CU010"]),
+            (r#"{"version": 1}"#, vec!["CU010"]),
+            (r#"{"version": 2, "hooks": {}}"#, vec!["CU010"]),
+            (r#"{"version": "1", "hooks": {}}"#, vec!["CU010"]),
+            (r#"{"version": 1.5, "hooks": {}}"#, vec!["CU010"]),
+            (r#"{"version": 1, "hooks": {"stop": {}}}"#, vec!["CU010"]),
+            (
+                r#"{"version": 1, "hooks": {"stop": [null]}}"#,
+                vec!["CU010"],
+            ),
+            (r#"{"version": 1, "hooks": {}}"#, vec![]),
+            (r#"{"version": 1.0, "hooks": {}}"#, vec![]),
+        ];
+        for (content, expected) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+            std::fs::write(tmp.path().join(".cursor/hooks.json"), content).unwrap();
+            assert_eq!(codes_for(tmp.path()), expected, "content: {content}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn hooks_apply_command_prompt_and_field_contracts() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/hooks.json"),
+            r#"{
+                "version": 1,
+                "hooks": {
+                    "unknown": [{"command": "echo hook"}],
+                    "beforeShellExecution": [
+                        {"type": "prompt"},
+                        {"type": "prompt", "prompt": null},
+                        {"type": "prompt", "prompt": 7},
+                        {"type": "prompt", "prompt": "   "},
+                        {"type": "prompt", "prompt": "Continue?", "model": null},
+                        {"type": "prompt", "prompt": "Continue?", "model": 7},
+                        {"type": "prompt", "prompt": "Continue?", "model": "  "},
+                        {"command": ""},
+                        {"type": "command", "command": 7},
+                        {"type": "agent", "command": "echo ignored"},
+                        {"type": 7},
+                        {"command": "echo valid", "timeout": 1.5, "loop_limit": null, "failClosed": true, "matcher": "Bash"},
+                        {"command": "echo invalid", "timeout": "fast", "loop_limit": false, "failClosed": "yes", "matcher": 7}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            codes_for(tmp.path()),
+            vec![
+                "CU018", "CU018", "CU018", "CU018", "CU019", "CU019", "CU019", "CU012", "CU012",
+                "CU013", "CU013", "CU017", "CU017", "CU017", "CU017", "CU011",
+            ]
+        );
     }
 
     #[test]

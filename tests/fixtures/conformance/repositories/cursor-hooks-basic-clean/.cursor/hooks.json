@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "workspaceOpen": [{ "command": ".cursor/hooks/register.sh" }],
+    "beforeShellExecution": [{
+      "type": "prompt",
+      "prompt": "Allow only read-only commands?",
+      "timeout": 10,
+      "matcher": "Bash"
+    }]
+  }
+}

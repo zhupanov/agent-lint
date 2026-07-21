@@ -1,0 +1,24 @@
+{
+  "class": "broken",
+  "repository": "cursor-hooks-plugin-broken",
+  "covers": ["cursor-hooks-plugin", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "CU010,CU011,CU012,CU013,CU017,CU018,CU019", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CU010", "name": "cursor-hooks-invalid", "severity": "error", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU011", "name": "cursor-event-unknown", "severity": "warning", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU012", "name": "cursor-command-missing", "severity": "error", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU012", "name": "cursor-command-missing", "severity": "error", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU013", "name": "cursor-type-invalid", "severity": "error", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU018", "name": "cursor-prompt-missing", "severity": "error", "subject_path": ".cursor/hooks.json" },
+    { "code": "CU019", "name": "cursor-model-invalid", "severity": "error", "subject_path": ".cursor/hooks.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

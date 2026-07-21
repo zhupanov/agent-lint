@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "cursor-hooks-plugin-all",
+  "covers": ["cursor-hooks-plugin", "all", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--all", "--only", "CU011", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CU011", "name": "cursor-event-unknown", "severity": "error", "subject_path": ".cursor/hooks.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

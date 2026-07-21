@@ -615,9 +615,9 @@ They run in both Basic and Plugin modes.
 | CU014 | `cursor-agent-invalid` | Cursor subagent frontmatter is invalid | Always | error |
 | CU015 | `cursor-body-empty` | Cursor subagent body is empty | Always | warn |
 | CU016 | `cursor-environment-invalid` | `.cursor/environment.json` schema is invalid | Always | error |
-| CU017 | `cursor-hook-invalid` | Cursor hook timeout, loop limit, or fail-closed type is invalid | Always | warn |
-| CU018 | `cursor-prompt-missing` | Prompt hook lacks `prompt` | Always | warn |
-| CU019 | `cursor-model-invalid` | Prompt hook `model` is not a string | Always | error |
+| CU017 | `cursor-hook-invalid` | Cursor hook timeout, loop limit, fail-closed, or matcher type is invalid | Always | warn |
+| CU018 | `cursor-prompt-missing` | Prompt hook lacks a non-empty string `prompt` | Always | error |
+| CU019 | `cursor-model-invalid` | Present prompt hook `model` is not a non-empty string | Always | error |
 | CU020 | `cursor-rule-extension` | A `.md` file below a repository-wide `.cursor/rules/` directory is not a live Cursor rule; rename it to the same basename with `.mdc` | Always | warn |
 | CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses frontmatter unsupported by Cursor | Always | warn |
 

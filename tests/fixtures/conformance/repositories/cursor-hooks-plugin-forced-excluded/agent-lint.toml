@@ -1,0 +1,5 @@
+[lint]
+exclude = [".cursor/hooks.json"]
+
+[platforms]
+cursor = true
