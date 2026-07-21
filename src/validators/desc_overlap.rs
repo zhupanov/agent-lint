@@ -31,15 +31,19 @@ const MIN_MEANINGFUL_TOKENS: usize = 4;
 const JACCARD_THRESHOLD: f64 = 0.85;
 
 const STOPWORDS: &[&str] = &[
-    "the", "a", "an", "is", "are", "to", "for", "with", "and", "of", "in", "on", "it",
-    "that", "this", "by", "from", "or", "as", "at", "be", "do", "so", "if", "no", "not",
-    "but", "up", "out", "all", "can", "has", "had", "was", "were", "been", "have", "will",
-    "would", "should", "could", "may", "might", "when", "you", "your", "use", "need",
-    "needed", "using", "used",
+    "the", "a", "an", "is", "are", "to", "for", "with", "and", "of", "in", "on", "it", "that",
+    "this", "by", "from", "or", "as", "at", "be", "do", "so", "if", "no", "not", "but", "up",
+    "out", "all", "can", "has", "had", "was", "were", "been", "have", "will", "would", "should",
+    "could", "may", "might", "when", "you", "your", "use", "need", "needed", "using", "used",
 ];
 
-const ROUTING_BOILERPLATE: &[&str] =
-    &["use when", "use this", "use for", "trigger when", "do not trigger"];
+const ROUTING_BOILERPLATE: &[&str] = &[
+    "use when",
+    "use this",
+    "use for",
+    "trigger when",
+    "do not trigger",
+];
 
 #[derive(Debug, Clone)]
 struct DescCandidate {
@@ -166,11 +170,7 @@ fn candidate_from_description(path: String, description: &str) -> Option<DescCan
     Some(DescCandidate { path, tokens })
 }
 
-fn report_overlaps(
-    diag: &mut DiagnosticCollector,
-    candidates: Vec<DescCandidate>,
-    rule: LintRule,
-) {
+fn report_overlaps(diag: &mut DiagnosticCollector, candidates: Vec<DescCandidate>, rule: LintRule) {
     for i in 0..candidates.len() {
         for j in (i + 1)..candidates.len() {
             let left = &candidates[i];
@@ -188,8 +188,7 @@ fn report_overlaps(
             diag.report_with(
                 rule,
                 &message,
-                DiagnosticMetadata::default()
-                    .with_related_subjects([&left.path, &right.path]),
+                DiagnosticMetadata::default().with_related_subjects([&left.path, &right.path]),
             );
         }
     }
@@ -232,9 +231,8 @@ mod tests {
 
     #[test]
     fn normalization_strips_boilerplate_punctuation_and_stopwords() {
-        let tokens = normalize_description_tokens(
-            "Use when reviewing pull requests for security issues!",
-        );
+        let tokens =
+            normalize_description_tokens("Use when reviewing pull requests for security issues!");
         assert_eq!(
             tokens,
             BTreeSet::from([
@@ -517,8 +515,10 @@ mod tests {
                 std::path::PathBuf::from(".claude/skills/z-skill/SKILL.md"),
             ]
         );
-        assert!(finding.message.starts_with(
-            ".claude/skills/a-skill/SKILL.md and .claude/skills/z-skill/SKILL.md"
-        ));
+        assert!(
+            finding
+                .message
+                .starts_with(".claude/skills/a-skill/SKILL.md and .claude/skills/z-skill/SKILL.md")
+        );
     }
 }
