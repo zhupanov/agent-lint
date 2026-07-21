@@ -1616,25 +1616,49 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn agent_validator_only_uses_valid_max_turns_as_a_q005_bound() {
+    fn agent_validator_only_hands_strict_positive_max_turns_to_q005() {
         let temporary = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(temporary.path()).unwrap();
         std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::create_dir_all("agents").unwrap();
         std::fs::write(
             ".claude/agents/bounded.md",
             "---\nname: bounded\ndescription: Reviews changes with concrete test evidence\nmaxTurns: 3\n---\nRetry until success.\n",
         )
         .unwrap();
         std::fs::write(
-            ".claude/agents/unbounded.md",
-            "---\nname: unbounded\ndescription: Reviews changes with concrete test evidence\nmaxTurns: zero\n---\nRetry until success.\n",
+            "agents/plugin-bounded.md",
+            "---\nname: plugin-bounded\ndescription: Reviews changes with concrete test evidence\nmaxTurns: 3\n---\nRetry until success.\n",
+        )
+        .unwrap();
+
+        let invalid_documents = [
+            ("duplicate.md", "maxTurns: 3\nmaxTurns: 4"),
+            ("syntax-invalid.md", "maxTurns: 3\n\tbroken: YAML"),
+            ("string.md", "maxTurns: \"3\""),
+            ("boolean.md", "maxTurns: true"),
+            ("sequence.md", "maxTurns: [3]"),
+            ("zero.md", "maxTurns: 0"),
+        ];
+        for (name, frontmatter) in invalid_documents {
+            std::fs::write(
+                format!(".claude/agents/{name}"),
+                format!(
+                    "---\nname: invalid\ndescription: Reviews changes with concrete test evidence\n{frontmatter}\n---\nRetry until success.\n"
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            ".claude/agents/non-mapping.md",
+            "---\n- maxTurns: 3\n---\nRetry until success.\n",
         )
         .unwrap();
 
         let mut diagnostics = DiagnosticCollector::new_all_enabled();
         super::super::run_all_with_targets(
-            &context(temporary.path(), LintMode::Basic),
+            &context(temporary.path(), LintMode::Plugin),
             &mut diagnostics,
             &ExcludeSet::default(),
             ValidationTargets {
@@ -1644,13 +1668,28 @@ mod tests {
                 agent_skills: false,
             },
         );
-        let q005_paths: Vec<_> = diagnostics
+        let q005_paths: std::collections::HashSet<_> = diagnostics
             .diagnostics()
             .iter()
             .filter(|diagnostic| diagnostic.rule == LintRule::PromptUnboundedRetry)
             .map(|diagnostic| diagnostic.subject_path.as_deref().unwrap().to_path_buf())
             .collect();
-        assert_eq!(q005_paths, vec![Path::new(".claude/agents/unbounded.md")]);
+        assert_eq!(
+            q005_paths,
+            [
+                ".claude/agents/duplicate.md",
+                ".claude/agents/syntax-invalid.md",
+                ".claude/agents/non-mapping.md",
+                ".claude/agents/string.md",
+                ".claude/agents/boolean.md",
+                ".claude/agents/sequence.md",
+                ".claude/agents/zero.md",
+            ]
+            .into_iter()
+            .map(Path::new)
+            .map(Path::to_path_buf)
+            .collect()
+        );
     }
 
     #[test]
