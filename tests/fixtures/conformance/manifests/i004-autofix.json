@@ -1,0 +1,54 @@
+{
+  "class": "hard-negative",
+  "repository": "i004-autofix",
+  "covers": [
+    "autofix",
+    "basic-mode",
+    "normal",
+    "json",
+    "i004-generic",
+    "i001-empty"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--autofix",
+      "--only",
+      "I001,I004",
+      "."
+    ]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": [
+    "claude"
+  ],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "I004",
+      "name": "instruction-file-generic",
+      "severity": "warning",
+      "subject_path": "AGENTS.md"
+    },
+    {
+      "code": "I004",
+      "name": "instruction-file-generic",
+      "severity": "warning",
+      "subject_path": "nested/AGENTS.md"
+    }
+  ],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    {
+      "path": "AGENTS.md",
+      "contents": "Be helpful.\n"
+    },
+    {
+      "path": "nested/AGENTS.md",
+      "contents": "Be accurate and write good code.\n"
+    }
+  ]
+}

@@ -555,9 +555,6 @@ pub enum LintRule {
     /// I004: an AGENTS.md file contains only generic guidance
     #[strum(props(code = "I004", name = "instruction-file-generic"))]
     InstructionFileGenericGuidance,
-    /// I005: an AGENTS.md file lacks project-specific structure
-    #[strum(props(code = "I005", name = "instruction-file-structure"))]
-    InstructionFileMissingStructure,
 
     // ── Codex configuration (CX) ─────────────────────────────────
     /// CX001: .codex/config.toml is not valid TOML
@@ -969,7 +966,6 @@ impl LintRule {
             "CX038" | "codex-agents-secret" => Some(Self::InstructionFileSecret),
             "CX041" | "codex-agents-path" => Some(Self::InstructionFilePathMissing),
             "CX043" | "codex-agents-generic" => Some(Self::InstructionFileGenericGuidance),
-            "CX044" | "codex-agents-structure" => Some(Self::InstructionFileMissingStructure),
             _ => None,
         };
         if migrated.is_some() {
@@ -1072,7 +1068,8 @@ impl LintRule {
             Self::CodexTopLevelKey | Self::CodexFeatureKey |
             Self::CodexNetworkPermissionField |
             Self::CodexAgentsTooLarge | Self::CodexAgentsDocLimit |
-            Self::InstructionFilePathMissing | Self::CodexAgentsOverrideTracked |
+            Self::InstructionFilePathMissing | Self::InstructionFileGenericGuidance |
+            Self::CodexAgentsOverrideTracked |
             Self::CodexPluginDefaultPromptCount | Self::CodexPluginDefaultPromptLength |
             Self::CodexPluginDefaultPromptEmpty | Self::CodexPluginInterfaceUrl |
             Self::CodexPluginHooksUnsupported | Self::CodexPluginDescriptionMissing |
@@ -1237,7 +1234,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            295,
+            294,
             "every enum variant must be registered"
         );
     }
@@ -1305,9 +1302,21 @@ mod tests {
                 "codex-agents-generic",
                 LintRule::InstructionFileGenericGuidance,
             ),
-            ("CX044", LintRule::InstructionFileMissingStructure),
+            ("CX043", LintRule::InstructionFileGenericGuidance),
         ] {
             assert_eq!(LintRule::from_code_or_name(identifier), Some(expected));
+        }
+        for retired in [
+            "I005",
+            "instruction-file-structure",
+            "CX044",
+            "codex-agents-structure",
+        ] {
+            assert_eq!(
+                LintRule::from_code_or_name(retired),
+                None,
+                "{retired} must not resolve after I005 removal"
+            );
         }
     }
 
@@ -1388,8 +1397,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            122,
-            "Expected 122 default-warning rules, got {}",
+            123,
+            "Expected 123 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1402,8 +1411,6 @@ mod tests {
             LintRule::CodexAgentThreads,
             LintRule::CodexApprovalPolicyShape,
             LintRule::CodexConfigContainerType,
-            LintRule::InstructionFileGenericGuidance,
-            LintRule::InstructionFileMissingStructure,
             LintRule::CodexAgentsConfigConflict,
             LintRule::PromptNegativeOnly,
             LintRule::PromptWeakCritical,
@@ -1415,6 +1422,10 @@ mod tests {
         }
         assert_eq!(
             LintRule::CodexNetworkPermissionField.default_severity(),
+            DefaultSeverity::Warning
+        );
+        assert_eq!(
+            LintRule::InstructionFileGenericGuidance.default_severity(),
             DefaultSeverity::Warning
         );
     }
@@ -1485,8 +1496,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            170,
-            "Expected 170 default-error rules, got {}",
+            168,
+            "Expected 168 default-error rules, got {}",
             errors.len()
         );
     }

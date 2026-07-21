@@ -1,0 +1,7 @@
+[lint]
+suppress = ["I004"]
+
+[[lint.overrides]]
+files = ["nested/AGENTS.md"]
+suppress = ["I001"]
+reason = "Empty nested addendum is intentional in this fixture"
