@@ -1197,6 +1197,8 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
         "S013",
         "name-reserved-word",
         "name-has-xml",
+        "K001",
+        "slack-fallback-mismatch",
         "Q006,",
         ",Q006",
     ] {
@@ -1227,6 +1229,8 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
             "S013",
             "name-reserved-word",
             "name-has-xml",
+            "K001",
+            "slack-fallback-mismatch",
         ] {
             let mut args = mode_args.clone();
             args.extend(["--only", only, &target]);
@@ -1238,6 +1242,47 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
                 stderr(&text)
             );
         }
+    }
+}
+
+#[test]
+fn larch_slack_fallback_scripts_produce_no_built_in_slack_diagnostic() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"slack-plugin","description":"Test plugin","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/marketplace.json"),
+        r#"{"name":"slack-marketplace","owner":{"name":"test"},"plugins":[{"name":"slack-plugin","source":"./","description":"Test plugin"}]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/slack.sh"),
+        "#!/bin/bash\nTOKEN=${LARCH_SLACK_BOT_TOKEN:-default}\nCHANNEL=${LARCH_SLACK_CHANNEL_ID:-x}\nUSER=${LARCH_SLACK_USER_ID:-y}\n",
+    )
+    .unwrap();
+
+    for args in [
+        vec!["--format", "json", "."],
+        vec!["--format", "json", "--pedantic", "."],
+        vec!["--format", "json", "--all", "."],
+    ] {
+        let output = run_in(tmp.path(), &args);
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert!(
+            diagnostics.iter().all(|d| {
+                let code = d["code"].as_str().unwrap_or("");
+                let name = d["name"].as_str().unwrap_or("");
+                code != "K001" && name != "slack-fallback-mismatch"
+            }),
+            "unexpected Slack diagnostic for {args:?}: {report}"
+        );
     }
 }
 

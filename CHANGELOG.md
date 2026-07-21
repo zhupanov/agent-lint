@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING**: Removed repository-specific Slack rule K001
+  (`slack-fallback-mismatch`) and its validator. The rule hardcoded
+  `LARCH_SLACK_*` fallback names that belong to the separate Larch consumer,
+  not to Agent Lint's portable Claude/Slack contract. Existing
+  `agent-lint.toml` references and `--only` selections using `K001` or
+  `slack-fallback-mismatch` now fail as invalid rule identifiers; remove those
+  entries. Downstream repositories that need the three-variable invariant must
+  enforce it in their own tests or lint configuration.
 - **BREAKING**: Removed U003 (`userconfig-env-missing`). Existing
   `agent-lint.toml` references and `--only` selections using `U003` /
   `userconfig-env-missing` now fail as invalid rule identifiers; remove those

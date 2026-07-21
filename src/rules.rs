@@ -854,11 +854,6 @@ pub enum LintRule {
     #[strum(props(code = "U008", name = "userconfig-option-invalid"))]
     UserconfigOptionInvalid,
 
-    // ── Slack (K) ─────────────────────────────────────────────────
-    /// K001: Slack fallback variable without corresponding CLAUDE_PLUGIN_OPTION_ reference
-    #[strum(props(code = "K001", name = "slack-fallback-mismatch"))]
-    SlackFallbackMismatch,
-
     // ── Docs (D) ──────────────────────────────────────────────────
     /// D001: docs reference in CLAUDE.md canonical sources not found on disk
     #[strum(props(code = "D001", name = "docs-ref-missing"))]
@@ -1091,9 +1086,6 @@ impl LintRule {
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
             Self::GhInlineBody |
 
-            // ── Default-warning: Slack ───────────────────────────────
-            Self::SlackFallbackMismatch |
-
             // ── Default-warning: docs ────────────────────────────────
             Self::ClaudemdTooLarge | Self::TodoInDocs |
             Self::ClaudeImportLarge | Self::InlinePathMissing
@@ -1241,7 +1233,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            295,
+            294,
             "every enum variant must be registered"
         );
     }
@@ -1386,8 +1378,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            120,
-            "Expected 120 default-warning rules, got {}",
+            119,
+            "Expected 119 default-warning rules, got {}",
             warnings.len()
         );
     }

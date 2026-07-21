@@ -1302,9 +1302,16 @@ suppress = ["S033"]
 
     #[test]
     #[serial_test::serial]
-    fn retired_skill_name_rules_are_invalid_config_identifiers() {
+    fn retired_rules_are_invalid_config_identifiers() {
         let tmp = tempfile::tempdir().unwrap();
-        for identifier in ["S012", "S013", "name-reserved-word", "name-has-xml"] {
+        for identifier in [
+            "S012",
+            "S013",
+            "name-reserved-word",
+            "name-has-xml",
+            "K001",
+            "slack-fallback-mismatch",
+        ] {
             std::fs::write(
                 tmp.path().join("agent-lint.toml"),
                 format!("[lint]\nsuppress = [\"{identifier}\"]\n"),
@@ -2138,7 +2145,7 @@ root-max-lines = 10
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 295);
+        assert_eq!(config.error.len(), 294);
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }
