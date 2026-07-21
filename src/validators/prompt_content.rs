@@ -9,7 +9,9 @@ use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::{MarkdownDocument, MarkdownHeading};
 use crate::rules::LintRule;
 use crate::traversal;
-use crate::validators::common::{NEVER_INVENT_PROHIBITION, has_bound_or_fallback, sentence_ranges};
+use crate::validators::common::{
+    NEVER_INVENT_PROHIBITION, has_bound_or_fallback, normalize_emphasis_for_gates, sentence_ranges,
+};
 use regex::Regex;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -144,15 +146,16 @@ fn check_unbounded_retry(
     let example_scopes = document.example_scopes();
     for scope in retry_instruction_scopes(document, &example_scopes) {
         let joined_scope = JoinedProseScope::new(&scope);
-        if has_bound_or_fallback(&joined_scope.text) {
+        if has_bound_or_fallback(&normalize_emphasis_for_gates(&joined_scope.text)) {
             continue;
         }
 
         for sentence_range in sentence_ranges(&joined_scope.text) {
             let sentence = &joined_scope.text[sentence_range.clone()];
             let normalized_sentence = sentence.to_ascii_lowercase();
-            if !is_operative_retry_instruction(&normalized_sentence)
-                || explicitly_prohibits_unbounded_retry(&normalized_sentence)
+            let gate_view = normalize_emphasis_for_gates(&normalized_sentence);
+            if !is_operative_retry_instruction(&gate_view)
+                || explicitly_prohibits_unbounded_retry(&gate_view)
             {
                 continue;
             }
@@ -2034,6 +2037,22 @@ mod tests {
             );
         }
 
+        for (instruction, evidence) in [
+            (
+                "**Important**: keep retrying until the build passes.",
+                "**Important**: keep retrying until the build passes.",
+            ),
+            (
+                "__Note__: retry until success.",
+                "__Note__: retry until success.",
+            ),
+            ("**Retry until success.**", "**Retry until success."),
+        ] {
+            let diagnostics = q005_diagnostics(instruction);
+            assert_eq!(diagnostics.len(), 1, "{instruction}");
+            assert_eq!(diagnostics[0].evidence.as_deref(), Some(evidence));
+        }
+
         let after_another_sentence =
             q005_diagnostics("First verify the input. Retry until success.");
         assert_eq!(
@@ -2068,6 +2087,8 @@ mod tests {
             "Retry until success by Friday.",
             "Retry until success. On failure, fall back to the previous result.",
             "Do not keep trying until success.",
+            "**Do not keep trying until success.**",
+            "Retry until success. __Stop after 3 attempts and report the blocker.__",
             "Continue the onboarding workflow until the release date.",
             "The legacy instruction was to retry until success.",
             "# Examples\nRetry until success.",
