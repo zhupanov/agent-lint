@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "q005-invalid-yaml",
+  "covers": ["q005-unbounded-retry", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "X001,Q005", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "X001", "name": "frontmatter-yaml-invalid", "severity": "error", "subject_path": ".claude/agents/retry.md" },
+    { "code": "Q005", "name": "prompt-unbounded-retry", "severity": "error", "subject_path": ".claude/agents/retry.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

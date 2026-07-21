@@ -370,9 +370,16 @@ fn validate_agent_file(
         }
     }
 
-    check_agent_field_values(diag, agent_path, fm_lines);
-    let max_turns = frontmatter::get_field(fm_lines, "maxTurns")
-        .and_then(|turns| parse_valid_max_turns(&turns));
+    let max_turns = parsed_frontmatter
+        .as_ref()
+        .and_then(validated_max_turns_from_yaml);
+    check_agent_field_values(
+        diag,
+        agent_path,
+        fm_lines,
+        parsed_frontmatter.as_ref(),
+        max_turns,
+    );
     let prompt_document = LiveInstructionDocument::new(
         Path::new(agent_path),
         InstructionSurfaceKind::Agent,
@@ -384,7 +391,7 @@ fn validate_agent_file(
             diag,
             agent_path,
             parsed_frontmatter,
-            fm_lines,
+            max_turns,
             &prompt_document,
         );
     }
@@ -523,20 +530,16 @@ fn get_field_items(fm_lines: &[String], key: &str) -> Vec<String> {
     items
 }
 
-/// Parse a positive `maxTurns` as an explicit, schema-validated agent turn bound.
-fn parse_valid_max_turns(value: &str) -> Option<NonZeroU64> {
-    value
-        .chars()
-        .all(|character| character.is_ascii_digit())
-        .then(|| value.parse::<u64>().ok())
-        .flatten()
+/// Read a positive integer `maxTurns` bound from successfully parsed agent YAML.
+///
+/// A quoted scalar, float, boolean, collection, or negative value is not an
+/// agent turn bound. Keeping this at the strict-YAML ownership boundary ensures
+/// prompt-content rules never infer execution limits from malformed frontmatter.
+fn validated_max_turns_from_yaml(yaml: &crate::yaml::Value) -> Option<NonZeroU64> {
+    yaml.as_mapping()?
+        .get("maxTurns")?
+        .as_u64()
         .and_then(NonZeroU64::new)
-}
-
-fn has_valid_max_turns(fm_lines: &[String]) -> bool {
-    frontmatter::get_field(fm_lines, "maxTurns")
-        .and_then(|turns| parse_valid_max_turns(&turns))
-        .is_some()
 }
 
 /// Return whether an explicitly declared tool can perform execution-like work.
@@ -559,14 +562,14 @@ fn check_agent_stop_control(
     diag: &mut DiagnosticCollector,
     agent_path: &str,
     parsed_frontmatter: &crate::yaml::Value,
-    fm_lines: &[String],
+    max_turns: Option<NonZeroU64>,
     document: &LiveInstructionDocument<'_>,
 ) {
     let execution_tools: Vec<_> = frontmatter::strict_string_items(parsed_frontmatter, "tools")
         .into_iter()
         .filter(|tool| is_execution_tool(tool))
         .collect();
-    if execution_tools.is_empty() || has_valid_max_turns(fm_lines) {
+    if execution_tools.is_empty() || max_turns.is_some() {
         return;
     }
 
@@ -649,7 +652,13 @@ fn skill_exists_on_disk(skill: &str) -> bool {
 }
 
 /// A014-A027: field-value validation for agent frontmatter.
-fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm_lines: &[String]) {
+fn check_agent_field_values(
+    diag: &mut DiagnosticCollector,
+    agent_path: &str,
+    fm_lines: &[String],
+    parsed_frontmatter: Option<&crate::yaml::Value>,
+    max_turns: Option<NonZeroU64>,
+) {
     // A014: model must be a recognized value (CC-AG-003).
     if let Some(model) = frontmatter::get_field(fm_lines, "model") {
         if !is_valid_model(&model) {
@@ -735,17 +744,17 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
         }
     }
 
-    // A026: maxTurns must be a positive integer (CC-AG-017).
-    if let Some(turns) = frontmatter::get_field(fm_lines, "maxTurns") {
-        if parse_valid_max_turns(&turns).is_none() {
-            diag.report(
-                LintRule::AgentMaxturnsInvalid,
-                &format!(
-                    "{agent_path}: maxTurns '{}' is not a positive integer",
-                    turns
-                ),
-            );
-        }
+    // A026: maxTurns must be a positive integer (CC-AG-017). Use the same
+    // strict parse that owns the Q005 outer bound, never a raw line lookup.
+    if parsed_frontmatter
+        .and_then(crate::yaml::Value::as_mapping)
+        .is_some_and(|mapping| mapping.contains_key("maxTurns"))
+        && max_turns.is_none()
+    {
+        diag.report(
+            LintRule::AgentMaxturnsInvalid,
+            &format!("{agent_path}: maxTurns is not a positive integer"),
+        );
     }
 
     let tools = get_field_items(fm_lines, "tools");
@@ -2080,7 +2089,7 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_aPH26PH_invalid_maxturns_fires() {
-        for val in ["0", "-5", "abc", "3.5"] {
+        for val in ["0", "-5", "abc", "3.5", "\"3\"", "true", "[3]"] {
             let content = format!(
                 "---\nname: general\ndescription: {GOOD_DESC}\nmaxTurns: {val}\n---\nBody\n"
             );
