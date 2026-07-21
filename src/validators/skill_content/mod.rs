@@ -122,6 +122,7 @@ fn run_content_checks(
 mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCollector;
+    use crate::rules::LintRule;
 
     // ── S009: name-too-long ──────────────────────────────────────────
 
@@ -292,109 +293,67 @@ mod tests {
             .any(|e| e.contains("starts/ends with hyphen") || e.contains("consecutive hyphens")));
     }
 
-    // ── S012: name-reserved-word ─────────────────────────────────────
+    // ── S010: invalid name characters ─────────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_s012_reserved_word() {
+    fn test_s010_reports_angle_bracket_names_once() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: claude-helper\ndescription: A valid skill description here\n---\nBody\n",
-        )
-        .unwrap();
+
+        for (index, name) in ["my-<tag>skill", "my-</tag>skill", "my-<tag", "my->tag"]
+            .iter()
+            .enumerate()
+        {
+            let dir = format!("skills/skill-{index}");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                format!("{dir}/SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description here\n---\nBody content\n"
+                ),
+            )
+            .unwrap();
+        }
+
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(diag.errors().iter().any(|e| e.contains("reserved word")));
+        let invalid_names: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::NameInvalidChars)
+            .collect();
+        assert_eq!(invalid_names.len(), 4);
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_s012_exact_skill_reserved() {
+    fn test_vendor_and_skill_names_are_valid() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/skill").unwrap();
-        std::fs::write(
-            "skills/skill/SKILL.md",
-            "---\nname: skill\ndescription: A valid skill description here\n---\nBody\n",
-        )
-        .unwrap();
+
+        for name in ["claude-api", "anthropic-tools", "skill", "skill-creator"] {
+            let dir = format!("skills/{name}");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                format!("{dir}/SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description here\n---\nBody content\n"
+                ),
+            )
+            .unwrap();
+        }
+
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            diag.errors().iter().any(|e| e.contains("reserved word")),
-            "exact name 'skill' must fire S012: {:?}",
-            diag.errors()
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s012_skill_substring_ok() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/skill-helper").unwrap();
-        std::fs::write(
-            "skills/skill-helper/SKILL.md",
-            "---\nname: skill-helper\ndescription: A valid skill description here\n---\nBody\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            !diag.errors().iter().any(|e| e.contains("reserved word")),
-            "'skill-helper' must not fire S012 exact-skill match: {:?}",
-            diag.errors()
-        );
-    }
-
-    // ── S013: name-has-xml ──────────────────────────────────────────
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s013_name_with_xml_tag() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-<tag>skill\ndescription: A valid skill description here\n---\nBody content\n",
-        ).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            diag.errors()
-                .iter()
-                .any(|e| e.contains("name") && e.contains("XML/HTML tags"))
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s013_name_without_xml_ok() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\n---\nBody content\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            !diag
-                .errors()
-                .iter()
-                .any(|e| e.contains("XML/HTML tags") && e.contains("name"))
-        );
+        assert!(diag.diagnostics().iter().all(|finding| {
+            !matches!(
+                finding.rule,
+                LintRule::NameInvalidChars | LintRule::NameBadHyphens
+            )
+        }));
     }
 
     // ── S014: desc-too-long ──────────────────────────────────────────
@@ -1420,8 +1379,6 @@ mod tests {
             ("S009", "name-too-long"),
             ("S010", "name-invalid-chars"),
             ("S011", "name-bad-hyphens"),
-            ("S012", "name-reserved-word"),
-            ("S013", "name-has-xml"),
             ("S014", "desc-too-long"),
             ("S015", "desc-truncated"),
             ("S016", "desc-uses-person"),

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **BREAKING**: Removed unsupported skill-name rules S012
+  (`name-reserved-word`) and S013 (`name-has-xml`). Existing `agent-lint.toml`
+  references and `--only` selections using either retired code or name now
+  fail as invalid rule identifiers; remove those entries. S010
+  (`name-invalid-chars`) remains the single diagnostic for angle brackets and
+  other invalid name characters. S013 no longer participates in `--autofix`.
+
 ## [3.0.1] - 2026-07-17
 
 ### Added

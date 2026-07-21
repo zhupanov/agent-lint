@@ -201,12 +201,6 @@ pub enum LintRule {
     /// S011: skill name starts/ends with hyphen or has consecutive hyphens
     #[strum(props(code = "S011", name = "name-bad-hyphens"))]
     NameBadHyphens,
-    /// S012: skill name contains reserved word (anthropic, claude)
-    #[strum(props(code = "S012", name = "name-reserved-word"))]
-    NameReservedWord,
-    /// S013: skill name contains XML/HTML tags
-    #[strum(props(code = "S013", name = "name-has-xml"))]
-    NameHasXml,
     /// S014: skill description exceeds 1024 characters
     #[strum(props(code = "S014", name = "desc-too-long"))]
     DescTooLong,
@@ -979,7 +973,6 @@ impl LintRule {
                 | Self::ScriptNotExecutable
                 | Self::FrontmatterNameMismatch
                 | Self::FrontmatterFieldEmpty
-                | Self::NameHasXml
                 | Self::DescHasXml
                 | Self::ConsecutiveBash
                 | Self::BackslashPath
@@ -1223,7 +1216,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            291,
+            289,
             "every enum variant must be registered"
         );
     }
@@ -1429,8 +1422,8 @@ mod tests {
         let fixable: Vec<_> = ALL_RULES.iter().filter(|r| r.is_autofixable()).collect();
         assert_eq!(
             fixable.len(),
-            12,
-            "Expected 12 auto-fixable rules, got {}",
+            11,
+            "Expected 11 auto-fixable rules, got {}",
             fixable.len()
         );
     }
@@ -1443,8 +1436,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            173,
-            "Expected 173 default-error rules, got {}",
+            171,
+            "Expected 171 default-error rules, got {}",
             errors.len()
         );
     }
