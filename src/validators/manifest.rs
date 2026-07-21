@@ -1,7 +1,7 @@
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
-use crate::validators::common::is_valid_http_url;
+use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
@@ -130,7 +130,11 @@ pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
             return;
         }
         ManifestState::Invalid(e) => {
-            diag.report(LintRule::PluginJsonInvalid, e);
+            diag.report_with(
+                LintRule::PluginJsonInvalid,
+                e.message(),
+                manifest_error_metadata(e),
+            );
             return;
         }
         ManifestState::Parsed(v) => v,
@@ -169,7 +173,11 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             return;
         }
         ManifestState::Invalid(e) => {
-            diag.report(LintRule::MarketplaceJsonInvalid, e);
+            diag.report_with(
+                LintRule::MarketplaceJsonInvalid,
+                e.message(),
+                manifest_error_metadata(e),
+            );
             return;
         }
         ManifestState::Parsed(v) => v,
@@ -182,39 +190,51 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
         .and_then(|v| v.as_str())
         .unwrap_or("");
 
-    if mp_name.is_empty() {
+    if mp_name.trim().is_empty() {
         diag.report(
             LintRule::MarketplaceFieldMissing,
             &format!("{f} missing required field: name"),
         );
     }
-    if mp_owner.is_empty() {
+    if mp_owner.trim().is_empty() {
         diag.report(
             LintRule::MarketplaceFieldMissing,
             &format!("{f} missing required field: owner.name"),
         );
     }
 
-    let plugins = val.get("plugins").and_then(|v| v.as_array());
-    match plugins {
+    match val.get("plugins") {
         None => {
             diag.report(
-                LintRule::MarketplacePluginsEmpty,
-                &format!("{f} has empty plugins array"),
+                LintRule::MarketplaceFieldMissing,
+                &format!("{f} missing required field: plugins"),
             );
         }
-        Some(arr) if arr.is_empty() => {
+        Some(plugins) if !plugins.is_array() => {
+            diag.report(
+                LintRule::MarketplacePluginsEmpty,
+                &format!(
+                    "{f} plugins must be an array (found {})",
+                    json_type(plugins)
+                ),
+            );
+        }
+        Some(plugins) if plugins.as_array().is_some_and(|arr| arr.is_empty()) => {
             diag.report(
                 LintRule::MarketplacePluginsEmpty,
                 &format!("{f} has empty plugins array"),
             );
         }
-        Some(arr) => {
+        Some(plugins) => {
+            let arr = plugins
+                .as_array()
+                .expect("the preceding branch established plugins is an array");
             for (i, plugin) in arr.iter().enumerate() {
                 let pname = plugin.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let has_source = match plugin.get("source") {
                     Some(s) => {
-                        (s.is_string() && !s.as_str().unwrap_or("").is_empty()) || s.is_object()
+                        (s.is_string() && !s.as_str().unwrap_or("").trim().is_empty())
+                            || s.is_object()
                     }
                     None => false,
                 };
@@ -228,6 +248,17 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                 }
             }
         }
+    }
+}
+
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
     }
 }
 
@@ -350,7 +381,7 @@ pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollecto
     }
 }
 
-/// V30: Validate optional plugin.json metadata (M014, M015).
+/// V30: Validate optional plugin.json metadata (M014, M015, M020).
 pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
@@ -358,10 +389,15 @@ pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    // M014: an author object must name the author. A bare author string is a
-    // different, accepted shape and carries no name field to check.
+    // M014 owns an incomplete author object; M020 owns every other present
+    // author shape because Claude Code accepts only an object here.
     if let Some(author) = val.get("author") {
-        if author.is_object() && !is_non_empty_string(author.get("name")) {
+        if !author.is_object() {
+            diag.report(
+                LintRule::AuthorTypeInvalid,
+                &format!("{f} author must be an object (found {})", json_type(author)),
+            );
+        } else if !is_non_empty_string(author.get("name")) {
             diag.report(
                 LintRule::AuthorNameMissing,
                 &format!("{f} author.name missing or invalid (must be a non-empty string)"),
@@ -413,7 +449,8 @@ pub fn validate_lsp_servers(ctx: &LintContext, diag: &mut DiagnosticCollector) {
 /// V32: Validate plugin.json channels entries (M017).
 ///
 /// `channels` is accepted both as an object keyed by channel name and as an
-/// array of entries; either way every entry must name a `server`.
+/// array of entries; either way every entry must name a `server`. When the
+/// manifest declares inline MCP servers, that name must refer to one of them.
 pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
@@ -433,12 +470,24 @@ pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
             .collect(),
         _ => return,
     };
+    let inline_servers = val.get("mcpServers").and_then(Value::as_object);
 
     for (label, entry) in entries {
-        if !is_non_empty_string(entry.get("server")) {
+        let server = entry
+            .get("server")
+            .and_then(Value::as_str)
+            .filter(|server| !server.trim().is_empty());
+        let Some(server) = server else {
             diag.report(
                 LintRule::ChannelServerMissing,
                 &format!("{f} {label} missing required field: server"),
+            );
+            continue;
+        };
+        if inline_servers.is_some_and(|servers| !servers.contains_key(server)) {
+            diag.report(
+                LintRule::ChannelServerMissing,
+                &format!("{f} {label} server '{server}' does not reference an mcpServers entry"),
             );
         }
     }
@@ -495,7 +544,7 @@ mod tests {
     fn test_v1_missing_plugin_json_with_marketplace_does_not_report() {
         for marketplace in [
             ManifestState::Parsed(json!({})),
-            ManifestState::Invalid("parse error".to_string()),
+            ManifestState::invalid("parse error"),
         ] {
             let ctx = make_ctx(ManifestState::Missing, marketplace);
             let mut diag = DiagnosticCollector::new_all_enabled();
@@ -507,7 +556,7 @@ mod tests {
     #[test]
     fn test_v1_invalid_plugin_json() {
         let ctx = make_ctx(
-            ManifestState::Invalid("parse error".to_string()),
+            ManifestState::invalid("parse error"),
             ManifestState::Missing,
         );
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -588,7 +637,36 @@ mod tests {
     }
 
     #[test]
-    fn test_v2_empty_plugins_array() {
+    fn test_v2_plugins_shape_failures_have_distinct_diagnostics() {
+        let cases = [
+            (
+                json!({"name": "mp", "owner": {"name": "o"}}),
+                LintRule::MarketplaceFieldMissing,
+                "missing required field: plugins",
+            ),
+            (
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": {}}),
+                LintRule::MarketplacePluginsEmpty,
+                "plugins must be an array (found object)",
+            ),
+            (
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": []}),
+                LintRule::MarketplacePluginsEmpty,
+                "has empty plugins array",
+            ),
+        ];
+        for (value, rule, message) in cases {
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(value));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_json(&ctx, &mut diag);
+            assert_eq!(diag.diagnostics().len(), 1);
+            assert_eq!(diag.diagnostics()[0].rule, rule);
+            assert!(diag.diagnostics()[0].message.contains(message));
+        }
+    }
+
+    #[test]
+    fn test_v2_empty_plugins_array_is_a_warning() {
         let val = json!({"name": "mp", "owner": {"name": "o"}, "plugins": []});
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
         let mut diag = DiagnosticCollector::new();
@@ -1201,16 +1279,56 @@ mod tests {
     }
 
     #[test]
-    fn test_m014_author_string_and_absent_pass() {
-        for val in [
-            json!({"name": "p", "author": "Ada Lovelace"}),
-            json!({"name": "p"}),
+    fn test_m020_non_object_authors_are_errors() {
+        for author in [
+            json!("Ada Lovelace <ada@example.com>"),
+            json!(42),
+            json!([]),
+            json!(true),
+            json!(null),
         ] {
+            let val = json!({"name": "p", "author": author});
             let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-            let mut diag = DiagnosticCollector::new_all_enabled();
+            let mut diag = DiagnosticCollector::new();
             validate_plugin_metadata(&ctx, &mut diag);
-            assert_eq!(diag.error_count(), 0);
+            assert_eq!(diag.error_count(), 1);
+            assert_eq!(diag.diagnostics()[0].rule, LintRule::AuthorTypeInvalid);
         }
+    }
+
+    #[test]
+    fn test_m020_absent_author_passes() {
+        let ctx = make_ctx(
+            ManifestState::Parsed(json!({"name": "p"})),
+            ManifestState::Missing,
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_metadata(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn test_m007_and_m009_whitespace_only_values_fire() {
+        let val = json!({
+            "name": "   ",
+            "owner": {"name": "\t"},
+            "plugins": [{"name": " ", "source": "\n"}]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 3);
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.rule == LintRule::MarketplaceFieldMissing)
+                .count(),
+            2
+        );
+        assert_eq!(
+            diag.diagnostics()[2].rule,
+            LintRule::MarketplacePluginInvalid
+        );
     }
 
     // ── M015: homepage-url-invalid ──────────────────────────────────
@@ -1342,12 +1460,13 @@ mod tests {
 
     #[test]
     fn test_m017_array_channels() {
-        let val = json!({"channels": [{"server": "s"}, {"name": "no-server"}]});
+        let val = json!({"channels": [{"server": "s"}, {"name": "no-server"}, "not-an-object"]});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_channels(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.error_count(), 2);
         assert!(diag.errors()[0].contains("channels[1]"));
+        assert!(diag.errors()[1].contains("channels[2]"));
     }
 
     #[test]
@@ -1357,6 +1476,39 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_channels(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
+    }
+
+    #[test]
+    fn test_m017_inline_mcp_server_reference_must_exist() {
+        let val = json!({
+            "mcpServers": {"existing": {"command": "server"}},
+            "channels": {"alerts": {"server": "missing"}}
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_channels(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::ChannelServerMissing);
+        assert!(diag.diagnostics()[0].message.contains("does not reference"));
+    }
+
+    #[test]
+    fn test_m017_matching_or_external_mcp_servers_skip_cross_check() {
+        for val in [
+            json!({
+                "mcpServers": {"existing": {"command": "server"}},
+                "channels": {"alerts": {"server": "existing"}}
+            }),
+            json!({
+                "mcpServers": "./servers.json",
+                "channels": {"alerts": {"server": "external"}}
+            }),
+        ] {
+            let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_channels(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 0);
+        }
     }
 
     #[test]

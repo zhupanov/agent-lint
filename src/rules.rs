@@ -75,6 +75,9 @@ pub enum LintRule {
     /// M018: plugin.json omits its optional version field
     #[strum(props(code = "M018", name = "plugin-version-missing"))]
     PluginVersionMissing,
+    /// M020: plugin.json author is present but not an object
+    #[strum(props(code = "M020", name = "author-type-invalid"))]
+    AuthorTypeInvalid,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
     /// H001: hooks/hooks.json is missing
@@ -1223,7 +1226,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            290,
+            291,
             "every enum variant must be registered"
         );
     }
@@ -1443,8 +1446,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            169,
-            "Expected 169 default-error rules, got {}",
+            170,
+            "Expected 170 default-error rules, got {}",
             errors.len()
         );
     }

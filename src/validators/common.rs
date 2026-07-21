@@ -1,8 +1,22 @@
+use crate::context::ManifestError;
+use crate::diagnostic::DiagnosticMetadata;
 use regex::Regex;
 use std::ops::Range;
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 use url::{Host, Url};
+
+/// Convert a manifest loader failure's structured parse location into the
+/// renderer-independent metadata used by every manifest-owning validator.
+pub(crate) fn manifest_error_metadata(error: &ManifestError) -> DiagnosticMetadata {
+    match error.location() {
+        Some(location) => match location.column() {
+            Some(column) => DiagnosticMetadata::at_point(location.line(), column),
+            None => DiagnosticMetadata::at_line(location.line()),
+        },
+        None => DiagnosticMetadata::default(),
+    }
+}
 
 /// Shared regex: matches characters outside [a-z0-9-] in names.
 /// Used by skill_content name validation and agents name validation.

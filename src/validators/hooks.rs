@@ -1,7 +1,7 @@
 use crate::context::{LintContext, ManifestState, collect_json_strings};
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
-use crate::validators::hook_schema;
+use crate::validators::{common::manifest_error_metadata, hook_schema};
 use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
@@ -80,7 +80,12 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
             return;
         }
         ManifestState::Invalid(e) => {
-            diag.report_at(LintRule::HooksJsonInvalid, f, e);
+            diag.report_at_with(
+                LintRule::HooksJsonInvalid,
+                f,
+                e.message(),
+                manifest_error_metadata(e),
+            );
             return;
         }
         ManifestState::Parsed(v) => v,
@@ -121,7 +126,12 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
     let val = match &ctx.settings_json {
         ManifestState::Missing => return, // Optional file
         ManifestState::Invalid(e) => {
-            diag.report_at(LintRule::SettingsJsonInvalid, ".claude/settings.json", e);
+            diag.report_at_with(
+                LintRule::SettingsJsonInvalid,
+                ".claude/settings.json",
+                e.message(),
+                manifest_error_metadata(e),
+            );
             return;
         }
         ManifestState::Parsed(v) => v,
@@ -161,10 +171,11 @@ pub fn validate_settings_schema(ctx: &LintContext, diag: &mut DiagnosticCollecto
 pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     match &ctx.settings_local_json {
         ManifestState::Missing => {} // Optional file
-        ManifestState::Invalid(e) => diag.report_at(
+        ManifestState::Invalid(e) => diag.report_at_with(
             LintRule::SettingsLocalInvalid,
             ".claude/settings.local.json",
-            e,
+            e.message(),
+            manifest_error_metadata(e),
         ),
         ManifestState::Parsed(val) => {
             validate_hook_command_paths(
@@ -227,10 +238,7 @@ mod tests {
 
     #[test]
     fn test_v3_invalid_hooks_json() {
-        let ctx = make_ctx(
-            ManifestState::Invalid("bad json".to_string()),
-            ManifestState::Missing,
-        );
+        let ctx = make_ctx(ManifestState::invalid("bad json"), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
@@ -282,7 +290,7 @@ mod tests {
     fn test_v4_invalid_settings() {
         let ctx = make_ctx(
             ManifestState::Missing,
-            ManifestState::Invalid("bad settings".to_string()),
+            ManifestState::invalid("bad settings"),
         );
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_hooks(&ctx, &mut diag);
@@ -418,10 +426,7 @@ mod tests {
     #[test]
     fn test_v26_unparseable_hooks_json_is_silent() {
         // H002 owns that report; the schema engine must not double-report.
-        let ctx = make_ctx(
-            ManifestState::Invalid("bad".to_string()),
-            ManifestState::Missing,
-        );
+        let ctx = make_ctx(ManifestState::invalid("bad"), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json_schema(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
@@ -480,7 +485,7 @@ mod tests {
     #[test]
     fn test_v28_settings_local_invalid_fires_h025() {
         let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        ctx.settings_local_json = ManifestState::Invalid("bad local settings".to_string());
+        ctx.settings_local_json = ManifestState::invalid("bad local settings");
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_local(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);

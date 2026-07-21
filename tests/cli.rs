@@ -542,6 +542,93 @@ fn json_preserves_structured_locations_without_fabricating_them() {
 }
 
 #[test]
+fn invalid_json_manifest_diagnostics_are_relative_and_located() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    for relative in [
+        ".claude-plugin/plugin.json",
+        ".claude-plugin/marketplace.json",
+        "hooks/hooks.json",
+        ".claude/settings.json",
+        ".claude/settings.local.json",
+    ] {
+        let path = tmp.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "{\n  invalid\n}").unwrap();
+    }
+
+    let output = run_in(
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--only",
+            "M002,M006,H002,H006,H025",
+            ".",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 5, "{report:#}");
+    for diagnostic in diagnostics {
+        let subject = diagnostic["subject_path"].as_str().unwrap();
+        assert!(diagnostic["message"].as_str().unwrap().starts_with(subject));
+        assert!(
+            !diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains(tmp.path().to_str().unwrap())
+        );
+        assert_eq!(diagnostic["location"]["start"]["line"], 2);
+        assert_eq!(diagnostic["location"]["start"]["column"], 3);
+    }
+}
+
+#[test]
+fn manifest_author_and_channel_diagnostics_preserve_strictness_policy() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let plugin = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+    std::fs::write(
+        plugin,
+        r#"{"name":"plugin","version":"1.0.0","author":"Ada","mcpServers":{"existing":{"command":"server"}},"channels":{"alerts":{"server":"missing"}}}"#,
+    )
+    .unwrap();
+
+    for (arguments, channel_severity) in [
+        (
+            vec!["--format", "json", "--only", "M017,M020", "."],
+            "warning",
+        ),
+        (
+            vec!["--format", "json", "--pedantic", "--only", "M017,M020", "."],
+            "error",
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "M017,M020", "."],
+            "error",
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        assert_eq!(diagnostics.len(), 2);
+        let channel = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic["code"] == "M017")
+            .unwrap();
+        assert_eq!(channel["severity"], channel_severity);
+        let author = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic["code"] == "M020")
+            .unwrap();
+        assert_eq!(author["severity"], "error");
+    }
+}
+
+#[test]
 fn json_pathless_finding_has_no_subject_or_location() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
