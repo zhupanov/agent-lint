@@ -296,7 +296,7 @@ code, and identifiable quoted examples. Q004 applies only when both root
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | Q001 | `prompt-generic-filler` | Generic instruction that adds no actionable guidance | Always | warn |
-| Q002 | `prompt-negative-only` | `don't`/`do not`/`never`/`avoid` without `instead`/`rather`/`prefer` within three prose lines | Always | error |
+| Q002 | `prompt-negative-only` | Operative style/behavior negative without `instead`/`rather`/`prefer` within three prose lines; precise safety and integrity prohibitions are exempt | Always | error |
 | Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | error |
 | Q004 | `claude-readme-duplicate` | More than 40% of normalized `CLAUDE.md` prose lines also occur in `README.md` (at least three shared lines) | Always | error |
 
@@ -304,6 +304,12 @@ Q001 recognizes: `be helpful`, `be accurate`, `be concise`, `follow
 instructions`, `do your best`, `be professional`, `use best judgment`, and
 `provide high-quality`. Prefer a concrete project-specific requirement over
 these phrases.
+
+Q002 evaluates explicit sentence-scoped patterns. It exempts precise
+prohibitions against secret/private-data disclosure, authorization bypass,
+destructive or irreversible actions, fabricated evidence, and explicit legal
+or security policy violations. Safety-adjacent words elsewhere in a sentence
+do not exempt an unrelated style negative.
 
 ## Claude Configuration Rules (R/O/T)
 

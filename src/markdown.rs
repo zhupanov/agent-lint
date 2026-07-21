@@ -77,7 +77,7 @@ impl MarkdownDocument {
         let mut headings = Vec::new();
         let mut links = Vec::new();
         let mut excluded_lines = std::collections::HashSet::new();
-        let mut inline_code = Vec::new();
+        let mut inline_exclusions = Vec::new();
         for node in root.descendants() {
             let data = node.data.borrow();
             match &data.value {
@@ -107,7 +107,7 @@ impl MarkdownDocument {
                 | NodeValue::CodeBlock(_) => {
                     excluded_lines.extend(data.sourcepos.start.line..=data.sourcepos.end.line);
                 }
-                NodeValue::Code(_) => inline_code.push((
+                NodeValue::Code(_) => inline_exclusions.push((
                     data.sourcepos.start.line,
                     data.sourcepos.start.column,
                     data.sourcepos.end.line,
@@ -125,6 +125,7 @@ impl MarkdownDocument {
             1
         };
         let mut tracker = CodeFenceTracker::new();
+        let mut in_html_comment = false;
         let body_prose = content
             .lines()
             .enumerate()
@@ -138,7 +139,7 @@ impl MarkdownDocument {
                 }
 
                 let mut text = line.to_string();
-                for &(start_line, start_column, end_line, end_column) in &inline_code {
+                for &(start_line, start_column, end_line, end_column) in &inline_exclusions {
                     if line_number < start_line || line_number > end_line {
                         continue;
                     }
@@ -164,6 +165,8 @@ impl MarkdownDocument {
                         })
                         .collect();
                 }
+                text = mask_html_comments(&text, &mut in_html_comment);
+                text = mask_quoted_text(&text);
                 Some(MarkdownProseLine {
                     line: line_number,
                     text,
@@ -230,6 +233,69 @@ impl MarkdownDocument {
     pub fn body_prose(&self) -> &[MarkdownProseLine] {
         &self.body_prose
     }
+}
+
+fn mask_html_comments(text: &str, in_comment: &mut bool) -> String {
+    let mut chars: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if *in_comment {
+            if chars[index..].starts_with(&['-', '-', '>']) {
+                chars[index..index + 3].fill(' ');
+                *in_comment = false;
+                index += 3;
+            } else {
+                chars[index] = ' ';
+                index += 1;
+            }
+        } else if chars[index..].starts_with(&['<', '!', '-', '-']) {
+            chars[index..index + 4].fill(' ');
+            *in_comment = true;
+            index += 4;
+        } else {
+            index += 1;
+        }
+    }
+    chars.into_iter().collect()
+}
+
+/// Remove balanced quoted examples while preserving columns. Apostrophes in
+/// contractions and possessives are not treated as quote delimiters.
+fn mask_quoted_text(text: &str) -> String {
+    let mut chars: Vec<char> = text.chars().collect();
+    for (opening, closing) in [('"', '"'), ('“', '”'), ('‘', '’'), ('\'', '\'')] {
+        let mut index = 0;
+        while index < chars.len() {
+            if chars[index] != opening || !is_quote_opener(&chars, index, opening) {
+                index += 1;
+                continue;
+            }
+            let Some(end) = ((index + 1)..chars.len()).find(|&candidate| {
+                chars[candidate] == closing && is_quote_closer(&chars, candidate, closing)
+            }) else {
+                index += 1;
+                continue;
+            };
+            chars[index..=end].fill(' ');
+            index = end + 1;
+        }
+    }
+    chars.into_iter().collect()
+}
+
+fn is_quote_opener(chars: &[char], index: usize, quote: char) -> bool {
+    quote != '\''
+        || (index == 0 || !chars[index - 1].is_alphanumeric())
+            && chars
+                .get(index + 1)
+                .is_some_and(|next| !next.is_whitespace())
+}
+
+fn is_quote_closer(chars: &[char], index: usize, quote: char) -> bool {
+    quote != '\''
+        || (index + 1 == chars.len() || !chars[index + 1].is_alphanumeric())
+            && index > 0
+            && !chars[index - 1].is_whitespace()
 }
 
 fn frontmatter_and_body_start(content: &str) -> (Option<Vec<String>>, Option<usize>) {
@@ -305,5 +371,38 @@ mod tests {
         let doc = MarkdownDocument::parse_body("---\n# Important\nYou should verify.\n");
         assert!(doc.frontmatter().is_none());
         assert!(doc.body().starts_with("---"));
+    }
+
+    #[test]
+    fn prose_masks_html_and_balanced_quoted_examples() {
+        let doc = MarkdownDocument::parse_body(
+            "Do not expose secrets. <!-- Never apologize. -->\n\
+             <!-- Never apologize.\n\
+             Avoid explanations. -->\n\
+             The guide says \"Never apologize.\"\n\
+             <div>\n\
+             Never apologize.\n\
+             </div>\n\
+             Don't be verbose.\n\
+             'Avoid explanations.'\n",
+        );
+
+        assert_eq!(
+            doc.body_prose()
+                .iter()
+                .map(|line| line.text.trim())
+                .collect::<Vec<_>>(),
+            [
+                "Do not expose secrets.",
+                "",
+                "",
+                "The guide says",
+                "<div>",
+                "Never apologize.",
+                "</div>",
+                "Don't be verbose.",
+                ""
+            ]
+        );
     }
 }

@@ -10,7 +10,7 @@ use crate::prompt_budget::{
 };
 use crate::rules::LintRule;
 use crate::traversal;
-use crate::validators::common::classify_inline_code_path;
+use crate::validators::common::{NEVER_INVENT_PROHIBITION, classify_inline_code_path};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -25,9 +25,6 @@ static OUTPUT_ONLY: LazyLock<Regex> = LazyLock::new(|| {
 });
 static CANNOT_READ: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\bunreadable\b|\b(?:cannot|can't|could\s+not|unable\s+to)\s+(?:read|open)\b|\bRead\s+fails\b|\bfail[ -]+closed\b").unwrap()
-});
-static NEVER_INVENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:never|do\s+not|don't)\s+(?:invent|fabricate|guess)\b").unwrap()
 });
 static SKILL_INVOKE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -289,7 +286,7 @@ fn validate_agent_contracts(
             }
         }
         if let (Some(read), Some(output)) = (read_line, first_matching_line(body, &OUTPUT_ONLY)) {
-            if (!CANNOT_READ.is_match(body) || !NEVER_INVENT.is_match(body))
+            if (!CANNOT_READ.is_match(body) || !NEVER_INVENT_PROHIBITION.is_match(body))
                 && !has_reasoned_marker(&content, "lint-agent-output-mandate: ok")
             {
                 diag.report_at(

@@ -8,9 +8,12 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
+use crate::validators::common::NEVER_INVENT_PROHIBITION;
+use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 const GENERIC_FILLER_PHRASES: &[&str] = &[
     "be helpful",
@@ -28,6 +31,27 @@ const POSITIVE_ALTERNATIVES: &[&str] = &["instead", "rather", "prefer"];
 const NEGATIVE_WINDOW: usize = 3;
 const README_OVERLAP_THRESHOLD: f64 = 0.4;
 const MIN_SHARED_README_LINES: usize = 3;
+
+static PRECISE_SAFETY_PROHIBITIONS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    [
+        // Disclosure or logging of secrets, credentials, tokens, and private data.
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:expos(?:e|ing)|reveal(?:ing)?|disclos(?:e|ing)|leak(?:ing)?|log(?:ging)?|print(?:ing)?|echo(?:ing)?|publish(?:ing)?|shar(?:e|ing)|transmit(?:ting)?|send(?:ing)?|commit(?:ting)?)(?:\s+(?:or|and)\s+(?:expos(?:e|ing)|reveal(?:ing)?|disclos(?:e|ing)|leak(?:ing)?|log(?:ging)?|print(?:ing)?|echo(?:ing)?|publish(?:ing)?|shar(?:e|ing)|transmit(?:ting)?|send(?:ing)?|commit(?:ting)?))?\s+(?:(?:any|the|a|an|our|user|users'|customer|customers'|private|sensitive|personal|authentication|api)\s+){0,3}(?:secrets?|credentials?|tokens?|passwords?|private data|personal data|customer data|user data|personally identifiable information|pii|api keys?)\b",
+        // Attempts to bypass approval, authorization, permissions, or access controls.
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:bypass(?:ing)?|circumvent(?:ing)?|evad(?:e|ing)|skip(?:ping)?|ignor(?:e|ing)|overrid(?:e|ing)|disabl(?:e|ing))\s+(?:(?:any|required|explicit|the|an?|user|security)\s+){0,3}(?:authorization|approval|permissions?|authentication|access controls?|security controls?)\b",
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:proceed(?:ing)?|act(?:ing)?|execut(?:e|ing)|continu(?:e|ing)|mak(?:e|ing) changes?)\b(?:\s+[[:alnum:]_-]+){0,3}\s+without\s+(?:(?:required|explicit|the|an?|user)\s+){0,2}(?:authorization|approval|permission)\b",
+        // Direct destructive or irreversible mutations.
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:delet(?:e|ing)|destroy(?:ing)?|eras(?:e|ing)|wip(?:e|ing)|overwrit(?:e|ing)|truncat(?:e|ing)|drop(?:ping)?|force[- ]push(?:ing)?|reformat(?:ting)?)\b",
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:remov(?:e|ing)|reset(?:ting)?|discard(?:ing)?)\s+(?:(?:any|all|the|a|an|our|user|customer|local|remote|uncommitted)\s+){0,3}(?:files?|directories|data|records?|resources?|branches|commits?|changes?|work)\b",
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:run(?:ning)?|execut(?:e|ing)|perform(?:ing)?)\s+(?:(?:any|an?|the|potentially)\s+){0,2}(?:destructive(?:\s+or\s+irreversible)?|irreversible)\s+(?:actions?|commands?|operations?)\b",
+        // Additional evidence-integrity language beyond A013's shared contract.
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:inventing|fabricating|guessing|falsif(?:y|ying)|forg(?:e|ing)|mak(?:e|ing) up)\b",
+        // Explicit legal, regulatory, privacy, and security policy constraints.
+        r"^(?:don't|do not|never|avoid)\s+(?:(?:ever|intentionally|knowingly)\s+)?(?:violat(?:e|ing)|breach(?:ing)?|contraven(?:e|ing)|disregard(?:ing)?|break(?:ing)?)\s+(?:(?:any|an?|the|explicit|applicable|legal|security|privacy)\s+){0,3}(?:laws?|regulations?|legal(?:/security)? polic(?:y|ies)|security polic(?:y|ies)|privacy polic(?:y|ies)|compliance requirements?)\b",
+    ]
+    .into_iter()
+    .map(|pattern| Regex::new(pattern).expect("Q002 safety pattern is valid"))
+    .collect()
+});
 
 /// One shared prompt-content pass for a validation run.
 ///
@@ -136,17 +160,29 @@ fn check_negative_only(
     diag: &mut DiagnosticCollector,
 ) {
     let lines = document.prose_lines();
+    let example_scopes = example_scopes(document);
     for (index, line) in lines.iter().enumerate() {
-        let normalized = line.text.to_ascii_lowercase();
-        if !contains_phrase(&normalized, NEGATIVE_INSTRUCTIONS) {
+        if example_scopes[index] {
+            continue;
+        }
+
+        let has_unaddressed_negative = line
+            .text
+            .split(['.', '!', '?', ';'])
+            .any(sentence_has_unaddressed_negative);
+        if !has_unaddressed_negative {
             continue;
         }
 
         let start = index.saturating_sub(NEGATIVE_WINDOW);
         let end = (index + NEGATIVE_WINDOW + 1).min(lines.len());
-        let has_alternative = lines[start..end].iter().any(|nearby| {
-            contains_phrase(&nearby.text.to_ascii_lowercase(), POSITIVE_ALTERNATIVES)
-        });
+        let has_alternative = lines[start..end]
+            .iter()
+            .zip(&example_scopes[start..end])
+            .any(|(nearby, is_example)| {
+                !is_example
+                    && contains_phrase(&nearby.text.to_ascii_lowercase(), POSITIVE_ALTERNATIVES)
+            });
         if !has_alternative {
             diag.report_with(
                 LintRule::PromptNegativeOnly,
@@ -158,6 +194,106 @@ fn check_negative_only(
             return;
         }
     }
+}
+
+fn sentence_has_unaddressed_negative(sentence: &str) -> bool {
+    let normalized = sentence.to_ascii_lowercase();
+    phrase_ranges(&normalized, NEGATIVE_INSTRUCTIONS)
+        .into_iter()
+        .any(|(start, _)| {
+            let predicate = &normalized[start..];
+            is_operative_negative(&normalized, start)
+                && NEVER_INVENT_PROHIBITION
+                    .find(predicate)
+                    .is_none_or(|matched| matched.start() != 0)
+                && !PRECISE_SAFETY_PROHIBITIONS
+                    .iter()
+                    .any(|pattern| pattern.is_match(predicate))
+        })
+}
+
+fn is_operative_negative(sentence: &str, marker_start: usize) -> bool {
+    let prefix = sentence[..marker_start]
+        .trim()
+        .trim_start_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '#' | '-' | '*' | '+' | '>' | '(' | ')' | '[' | ']'
+                )
+                || character.is_ascii_digit()
+                || character == '.'
+        })
+        .trim();
+
+    prefix.is_empty()
+        || prefix == "please"
+        || prefix.ends_with(':')
+        || prefix
+            .rsplit_once(',')
+            .is_some_and(|(_, conjunction)| matches!(conjunction.trim(), "and" | "or" | "but"))
+        || ([" and", " or", " but"]
+            .iter()
+            .any(|conjunction| prefix.ends_with(conjunction))
+            && contains_phrase(prefix, NEGATIVE_INSTRUCTIONS))
+        || setup_clause(prefix)
+        || (contains_phrase(prefix, &["must", "should", "shall"])
+            && contains_phrase(
+                prefix,
+                &["you", "agent", "agents", "assistant", "model", "tool"],
+            ))
+}
+
+fn setup_clause(prefix: &str) -> bool {
+    let Some(clause) = prefix.strip_suffix(',') else {
+        return false;
+    };
+    let clause = clause.trim_start();
+    ["when ", "before ", "after ", "if ", "unless ", "while "]
+        .iter()
+        .any(|opening| clause.starts_with(opening))
+}
+
+fn example_scopes(document: &LiveInstructionDocument<'_>) -> Vec<bool> {
+    let mut active_heading_level = None;
+    document
+        .prose_lines()
+        .iter()
+        .map(|line| {
+            if let Some(heading) = document
+                .headings()
+                .iter()
+                .find(|heading| heading.line == line.line)
+            {
+                if active_heading_level.is_some_and(|level| heading.level <= level) {
+                    active_heading_level = None;
+                }
+                if contains_phrase(&heading.text.to_ascii_lowercase(), &["example", "examples"]) {
+                    active_heading_level = Some(heading.level);
+                    return true;
+                }
+            }
+
+            active_heading_level.is_some()
+                || is_explicit_example_line(&line.text.to_ascii_lowercase())
+        })
+        .collect()
+}
+
+fn is_explicit_example_line(line: &str) -> bool {
+    let line = line.trim().trim_start_matches(|character: char| {
+        character.is_whitespace() || matches!(character, '-' | '*' | '+' | '>')
+    });
+    [
+        "example:",
+        "example ",
+        "for example,",
+        "for example:",
+        "e.g.,",
+        "e.g.:",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
 }
 
 fn check_weak_critical_language(
@@ -243,12 +379,22 @@ fn normalize_line(line: &str) -> Option<String> {
 }
 
 fn contains_phrase(text: &str, phrases: &[&str]) -> bool {
-    phrases.iter().any(|phrase| {
-        text.match_indices(phrase).any(|(start, _)| {
-            let end = start + phrase.len();
-            is_word_boundary(text, start, true) && is_word_boundary(text, end, false)
+    !phrase_ranges(text, phrases).is_empty()
+}
+
+fn phrase_ranges(text: &str, phrases: &[&str]) -> Vec<(usize, usize)> {
+    let mut ranges = phrases
+        .iter()
+        .flat_map(|phrase| {
+            text.match_indices(phrase).filter_map(|(start, _)| {
+                let end = start + phrase.len();
+                (is_word_boundary(text, start, true) && is_word_boundary(text, end, false))
+                    .then_some((start, end))
+            })
         })
-    })
+        .collect::<Vec<_>>();
+    ranges.sort_unstable();
+    ranges
 }
 
 fn contains_word(text: &str, word: &str) -> bool {
@@ -289,6 +435,32 @@ mod tests {
         diag
     }
 
+    fn q002_diagnostics(body: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        diagnostics_for(body)
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptNegativeOnly)
+            .cloned()
+            .collect()
+    }
+
+    fn q002_diagnostics_with_frontmatter(content: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        let markdown = MarkdownDocument::parse(content);
+        let document = LiveInstructionDocument::new(
+            Path::new(".cursor/rules/example.mdc"),
+            InstructionSurfaceKind::CursorRule,
+            &markdown,
+        );
+        let mut diagnostics = DiagnosticCollector::new_all_enabled();
+        PromptContentPass::default().validate(&document, &mut diagnostics);
+        diagnostics
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptNegativeOnly)
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn generic_filler_is_case_insensitive_and_fence_aware() {
         let diag = diagnostics_for("Be helpful when responding.\n```text\nNever do this\n```");
@@ -297,12 +469,99 @@ mod tests {
 
     #[test]
     fn negative_instruction_needs_nearby_positive_alternative() {
-        let missing = diagnostics_for("Never invent test results.");
-        assert_eq!(missing.error_count(), 1);
+        for missing in [
+            "Don't be verbose.",
+            "Never apologize.",
+            "Avoid explanations.",
+            "Do not add unnecessary preambles.",
+        ] {
+            assert_eq!(q002_diagnostics(missing).len(), 1, "{missing}");
+        }
 
-        let addressed =
-            diagnostics_for("Never invent test results. Prefer reporting the missing evidence.");
-        assert_eq!(addressed.error_count(), 0);
+        assert!(q002_diagnostics("Never apologize. Prefer a direct correction.").is_empty());
+        assert!(
+            q002_diagnostics(
+                "Never apologize.\nContext one.\nContext two.\nInstead, state the correction."
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            q002_diagnostics(
+                "Never apologize.\nContext one.\nContext two.\nContext three.\nInstead, state the correction."
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn precise_safety_and_integrity_prohibitions_are_exempt() {
+        for exempt in [
+            "Never expose or log secrets.",
+            "Do not reveal authentication credentials.",
+            "Don't bypass required approval.",
+            "Never proceed without explicit authorization.",
+            "Avoid deleting user data.",
+            "Do not run destructive commands.",
+            "Never execute destructive or irreversible actions.",
+            "Never invent evidence.",
+            "Do not fabricate results.",
+            "Don't guess.",
+            "Avoid falsifying test output.",
+            "Never violate an applicable security policy.",
+            "Never violate an explicit legal/security policy.",
+            "Do not breach privacy regulations.",
+        ] {
+            assert!(q002_diagnostics(exempt).is_empty(), "{exempt}");
+        }
+    }
+
+    #[test]
+    fn safety_exemptions_are_scoped_to_each_direct_predicate() {
+        let diagnostic = q002_diagnostics(
+            "Never expose credentials.\nNever apologize when a data file is missing.",
+        );
+        assert_eq!(diagnostic.len(), 1);
+        assert_eq!(diagnostic[0].location.unwrap().start().line_number(), 2);
+
+        let same_sentence =
+            q002_diagnostics("Never expose credentials, and never apologize to the user.");
+        assert_eq!(same_sentence.len(), 1);
+        assert_eq!(
+            q002_diagnostics("Never expose credentials and never apologize to the user.").len(),
+            1
+        );
+        assert_eq!(q002_diagnostics("Avoid removing explanations.").len(), 1);
+    }
+
+    #[test]
+    fn non_operative_and_structural_occurrences_are_exempt() {
+        for exempt in [
+            "```text\nNever apologize.\n```",
+            "The phrase `Never apologize` is a bad example.",
+            "> Never apologize.",
+            "The guide says \"Never apologize.\"",
+            "<!-- Never apologize. -->",
+            "<!-- generated file: do not edit -->",
+            "The validator never writes files.",
+            "For example, never apologize.",
+            "# Examples\n- Never apologize.\n## More examples\nAvoid explanations.\n# Requirements\nState the result.",
+        ] {
+            assert!(q002_diagnostics(exempt).is_empty(), "{exempt}");
+        }
+
+        assert_eq!(q002_diagnostics("Do not write 'never apologize'.").len(), 1);
+        assert_eq!(q002_diagnostics("Agents must never apologize.").len(), 1);
+        assert_eq!(
+            q002_diagnostics("When responding, never apologize.").len(),
+            1
+        );
+        assert!(
+            q002_diagnostics_with_frontmatter(
+                "---\ndescription: Never apologize.\nalwaysApply: true\n---\nState the result.\n"
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -379,11 +638,11 @@ mod tests {
             std::env::set_current_dir(tmp.path()).unwrap();
             std::fs::create_dir_all("nested").unwrap();
             std::fs::create_dir_all(".cursor/rules/nested").unwrap();
-            std::fs::write("AGENTS.md", "Never invent test results.\n").unwrap();
+            std::fs::write("AGENTS.md", "Never apologize.\n").unwrap();
             std::fs::write("nested/AGENTS.md", "Be helpful when responding.\n").unwrap();
             std::fs::write(
                 ".cursor/rules/example.mdc",
-                "---\ndescription: Be helpful in metadata\nalwaysApply: true\n---\nNever invent test results.\n",
+                "---\ndescription: Be helpful in metadata\nalwaysApply: true\n---\nNever apologize.\n",
             )
             .unwrap();
             std::fs::write(
@@ -391,8 +650,8 @@ mod tests {
                 "Be concise when responding.\n",
             )
             .unwrap();
-            std::fs::write(".cursorrules", "Never invent test results.\n").unwrap();
-            std::fs::write("notes.md", "Never invent test results.\n").unwrap();
+            std::fs::write(".cursorrules", "Never apologize.\n").unwrap();
+            std::fs::write("notes.md", "Never apologize.\n").unwrap();
 
             let mut diag = DiagnosticCollector::new_all_enabled();
             super::super::run_all_with_targets(
@@ -500,8 +759,8 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all(".cursor/rules").unwrap();
-        std::fs::write("AGENTS.md", "Never invent output.\n").unwrap();
-        std::fs::write(".cursor/rules/example.md", "Never invent output.\n").unwrap();
+        std::fs::write("AGENTS.md", "Never apologize.\n").unwrap();
+        std::fs::write(".cursor/rules/example.md", "Never apologize.\n").unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
         super::super::run_all_with_targets(
@@ -535,9 +794,9 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all("nested").unwrap();
         std::fs::create_dir_all("excluded").unwrap();
-        std::fs::write("AGENTS.md", "Never invent output.\n").unwrap();
-        std::fs::write("nested/AGENTS.md", "Never invent output.\n").unwrap();
-        std::fs::write("excluded/AGENTS.md", "Never invent output.\n").unwrap();
+        std::fs::write("AGENTS.md", "Never apologize.\n").unwrap();
+        std::fs::write("nested/AGENTS.md", "Never apologize.\n").unwrap();
+        std::fs::write("excluded/AGENTS.md", "Never apologize.\n").unwrap();
         std::fs::write(
             "agent-lint.toml",
             "[[lint.overrides]]\nfiles = [\"nested/AGENTS.md\"]\nsuppress = [\"Q002\"]\nreason = \"legacy nested instructions\"\n",
@@ -576,7 +835,7 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all(".cursor/rules").unwrap();
-        std::fs::write(".cursor/rules/AGENTS.md", "Never invent output.\n").unwrap();
+        std::fs::write(".cursor/rules/AGENTS.md", "Never apologize.\n").unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
         super::super::run_all_with_targets(
