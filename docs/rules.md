@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 295 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 294 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -647,12 +647,6 @@ Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn
 | P026 | `mcp-server-reserved` | Server name is reserved by Claude Code | Always | error |
 | P027 | `mcp-structure-invalid` | Required standalone server map is missing or invalid; an inline map, server entry, duplicate top-level map key, or adapter selector has an invalid shape | Always | error |
 
-## Slack Rules (K)
-
-| Code | Name | Description | Mode | Default |
-|------|------|-------------|------|---------|
-| K001 | `slack-fallback-mismatch` | Slack fallback variable without corresponding `CLAUDE_PLUGIN_OPTION_` reference | Plugin | warn |
-
 ## Docs Rules (D)
 
 | Code | Name | Description | Mode | Default |
@@ -695,7 +689,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 295):**
+**Auto-fixable rules (11 of 294):**
 
 | Rule | Code | Fix |
 |------|------|-----|

@@ -19,7 +19,6 @@ mod mcp;
 mod prompt_content;
 pub(crate) mod skill_content;
 pub(crate) mod skills;
-mod slack;
 mod user_config;
 
 use crate::config::ExcludeSet;
@@ -156,10 +155,6 @@ fn run_plugin(
     // V18/V23–V25/V33/U008: userConfig schema (top-level and channels)
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
         user_config::validate_user_config(ctx, diag);
-    });
-    // V19: Slack fallback consistency (larch-specific convention)
-    diag.with_subject_path(".claude-plugin/marketplace.json", |diag| {
-        slack::validate_slack_fallback_consistency(diag, exclude);
     });
     // V21: agent-template count
     agents::validate_agent_template_count(diag, exclude);
