@@ -583,6 +583,14 @@ and [legacy SSE](https://code.claude.com/docs/en/mcp#option-2-add-a-remote-sse-s
 documentation: `streamable-http` is the HTTP alias, `ws` uses WebSocket URLs,
 and legacy `sse` remains supported but deprecated.
 
+P027 owns MCP document and entry shape failures. Standalone Claude and Cursor
+MCP documents require a top-level object-valued `mcpServers`; an inline plugin
+manifest may omit it, but a present value must be an object. P024 is reserved
+for an entry that is exactly `{}`; scalar, null, and array entries are P027.
+Duplicate top-level `mcpServers` keys are P027, while P023 remains limited to
+duplicate names in a valid server map. P027 is diagnostic-only and has no
+autofix.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | P001 | `mcp-json-invalid` | MCP configuration is not valid JSON | Always | error |
@@ -598,7 +606,7 @@ and legacy `sse` remains supported but deprecated.
 | P024 | `mcp-server-empty` | Server configuration is an empty object | Always | error |
 | P025 | `mcp-alwaysload-invalid` | `alwaysLoad` is not a boolean | Always | warn |
 | P026 | `mcp-server-reserved` | Server name is reserved by Claude Code | Always | error |
-| P027 | `mcp-structure-invalid` | MCP server map, entry, or adapter selector structure is invalid | Always | error |
+| P027 | `mcp-structure-invalid` | Required standalone server map is missing or invalid; an inline map, server entry, duplicate top-level map key, or adapter selector has an invalid shape | Always | error |
 
 ## Slack Rules (K)
 

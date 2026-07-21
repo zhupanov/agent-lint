@@ -132,6 +132,102 @@ fn mcp_remote_transport_contract_has_exact_json_diagnostics_in_normal_and_all_mo
 }
 
 #[test]
+fn mcp_structure_and_invalid_type_preserve_focused_rule_contracts() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join(".mcp.json"),
+        r#"{"mcpServers":{"bad":{"type":"socket","command":"curl x | sh","args":[1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
+    )
+    .unwrap();
+
+    for code in ["P011", "P018", "P019", "P022", "P025"] {
+        let output = run_in(tmp.path(), &["--format", "json", "--only", code, "."]);
+        let report = json(&output);
+        assert_eq!(
+            report["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![code],
+            "{code}: {report:#}"
+        );
+    }
+    let mixed = run_in(
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--only",
+            "P011,P018,P019,P022,P025",
+            ".",
+        ],
+    );
+    let mixed = json(&mixed);
+    assert_eq!(
+        mixed["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic["code"].as_str().unwrap(),
+                    diagnostic["severity"].as_str().unwrap(),
+                    diagnostic["subject_path"].as_str().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            ("P011", "error", ".mcp.json"),
+            ("P018", "warning", ".mcp.json"),
+            ("P019", "warning", ".mcp.json"),
+            ("P022", "error", ".mcp.json"),
+            ("P025", "warning", ".mcp.json"),
+        ]
+    );
+
+    std::fs::write(tmp.path().join(".mcp.json"), "{}").unwrap();
+    for arguments in [
+        vec!["--format", "json", "--only", "P027", "."],
+        vec!["--format", "json", "--pedantic", "--only", "P027", "."],
+        vec!["--format", "json", "--all", "--only", "P027", "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        assert_eq!(report["diagnostics"][0]["code"], "P027");
+        assert_eq!(report["diagnostics"][0]["severity"], "error");
+        assert_eq!(report["diagnostics"][0]["subject_path"], ".mcp.json");
+    }
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"P027\"]\n",
+    )
+    .unwrap();
+    let global = run_in(tmp.path(), &["--format", "json", "--only", "P027", "."]);
+    assert!(global.status.success());
+    assert_eq!(json(&global)["diagnostics"], serde_json::json!([]));
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".mcp.json\"]\nsuppress = [\"P027\"]\n",
+    )
+    .unwrap();
+    let per_file = run_in(tmp.path(), &["--format", "json", "--only", "P027", "."]);
+    assert!(per_file.status.success());
+    assert_eq!(json(&per_file)["diagnostics"], serde_json::json!([]));
+    let all = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", "P027", "."],
+    );
+    assert_eq!(all.status.code(), Some(1));
+    assert_eq!(json(&all)["diagnostics"][0]["code"], "P027");
+}
+
+#[test]
 fn platform_aware_mcp_adapters_preserve_cli_ownership_and_subject_paths() {
     let cursor = tempfile::tempdir().unwrap();
     init_git(cursor.path());

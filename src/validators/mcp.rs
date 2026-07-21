@@ -1,6 +1,6 @@
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, ManifestState};
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::platforms::ValidationTargets;
 use crate::rules::LintRule;
 use crate::traversal;
@@ -180,9 +180,9 @@ fn validate_json_document(
             return;
         }
     };
-    let duplicates = duplicate_mcp_keys(&content);
+    let raw_keys = scan_mcp_keys(&content);
     diag.with_subject_path(&display, |diag| {
-        validate_document(&display, &value, adapter, Some(duplicates), diag);
+        validate_document(&display, &value, adapter, Some((&content, &raw_keys)), diag);
     });
 }
 
@@ -208,20 +208,47 @@ fn validate_document(
     display: &str,
     value: &Value,
     adapter: McpAdapter,
-    duplicates: Option<DuplicateMcpKeys>,
+    raw_document: Option<(&str, &RawMcpKeys)>,
     diag: &mut DiagnosticCollector,
 ) {
-    if let Some(duplicates) = duplicates {
-        for () in duplicates.top_level_server_maps {
-            diag.report(
-                LintRule::McpStructureInvalid,
+    if let Some((source, raw_keys)) = raw_document {
+        for duplicate in raw_keys.server_maps.iter().skip(1) {
+            report_structure(
+                diag,
                 &format!("{display}: duplicate top-level mcpServers key"),
+                Some((source, duplicate.key_range.clone())),
+                None,
             );
         }
-        for name in duplicates.server_names {
+        if let Some(first) = raw_keys.server_maps.first()
+            && !first.value_is_object
+        {
+            report_structure(
+                diag,
+                &format!("{display}: mcpServers must be an object"),
+                Some((source, first.value_range.clone())),
+                None,
+            );
+        }
+        for map in &raw_keys.server_maps {
+            for entry in &raw_keys.server_entries[map.entries.clone()] {
+                if !entry.value_is_object {
+                    report_structure(
+                        diag,
+                        &format!("{display}: mcpServers.{} must be an object", entry.name),
+                        Some((source, entry.value_range.clone())),
+                        None,
+                    );
+                }
+            }
+        }
+        for duplicate in &raw_keys.server_names {
             diag.report(
                 LintRule::McpDuplicateServer,
-                &format!("{display}: mcpServers contains duplicate server name '{name}'"),
+                &format!(
+                    "{display}: mcpServers contains duplicate server name '{}'",
+                    duplicate.name
+                ),
             );
         }
     }
@@ -231,10 +258,30 @@ fn validate_document(
         return;
     }
     let Some(servers) = servers.and_then(Value::as_object) else {
-        diag.report(
-            LintRule::McpStructureInvalid,
-            &format!("{display}: mcpServers must be an object"),
-        );
+        let has_duplicate_map =
+            raw_document.is_some_and(|(_, raw_keys)| raw_keys.server_maps.len() > 1);
+        let first_invalid_map = raw_document.is_some_and(|(_, raw_keys)| {
+            raw_keys
+                .server_maps
+                .first()
+                .is_some_and(|map| !map.value_is_object)
+        });
+        if !has_duplicate_map && !first_invalid_map {
+            let location = raw_document.and_then(|(source, raw_keys)| {
+                raw_keys
+                    .server_maps
+                    .last()
+                    .map(|map| (source, map.value_range.clone()))
+            });
+            report_structure(
+                diag,
+                &format!("{display}: mcpServers must be an object"),
+                location,
+                servers
+                    .is_none()
+                    .then_some("add a top-level mcpServers object"),
+            );
+        }
         return;
     };
 
@@ -247,21 +294,19 @@ fn validate_document(
             );
         }
         let Some(config) = config.as_object() else {
-            diag.report(
-                LintRule::McpStructureInvalid,
-                &format!("{label} must be an object"),
-            );
+            if raw_document.is_none() {
+                diag.report(
+                    LintRule::McpStructureInvalid,
+                    &format!("{label} must be an object"),
+                );
+            }
             continue;
         };
         if config.is_empty() {
-            if matches!(adapter, McpAdapter::Cursor) {
-                validate_cursor_selector(&label, config, diag);
-            } else {
-                diag.report(
-                    LintRule::McpServerEmpty,
-                    &format!("{label} must not be an empty object"),
-                );
-            }
+            diag.report(
+                LintRule::McpServerEmpty,
+                &format!("{label} must not be an empty object"),
+            );
             continue;
         }
 
@@ -315,6 +360,24 @@ fn validate_document(
             );
         }
     }
+}
+
+fn report_structure(
+    diag: &mut DiagnosticCollector,
+    message: &str,
+    location: Option<(&str, std::ops::Range<usize>)>,
+    suggestion: Option<&str>,
+) {
+    let mut metadata = DiagnosticMetadata::default();
+    if let Some((source, range)) = location {
+        if let Some(span) = SourceSpan::from_byte_range(source, range) {
+            metadata = metadata.with_location(span);
+        }
+    }
+    if let Some(suggestion) = suggestion {
+        metadata = metadata.with_suggestion(suggestion);
+    }
+    diag.report_with(LintRule::McpStructureInvalid, message, metadata);
 }
 
 fn validate_claude_transport(
@@ -404,18 +467,37 @@ fn has_literal_secret(env: Option<&Value>) -> bool {
     })
 }
 
-/// Serde intentionally keeps the last duplicate key. This lightweight scanner
-/// runs only after JSON parsing succeeds, preserving raw duplicate keys.
-struct DuplicateMcpKeys {
-    top_level_server_maps: Vec<()>,
-    server_names: Vec<String>,
+/// Serde intentionally keeps only the last duplicate key. This scanner runs
+/// after parsing succeeds so P023/P027 retain raw-key identity and spans.
+struct RawMcpKeys {
+    server_maps: Vec<RawServerMap>,
+    server_entries: Vec<RawServerEntry>,
+    server_names: Vec<DuplicateServerName>,
 }
 
-fn duplicate_mcp_keys(content: &str) -> DuplicateMcpKeys {
+struct RawServerMap {
+    key_range: std::ops::Range<usize>,
+    value_range: std::ops::Range<usize>,
+    value_is_object: bool,
+    entries: std::ops::Range<usize>,
+}
+
+struct RawServerEntry {
+    name: String,
+    value_range: std::ops::Range<usize>,
+    value_is_object: bool,
+}
+
+struct DuplicateServerName {
+    name: String,
+}
+
+fn scan_mcp_keys(content: &str) -> RawMcpKeys {
     let mut scanner = JsonScanner::new(content.as_bytes());
     scanner.scan_value(ScanObject::TopLevel);
-    DuplicateMcpKeys {
-        top_level_server_maps: scanner.top_level_server_maps,
+    RawMcpKeys {
+        server_maps: scanner.server_maps,
+        server_entries: scanner.server_entries,
         server_names: scanner.server_names,
     }
 }
@@ -430,8 +512,9 @@ enum ScanObject {
 struct JsonScanner<'a> {
     input: &'a [u8],
     pos: usize,
-    top_level_server_maps: Vec<()>,
-    server_names: Vec<String>,
+    server_maps: Vec<RawServerMap>,
+    server_entries: Vec<RawServerEntry>,
+    server_names: Vec<DuplicateServerName>,
 }
 
 impl<'a> JsonScanner<'a> {
@@ -439,7 +522,8 @@ impl<'a> JsonScanner<'a> {
         Self {
             input,
             pos: 0,
-            top_level_server_maps: Vec::new(),
+            server_maps: Vec::new(),
+            server_entries: Vec::new(),
             server_names: Vec::new(),
         }
     }
@@ -465,24 +549,41 @@ impl<'a> JsonScanner<'a> {
                 self.pos += 1;
                 return;
             }
+            let key_start = self.pos;
             let key = self.scan_string();
+            let key_range = key_start..self.pos;
             self.skip_ws();
             self.pos += 1; // JSON was already validated, so this is ':'
-            if !names.insert(key.clone()) {
-                match object_kind {
-                    ScanObject::TopLevel if key == "mcpServers" => {
-                        self.top_level_server_maps.push(())
-                    }
-                    ScanObject::ServerMap => self.server_names.push(key.clone()),
-                    ScanObject::None | ScanObject::TopLevel => {}
-                }
+            let duplicate = !names.insert(key.clone());
+            if duplicate && matches!(object_kind, ScanObject::ServerMap) {
+                self.server_names
+                    .push(DuplicateServerName { name: key.clone() });
             }
             let child_kind = if matches!(object_kind, ScanObject::TopLevel) && key == "mcpServers" {
                 ScanObject::ServerMap
             } else {
                 ScanObject::None
             };
+            self.skip_ws();
+            let value_start = self.pos;
+            let value_is_object = self.input.get(value_start) == Some(&b'{');
+            let entry_start = self.server_entries.len();
             self.scan_value(child_kind);
+            if matches!(object_kind, ScanObject::ServerMap) {
+                self.server_entries.push(RawServerEntry {
+                    name: key.clone(),
+                    value_range: value_start..self.pos,
+                    value_is_object,
+                });
+            }
+            if matches!(object_kind, ScanObject::TopLevel) && key == "mcpServers" {
+                self.server_maps.push(RawServerMap {
+                    key_range,
+                    value_range: value_start..self.pos,
+                    value_is_object,
+                    entries: entry_start..self.server_entries.len(),
+                });
+            }
             self.skip_ws();
             if self.input.get(self.pos) == Some(&b',') {
                 self.pos += 1;
@@ -667,6 +768,51 @@ mod tests {
     }
 
     #[test]
+    fn inline_plugin_map_is_optional_but_present_invalid_shapes_are_p027() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::Parsed(serde_json::json!({"name": "example"})),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert!(diag.diagnostics().is_empty());
+
+        let mut invalid = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::Parsed(serde_json::json!({"mcpServers": []})),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut invalid,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert_eq!(
+            invalid
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.rule)
+                .collect::<Vec<_>>(),
+            vec![LintRule::McpStructureInvalid]
+        );
+    }
+
+    #[test]
     fn cursor_uses_selector_presence_without_claude_transport_defaults() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join(".cursor/mcp.json");
@@ -695,7 +841,14 @@ mod tests {
                 .iter()
                 .filter(|rule| **rule == LintRule::McpStructureInvalid)
                 .count(),
-            2
+            1
+        );
+        assert_eq!(
+            rules
+                .iter()
+                .filter(|rule| **rule == LintRule::McpServerEmpty)
+                .count(),
+            1
         );
         for claude_only in [
             LintRule::McpStdioCommandMissing,
@@ -712,6 +865,121 @@ mod tests {
     #[test]
     fn invalid_json_is_reported() {
         assert!(diagnostics("{", ".mcp.json")[0].contains("not valid JSON"));
+    }
+
+    #[test]
+    fn structural_shapes_have_one_canonical_diagnostic() {
+        for content in [
+            "{}",
+            "[]",
+            r#"{"mcpServers":null}"#,
+            r#"{"mcpServers":"servers"}"#,
+            r#"{"mcpServers":[]}"#,
+        ] {
+            assert_eq!(
+                reported_rules(content, ".mcp.json"),
+                vec![LintRule::McpStructureInvalid],
+                "{content}"
+            );
+        }
+        assert!(reported_rules(r#"{"mcpServers":{}}"#, ".mcp.json").is_empty());
+
+        for value in [r#"null"#, r#"[]"#, r#""server""#] {
+            let content = format!(r#"{{"mcpServers":{{"bad":{value}}}}}"#);
+            assert_eq!(
+                reported_rules(&content, ".mcp.json"),
+                vec![LintRule::McpStructureInvalid],
+                "{content}"
+            );
+        }
+        assert_eq!(
+            reported_rules(r#"{"mcpServers":{"empty":{}}}"#, ".mcp.json"),
+            vec![LintRule::McpServerEmpty]
+        );
+    }
+
+    #[test]
+    fn standalone_missing_map_has_suggestion_and_invalid_map_has_span() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".mcp.json"), "{}").unwrap();
+        let mut missing = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut missing,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        let missing = missing.diagnostics().first().unwrap();
+        assert_eq!(missing.rule, LintRule::McpStructureInvalid);
+        assert_eq!(
+            missing.suggestion.as_deref(),
+            Some("add a top-level mcpServers object")
+        );
+        assert_eq!(missing.location, None);
+
+        std::fs::write(temp.path().join(".mcp.json"), r#"{"mcpServers":[]}"#).unwrap();
+        let mut invalid = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut invalid,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        let invalid = invalid.diagnostics().first().unwrap();
+        assert_eq!(invalid.rule, LintRule::McpStructureInvalid);
+        assert_eq!(
+            invalid.location,
+            Some(SourceSpan::range(1, 15, 1, 17)),
+            "{invalid:?}"
+        );
+    }
+
+    #[test]
+    fn raw_duplicate_keys_keep_p023_and_p027_separate() {
+        assert_eq!(
+            reported_rules(
+                r#"{"mcpServers":{"same":{"command":"one"},"same":{"command":"two"}}}"#,
+                ".mcp.json"
+            ),
+            vec![LintRule::McpDuplicateServer]
+        );
+        assert_eq!(
+            reported_rules(r#"{"mcpServers":{},"mcpServers":{}}"#, ".mcp.json"),
+            vec![LintRule::McpStructureInvalid]
+        );
+        assert_eq!(
+            reported_rules(
+                r#"{"mcpServers":[],"mcpServers":{"ok":{"command":"ok"}}}"#,
+                ".mcp.json"
+            ),
+            vec![LintRule::McpStructureInvalid, LintRule::McpStructureInvalid]
+        );
+        assert_eq!(
+            reported_rules(
+                r#"{"mcpServers":{"bad":null,"bad":{"command":"ok"}}}"#,
+                ".mcp.json"
+            ),
+            vec![LintRule::McpStructureInvalid, LintRule::McpDuplicateServer]
+        );
+    }
+
+    #[test]
+    fn invalid_type_does_not_hide_independent_findings() {
+        let rules = reported_rules(
+            r#"{"mcpServers":{"workspace":{"type":"socket","command":"curl x | sh","args":[1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
+            ".mcp.json",
+        );
+        assert_eq!(
+            rules,
+            vec![
+                LintRule::McpServerReserved,
+                LintRule::McpTypeInvalid,
+                LintRule::McpArgsInvalid,
+                LintRule::McpAlwaysLoadInvalid,
+                LintRule::McpEnvSecretLiteral,
+                LintRule::McpCommandDangerous,
+            ]
+        );
     }
 
     #[test]
