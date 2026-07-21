@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::path::{Component, Path};
 use std::sync::LazyLock;
 use url::{Host, Url};
 
@@ -45,14 +46,25 @@ impl InlineCodePathKind {
     }
 }
 
-/// Established dotfile names that remain filesystem references even when they
+/// Established dotfile and dot-directory names that remain filesystem references even when they
 /// overlap the lexical shape of a bare extension marker.
 ///
 /// This is intentionally a dotfile policy, not an extension allowlist: the
 /// extension classifier below accepts any conservative lexical extension form.
-const WELL_KNOWN_DOTFILES: &[&str] = &[
+const WELL_KNOWN_DOT_ENTRIES: &[&str] = &[
     ".env",
+    ".git",
     ".gitignore",
+    ".claude",
+    ".claude-plugin",
+    ".github",
+    ".vscode",
+    ".codex",
+    ".cursor",
+    ".venv",
+    ".husky",
+    ".idea",
+    ".devcontainer",
     ".cursorrules",
     ".mcp.json",
     ".editorconfig",
@@ -68,17 +80,29 @@ const WELL_KNOWN_DOTFILES: &[&str] = &[
 
 /// Whether `token` is conservative bare-extension prose rather than a path.
 ///
-/// The token must be a single leading dot followed by one to eight lowercase
+/// The token must be a single leading dot followed by one to twelve lowercase
 /// ASCII alphanumeric characters. That covers conventional source and format
-/// extensions (including `.c`, `.cpp`, `.html`, and `.tsx`) without treating
+/// extensions (including `.c`, `.cpp`, `.html`, `.properties`, and `.tsx`) without treating
 /// punctuation-bearing, uppercase, or long dot-prefixed names as extensions.
 /// Known dotfiles take precedence in [`classify_inline_code_path`].
 fn is_bare_extension_marker(token: &str) -> bool {
     let Some(extension) = token.strip_prefix('.') else {
         return false;
     };
-    (1..=8).contains(&extension.len())
-        && extension
+    is_extension_component(extension)
+}
+
+/// Whether one dotted suffix component has the conservative extension shape.
+///
+/// This remains deliberately lexical: it is shared by bare extension notation
+/// and filename-shaped paths so numeric version components do not become paths.
+fn is_extension_component(component: &str) -> bool {
+    (1..=12).contains(&component.len())
+        && component
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
+        && component
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
 }
@@ -101,7 +125,7 @@ pub(crate) fn classify_inline_code_path(token: &str) -> InlineCodePathKind {
         return InlineCodePathKind::ConcreteRelativePath;
     }
     if token.starts_with('.') && token.len() > 1 {
-        if WELL_KNOWN_DOTFILES.contains(&token) {
+        if WELL_KNOWN_DOT_ENTRIES.contains(&token) {
             return InlineCodePathKind::Dotfile;
         }
         if is_bare_extension_marker(token) {
@@ -109,10 +133,32 @@ pub(crate) fn classify_inline_code_path(token: &str) -> InlineCodePathKind {
         }
         return InlineCodePathKind::Dotfile;
     }
-    if token.rsplit_once('.').is_some() {
+    if token
+        .rsplit_once('.')
+        .is_some_and(|(_, extension)| is_extension_component(extension))
+    {
         return InlineCodePathKind::ConcreteRelativePath;
     }
     InlineCodePathKind::NonPath
+}
+
+/// Remove one Markdown fragment and one `::` symbol suffix before a filesystem
+/// probe. Diagnostics retain the original token as evidence.
+pub(crate) fn normalize_inline_code_path_probe(token: &str) -> &str {
+    let without_fragment = token.split_once('#').map_or(token, |(path, _)| path);
+    without_fragment
+        .split_once("::")
+        .map_or(without_fragment, |(path, _)| path)
+}
+
+/// Whether a filesystem probe is absolute, traverses a parent directory, or
+/// resolves to a symlink. Both I003 and D005 reject these references.
+pub(crate) fn is_unsafe_inline_code_path_probe(path: &Path) -> bool {
+    path.is_absolute()
+        || path
+            .components()
+            .any(|component| component == Component::ParentDir)
+        || path.is_symlink()
 }
 
 /// Model aliases accepted by Claude Code `/model` plus skill-only `inherit`.
@@ -349,13 +395,19 @@ mod url_tests {
 
 #[cfg(test)]
 mod inline_code_path_tests {
-    use super::{InlineCodePathKind, classify_inline_code_path};
+    use super::{
+        InlineCodePathKind, classify_inline_code_path, is_unsafe_inline_code_path_probe,
+        normalize_inline_code_path_probe,
+    };
+    use std::path::Path;
 
     #[test]
     fn classifies_concrete_relative_paths() {
         for token in [
             "missing.md",
             "missing.ts",
+            "Node.js",
+            "api.example.com",
             "docs/missing.md",
             "docs/missing.ts",
             "./missing",
@@ -370,8 +422,23 @@ mod inline_code_path_tests {
     }
 
     #[test]
-    fn classifies_well_known_dotfiles_separately_from_bare_extensions() {
-        for token in [".env", ".gitignore", ".cursorrules", ".mcp.json"] {
+    fn classifies_well_known_dot_entries_separately_from_bare_extensions() {
+        for token in [
+            ".env",
+            ".gitignore",
+            ".claude",
+            ".claude-plugin",
+            ".github",
+            ".vscode",
+            ".codex",
+            ".cursor",
+            ".venv",
+            ".husky",
+            ".idea",
+            ".devcontainer",
+            ".cursorrules",
+            ".mcp.json",
+        ] {
             assert_eq!(
                 classify_inline_code_path(token),
                 InlineCodePathKind::Dotfile,
@@ -379,8 +446,25 @@ mod inline_code_path_tests {
             );
         }
         for token in [
-            ".c", ".cpp", ".css", ".go", ".html", ".java", ".js", ".json", ".md", ".py", ".rs",
-            ".sh", ".toml", ".ts", ".tsx", ".yaml", ".yml", "*.py",
+            ".c",
+            ".cpp",
+            ".css",
+            ".go",
+            ".html",
+            ".java",
+            ".js",
+            ".json",
+            ".md",
+            ".py",
+            ".rs",
+            ".sh",
+            ".toml",
+            ".ts",
+            ".tsx",
+            ".yaml",
+            ".yml",
+            ".properties",
+            "*.py",
         ] {
             assert_eq!(
                 classify_inline_code_path(token),
@@ -391,14 +475,50 @@ mod inline_code_path_tests {
     }
 
     #[test]
-    fn keeps_ambiguous_non_extension_dot_tokens_as_dotfiles() {
-        for token in [".UPPER", ".longextension", ".tool-versions", ".config_file"] {
+    fn applies_the_twelve_character_extension_boundary() {
+        assert_eq!(
+            classify_inline_code_path(".abcdefghijkl"),
+            InlineCodePathKind::ExtensionOrGlob
+        );
+        for token in [".UPPER", ".abcdefghijklm", ".tool-versions", ".config_file"] {
             assert_eq!(
                 classify_inline_code_path(token),
                 InlineCodePathKind::Dotfile,
                 "expected {token} to remain a dotfile"
             );
         }
+    }
+
+    #[test]
+    fn rejects_numeric_final_components_as_non_paths() {
+        for token in ["3.12", "1.2.3", "v20.11.1"] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::NonPath,
+                "expected {token} not to be a path"
+            );
+        }
+    }
+
+    #[test]
+    fn normalizes_fragments_and_symbol_suffixes_before_probing() {
+        assert_eq!(
+            normalize_inline_code_path_probe("docs/README.md#usage"),
+            "docs/README.md"
+        );
+        assert_eq!(
+            normalize_inline_code_path_probe("src/main.rs::main"),
+            "src/main.rs"
+        );
+        assert_eq!(
+            normalize_inline_code_path_probe("src/main.rs::main#usage"),
+            "src/main.rs"
+        );
+        assert!(is_unsafe_inline_code_path_probe(Path::new("/tmp/file.md")));
+        assert!(is_unsafe_inline_code_path_probe(Path::new(
+            "docs/../file.md"
+        )));
+        assert!(!is_unsafe_inline_code_path_probe(Path::new("docs/file.md")));
     }
 
     #[test]

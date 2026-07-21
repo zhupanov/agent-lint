@@ -10,7 +10,10 @@ use crate::prompt_budget::{
 };
 use crate::rules::LintRule;
 use crate::traversal;
-use crate::validators::common::{NEVER_INVENT_PROHIBITION, classify_inline_code_path};
+use crate::validators::common::{
+    NEVER_INVENT_PROHIBITION, classify_inline_code_path, is_unsafe_inline_code_path_probe,
+    normalize_inline_code_path_probe,
+};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -925,21 +928,9 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                 {
                     continue;
                 }
-                let probe = token
-                    .split("::")
-                    .next()
-                    .unwrap_or(token)
-                    .split('#')
-                    .next()
-                    .unwrap_or(token);
+                let probe = normalize_inline_code_path_probe(token);
                 let candidate = Path::new(probe);
-                if candidate.is_absolute()
-                    || candidate
-                        .components()
-                        .any(|part| part == Component::ParentDir)
-                    || candidate.is_symlink()
-                    || !candidate.exists()
-                {
+                if is_unsafe_inline_code_path_probe(candidate) || !candidate.exists() {
                     let start_column = line[..token_match.start()].chars().count() + 1;
                     let end_column = start_column + token.chars().count();
                     let metadata = DiagnosticMetadata::default()
@@ -1848,6 +1839,39 @@ mod tests {
         );
         assert_eq!(findings[0].evidence.as_deref(), Some("docs/missing.md"));
         assert!(findings[0].location.is_some());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn d005_normalizes_probes_and_preserves_its_documented_suppression_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir("docs").unwrap();
+        fs::write("docs/present.md", "present\n").unwrap();
+        fs::write("outside.md", "present\n").unwrap();
+        fs::write(
+            "AGENTS.md",
+            "See `docs/present.md#usage` and `docs/present.md::entry`.\n\
+             See `docs/../outside.md` and `/absolute-missing.md`.\n\
+             See `docs/suppressed.md`. <!-- lint-doc-pointer-paths: ok documented exception -->\n",
+        )
+        .unwrap();
+        let config = LintConfig {
+            inline_path_prefixes: vec!["docs/".into(), "/".into()],
+            ..LintConfig::default()
+        };
+        let mut diag = all_enabled_with(config);
+
+        validate_inline_paths(&mut diag, &ExcludeSet::default());
+
+        let evidence: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::InlinePathMissing)
+            .filter_map(|item| item.evidence.as_deref())
+            .collect();
+        assert_eq!(evidence, vec!["docs/../outside.md", "/absolute-missing.md"]);
     }
 
     #[test]
