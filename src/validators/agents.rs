@@ -1,5 +1,5 @@
 use crate::config::ExcludeSet;
-use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::frontmatter;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
@@ -13,8 +13,8 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use super::common::{
-    RE_NAME_INVALID, has_bound_or_fallback, is_known_tool_name, is_valid_model_value,
-    normalize_emphasis_for_gates, sentence_ranges,
+    NEVER_INVENT_PROHIBITION, RE_NAME_INVALID, has_bound_or_fallback, is_known_tool_name,
+    is_valid_model_value, normalize_emphasis_for_gates, sentence_ranges,
 };
 
 /// Jaccard similarity threshold (strict greater-than).
@@ -68,6 +68,65 @@ static OPERATIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
 static DESCRIPTIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*(?:use\s+of\b|(?:timeout|deadline|budget|max(?:imum)?|limit|cap)\b.{0,80}\b(?:was|were|had|used\s+to|once\s+forced)\b)")
         .expect("A029 descriptive-control prefix regex is valid")
+});
+
+const CURRENT_AGENT_SUBJECT: &str = r"(?:you|the\s+agent|this\s+agent|agents?|assistant|model)";
+const CURRENT_AGENT_MODAL: &str = r"(?:must|shall|should|will|need\s+to)";
+const SETUP_CLAUSE: &str = r"(?:if|when|before|after|unless)\b[^.!?;,:]*,\s*";
+const OPTIONAL_POLITENESS: &str = r"(?:(?:always|please)\s+)?";
+
+static EXPLICIT_READ_MANDATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?ix)^\s*(?:[-*+]\s*)?(?:
+            {politeness}use\s+(?:the\s+)?Read(?:\s+tool)?\b |
+            {subject}\s+{modal}\s+{politeness}use\s+(?:the\s+)?Read(?:\s+tool)?\b |
+            {setup}(?:{subject}\s+{modal}\s+)?{politeness}use\s+(?:the\s+)?Read(?:\s+tool)?\b
+        )",
+        politeness = OPTIONAL_POLITENESS,
+        subject = CURRENT_AGENT_SUBJECT,
+        modal = CURRENT_AGENT_MODAL,
+        setup = SETUP_CLAUSE,
+    ))
+    .expect("A012 explicit Read mandate regex is valid")
+});
+
+static EVIDENCE_READ_MANDATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?ix)^\s*(?:[-*+]\s*)?(?:
+            {politeness}(?:read|open)\s+(?:(?:the|each|every|all|any)\s+)?[^.!?\n]{{0,80}}\b(?:file|files|bundle|bundles|path|paths|diff|diffs|body|bodies|artifact|artifacts|markdown|log|logs)\b |
+            {subject}\s+{modal}\s+{politeness}(?:read|open)\s+(?:(?:the|each|every|all|any)\s+)?[^.!?\n]{{0,80}}\b(?:file|files|bundle|bundles|path|paths|diff|diffs|body|bodies|artifact|artifacts|markdown|log|logs)\b |
+            {setup}(?:{subject}\s+{modal}\s+)?{politeness}(?:read|open)\s+(?:(?:the|each|every|all|any)\s+)?[^.!?\n]{{0,80}}\b(?:file|files|bundle|bundles|path|paths|diff|diffs|body|bodies|artifact|artifacts|markdown|log|logs)\b
+        )",
+        politeness = OPTIONAL_POLITENESS,
+        subject = CURRENT_AGENT_SUBJECT,
+        modal = CURRENT_AGENT_MODAL,
+        setup = SETUP_CLAUSE,
+    ))
+    .expect("A013 evidence-read mandate regex is valid")
+});
+
+static JSON_OUTPUT_MANDATE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?ix)^\s*(?:[-*+]\s*)?(?:
+            {politeness}(?:emit|output|return|respond\s+with|reply\s+with)\s+(?:strict\s+|valid\s+)?JSONL?\s+only\b |
+            {politeness}only\s+(?:emit|output|return)\s+(?:strict\s+|valid\s+)?JSONL?\b |
+            {politeness}output\s+must\s+be\s+(?:strict\s+|valid\s+)?JSONL?\b |
+            {subject}\s+{modal}\s+(?:{politeness})?(?:(?:emit|output|return|respond\s+with|reply\s+with)\s+(?:strict\s+|valid\s+)?JSONL?\s+only|only\s+(?:emit|output|return)\s+(?:strict\s+|valid\s+)?JSONL?|output\s+must\s+be\s+(?:strict\s+|valid\s+)?JSONL?)\b |
+            {setup}(?:{subject}\s+{modal}\s+)?{politeness}(?:(?:emit|output|return|respond\s+with|reply\s+with)\s+(?:strict\s+|valid\s+)?JSONL?\s+only|only\s+(?:emit|output|return)\s+(?:strict\s+|valid\s+)?JSONL?|output\s+must\s+be\s+(?:strict\s+|valid\s+)?JSONL?)\b
+        )",
+        politeness = OPTIONAL_POLITENESS,
+        subject = CURRENT_AGENT_SUBJECT,
+        modal = CURRENT_AGENT_MODAL,
+        setup = SETUP_CLAUSE,
+    ))
+    .expect("A013 JSON-only output mandate regex is valid")
+});
+
+static UNREADABLE_EVIDENCE_OUTCOME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ix)\b(?:if|when|for)\s+(?:(?:an?|the)\s+)?(?:evidence\s+)?(?:file|files|evidence|artifact|artifacts|path|paths)?\s*(?:is\s+)?(?:unreadable|unavailable|missing)\b[^.!?\n]{0,120}\b(?:return|report|emit|output|respond|reply|stop|abort|escalate|fail)\b|\b(?:cannot|can't|could\s+not|unable\s+to)\s+(?:read|open)\b[^.!?\n]{0,120}\b(?:return|report|emit|output|respond|reply|stop|abort|escalate|fail)\b",
+    )
+    .expect("A013 unreadable-evidence outcome regex is valid")
 });
 
 /// Check whether an agent description is too similar to the agent name.
@@ -381,6 +440,7 @@ fn validate_agent_file(
     }
     let prompt_document = prompt_document.with_outer_max_turns(max_turns);
     if let Some(parsed_frontmatter) = parsed_frontmatter.as_ref() {
+        check_agent_evidence_contracts(diag, agent_path, parsed_frontmatter, &prompt_document);
         check_agent_stop_control(
             diag,
             agent_path,
@@ -555,8 +615,100 @@ fn is_execution_tool(tool: &str) -> bool {
     if !is_known_tool_name(tool) {
         return false;
     }
-    let base_name = tool.split_once('(').map_or(tool, |(base, _)| base).trim();
+    let base_name = tool_base_name(tool);
     base_name.starts_with("mcp__") || EXECUTION_TOOLS.contains(&base_name)
+}
+
+fn tool_base_name(tool: &str) -> &str {
+    tool.split_once('(').map_or(tool, |(base, _)| base).trim()
+}
+
+/// A012/A013: evidence-reading contracts are evaluated from the canonical
+/// parsed frontmatter and source-aware live prose, never from a second YAML or
+/// Markdown parse. This keeps malformed/non-mapping YAML with X001/A002 and
+/// makes examples, code, quotes, and comments inert.
+fn check_agent_evidence_contracts(
+    diag: &mut DiagnosticCollector,
+    agent_path: &str,
+    parsed_frontmatter: &AgentFrontmatter,
+    document: &LiveInstructionDocument<'_>,
+) {
+    let read_tool_mandate = first_live_sentence(document, |sentence| {
+        EXPLICIT_READ_MANDATE.is_match(&normalize_emphasis_for_gates(sentence))
+    });
+    if let Some((line, mandate)) = read_tool_mandate {
+        let has_read = matches!(canonical_string_list(parsed_frontmatter, "tools"), StringList::Valid(tools) if tools.iter().any(|tool| is_known_tool_name(tool) && tool_base_name(tool) == "Read"));
+        if !has_read {
+            diag.report_with(
+                LintRule::AgentReadMismatch,
+                &format!(
+                    "{agent_path}:{line}: explicit tools omit Read but the prompt requires the Read tool"
+                ),
+                DiagnosticMetadata::at_line(line)
+                    .with_evidence(mandate)
+                    .with_suggestion("declare Read in tools or remove the explicit Read-tool mandate"),
+            );
+        }
+    }
+
+    let read_evidence = first_live_sentence(document, |sentence| {
+        EVIDENCE_READ_MANDATE.is_match(&normalize_emphasis_for_gates(sentence))
+    });
+    let json_output = first_live_sentence(document, |sentence| {
+        JSON_OUTPUT_MANDATE.is_match(&normalize_emphasis_for_gates(sentence))
+    });
+    let has_unreadable_outcome = any_live_sentence(document, |sentence| {
+        UNREADABLE_EVIDENCE_OUTCOME.is_match(&normalize_emphasis_for_gates(sentence))
+    });
+    let has_never_invent = any_live_sentence(document, |sentence| {
+        NEVER_INVENT_PROHIBITION.is_match(&normalize_emphasis_for_gates(sentence))
+    });
+
+    if let (Some((read_line, _)), Some((output_line, _))) = (read_evidence, json_output)
+        && (!has_unreadable_outcome || !has_never_invent)
+    {
+        diag.report_with(
+            LintRule::AgentOutputUnsafe,
+            &format!(
+                "{agent_path}:{output_line}: machine-only output that reads evidence must define an unreadable-evidence outcome and prohibit invented evidence (read instruction at line {read_line})"
+            ),
+            DiagnosticMetadata::default()
+                .with_location(SourceSpan::line(output_line))
+                .with_evidence(format!("read instruction line {read_line}; JSON-only output line {output_line}"))
+                .with_suggestion("state the unreadable-evidence outcome and directly prohibit inventing, fabricating, or guessing evidence"),
+        );
+    }
+}
+
+fn first_live_sentence(
+    document: &LiveInstructionDocument<'_>,
+    matches: impl Fn(&str) -> bool,
+) -> Option<(usize, String)> {
+    let example_scopes = document.example_scopes();
+    let heading_lines: HashSet<_> = document
+        .headings()
+        .iter()
+        .map(|heading| heading.line)
+        .collect();
+    document
+        .prose_lines()
+        .iter()
+        .zip(example_scopes)
+        .filter(|(line, is_example)| !*is_example && !heading_lines.contains(&line.line))
+        .flat_map(|(line, _)| {
+            sentence_ranges(&line.text)
+                .into_iter()
+                .map(move |range| (line.line, line.text[range].trim()))
+        })
+        .find(|(_, sentence)| !sentence.is_empty() && matches(sentence))
+        .map(|(line, sentence)| (line, sentence.to_string()))
+}
+
+fn any_live_sentence(
+    document: &LiveInstructionDocument<'_>,
+    matches: impl Fn(&str) -> bool,
+) -> bool {
+    first_live_sentence(document, matches).is_some()
 }
 
 /// A029: tool-using agents need one concrete stop control or failure outcome.
@@ -586,12 +738,14 @@ fn check_agent_stop_control(
         return;
     }
 
-    diag.report(
+    diag.report_with(
         LintRule::AgentStopMissing,
         &format!(
-            "{agent_path}: execution tools [{}] have no maximum attempt/tool-call/step count, explicit timeout/deadline/token/cost budget, progress/failure threshold, or stop-and-report/escalation fallback; add a concrete bound and a failure outcome",
+            "{agent_path}: execution tools [{}] have no maximum attempt/tool-call/step count, explicit timeout/deadline/token/cost budget, progress/failure threshold, or stop-and-report/escalation fallback; add either a concrete bound or a concrete failure outcome",
             execution_tools.join(", "),
         ),
+        DiagnosticMetadata::default()
+            .with_suggestion("add either a concrete bound or a concrete failure outcome"),
     );
 }
 
@@ -1639,6 +1793,153 @@ mod tests {
 
     const GOOD_DESC: &str = "A general-purpose code review assistant";
 
+    // ── A012/A013: canonical evidence contracts ────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn a012_uses_canonical_tool_lists_and_source_aware_live_prose() {
+        for tools in ["tools: Bash", "tools: [Bash]", "tools:\n  - Bash"] {
+            let mandate_line = 5 + tools.lines().count();
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\n{tools}\n---\nPlease use the Read tool before reporting.\n"
+            );
+            run_private_agent(&content, |diag| {
+                let finding = diag
+                    .diagnostics()
+                    .iter()
+                    .find(|diagnostic| diagnostic.rule == LintRule::AgentReadMismatch)
+                    .expect("scalar and sequence tools must be checked");
+                assert_eq!(finding.location, Some(SourceSpan::line(mandate_line)));
+                assert_eq!(
+                    finding.evidence.as_deref(),
+                    Some("Please use the Read tool before reporting.")
+                );
+                assert!(finding.suggestion.is_some());
+            });
+        }
+
+        for tools in ["tools: Read", "tools: Read(path/**)"] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\n{tools}\n---\nUse Read before reporting.\n"
+            );
+            run_private_agent(&content, |diag| {
+                assert!(
+                    !diag
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.rule == LintRule::AgentReadMismatch)
+                );
+            });
+        }
+
+        let generic_read = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, mcp__files__open\n---\nRead every evidence file before reporting.\n"
+        );
+        run_private_agent(&generic_read, |diag| {
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == LintRule::AgentReadMismatch)
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a012_a013_ignore_examples_and_inline_markers_but_keep_live_contracts() {
+        let inert = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: [Bash]\n---\n# Examples\nUse the Read tool.\nRead every evidence file. Output strict JSON only.\n\n```text\nUse the Read tool. Read every evidence file. Output strict JSON only.\n```\n> Use the Read tool.\n"
+        );
+        run_private_agent(&inert, |diag| {
+            assert!(!diag.diagnostics().iter().any(|diagnostic| {
+                matches!(
+                    diagnostic.rule,
+                    LintRule::AgentReadMismatch | LintRule::AgentOutputUnsafe
+                )
+            }));
+        });
+
+        let live = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\nUse the Read tool. lint-agent-tool-contract: ok because legacy.\nRead every evidence file.\nOutput strict JSON only. lint-agent-output-mandate: ok because legacy.\n"
+        );
+        run_private_agent(&live, |diag| {
+            assert!(diag.diagnostics().iter().any(|diagnostic| {
+                diagnostic.rule == LintRule::AgentReadMismatch
+                    && diagnostic.location == Some(SourceSpan::line(6))
+            }));
+            let output = diag
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| diagnostic.rule == LintRule::AgentOutputUnsafe)
+                .expect("inline marker must not suppress A013");
+            assert_eq!(output.location, Some(SourceSpan::line(8)));
+            assert_eq!(
+                output.evidence.as_deref(),
+                Some("read instruction line 7; JSON-only output line 8")
+            );
+            assert!(output.suggestion.is_some());
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a013_requires_live_unreadable_outcome_and_never_invent_prohibition() {
+        let safe = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Read\n---\nRead every evidence file.\nIf a file is unreadable, return NEEDS_DEEP.\nDo not invent evidence.\nOutput strict JSONL only.\n"
+        );
+        run_private_agent(&safe, |diag| {
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == LintRule::AgentOutputUnsafe)
+            );
+        });
+
+        let quoted_safeguards = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Read\n---\nRead every evidence file.\nOutput strict JSON only.\nExample: If a file is unreadable, return NEEDS_DEEP and do not invent evidence.\n"
+        );
+        run_private_agent(&quoted_safeguards, |diag| {
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == LintRule::AgentOutputUnsafe)
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a012_a013_leave_invalid_yaml_to_x001() {
+        let content = format!(
+            "---\nname: general\n\tdescription: {GOOD_DESC}\ntools: Bash\n---\nUse the Read tool. Read every evidence file. Output strict JSON only.\n"
+        );
+        run_private_agent(&content, |diag| {
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == LintRule::FrontmatterYamlInvalid)
+            );
+            assert!(!diag.diagnostics().iter().any(|diagnostic| {
+                matches!(
+                    diagnostic.rule,
+                    LintRule::AgentReadMismatch | LintRule::AgentOutputUnsafe
+                )
+            }));
+        });
+
+        let non_mapping = "---\n- tools: Bash\n---\nUse the Read tool. Read every evidence file. Output strict JSON only.\n";
+        run_private_agent(non_mapping, |diag| {
+            assert!(!diag.diagnostics().iter().any(|diagnostic| {
+                matches!(
+                    diagnostic.rule,
+                    LintRule::AgentReadMismatch | LintRule::AgentOutputUnsafe
+                )
+            }));
+        });
+    }
+
     // ── A029: agent-stop-missing ───────────────────────────────────
 
     #[test]
@@ -1656,6 +1957,10 @@ mod tests {
             assert_eq!(
                 finding.subject_path.as_deref(),
                 Some(Path::new("agents/general.md"))
+            );
+            assert_eq!(
+                finding.suggestion.as_deref(),
+                Some("add either a concrete bound or a concrete failure outcome")
             );
             assert!(finding.message.contains("Bash"));
             assert!(finding.message.contains("failure outcome"));
