@@ -36,6 +36,7 @@ const REQUIRED_SMOKE_COVERAGE: &[&str] = &[
     "q002-safety-negative",
     "q006-multi-format-clean",
     "q006-output-conflict",
+    "skill-structural",
 ];
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
@@ -547,13 +548,40 @@ fn assert_safe_relative_path(case: &str, path: &str) {
     );
 }
 
+/// Recursively copy a fixture repository.
+///
+/// Files named `*.alint-bytes` are size markers: the file body is a decimal
+/// byte count, and the destination is a zero-filled file with that stem name
+/// (so oversized S072 fixtures need not be checked into git).
 fn copy_tree(source: &Path, destination: &Path) {
     for entry in fs::read_dir(source)
         .unwrap_or_else(|error| panic!("cannot read fixture {}: {error}", source.display()))
     {
         let entry = entry.expect("fixture directory entry is readable");
         let file_type = entry.file_type().expect("fixture file type is readable");
-        let target = destination.join(entry.file_name());
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        if let Some(stem) = name.strip_suffix(".alint-bytes") {
+            assert!(
+                file_type.is_file(),
+                "size-marker fixtures must be files: {}",
+                entry.path().display()
+            );
+            let raw = fs::read_to_string(entry.path()).unwrap_or_else(|error| {
+                panic!(
+                    "cannot read size marker {}: {error}",
+                    entry.path().display()
+                )
+            });
+            let bytes: usize = raw.trim().parse().unwrap_or_else(|error| {
+                panic!("invalid size marker {}: {error}", entry.path().display())
+            });
+            let target = destination.join(stem);
+            fs::write(&target, vec![0u8; bytes])
+                .unwrap_or_else(|error| panic!("cannot materialize {}: {error}", target.display()));
+            continue;
+        }
+        let target = destination.join(&file_name);
         if file_type.is_dir() {
             fs::create_dir(&target).expect("fixture directory is copied");
             copy_tree(&entry.path(), &target);

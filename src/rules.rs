@@ -261,7 +261,7 @@ pub enum LintRule {
     /// S029: referenced shared .md file itself references other shared .md files
     #[strum(props(code = "S029", name = "nested-ref-deep"))]
     NestedRefDeep,
-    /// S030: files in skill scripts/ not referenced from SKILL.md
+    /// S030: files in skill scripts/ not referenced from any skill-local .md
     #[strum(props(code = "S030", name = "orphaned-skill-files"))]
     OrphanedSkillFiles,
     /// S031: http:// URL in skill content (not https)
@@ -279,7 +279,7 @@ pub enum LintRule {
     /// S035: compatibility field exceeds 500 characters
     #[strum(props(code = "S035", name = "compat-too-long"))]
     CompatTooLong,
-    /// S036: referenced .md file exceeds 100 lines with no headings
+    /// S036: referenced .md file exceeds 100 lines with no ATX headings
     #[strum(props(code = "S036", name = "ref-no-toc"))]
     RefNoToc,
     /// S037: SKILL.md body exceeds 300 lines with no file references
@@ -391,7 +391,7 @@ pub enum LintRule {
     /// S072: skill directory exceeds 8MB (platform upload limit)
     #[strum(props(code = "S072", name = "skill-dir-oversized"))]
     SkillDirOversized,
-    /// S073: skill file reference nested deeper than one level
+    /// S073: skill-relative `.md` link nested deeper than one directory level
     #[strum(props(code = "S073", name = "skill-ref-nested"))]
     SkillRefNested,
     /// S074: skill routing descriptions overlap within a shared namespace

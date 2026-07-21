@@ -223,8 +223,8 @@ H008--H024 codes with a `… frontmatter` path label.
 | S066 | `side-effect-auto` | Side-effect-named skill lacks `disable-model-invocation: true` | Always | warn |
 | S070 | `unknown-fm-field` | Unknown skill frontmatter field (typo catcher) | Always | warn |
 | S071 | `paths-empty` | `paths` field is present but empty | Always | warn |
-| S072 | `skill-dir-oversized` | Skill directory exceeds 8MB platform upload limit | Always | warn |
-| S073 | `skill-ref-nested` | Skill-relative `.md` link nested deeper than one directory level | Always | error |
+| S072 | `skill-dir-oversized` | Skill directory exceeds 8MB platform upload limit (counts build/dependency trees; skips `.git`; does not follow directory symlinks) | Always | warn |
+| S073 | `skill-ref-nested` | Skill-relative `.md` link nested deeper than one directory level (`..` counts; URI schemes and non-`.md` targets are skipped) | Always | error |
 
 ### Extended Frontmatter (S035, S039--S040, S042--S045, S067)
 
@@ -245,10 +245,10 @@ H008--H024 codes with a `… frontmatter` path label.
 |------|------|-------------|------|---------|
 | S028 | `args-no-hint` | Body uses `$ARGUMENTS` but frontmatter has no `argument-hint` field | Always | error |
 | S029 | `nested-ref-deep` | Referenced shared `.md` itself references other shared `.md` files | Plugin | warn |
-| S030 | `orphaned-skill-files` | Files in skill `scripts/` not referenced from `SKILL.md` | Always | error |
+| S030 | `orphaned-skill-files` | Files in skill `scripts/` not referenced from any skill-local `.md` (with name-boundary matching) | Always | error |
 | S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content | Always | error |
 | S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | Always | error |
-| S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no `##` headings | Plugin | warn |
+| S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no headings (levels 1–6, outside fences) | Plugin | warn |
 | S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Always | warn |
 | S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin | warn |
 | S068 | `injection-overflow` | More than 3 dynamic context injections (`!`…``) in skill body | Always | warn |
