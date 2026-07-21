@@ -750,6 +750,12 @@ const CONDITIONAL_LEAD_INS: &[&str] = &[
 /// Multi-word conditional lead-ins checked against the head of a sentence.
 const CONDITIONAL_LEAD_PHRASES: &[&str] = &["in case", "only if", "as long as", "in the case"];
 
+/// Sentence-leading `In <X> mode` / `In <X> format` routing has the same
+/// conditional meaning as the established `When` and `For` forms. The
+/// vocabulary is deliberately limited to these routing nouns (plus `case`),
+/// rather than treating arbitrary prepositional phrases as conditions.
+const PREPOSITIONAL_CONDITION_NOUNS: &[&str] = &["mode", "format", "case"];
+
 /// Subordinate-clause markers that make an instruction conditional even when it
 /// does not lead the sentence. Kept deliberately narrow (surrounded by spaces)
 /// so common prepositions do not silently drop real conflicts.
@@ -784,10 +790,60 @@ const AGENT_OUTPUT_SUBJECTS: &[&str] = &[
     "the response should",
     "the output must",
     "the output should",
-    "response:",
-    "output:",
-    "answer:",
-    "reply:",
+];
+
+/// Label forms are operative only at the beginning of a clause. Keeping them
+/// separate from prose subjects prevents `Bad output: ...` from becoming an
+/// instruction merely because it contains the substring `output:`.
+const AGENT_OUTPUT_LABELS: &[&str] = &["response:", "output:", "answer:", "reply:"];
+
+/// A conservative, typed vocabulary for artifacts that are not the agent's
+/// response. Q006 must not reinterpret instructions about these artifacts as
+/// whole-response format or shape requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NonResponseArtifact {
+    CommitMessage,
+    PullRequestDescription,
+    IssueDescription,
+    Changelog,
+    Documentation,
+    File,
+    Filename,
+    Log,
+    NamedPath,
+}
+
+impl NonResponseArtifact {
+    fn phrases(self) -> &'static [&'static str] {
+        match self {
+            Self::CommitMessage => &["commit message", "commit messages"],
+            Self::PullRequestDescription => &[
+                "pull request description",
+                "pull request descriptions",
+                "pr description",
+                "pr descriptions",
+            ],
+            Self::IssueDescription => &["issue description", "issue descriptions"],
+            Self::Changelog => &["changelog"],
+            Self::Documentation => &["documentation", "document", "documents"],
+            Self::File => &["file", "files", "export file"],
+            Self::Filename => &["filename", "filenames", "file name", "file names"],
+            Self::Log => &["log", "logs"],
+            Self::NamedPath => &[],
+        }
+    }
+}
+
+const NON_RESPONSE_ARTIFACTS: &[NonResponseArtifact] = &[
+    NonResponseArtifact::CommitMessage,
+    NonResponseArtifact::PullRequestDescription,
+    NonResponseArtifact::IssueDescription,
+    NonResponseArtifact::Changelog,
+    NonResponseArtifact::Documentation,
+    NonResponseArtifact::File,
+    NonResponseArtifact::Filename,
+    NonResponseArtifact::Log,
+    NonResponseArtifact::NamedPath,
 ];
 
 /// Markers that turn an otherwise agent-output-looking clause into a
@@ -1001,12 +1057,14 @@ fn format_constraint(clause: &str) -> Option<FormatConstraint> {
 /// adverbs and an optional `you [modal]` subject) or it explicitly constrains
 /// the agent's own response.
 fn clause_states_output_directive(lower: &str) -> bool {
-    clause_starts_with_directive(lower, OUTPUT_DIRECTIVE_VERBS)
+    (clause_starts_with_directive(lower, OUTPUT_DIRECTIVE_VERBS)
+        && !directive_targets_non_response_artifact(lower, OUTPUT_DIRECTIVE_VERBS))
         || clause_explicitly_constrains_agent_output(lower)
 }
 
 fn clause_states_shape_directive(lower: &str) -> bool {
-    clause_starts_with_directive(lower, SHAPE_DIRECTIVE_VERBS)
+    (clause_starts_with_directive(lower, SHAPE_DIRECTIVE_VERBS)
+        && !directive_targets_non_response_artifact(lower, SHAPE_DIRECTIVE_VERBS))
         || clause_explicitly_constrains_agent_output(lower)
 }
 
@@ -1033,13 +1091,101 @@ fn clause_starts_with_directive(lower: &str, directive_verbs: &[&str]) -> bool {
     false
 }
 
+fn directive_targets_non_response_artifact(lower: &str, directive_verbs: &[&str]) -> bool {
+    let Some(tail) = imperative_directive_tail(lower, directive_verbs) else {
+        return false;
+    };
+    artifact_starts(tail)
+        || [" in ", " into ", " to "]
+            .iter()
+            .filter_map(|marker| tail.find(marker).map(|index| &tail[index + marker.len()..]))
+            .any(artifact_starts)
+}
+
+fn imperative_directive_tail<'a>(lower: &'a str, directive_verbs: &[&str]) -> Option<&'a str> {
+    let lead = lower.trim_start_matches(|character: char| {
+        character.is_whitespace()
+            || matches!(character, '#' | '-' | '*' | '+' | '>' | ')')
+            || character.is_ascii_digit()
+            || character == '.'
+    });
+    let mut remaining = lead;
+    while !remaining.is_empty() {
+        remaining = remaining.trim_start();
+        let word_end = remaining
+            .find(char::is_whitespace)
+            .unwrap_or(remaining.len());
+        let word = &remaining[..word_end];
+        let tail = &remaining[word_end..];
+        if IMPERATIVE_LEAD_SKIP.contains(&word) {
+            remaining = tail;
+            continue;
+        }
+        if directive_verbs.contains(&word) {
+            return Some(tail.trim_start());
+        }
+        return None;
+    }
+    None
+}
+
+fn artifact_starts(text: &str) -> bool {
+    let text = text.trim_start();
+    let text = text
+        .strip_prefix("the ")
+        .or_else(|| text.strip_prefix("a "))
+        .or_else(|| text.strip_prefix("an "))
+        .or_else(|| text.strip_prefix("your "))
+        .unwrap_or(text);
+    NON_RESPONSE_ARTIFACTS
+        .iter()
+        .any(|artifact| match artifact {
+            NonResponseArtifact::NamedPath => starts_with_named_path(text),
+            _ => artifact
+                .phrases()
+                .iter()
+                .any(|phrase| starts_with_words(text, phrase)),
+        })
+}
+
+fn starts_with_named_path(text: &str) -> bool {
+    let first = text.split_whitespace().next().unwrap_or_default();
+    first.contains('/')
+        || first.contains('\\')
+        || first.ends_with(".md")
+        || first.ends_with(".mdx")
+        || first.ends_with(".json")
+        || first.ends_with(".toml")
+        || matches!(first, "changelog" | "readme" | "agents.md" | "claude.md")
+}
+
+fn starts_with_words(text: &str, phrase: &str) -> bool {
+    text == phrase
+        || text.strip_prefix(phrase).is_some_and(|suffix| {
+            suffix.starts_with(char::is_whitespace) || suffix.starts_with(',')
+        })
+}
+
 fn clause_explicitly_constrains_agent_output(lower: &str) -> bool {
     !HISTORICAL_OUTPUT_REFERENCES
         .iter()
         .any(|reference| lower.contains(reference))
-        && AGENT_OUTPUT_SUBJECTS
+        && (AGENT_OUTPUT_SUBJECTS
             .iter()
             .any(|subject| lower.contains(subject))
+            || clause_starts_with_agent_output_label(lower))
+}
+
+fn clause_starts_with_agent_output_label(lower: &str) -> bool {
+    let lead = lower.trim_start_matches(|character: char| {
+        character.is_whitespace()
+            || matches!(character, '#' | '-' | '*' | '+' | '>' | ')')
+            || character.is_ascii_digit()
+            || character == '.'
+    });
+    AGENT_OUTPUT_LABELS
+        .iter()
+        .any(|label| lead.starts_with(label))
 }
 
 /// Every recognized size/shape bound in a clause, kept left to right and
@@ -1071,6 +1217,9 @@ fn shape_constraints(clause: &str) -> Vec<RecognizedShapeConstraint> {
             let Some(whole) = captures.get(0) else {
                 continue;
             };
+            if has_distributive_qualifier(&clause[whole.end()..]) {
+                continue;
+            }
             matches.push((whole.start(), whole.end(), unit, bound));
         }
     }
@@ -1092,6 +1241,16 @@ fn shape_constraints(clause: &str) -> Vec<RecognizedShapeConstraint> {
         });
     }
     selected
+}
+
+fn has_distributive_qualifier(suffix: &str) -> bool {
+    let suffix = suffix.trim_start();
+    suffix == "apiece"
+        || suffix.starts_with("apiece ")
+        || suffix == "each"
+        || suffix.starts_with("each ")
+        || suffix.starts_with("per ")
+        || suffix.starts_with("for each ")
 }
 
 fn standalone_shape_mandate(clause: &str, shape: RecognizedShapeConstraint) -> bool {
@@ -1183,6 +1342,22 @@ fn sentence_is_conditional(clause: &str) -> bool {
     if CONDITIONAL_LEAD_PHRASES
         .iter()
         .any(|phrase| cleaned.starts_with(phrase))
+    {
+        return true;
+    }
+    let words = cleaned
+        .split_whitespace()
+        .take(4)
+        .map(|word| word.trim_matches(|character: char| !character.is_alphanumeric()))
+        .collect::<Vec<_>>();
+    if words.first() == Some(&"in")
+        && (words
+            .get(2)
+            .is_some_and(|word| PREPOSITIONAL_CONDITION_NOUNS.contains(word))
+            || matches!(words.get(1), Some(&"a" | &"an" | &"the"))
+                && words
+                    .get(3)
+                    .is_some_and(|word| PREPOSITIONAL_CONDITION_NOUNS.contains(word)))
     {
         return true;
     }
@@ -2204,6 +2379,49 @@ mod tests {
     }
 
     #[test]
+    fn q006_classifies_issue_239_mode_artifact_bound_and_example_cases() {
+        for clean in [
+            // A sentence-leading prepositional mode adjunct guards all of its
+            // comma-separated directive clauses, with or without the comma.
+            "In JSON mode, respond only with JSON; in chat mode, respond in Markdown.",
+            "In JSON mode respond only with JSON; in chat mode respond in Markdown.",
+            "In that case, return only JSON; in chat format, respond in Markdown.",
+            // Direct objects and destinations in the typed artifact vocabulary
+            // are not requirements on the response itself.
+            "Write commit messages in plain text only.\nRespond in Markdown.",
+            "Write documentation in Markdown only.\nReturn only JSON.",
+            "Write the export file as JSON only.\nRespond in Markdown.",
+            "Include at least three paragraphs in the PR description.\nAnswer in exactly one sentence.",
+            // Per-item bounds are not whole-response bounds.
+            "Use at most two sentences per paragraph.\nWrite at least five paragraphs.",
+            "Use exactly one sentence for each bullet.\nInclude at least three sentences.",
+            "Use at most two sentences apiece.\nWrite at least five sentences.",
+            // Qualified labels are examples, while bare labels remain live.
+            "Bad output: Return only JSON.\nGood output: Respond in Markdown.",
+            "Sample output: Return only JSON.\nRespond in Markdown.",
+            // #221 mixed descriptive/operative hard negative.
+            "The input contains at most two sentences.\nInclude at least five sentences.",
+        ] {
+            assert!(
+                q006_diagnostics(clean).is_empty(),
+                "expected clean: {clean:?}"
+            );
+        }
+
+        for operative in [
+            "Return only JSON.\nRespond in Markdown.",
+            "Use at most two sentences.\nWrite at least five sentences.",
+            "Output: Return only JSON.\nResponse: Respond in Markdown.",
+        ] {
+            assert_eq!(
+                q006_diagnostics(operative).len(),
+                1,
+                "expected conflict: {operative:?}"
+            );
+        }
+    }
+
+    #[test]
     fn q006_classifies_output_shape_clauses_before_comparing_bounds() {
         for (operative, descriptive) in [
             (
@@ -2291,7 +2509,12 @@ mod tests {
             ),
         )
         .unwrap();
-        std::fs::write(".cursor/rules/example.md", conflict).unwrap();
+        std::fs::write(
+            ".cursor/rules/example.mdc",
+            format!("---\ndescription: Enforces output rules\nalwaysApply: true\n---\n{conflict}"),
+        )
+        .unwrap();
+        std::fs::write(".cursorrules", conflict).unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
         super::super::run_all_with_targets(
@@ -2311,7 +2534,8 @@ mod tests {
             "AGENTS.md",
             ".claude/skills/example/SKILL.md",
             ".claude/agents/example.md",
-            ".cursor/rules/example.md",
+            ".cursor/rules/example.mdc",
+            ".cursorrules",
         ] {
             assert_eq!(
                 diag.diagnostics()

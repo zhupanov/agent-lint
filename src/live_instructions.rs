@@ -131,6 +131,27 @@ fn is_explicit_example_line(line: &str) -> bool {
     ]
     .iter()
     .any(|prefix| lower.starts_with(prefix))
+        || is_qualified_output_example_label(&lower)
+}
+
+fn is_qualified_output_example_label(lower: &str) -> bool {
+    const QUALIFIERS: &[&str] = &[
+        "bad",
+        "good",
+        "sample",
+        "expected",
+        "invalid",
+        "wrong",
+        "incorrect",
+        "example",
+    ];
+    const OUTPUT_LABELS: &[&str] = &["output:", "response:", "answer:", "reply:"];
+    QUALIFIERS.iter().any(|qualifier| {
+        lower
+            .strip_prefix(qualifier)
+            .and_then(|suffix| suffix.strip_prefix(' '))
+            .is_some_and(|suffix| OUTPUT_LABELS.iter().any(|label| suffix.starts_with(label)))
+    })
 }
 
 #[cfg(test)]
@@ -173,5 +194,19 @@ mod tests {
             document.example_scopes(),
             vec![true, true, true, true, false, false]
         );
+    }
+
+    #[test]
+    fn identifies_qualified_output_labels_as_examples_without_hiding_bare_labels() {
+        let markdown = MarkdownDocument::parse(
+            "Bad output: Return only JSON.\nGood response: Respond in Markdown.\nOutput: Return only JSON.\n",
+        );
+        let document = LiveInstructionDocument::new(
+            Path::new("AGENTS.md"),
+            InstructionSurfaceKind::AgentsMd,
+            &markdown,
+        );
+
+        assert_eq!(document.example_scopes(), vec![true, true, false]);
     }
 }
