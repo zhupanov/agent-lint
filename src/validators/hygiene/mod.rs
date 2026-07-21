@@ -346,7 +346,7 @@ mod tests {
             mode: crate::context::LintMode::Plugin,
             plugin_json: crate::context::ManifestState::Missing,
             marketplace_json: crate::context::ManifestState::Missing,
-            hooks_json: crate::context::ManifestState::Parsed(hooks_val),
+            hooks_json: crate::context::ManifestState::parsed(hooks_val),
             declared_hook_configs: vec![],
             settings_json: crate::context::ManifestState::Missing,
             settings_local_json: crate::context::ManifestState::Missing,
@@ -380,7 +380,7 @@ mod tests {
             marketplace_json: crate::context::ManifestState::Missing,
             hooks_json: crate::context::ManifestState::Missing,
             declared_hook_configs: vec![],
-            settings_json: crate::context::ManifestState::Parsed(settings_val),
+            settings_json: crate::context::ManifestState::parsed(settings_val),
             settings_local_json: crate::context::ManifestState::Missing,
         };
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();

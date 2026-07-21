@@ -824,9 +824,12 @@ pub enum LintRule {
     AwkRegexNonascii,
 
     // ── Email (E) ─────────────────────────────────────────────────
-    /// E001: email address is not a valid format
+    /// E001: email address does not meet the contact-metadata quality convention
     #[strum(props(code = "E001", name = "invalid-email-format"))]
     InvalidEmailFormat,
+    /// E002: email address metadata has a non-string JSON type
+    #[strum(props(code = "E002", name = "email-type-invalid"))]
+    EmailTypeInvalid,
 
     // ── User Config (U) ───────────────────────────────────────────
     /// U001: userConfig must be an object
@@ -1081,6 +1084,9 @@ impl LintRule {
             Self::CursorHookFieldTypeInvalid | Self::CursorPromptHookPromptMissing |
             Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
 
+            // ── Default-warning: contact metadata ───────────────────
+            Self::InvalidEmailFormat |
+
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
             Self::GhInlineBody |
@@ -1235,7 +1241,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            294,
+            295,
             "every enum variant must be registered"
         );
     }
@@ -1380,8 +1386,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            119,
-            "Expected 119 default-warning rules, got {}",
+            120,
+            "Expected 120 default-warning rules, got {}",
             warnings.len()
         );
     }

@@ -301,6 +301,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Added E002 `email-type-invalid` for non-string plugin and marketplace email metadata.
+
+### Changed
+
+- Hardened E001 email contact-metadata validation, made its quality convention explicit, and changed its default severity to warning; diagnostics now redact email values and include structured field locations.
+
 - Added S051 `script-deps-missing` rule: detects script-backed skills lacking dependency/package documentation (plugin-only)
 - Added S052 `script-verify-missing` rule: detects script-backed skills lacking verification/validation steps (plugin-only)
 - Added `has_scripts_dir` field to `SkillInfo` for clean separation of filesystem detection from content validation

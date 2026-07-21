@@ -1723,7 +1723,7 @@ mod tests {
         let ctx = LintContext {
             base_path: temp.path().to_path_buf(),
             mode: LintMode::Plugin,
-            plugin_json: ManifestState::Parsed(serde_json::json!({
+            plugin_json: ManifestState::parsed(serde_json::json!({
                 "mcpServers": {
                     "missing-command": {"type": "stdio"},
                     "secret": {"command": "ok", "env": {"API_KEY": "plaintext"}}
@@ -1762,7 +1762,7 @@ mod tests {
             &LintContext {
                 base_path: temp.path().to_path_buf(),
                 mode: LintMode::Plugin,
-                plugin_json: ManifestState::Parsed(serde_json::json!({"name": "example"})),
+                plugin_json: ManifestState::parsed(serde_json::json!({"name": "example"})),
                 marketplace_json: ManifestState::Missing,
                 hooks_json: ManifestState::Missing,
                 declared_hook_configs: vec![],
@@ -1780,7 +1780,7 @@ mod tests {
             &LintContext {
                 base_path: temp.path().to_path_buf(),
                 mode: LintMode::Plugin,
-                plugin_json: ManifestState::Parsed(serde_json::json!({"mcpServers": []})),
+                plugin_json: ManifestState::parsed(serde_json::json!({"mcpServers": []})),
                 marketplace_json: ManifestState::Missing,
                 hooks_json: ManifestState::Missing,
                 declared_hook_configs: vec![],

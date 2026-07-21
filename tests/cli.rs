@@ -950,6 +950,139 @@ fn invalid_json_manifest_diagnostics_are_relative_and_located() {
 }
 
 #[test]
+fn email_metadata_contract_preserves_privacy_policy_and_locations() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest_dir = tmp.path().join(".claude-plugin");
+    std::fs::create_dir(&manifest_dir).unwrap();
+    let private_email = "private-routing@example";
+    std::fs::write(
+        manifest_dir.join("plugin.json"),
+        format!(
+            "{{\n  \"name\": \"plugin\",\n  \"author\": {{\"email\": \"{private_email}\"}}\n}}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        manifest_dir.join("marketplace.json"),
+        "{\n  \"name\": \"marketplace\",\n  \"owner\": {\"email\": 42},\n  \"plugins\": []\n}\n",
+    )
+    .unwrap();
+
+    for (strictness, format_severity) in [
+        (vec![], "warning"),
+        (vec!["--pedantic"], "error"),
+        (vec!["--all"], "error"),
+    ] {
+        let mut args = vec!["--format", "json"];
+        args.extend(strictness);
+        args.extend(["--only", "E001,E002", "."]);
+        let output = run_in(tmp.path(), &args);
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 2, "{report:#}");
+        assert_eq!(diagnostics[0]["code"], "E001");
+        assert_eq!(diagnostics[0]["severity"], format_severity);
+        assert_eq!(diagnostics[0]["subject_path"], ".claude-plugin/plugin.json");
+        assert_eq!(diagnostics[0]["location"]["start"]["line"], 3);
+        assert_eq!(diagnostics[1]["code"], "E002");
+        assert_eq!(diagnostics[1]["severity"], "error");
+        assert_eq!(
+            diagnostics[1]["subject_path"],
+            ".claude-plugin/marketplace.json"
+        );
+        assert_eq!(diagnostics[1]["location"]["start"]["line"], 3);
+        for diagnostic in diagnostics {
+            assert_eq!(diagnostic["evidence"], "[redacted: possible secret]");
+            assert!(diagnostic["suggestion"].is_string());
+        }
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(private_email));
+    }
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+exclude = [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"]
+[[lint.overrides]]
+files = [".claude-plugin/plugin.json"]
+suppress = ["E001"]
+"#,
+    )
+    .unwrap();
+    let overridden = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "E001,E002", "."],
+    );
+    let overridden_report = json(&overridden);
+    assert_eq!(overridden_report["counts"]["suppressed"], 1);
+    assert_eq!(
+        overridden_report["diagnostics"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(overridden_report["diagnostics"][0]["code"], "E002");
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+suppress = ["E002"]
+"#,
+    )
+    .unwrap();
+    let globally_suppressed = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "E001,E002", "."],
+    );
+    assert!(globally_suppressed.status.success());
+    let report = json(&globally_suppressed);
+    assert_eq!(report["counts"]["suppressed"], 1);
+    assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(report["diagnostics"][0]["code"], "E001");
+}
+
+#[test]
+fn email_rules_are_plugin_only_and_do_not_claim_malformed_json() {
+    let basic = tempfile::tempdir().unwrap();
+    init_git(basic.path());
+    let basic_output = run_in(
+        basic.path(),
+        &["--format", "json", "--only", "E001,E002", "."],
+    );
+    assert!(
+        basic_output.status.success(),
+        "stderr: {}",
+        stderr(&basic_output)
+    );
+    assert!(
+        json(&basic_output)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let malformed = tempfile::tempdir().unwrap();
+    init_git(malformed.path());
+    let path = malformed.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, "{ invalid").unwrap();
+    let malformed_output = run_in(
+        malformed.path(),
+        &["--format", "json", "--only", "E001,E002", "."],
+    );
+    assert!(
+        malformed_output.status.success(),
+        "stderr: {}",
+        stderr(&malformed_output)
+    );
+    assert!(
+        json(&malformed_output)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn manifest_author_and_channel_diagnostics_preserve_strictness_policy() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
