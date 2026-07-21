@@ -10,8 +10,17 @@ use std::sync::LazyLock;
 static RE_BACKTICK_SNAKE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"`([a-z][a-z0-9]*(?:_[a-z0-9]+)+)`").unwrap());
 
-// Context words that suggest a tool invocation (case-insensitive check).
-const CONTEXT_WORDS: &[&str] = &["use", "call", "invoke", "run", "execute", "tool"];
+// Context vocabulary suggesting a tool invocation, matched on word boundaries so
+// prose substrings ("use" inside "Because"/"user", "run" inside "prune", "call"
+// inside "recall") do not pass the gate. Case-insensitive via the inline `(?i)`
+// flag; includes common inflections of each verb plus the singular/plural noun
+// "tool(s)".
+static RE_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:use[sd]?|using|call(?:s|ed|ing)?|invoke[sd]?|invoking|run(?:s|ning)?|ran|execute[sd]?|executing|tools?)\b",
+    )
+    .unwrap()
+});
 
 // Built-in platform tools in snake_case form. Single-word tools (bash, read,
 // etc.) are excluded automatically by the regex's underscore requirement.
@@ -32,8 +41,10 @@ const BUILTIN_TOOLS_SNAKE: &[&str] = &[
 
 /// S044: Detect backtick-quoted MCP tool references that lack a `ServerName:` prefix.
 ///
-/// Only flags identifiers on lines that also contain a context word (e.g., "use",
-/// "call", "tool") to reduce false positives on generic snake_case variables.
+/// Only flags identifiers on lines that also contain an invocation-context word
+/// (e.g., "use", "call", "tool"), matched on word boundaries so prose substrings
+/// like "use" inside "Because" do not pass the gate, reducing false positives on
+/// generic snake_case variables.
 /// Runs in both plugin and private skill modes (no `plugin_mode` gate).
 /// Scans `info.body` only (post-frontmatter content).
 pub(super) fn check_mcp_tool_refs(info: &SkillInfo, diag: &mut DiagnosticCollector) {
@@ -44,10 +55,8 @@ pub(super) fn check_mcp_tool_refs(info: &SkillInfo, diag: &mut DiagnosticCollect
     let mut reported: HashSet<String> = HashSet::new();
 
     for line in crate::fence::lines_outside_fences(&info.body) {
-        // Check if this line contains any context word (case-insensitive)
-        let line_lower = line.to_lowercase();
-        let has_context = CONTEXT_WORDS.iter().any(|w| line_lower.contains(w));
-        if !has_context {
+        // Skip lines with no invocation-context word (word-boundary match).
+        if !RE_CONTEXT.is_match(line) {
             continue;
         }
 

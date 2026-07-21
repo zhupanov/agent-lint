@@ -387,6 +387,43 @@ fn mcp_structure_and_invalid_type_preserve_focused_rule_contracts() {
 }
 
 #[test]
+fn s044_word_boundary_gate_separates_prose_substring_from_real_invocation() {
+    // Leaf-#251 regression through the released CLI path: the hard-negative
+    // evidence line (context is only the substring `use` inside *Because*) yields
+    // no S044, while a genuine invocation line still fires exactly once.
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/my-skill/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill,
+        // Positive line omits "tool" so the `use` gate branch is exercised alone,
+        // mirroring the "Because"/"user_id" hard-negative on the line above.
+        "---\nname: my-skill\ndescription: A skill for exercising the S044 context gate\n---\nBecause the `user_id` column is indexed, lookups stay fast.\nUse `create_issue` to file bugs.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S044", "."]);
+    // S044 is a warning; a warning-only run does not fail (I-Exit-1).
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{report:#}");
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["code"], "S044", "{report:#}");
+    assert_eq!(diagnostic["name"], "mcp-tool-unqualified", "{report:#}");
+    assert_eq!(diagnostic["severity"], "warning", "{report:#}");
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(message.contains("create_issue"), "{report:#}");
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d["message"].as_str().unwrap().contains("user_id")),
+        "prose substring line must not produce S044: {report:#}"
+    );
+}
+
+#[test]
 fn platform_aware_mcp_adapters_preserve_cli_ownership_and_subject_paths() {
     let cursor = tempfile::tempdir().unwrap();
     init_git(cursor.path());
