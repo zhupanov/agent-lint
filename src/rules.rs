@@ -75,9 +75,15 @@ pub enum LintRule {
     /// M018: plugin.json omits its optional version field
     #[strum(props(code = "M018", name = "plugin-version-missing"))]
     PluginVersionMissing,
+    /// M019: marketplace.json relative string source lacks `./` without pluginRoot
+    #[strum(props(code = "M019", name = "marketplace-bare-path"))]
+    MarketplaceBarePath,
     /// M020: plugin.json author is present but not an object
     #[strum(props(code = "M020", name = "author-type-invalid"))]
     AuthorTypeInvalid,
+    /// M021: marketplace.json marketplace or plugin name is not kebab-case
+    #[strum(props(code = "M021", name = "marketplace-name-format"))]
+    MarketplaceNameFormat,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
     /// H001: hooks/hooks.json is missing
@@ -1010,6 +1016,9 @@ impl LintRule {
             Self::AuthorNameMissing | Self::HomepageUrlInvalid |
             Self::ChannelServerMissing | Self::PluginVersionMissing |
 
+            // ── Default-warning: marketplace entry advisories ────────
+            Self::MarketplaceBarePath | Self::MarketplaceNameFormat |
+
             // ── Default-warning: optional manifest files ────────────
             Self::MarketplaceJsonMissing | Self::MarketplacePluginsEmpty |
 
@@ -1226,7 +1235,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            291,
+            293,
             "every enum variant must be registered"
         );
     }
@@ -1371,8 +1380,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            118,
-            "Expected 118 default-warning rules, got {}",
+            120,
+            "Expected 120 default-warning rules, got {}",
             warnings.len()
         );
     }

@@ -678,7 +678,7 @@ mod tests {
         let marketplace_val = json!({
             "name": "test-mp",
             "owner": {"name": "owner", "email": "a@b.com"},
-            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+            "plugins": [{"name": "p", "source": "./s", "category": "lint"}]
         });
         let hooks_val = json!({"hooks": [{"command": "echo test"}]});
 
@@ -748,7 +748,7 @@ mod tests {
         let marketplace_val = json!({
             "name": "test-mp",
             "owner": {"name": "owner", "email": "a@b.com"},
-            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+            "plugins": [{"name": "p", "source": "./s", "category": "lint"}]
         });
         let hooks_val = json!({"hooks": [{"command": "echo test"}]});
 
@@ -912,7 +912,7 @@ mod tests {
         let marketplace_val = json!({
             "name": "test-mp",
             "owner": {"name": "owner", "email": "a@b.com"},
-            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+            "plugins": [{"name": "p", "source": "./s", "category": "lint"}]
         });
         let hooks_val = json!({"hooks": [{"command": "echo test"}]});
 
@@ -1081,7 +1081,7 @@ mod tests {
         let marketplace_val = json!({
             "name": "test-mp",
             "owner": {"name": "owner", "email": "a@b.com"},
-            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+            "plugins": [{"name": "p", "source": "./s", "category": "lint"}]
         });
         let hooks_val = json!({"hooks": [{"command": "echo test"}]});
 

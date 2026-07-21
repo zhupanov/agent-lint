@@ -4,6 +4,7 @@ use crate::rules::LintRule;
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
 use regex::Regex;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -18,6 +19,10 @@ static RE_SEMVER: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Windows drive-letter path prefix, e.g. `C:\` or `c:/`.
 static RE_WIN_DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[\\/]").unwrap());
+
+/// Marketplace / plugin entry name kebab-case: `[a-z0-9]+(-[a-z0-9]+)*`.
+static RE_MARKETPLACE_KEBAB: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z0-9]+(-[a-z0-9]+)*$").unwrap());
 
 /// The plugin manifest directory. Components must never live under it.
 const PLUGIN_DIR: &str = ".claude-plugin";
@@ -80,6 +85,14 @@ const COMPONENT_DIRECTORIES: &[&str] = &[
     "output-styles",
     "themes",
     "monitors",
+];
+
+/// Known marketplace plugin object-source types and their required fields.
+const OBJECT_SOURCE_REQUIRED: &[(&str, &[&str])] = &[
+    ("github", &["repo"]),
+    ("url", &["url"]),
+    ("git-subdir", &["url", "path"]),
+    ("npm", &["package"]),
 ];
 
 /// Split a manifest path on POSIX and Windows separators, dropping empty and
@@ -195,6 +208,14 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             LintRule::MarketplaceFieldMissing,
             &format!("{f} missing required field: name"),
         );
+    } else {
+        let trimmed = mp_name.trim();
+        if !trimmed.is_empty() && !RE_MARKETPLACE_KEBAB.is_match(trimmed) {
+            diag.report(
+                LintRule::MarketplaceNameFormat,
+                &format!("{f} name '{mp_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
+            );
+        }
     }
     if mp_owner.trim().is_empty() {
         diag.report(
@@ -229,16 +250,39 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             let arr = plugins
                 .as_array()
                 .expect("the preceding branch established plugins is an array");
+            let has_plugin_root = val
+                .get("metadata")
+                .and_then(|m| m.get("pluginRoot"))
+                .and_then(|v| v.as_str())
+                .is_some();
+            let mut name_indexes: HashMap<String, Vec<usize>> = HashMap::new();
+
             for (i, plugin) in arr.iter().enumerate() {
-                let pname = plugin.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let has_source = match plugin.get("source") {
-                    Some(s) => {
-                        (s.is_string() && !s.as_str().unwrap_or("").trim().is_empty())
-                            || s.is_object()
+                let pname = plugin
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                let name_missing = pname.is_empty();
+                if !name_missing {
+                    name_indexes.entry(pname.to_string()).or_default().push(i);
+                    if !RE_MARKETPLACE_KEBAB.is_match(pname) {
+                        diag.report(
+                            LintRule::MarketplaceNameFormat,
+                            &format!(
+                                "{f} plugins[{i}] name '{pname}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"
+                            ),
+                        );
                     }
-                    None => false,
+                }
+
+                let source_missing_or_wrong = match plugin.get("source") {
+                    None => true,
+                    Some(Value::String(s)) => s.trim().is_empty(),
+                    Some(Value::Object(_)) => false,
+                    Some(_) => true,
                 };
-                if pname.is_empty() || !has_source {
+                if name_missing || source_missing_or_wrong {
                     diag.report(
                         LintRule::MarketplacePluginInvalid,
                         &format!(
@@ -246,7 +290,97 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                         ),
                     );
                 }
+
+                match plugin.get("source") {
+                    Some(Value::String(s)) => {
+                        let s = s.trim();
+                        if s.is_empty() {
+                            // Already reported as missing/invalid above.
+                        } else if is_absolute_path(s) {
+                            diag.report(
+                                LintRule::MarketplacePluginInvalid,
+                                &format!(
+                                    "{f} plugins[{i}].source path '{s}' must be relative, not absolute"
+                                ),
+                            );
+                        } else if path_segments(s).any(|seg| seg == "..") {
+                            diag.report(
+                                LintRule::MarketplacePluginInvalid,
+                                &format!(
+                                    "{f} plugins[{i}].source path '{s}' must not use '..' traversal"
+                                ),
+                            );
+                        } else if !s.starts_with("./") && !has_plugin_root {
+                            diag.report(
+                                LintRule::MarketplaceBarePath,
+                                &format!(
+                                    "{f} plugins[{i}].source '{s}' should start with './' (or set metadata.pluginRoot)"
+                                ),
+                            );
+                        }
+                    }
+                    Some(Value::Object(obj)) => {
+                        validate_object_plugin_source(f, i, obj, diag);
+                    }
+                    _ => {}
+                }
             }
+
+            let mut duplicates: Vec<(String, Vec<usize>)> = name_indexes
+                .into_iter()
+                .filter(|(_, idxs)| idxs.len() > 1)
+                .collect();
+            duplicates.sort_by(|a, b| a.1[0].cmp(&b.1[0]).then_with(|| a.0.cmp(&b.0)));
+            for (name, idxs) in duplicates {
+                let indexes = idxs
+                    .iter()
+                    .map(|i| format!("plugins[{i}]"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                diag.report(
+                    LintRule::MarketplacePluginInvalid,
+                    &format!("{f} duplicate plugin name \"{name}\" ({indexes})"),
+                );
+            }
+        }
+    }
+}
+
+/// Validate a marketplace plugin entry whose `source` is a JSON object.
+fn validate_object_plugin_source(
+    f: &str,
+    i: usize,
+    obj: &serde_json::Map<String, Value>,
+    diag: &mut DiagnosticCollector,
+) {
+    let source_type = obj.get("source").and_then(|v| v.as_str()).unwrap_or("");
+    if source_type.is_empty() {
+        diag.report(
+            LintRule::MarketplacePluginInvalid,
+            &format!("{f} plugins[{i}].source missing required field: source"),
+        );
+        return;
+    }
+    let Some((_, required)) = OBJECT_SOURCE_REQUIRED
+        .iter()
+        .find(|(ty, _)| *ty == source_type)
+    else {
+        diag.report(
+            LintRule::MarketplacePluginInvalid,
+            &format!(
+                "{f} plugins[{i}].source unknown source type '{source_type}' (expected github, url, git-subdir, or npm)"
+            ),
+        );
+        return;
+    };
+    for field in *required {
+        if !is_non_empty_string(obj.get(*field)) {
+            diag.report(
+                LintRule::MarketplacePluginInvalid,
+                &format!(
+                    "{f} plugins[{i}].source {source_type} source requires non-empty \"{field}\""
+                ),
+            );
         }
     }
 }
@@ -618,7 +752,7 @@ mod tests {
         let val = json!({
             "name": "mp",
             "owner": {"name": "owner-name"},
-            "plugins": [{"name": "p1", "source": "https://example.com"}]
+            "plugins": [{"name": "p1", "source": "./plugins/p1"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -684,7 +818,7 @@ mod tests {
         let val = json!({
             "name": "mp",
             "owner": {},
-            "plugins": [{"name": "p", "source": "s"}]
+            "plugins": [{"name": "p", "source": "./p"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -705,6 +839,279 @@ mod tests {
         validate_marketplace_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("plugins[0]"));
+    }
+
+    #[test]
+    fn test_v2_plugin_source_shapes_table() {
+        type Expect<'a> = &'a [(LintRule, &'a str)];
+        let cases: &[(&str, serde_json::Value, Expect<'_>)] = &[
+            (
+                "relative_ok",
+                json!({"name": "p", "source": "./plugins/x"}),
+                &[],
+            ),
+            (
+                "github_ok",
+                json!({"name": "p", "source": {"source": "github", "repo": "org/repo"}}),
+                &[],
+            ),
+            (
+                "url_ok",
+                json!({"name": "p", "source": {"source": "url", "url": "https://example.com/p.git"}}),
+                &[],
+            ),
+            (
+                "git_subdir_ok",
+                json!({"name": "p", "source": {"source": "git-subdir", "url": "https://example.com/m.git", "path": "plugins/p"}}),
+                &[],
+            ),
+            (
+                "npm_ok",
+                json!({"name": "p", "source": {"source": "npm", "package": "@scope/pkg"}}),
+                &[],
+            ),
+            (
+                "github_with_optional",
+                json!({"name": "p", "source": {"source": "github", "repo": "org/repo", "ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}),
+                &[],
+            ),
+            (
+                "github_missing_repo",
+                json!({"name": "p", "source": {"source": "github"}}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "requires non-empty \"repo\"",
+                )],
+            ),
+            (
+                "url_missing_url",
+                json!({"name": "p", "source": {"source": "url"}}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "requires non-empty \"url\"",
+                )],
+            ),
+            (
+                "git_subdir_missing_path",
+                json!({"name": "p", "source": {"source": "git-subdir", "url": "https://example.com/m.git"}}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "requires non-empty \"path\"",
+                )],
+            ),
+            (
+                "npm_missing_package",
+                json!({"name": "p", "source": {"source": "npm"}}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "requires non-empty \"package\"",
+                )],
+            ),
+            (
+                "unknown_type",
+                json!({"name": "p", "source": {"source": "nonsense-type"}}),
+                &[(LintRule::MarketplacePluginInvalid, "unknown source type")],
+            ),
+            (
+                "missing_source_type",
+                json!({"name": "p", "source": {"repo": "org/repo"}}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "missing required field: source",
+                )],
+            ),
+            (
+                "non_object_non_string",
+                json!({"name": "p", "source": 42}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "missing/invalid name or source",
+                )],
+            ),
+            (
+                "traversal",
+                json!({"name": "p", "source": "../outside"}),
+                &[(LintRule::MarketplacePluginInvalid, "'..' traversal")],
+            ),
+            (
+                "posix_absolute",
+                json!({"name": "p", "source": "/abs"}),
+                &[(LintRule::MarketplacePluginInvalid, "must be relative")],
+            ),
+            (
+                "windows_absolute",
+                json!({"name": "p", "source": "C:\\x"}),
+                &[(LintRule::MarketplacePluginInvalid, "must be relative")],
+            ),
+            (
+                "bare_without_root",
+                json!({"name": "p", "source": "plugins/x"}),
+                &[(LintRule::MarketplaceBarePath, "should start with './'")],
+            ),
+            (
+                "whitespace_name",
+                json!({"name": "  ", "source": "./p"}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "missing/invalid name or source",
+                )],
+            ),
+            (
+                "whitespace_source",
+                json!({"name": "p", "source": "  "}),
+                &[(
+                    LintRule::MarketplacePluginInvalid,
+                    "missing/invalid name or source",
+                )],
+            ),
+        ];
+
+        for (label, plugin, expected) in cases {
+            let val = json!({
+                "name": "mp",
+                "owner": {"name": "o"},
+                "plugins": [plugin]
+            });
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_json(&ctx, &mut diag);
+            let got: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .map(|d| (d.rule, d.message.clone()))
+                .collect();
+            assert_eq!(
+                got.len(),
+                expected.len(),
+                "{label}: unexpected diagnostics {got:?}"
+            );
+            for (rule, needle) in *expected {
+                assert!(
+                    got.iter().any(|(r, msg)| r == rule && msg.contains(needle)),
+                    "{label}: missing {rule:?} containing {needle:?} in {got:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_v2_bare_path_clean_with_plugin_root() {
+        let val = json!({
+            "name": "mp",
+            "owner": {"name": "o"},
+            "metadata": {"pluginRoot": "./plugins"},
+            "plugins": [{"name": "p", "source": "plugins/x"}]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0, "{:?}", diag.diagnostics());
+    }
+
+    #[test]
+    fn test_v2_duplicate_plugin_names() {
+        let val = json!({
+            "name": "mp",
+            "owner": {"name": "o"},
+            "plugins": [
+                {"name": "a", "source": "./a"},
+                {"name": "a", "source": "./a2"},
+                {"name": "b", "source": "./b"},
+                {"name": "b", "source": "./b2"},
+                {"name": "b", "source": "./b3"}
+            ]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        let dups: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| {
+                d.rule == LintRule::MarketplacePluginInvalid && d.message.contains("duplicate")
+            })
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(dups.len(), 2, "{dups:?}");
+        assert!(dups[0].contains("\"a\"") && dups[0].contains("plugins[0], plugins[1]"));
+        assert!(
+            dups[1].contains("\"b\"") && dups[1].contains("plugins[2], plugins[3], plugins[4]")
+        );
+    }
+
+    #[test]
+    fn test_v2_evidence_manifest_catches_four_conditions() {
+        let val = json!({
+            "name": "m",
+            "owner": {"name": "o"},
+            "plugins": [
+                {"name": "a", "source": "../outside"},
+                {"name": "a", "source": {"source": "github"}},
+                {"name": "b", "source": {"source": "nonsense-type"}}
+            ]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        let msgs: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("'..' traversal")),
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("duplicate plugin name \"a\"")),
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("requires non-empty \"repo\"")),
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter().any(|m| m.contains("unknown source type")),
+            "{msgs:?}"
+        );
+    }
+
+    #[test]
+    fn test_v2_name_format_warnings() {
+        let cases: &[(&str, serde_json::Value, bool)] = &[
+            (
+                "top_ok",
+                json!({"name": "a", "owner": {"name": "o"}, "plugins": [{"name": "a-b2", "source": "./p"}]}),
+                false,
+            ),
+            (
+                "top_bad",
+                json!({"name": "My_Plugin", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
+                true,
+            ),
+            (
+                "entry_upper",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "UPPER", "source": "./p"}]}),
+                true,
+            ),
+            (
+                "entry_double_hyphen",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "a--b", "source": "./p"}]}),
+                true,
+            ),
+        ];
+        for (label, val, expect_warn) in cases {
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val.clone()));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_json(&ctx, &mut diag);
+            let has = diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::MarketplaceNameFormat);
+            assert_eq!(has, *expect_warn, "{label}");
+        }
     }
 
     // V12: validate_marketplace_enriched

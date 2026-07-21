@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 291 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 293 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -47,7 +47,7 @@ run only when their platform is auto-detected or force-enabled in
 | M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON | Plugin | error |
 | M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name`, `owner.name`, or `plugins`) | Plugin | error |
 | M008 | `marketplace-plugins-empty` | `marketplace.json` `plugins` is empty or has the wrong type. Claude Code treats an empty array as a non-blocking warning. | Plugin | warn |
-| M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name` or `source` | Plugin | error |
+| M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name`/`source`: missing/empty fields, duplicate names, unknown object source type, missing required per-type subfields, `..` traversal, or absolute paths | Plugin | error |
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | warn |
 | M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a manifest path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) points there | Plugin | error |
@@ -57,9 +57,11 @@ run only when their platform is auto-detected or force-enabled in
 | M016 | `lsp-server-invalid` | `plugin.json` `lspServers` entry missing `command` or `extensionToLanguage` | Plugin | error |
 | M017 | `channel-server-missing` | `plugin.json` `channels` entry does not reference a `server` | Plugin | warn |
 | M018 | `plugin-version-missing` | `plugin.json` omits optional `version`; Claude Code falls back to the Git commit SHA. | Plugin | warn |
+| M019 | `marketplace-bare-path` | `marketplace.json` relative string `source` does not start with `./` while `metadata.pluginRoot` is absent | Plugin | warn |
 | M020 | `author-type-invalid` | `plugin.json` `author` is present but not an object. Claude Code rejects non-object authors as manifest load errors. | Plugin | error |
+| M021 | `marketplace-name-format` | Marketplace or plugin entry `name` is not kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`); claude.ai marketplace sync rejects other forms | Plugin | warn |
 
-M003, M004, and M018 follow the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and its [plugin manifest schema](https://www.schemastore.org/claude-code-plugin-manifest.json). M005 and M008 follow the [Claude Code marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces); M005 remains an agent-lint advisory for repositories that intend to publish a self-hosted marketplace.
+M003, M004, and M018 follow the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and its [plugin manifest schema](https://www.schemastore.org/claude-code-plugin-manifest.json). M005, M008, M009, M019, and M021 follow the [Claude Code marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces); M005 remains an agent-lint advisory for repositories that intend to publish a self-hosted marketplace.
 
 ## Hooks Rules (H)
 
@@ -641,7 +643,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 291):**
+**Auto-fixable rules (11 of 293):**
 
 | Rule | Code | Fix |
 |------|------|-----|
