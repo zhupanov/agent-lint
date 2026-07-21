@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 295 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 296 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -355,7 +355,7 @@ These shared, source-aware checks run on root and nested `CLAUDE.md`, Claude
 and shared-agent skill bodies (`.claude/skills`, `skills`, and
 `.agents/skills`), Claude, Cursor, and plugin agent bodies, every included
 `AGENTS.md`, `AGENTS.override.md`, and active Cursor rule and skill bodies
-(`.cursor/rules/**/*.{md,mdc}`, `.cursorrules`, and
+(`**/.cursor/rules/**/*.mdc`, `.cursorrules`, and
 `.cursor/skills/*/SKILL.md`) in both Basic and Plugin modes. They skip
 frontmatter where the surface defines it, fenced and inline code, and
 identifiable quoted examples. A missing or malformed frontmatter block does
@@ -591,7 +591,7 @@ They run in both Basic and Plugin modes.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| CU001 | `cursor-rule-empty` | `.cursor/rules/*.mdc` or `.cursorrules` has no instructions | Always | error |
+| CU001 | `cursor-rule-empty` | A `**/.cursor/rules/**/*.mdc` file or `.cursorrules` has no instructions | Always | error |
 | CU002 | `cursor-frontmatter-missing` | `.mdc` rule lacks YAML frontmatter | Always | warn |
 | CU003 | `cursor-frontmatter-invalid` | `.mdc` frontmatter is invalid YAML | Always | error |
 | CU004 | `cursor-glob-invalid` | `.mdc` `globs` has an invalid pattern | Always | error |
@@ -610,6 +610,7 @@ They run in both Basic and Plugin modes.
 | CU017 | `cursor-hook-invalid` | Cursor hook timeout, loop limit, or fail-closed type is invalid | Always | warn |
 | CU018 | `cursor-prompt-missing` | Prompt hook lacks `prompt` | Always | warn |
 | CU019 | `cursor-model-invalid` | Prompt hook `model` is not a string | Always | error |
+| CU020 | `cursor-rule-extension` | A `.md` file below a repository-wide `.cursor/rules/` directory is not a live Cursor rule; rename it to the same basename with `.mdc` | Always | warn |
 | CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses frontmatter unsupported by Cursor | Always | warn |
 
 ## Hygiene / Scripts Rules (G)
@@ -789,7 +790,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 295):**
+**Auto-fixable rules (11 of 296):**
 
 | Rule | Code | Fix |
 |------|------|-----|

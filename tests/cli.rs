@@ -947,6 +947,135 @@ fn q006_discovers_cursor_mdc_and_legacy_rules_through_the_cli() {
 }
 
 #[test]
+fn nested_cursor_rules_have_extension_and_prompt_content_cli_contracts() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let mdc = tmp.path().join("packages/api/.cursor/rules/api.mdc");
+    let first_md = tmp.path().join("packages/api/.cursor/rules/not-a-rule.md");
+    let second_md = tmp
+        .path()
+        .join("packages/web/.cursor/rules/also-not-a-rule.md");
+    for path in [&mdc, &first_md, &second_md] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    }
+    std::fs::write(&mdc, "---\nalwaysApply: true\n---\nRetry until success.\n").unwrap();
+    std::fs::write(&first_md, "Retry until success.\n").unwrap();
+    std::fs::write(&second_md, "Retry until success.\n").unwrap();
+
+    let extension_report = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CU020", "."],
+    ));
+    assert_eq!(
+        extension_report["active_platforms"],
+        serde_json::json!(["claude", "cursor"])
+    );
+    let extension_diagnostics = extension_report["diagnostics"].as_array().unwrap();
+    assert_eq!(extension_diagnostics.len(), 2);
+    assert_eq!(
+        extension_diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic["code"].as_str().unwrap(),
+                diagnostic["severity"].as_str().unwrap(),
+                diagnostic["subject_path"].as_str().unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "CU020",
+                "warning",
+                "packages/api/.cursor/rules/not-a-rule.md",
+            ),
+            (
+                "CU020",
+                "warning",
+                "packages/web/.cursor/rules/also-not-a-rule.md",
+            ),
+        ]
+    );
+    assert_eq!(
+        extension_diagnostics[0]["suggestion"],
+        "rename to packages/api/.cursor/rules/not-a-rule.mdc"
+    );
+
+    for (arguments, severity, exit_code) in [
+        (
+            vec!["--format", "json", "--pedantic", "--only", "CU020", "."],
+            "error",
+            Some(1),
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "CU020", "."],
+            "error",
+            Some(1),
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(
+            output.status.code(),
+            exit_code,
+            "stderr: {}",
+            stderr(&output)
+        );
+        assert!(
+            json(&output)["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|diagnostic| diagnostic["severity"] == severity),
+            "{arguments:?} must classify CU020 as {severity}"
+        );
+    }
+
+    let prompt_report = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "Q005", "."],
+    ));
+    assert_eq!(
+        prompt_report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["packages/api/.cursor/rules/api.mdc"]
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncursor = false\n",
+    )
+    .unwrap();
+    let disabled = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CU020", "."],
+    ));
+    assert_eq!(disabled["active_platforms"], serde_json::json!([]));
+    assert!(disabled["diagnostics"].as_array().unwrap().is_empty());
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[[lint.overrides]]\nfiles = [\"packages/api/.cursor/rules/not-a-rule.md\"]\nsuppress = [\"CU020\"]\n",
+    )
+    .unwrap();
+    let suppressed = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CU020", "."],
+    ));
+    assert_eq!(suppressed["counts"]["suppressed"], 1);
+    assert_eq!(
+        suppressed["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["packages/web/.cursor/rules/also-not-a-rule.md"]
+    );
+}
+
+#[test]
 fn q004_cli_preserves_source_metadata_modes_and_claude_scoped_policy() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

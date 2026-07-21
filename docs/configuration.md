@@ -139,9 +139,13 @@ repository with no platform files), and `false` disables its platform-specific
 validators. Omit a key to use auto-detection. Only `cursor` and `codex` are
 accepted.
 
-Cursor surfaces are `.cursorrules`, `.cursor/mcp.json`, `.cursor/rules/**/*.{md,mdc}`,
+Cursor project rules are discovered repository-wide as
+`**/.cursor/rules/**/*.mdc`. An included `.md` file below any
+`**/.cursor/rules/` directory is not a live rule; it activates Cursor only so
+CU020 can report the required rename to `.mdc`. Other Cursor surfaces are
+`.cursorrules`, `.cursor/mcp.json`,
 `.cursor/hooks.json`, `.cursor/agents/**/*.md`, `.cursor/environment.json`,
-and `.cursor/skills/*/SKILL.md`. Unique Codex surfaces are
+`.cursor/skills/*/SKILL.md`. Unique Codex surfaces are
 `.codex/config.toml`, `.codex-plugin/plugin.json`, and root
 `AGENTS.override.md`. Root or nested `AGENTS.md` and
 `.agents/skills/*/SKILL.md` are shared surfaces. Discovery skips `.git` and

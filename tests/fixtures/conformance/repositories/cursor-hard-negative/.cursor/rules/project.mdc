@@ -1,7 +1,7 @@
 ---
-description: Explain migration from the legacy Cursor rules filename
+description: Explain repository maintenance steps
 alwaysApply: true
 ---
-# Migration example
+# Maintenance
 
-Documentation may quote `.cursorrules` without creating that legacy root file.
+Use focused validation for every change.

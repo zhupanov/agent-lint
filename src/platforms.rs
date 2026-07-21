@@ -6,7 +6,7 @@
 
 use crate::config::{ExcludeSet, PlatformOverrides};
 use crate::traversal;
-use std::path::Path;
+use std::path::{Component, Path};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DetectedSurfaces {
@@ -60,18 +60,45 @@ fn cursor_surface_exists(exclude: &ExcludeSet) -> bool {
         || is_included_file(".cursor/mcp.json", exclude)
         || is_included_file(".cursor/hooks.json", exclude)
         || is_included_file(".cursor/environment.json", exclude)
-        || has_matching_file(".cursor/rules", exclude, |path| {
-            matches!(
-                path.extension().and_then(|ext| ext.to_str()),
-                Some("md" | "mdc")
-            )
-        })
+        || !cursor_rule_candidates(exclude).is_empty()
         || has_matching_file(".cursor/agents", exclude, |path| {
             path.extension().and_then(|ext| ext.to_str()) == Some("md")
         })
         || has_matching_file(".cursor/skills", exclude, |path| {
             path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
         })
+}
+
+/// Return included Cursor project-rule candidates anywhere in the repository.
+///
+/// Cursor permits `.cursor/rules` directories below the repository root. This
+/// is the single discovery contract consumed by platform detection and Cursor
+/// validation, so an included candidate that activates Cursor is also the
+/// candidate that validation receives. `recursive_files` supplies deterministic
+/// ordering, exclusion handling, pruning, and no-follow-symlink behavior.
+pub(crate) fn cursor_rule_candidates(exclude: &ExcludeSet) -> Vec<traversal::WalkEntry> {
+    traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude))
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            is_beneath_cursor_rules(&entry.path)
+                && matches!(
+                    entry
+                        .path
+                        .extension()
+                        .and_then(|extension| extension.to_str()),
+                    Some("md" | "mdc")
+                )
+        })
+        .collect()
+}
+
+fn is_beneath_cursor_rules(path: &Path) -> bool {
+    let components: Vec<_> = path.components().collect();
+    components.windows(2).any(|pair| {
+        matches!(pair, [Component::Normal(cursor), Component::Normal(rules)]
+            if *cursor == ".cursor" && *rules == "rules")
+    })
 }
 
 fn codex_surface_exists(exclude: &ExcludeSet) -> bool {
@@ -185,6 +212,96 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_rule_candidates_cover_nested_roots_and_ignore_non_candidates() {
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        for path in [
+            ".cursor/rules/root.mdc",
+            ".cursor/rules/nested/root.md",
+            "packages/api/.cursor/rules/api.mdc",
+            "packages/web/.cursor/rules/web.md",
+            ".cursor/rules/nested/.cursor/rules/overlap.mdc",
+            "packages/api/.cursor/rules/ignored.txt",
+            "docs/not-a-rule.md",
+            "node_modules/pkg/.cursor/rules/dependency.mdc",
+            "vendor/pkg/.cursor/rules/dependency.mdc",
+            "target/pkg/.cursor/rules/dependency.mdc",
+            "dist/pkg/.cursor/rules/dependency.mdc",
+            "build/pkg/.cursor/rules/dependency.mdc",
+        ] {
+            let path = Path::new(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "rule").unwrap();
+        }
+        let exclude = ExcludeSet::new(&["packages/web/**".into()]).unwrap();
+
+        let candidates = cursor_rule_candidates(&exclude);
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.display.as_str())
+                .collect::<Vec<_>>(),
+            [
+                ".cursor/rules/nested/.cursor/rules/overlap.mdc",
+                ".cursor/rules/nested/root.md",
+                ".cursor/rules/root.mdc",
+                "packages/api/.cursor/rules/api.mdc",
+            ]
+        );
+        assert!(DetectedSurfaces::discover(&exclude).cursor);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn cursor_rule_candidates_do_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join(".cursor/rules")).unwrap();
+        std::fs::write(outside.path().join(".cursor/rules/rule.mdc"), "rule").unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        symlink(outside.path(), "linked").unwrap();
+
+        assert!(cursor_rule_candidates(&ExcludeSet::default()).is_empty());
+        assert!(!DetectedSurfaces::discover(&ExcludeSet::default()).cursor);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn md_only_candidates_activate_cursor_and_respect_overrides() {
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("packages/api/.cursor/rules").unwrap();
+        std::fs::write("packages/api/.cursor/rules/not-a-rule.md", "text").unwrap();
+
+        let detected = DetectedSurfaces::discover(&ExcludeSet::default());
+        assert!(detected.cursor);
+        assert!(
+            !detected
+                .resolve(PlatformOverrides {
+                    cursor: Some(false),
+                    codex: None,
+                })
+                .cursor
+        );
+        assert!(
+            detected
+                .resolve(PlatformOverrides {
+                    cursor: Some(true),
+                    codex: None,
+                })
+                .cursor
+        );
     }
 
     #[test]
