@@ -985,3 +985,55 @@ fn only_filters_basic_mode_dispatch() {
     assert!(stderr.contains("error[H006/settings-json-invalid]"));
     assert!(!stderr.contains("M001/plugin-json-missing"));
 }
+
+#[test]
+fn inline_path_rules_share_clean_normalized_and_fence_aware_behavior() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join("docs")).unwrap();
+    std::fs::write(tmp.path().join("docs/README.md"), "present\n").unwrap();
+    std::fs::write(tmp.path().join("Node.js"), "present\n").unwrap();
+    std::fs::write(tmp.path().join("api.example.com"), "present\n").unwrap();
+    for directory in [".claude", ".github", ".vscode", ".devcontainer"] {
+        std::fs::create_dir(tmp.path().join(directory)).unwrap();
+    }
+    std::fs::write(
+        tmp.path().join("AGENTS.md"),
+        "# Instructions\n\
+         See `docs/README.md#usage` and `docs/README.md::entry`.\n\
+         Use `Node.js`, `api.example.com`, `.claude`, `.github`, `.vscode`, and `.devcontainer`.\n\
+         Python `3.12`, `1.2.3`, and `v20.11.1` use `.properties` files.\n\
+         ```\n\
+         docs/missing-only-in-fence.md\n\
+         ```\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "I003,D005", "."],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn inline_path_marker_is_documented_as_d005_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("AGENTS.md"),
+        "See `docs/missing.md`. <!-- lint-doc-pointer-paths: ok legacy generated path -->\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "I003,D005", "."],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "I003");
+    assert_eq!(diagnostics[0]["evidence"], "docs/missing.md");
+}

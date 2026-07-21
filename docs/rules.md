@@ -396,18 +396,31 @@ metadata, dependencies, and conventional build output.
 | I004 | `instruction-file-generic` | `AGENTS.md` is generic-only | Always | error |
 | I005 | `instruction-file-structure` | `AGENTS.md` lacks project-specific structure | Always | error |
 
-I003 treats explicit relative paths (for example `docs/guide.md`,
-`missing.md`, or `./script`) as filesystem references. Bare extension and glob
-notation is prose, not a path. The conservative extension policy recognizes a
-single dot followed by one to eight lowercase ASCII letters or digits, so
-markers such as `.ts`, `.java`, `.html`, and `.tsx` do not depend on a fixed
-extension allowlist. Recognizable dotfiles take precedence and remain
-existence-sensitive: an existing `.env`, `.gitignore`, `.cursorrules`, or
-`.mcp.json` is accepted and a missing one is reported. Other dot-prefixed
-tokens, including uppercase, punctuation-bearing, and longer names, are also
-treated as dotfiles. URLs, variables, placeholders, tokens containing
-whitespace, and non-path words are excluded. D005 uses the same lexical
-classification after applying its configured `inline-path-prefixes` scope.
+I003 scans paired backticks on individual prose lines; fence delimiters and
+fence interiors are ignored. It treats explicit relative paths (for example
+`docs/guide.md`, `missing.md`, `Node.js`, `api.example.com`, or `./script`) as
+filesystem references. A slash-free dotted token is a path only when its final
+component starts with a lowercase ASCII letter and is one to twelve lowercase
+ASCII letters or digits. This excludes version literals such as `3.12`,
+`1.2.3`, and `v20.11.1`. Bare extension and glob notation is prose, not a
+path: a bare extension is one leading dot followed by one to twelve lowercase
+ASCII letters or digits, so markers such as `.ts`, `.java`, `.properties`,
+and `.tsx` do not depend on a fixed extension allowlist. Recognizable dotfile
+and dot-directory entries take precedence and remain existence-sensitive:
+`.env`, `.gitignore`, `.claude`, `.claude-plugin`, `.github`, `.vscode`,
+`.codex`, `.cursor`, `.venv`, `.husky`, `.idea`, and `.devcontainer` are
+reported when missing. Unlisted short lowercase dot tokens remain extension
+notation; uppercase, punctuation-bearing, and over-twelve-character
+dot-prefixed tokens are treated as dotfiles. URLs, variables, placeholders,
+tokens containing whitespace, and non-path words are excluded.
+
+Before probing a path, I003 and D005 both remove one `#fragment` and one
+`::symbol` suffix while retaining the original token as diagnostic evidence.
+Both report absolute, parent-traversing, and symlink probes. I003 resolves a
+reference relative to the owning `AGENTS.md`; D005 additionally requires a
+configured `inline-path-prefixes` match. The D005-only
+`<!-- lint-doc-pointer-paths: ok reason -->` marker suppresses its source line
+when it includes a non-empty reason; it does not suppress I003.
 
 The former CX037, CX038, CX041, CX043, and CX044 identifiers and names remain
 accepted as configuration aliases for these shared rules.
@@ -577,6 +590,12 @@ present. These rules run in both Basic and Plugin modes.
 | D003 | `todo-in-docs` | `TODO`/`FIXME`/`HACK`/`XXX` marker in `CLAUDE.md` (outside code fences) | Plugin | warn |
 | D004 | `claude-import-large` | Recursive `CLAUDE.md` `@`-import closure exceeds a global, path-specific, or total line budget | Always | warn |
 | D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
+
+D005 scans inline-code pointers outside fenced code blocks in the configured
+`instruction-files` (default `AGENTS.md`, `SECURITY.md`, and `CLAUDE.md`). It
+uses the shared I003 lexical and probe policy above after applying its
+`inline-path-prefixes` scope. Its documented
+`<!-- lint-doc-pointer-paths: ok reason -->` marker is intentionally D005-only.
 
 ## Link/import integrity Rules (L)
 
