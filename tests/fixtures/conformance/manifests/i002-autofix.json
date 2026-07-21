@@ -1,0 +1,43 @@
+{
+  "class": "hard-negative",
+  "repository": "i002-autofix",
+  "covers": [
+    "autofix",
+    "basic-mode",
+    "normal",
+    "json",
+    "i002-instruction-secret"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--autofix",
+      "--only",
+      "I002",
+      "."
+    ]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": [
+    "claude"
+  ],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "I002",
+      "name": "instruction-file-secret",
+      "severity": "error",
+      "subject_path": "AGENTS.md"
+    }
+  ],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    {
+      "path": "AGENTS.md",
+      "contents": "# Project instructions\n\npassword = hunterhunter\n\nRun `cargo test` and keep docs/README.md current.\n"
+    }
+  ]
+}

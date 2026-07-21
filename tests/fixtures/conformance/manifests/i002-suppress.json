@@ -1,0 +1,30 @@
+{
+  "class": "hard-negative",
+  "repository": "i002-suppress",
+  "covers": [
+    "nested-agents-md",
+    "basic-mode",
+    "global-suppression",
+    "normal",
+    "json",
+    "i002-instruction-secret"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--only",
+      "I002",
+      "."
+    ]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": [
+    "claude"
+  ],
+  "expected_suppressed": 2,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "i002-codex",
+  "covers": ["codex", "basic-mode", "pedantic", "all", "json", "i002-instruction-secret"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--all", "--only", "I002", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "I002", "name": "instruction-file-secret", "severity": "error", "subject_path": "AGENTS.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}
