@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 294 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 295 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -464,32 +464,40 @@ accepted as configuration aliases for these shared rules.
 ## Codex Configuration Rules (CX)
 
 These optional rules validate a project-local `.codex/config.toml` in Basic
-and Plugin modes. The allowlists were verified against the live Codex schema
-on 2026-07-16. Codex's legacy `approvalMode` and `fullAutoErrorMode` keys are
+and Plugin modes. The allowlists were rechecked with official `codex-cli 0.144.6`
+on 2026-07-21. Codex's legacy `approvalMode` and `fullAutoErrorMode` keys are
 not registered as standalone rules because they are absent from the current
 schema and are covered by the unknown-key rules.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| CX001 | `codex-toml-invalid` | `.codex/config.toml` is invalid TOML | Always | error |
-| CX002 | `codex-doc-bytes` | `project_doc_max_bytes` is not 1–65536 | Always | error |
-| CX003 | `codex-doc-names` | project documentation fallback names are invalid | Always | error |
+| CX001 | `codex-toml-invalid` | `.codex/config.toml` cannot be read as UTF-8 or parsed as TOML | Always | error |
+| CX002 | `codex-doc-bytes` | `project_doc_max_bytes` is not a nonnegative integer | Always | error |
+| CX003 | `codex-doc-names` | project documentation fallback names are not an array of strings | Always | error |
 | CX004 | `codex-key-unknown` | Unknown supported nested configuration key | Always | warn |
-| CX005–CX009 | — | Invalid core approval, sandbox, model, or personality enum | Always | error |
-| CX010 | `codex-access-ack` | Full sandbox access lacks its explicit acknowledgement | Always | error |
+| CX005 | `codex-approval-policy` | Invalid scalar approval policy | Always | error |
+| CX006 | `codex-sandbox-mode` | Invalid sandbox mode | Always | error |
+| CX007 | `codex-reasoning-effort` | Model reasoning effort is not a non-empty string | Always | error |
+| CX008 | `codex-model-verbosity` | Invalid model verbosity | Always | error |
+| CX009 | `codex-personality` | Invalid personality | Always | error |
 | CX011 | `codex-shell-inherit` | Invalid shell environment inheritance mode | Always | error |
-| CX012 | `codex-mcp-transport` | MCP server has neither a command nor URL | Always | error |
+| CX012 | `codex-mcp-transport` | MCP server has an invalid transport shape or field | Always | error |
 | CX013 | `codex-secret-literal` | MCP configuration contains a hardcoded secret | Always | error |
-| CX014–CX015 | — | Invalid credential-store or workspace-write mode | Always | error |
+| CX014 | `codex-cli-credentials` | Invalid credential-store mode | Always | error |
+| CX015 | `codex-workspace-write` | Invalid workspace-write field type | Always | error |
 | CX016–CX024 | — | Invalid Codex scalar/table type or model token limit | Always | warn/error |
-| CX025–CX027 | — | Unknown granular approval field or invalid reviewer/tier | Always | warn |
+| CX025 | `codex-approval-field` | Unknown granular approval field | Always | warn |
+| CX026 | `codex-approval-reviewer` | Invalid approvals reviewer | Always | warn |
+| CX027 | `codex-service-tier-type` | `service_tier` is not a string | Always | error |
 | CX028 | `codex-bearer-token` | Inline MCP bearer token is forbidden | Always | error |
-| CX029 | `codex-agent-threads` | `agents.max_threads` conflicts with `multi_agent_v2` | Always | error |
+| CX029 | `codex-agent-threads` | `agents.max_threads` is not an integer greater than zero | Always | error |
 | CX030–CX032 | — | Invalid app approval mode, skills table, or profile type | Always | error/warn |
 | CX033 | `codex-top-key` | Unknown top-level Codex key | Always | warn |
 | CX034 | `codex-feature-key` | Unknown Codex feature flag | Always | warn |
-| CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | error |
+| CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | warn |
 | CX036 | `codex-windows-sandbox` | Invalid Windows sandbox mode | Always | error |
+| CX061 | `codex-approval-shape` | Granular approval policy has an invalid shape or field type | Always | error |
+| CX062 | `codex-config-container-type` | A structured Codex configuration value is not a table | Always | error |
 
 ### Codex Instruction, Plugin, and Skill Rules (CX)
 
@@ -707,7 +715,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 294):**
+**Auto-fixable rules (11 of 295):**
 
 | Rule | Code | Fix |
 |------|------|-----|

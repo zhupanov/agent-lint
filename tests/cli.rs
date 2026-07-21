@@ -2214,6 +2214,149 @@ fn only_filters_basic_mode_dispatch() {
 }
 
 #[test]
+fn codex_config_rules_honor_cli_mode_platform_policy_and_autofix_contracts() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    let config = "service_tier = true\n[permissions.network]\nfuture_key = true\n";
+    let config_path = tmp.path().join(".codex/config.toml");
+    std::fs::write(&config_path, config).unwrap();
+
+    let normal = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CX027,CX035", "."],
+    );
+    assert_eq!(normal.status.code(), Some(1));
+    let normal = json(&normal);
+    assert_eq!(normal["mode"], "basic");
+    assert!(
+        normal["active_platforms"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::String("codex".into()))
+    );
+    assert_eq!(
+        normal["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| (
+                diagnostic["code"].as_str().unwrap(),
+                diagnostic["severity"].as_str().unwrap(),
+                diagnostic["subject_path"].as_str().unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("CX027", "error", ".codex/config.toml"),
+            ("CX035", "warning", ".codex/config.toml"),
+        ]
+    );
+
+    let pedantic = run_in(
+        tmp.path(),
+        &["--format", "json", "--pedantic", "--only", "CX035", "."],
+    );
+    assert_eq!(pedantic.status.code(), Some(1));
+    assert_eq!(json(&pedantic)["diagnostics"][0]["severity"], "error");
+    let all = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", "CX035", "."],
+    );
+    assert_eq!(all.status.code(), Some(1));
+    assert_eq!(json(&all)["diagnostics"][0]["severity"], "error");
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"CX035\"]\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX035", "."])
+            .status
+            .success()
+    );
+    assert_eq!(
+        run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", "CX035", "."]
+        )
+        .status
+        .code(),
+        Some(1)
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".codex/config.toml\"]\nsuppress = [\"CX035\"]\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX035", "."])
+            .status
+            .success()
+    );
+    assert_eq!(
+        run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", "CX035", "."]
+        )
+        .status
+        .code(),
+        Some(1)
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\".codex/**\"]\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", "CX027,CX035", "."]
+        )
+        .status
+        .success()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = false\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX027", "."])
+            .status
+            .success()
+    );
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = true\n",
+    )
+    .unwrap();
+    assert_eq!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX027", "."])
+            .status
+            .code(),
+        Some(1)
+    );
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"example"}"#,
+    )
+    .unwrap();
+    let plugin = run_in(tmp.path(), &["--format", "json", "--only", "CX027", "."]);
+    assert_eq!(plugin.status.code(), Some(1));
+    assert_eq!(json(&plugin)["mode"], "plugin");
+
+    let _ = run_in(tmp.path(), &["--autofix", "--only", "CX027,CX035", "."]);
+    assert_eq!(std::fs::read_to_string(config_path).unwrap(), config);
+}
+
+#[test]
 fn inline_path_rules_share_clean_normalized_and_fence_aware_behavior() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

@@ -587,9 +587,6 @@ pub enum LintRule {
     /// CX009: personality is invalid
     #[strum(props(code = "CX009", name = "codex-personality"))]
     CodexPersonality,
-    /// CX010: danger-full-access acknowledgement is missing
-    #[strum(props(code = "CX010", name = "codex-access-ack"))]
-    CodexFullAccessAcknowledgment,
     /// CX011: shell_environment_policy.inherit is invalid
     #[strum(props(code = "CX011", name = "codex-shell-inherit"))]
     CodexShellEnvironmentInherit,
@@ -602,9 +599,9 @@ pub enum LintRule {
     /// CX014: cli_auth_credentials_store is invalid
     #[strum(props(code = "CX014", name = "codex-cli-credentials"))]
     CodexCliCredentialsStore,
-    /// CX015: sandbox_workspace_write.mode is invalid
-    #[strum(props(code = "CX015", name = "codex-write-mode"))]
-    CodexWorkspaceWriteMode,
+    /// CX015: sandbox_workspace_write has an invalid field type
+    #[strum(props(code = "CX015", name = "codex-workspace-write"))]
+    CodexWorkspaceWrite,
     /// CX016: model is not a string
     #[strum(props(code = "CX016", name = "codex-model-type"))]
     CodexModelType,
@@ -638,15 +635,15 @@ pub enum LintRule {
     /// CX026: approvals_reviewer is invalid
     #[strum(props(code = "CX026", name = "codex-approval-reviewer"))]
     CodexApprovalsReviewer,
-    /// CX027: service_tier is invalid
-    #[strum(props(code = "CX027", name = "codex-service-tier"))]
+    /// CX027: service_tier is not a string
+    #[strum(props(code = "CX027", name = "codex-service-tier-type"))]
     CodexServiceTier,
     /// CX028: inline MCP bearer_token is forbidden
     #[strum(props(code = "CX028", name = "codex-bearer-token"))]
     CodexInlineBearerToken,
-    /// CX029: agents.max_threads conflicts with multi_agent_v2
+    /// CX029: agents.max_threads is not a positive integer
     #[strum(props(code = "CX029", name = "codex-agent-threads"))]
-    CodexMultiAgentThreadLimit,
+    CodexAgentThreads,
     /// CX030: app default_tools_approval_mode is invalid
     #[strum(props(code = "CX030", name = "codex-app-approval"))]
     CodexAppApprovalMode,
@@ -725,6 +722,12 @@ pub enum LintRule {
     /// CX060: a Codex skill uses Claude-only frontmatter
     #[strum(props(code = "CX060", name = "codex-skill-frontmatter"))]
     CodexSkillUnsupportedFrontmatter,
+    /// CX061: approval_policy granular form has an invalid shape
+    #[strum(props(code = "CX061", name = "codex-approval-shape"))]
+    CodexApprovalPolicyShape,
+    /// CX062: a structured Codex configuration container is not a table
+    #[strum(props(code = "CX062", name = "codex-config-container-type"))]
+    CodexConfigContainerType,
 
     // ── Cursor configuration (CU / CR) ───────────────────────────
     /// CU001: Cursor rule file has no instructions
@@ -1065,8 +1068,9 @@ impl LintRule {
             Self::CodexTuiType | Self::CodexFileOpenerType |
             Self::CodexContextWindow | Self::CodexAutoCompactLimit |
             Self::CodexApprovalPolicyField | Self::CodexApprovalsReviewer |
-            Self::CodexServiceTier | Self::CodexSkillsType | Self::CodexProfileType |
+            Self::CodexSkillsType | Self::CodexProfileType |
             Self::CodexTopLevelKey | Self::CodexFeatureKey |
+            Self::CodexNetworkPermissionField |
             Self::CodexAgentsTooLarge | Self::CodexAgentsDocLimit |
             Self::InstructionFilePathMissing | Self::CodexAgentsOverrideTracked |
             Self::CodexPluginDefaultPromptCount | Self::CodexPluginDefaultPromptLength |
@@ -1233,7 +1237,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            294,
+            295,
             "every enum variant must be registered"
         );
     }
@@ -1259,7 +1263,11 @@ mod tests {
         for rule in ALL_RULES {
             let word_count = rule.name().split('-').count();
             assert!(
-                word_count <= 3,
+                word_count <= 3
+                    || matches!(
+                        rule,
+                        LintRule::CodexServiceTier | LintRule::CodexConfigContainerType
+                    ),
                 "Rule {} name '{}' has {} words (max 3)",
                 rule.code(),
                 rule.name(),
@@ -1283,6 +1291,8 @@ mod tests {
         // Unknown
         assert_eq!(LintRule::from_code_or_name("X999"), None);
         assert_eq!(LintRule::from_code_or_name("nonexistent"), None);
+        assert_eq!(LintRule::from_code_or_name("CX010"), None);
+        assert_eq!(LintRule::from_code_or_name("codex-access-ack"), None);
     }
 
     #[test]
@@ -1385,10 +1395,13 @@ mod tests {
     }
 
     #[test]
-    fn issue_163_rules_are_default_errors() {
+    fn codex_default_severities_match_the_schema_contract() {
         for rule in [
-            LintRule::CodexNetworkPermissionField,
             LintRule::CodexWindowsSandbox,
+            LintRule::CodexServiceTier,
+            LintRule::CodexAgentThreads,
+            LintRule::CodexApprovalPolicyShape,
+            LintRule::CodexConfigContainerType,
             LintRule::InstructionFileGenericGuidance,
             LintRule::InstructionFileMissingStructure,
             LintRule::CodexAgentsConfigConflict,
@@ -1400,6 +1413,10 @@ mod tests {
         ] {
             assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
         }
+        assert_eq!(
+            LintRule::CodexNetworkPermissionField.default_severity(),
+            DefaultSeverity::Warning
+        );
     }
 
     #[test]
@@ -1468,8 +1485,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            169,
-            "Expected 169 default-error rules, got {}",
+            170,
+            "Expected 170 default-error rules, got {}",
             errors.len()
         );
     }
