@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 290 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 291 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -45,8 +45,8 @@ run only when their platform is auto-detected or force-enabled in
 | M004 | `plugin-version-format` | Present `plugin.json` version is not valid Semantic Versioning 2.0.0 (pre-release and build metadata are accepted). This follows the Claude Code manifest contract. | Plugin | error |
 | M005 | `marketplace-json-missing` | `.claude-plugin/marketplace.json` is missing. Plugin-only repositories are valid in Claude Code, so this is advisory. | Plugin | warn |
 | M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON | Plugin | error |
-| M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name` or `owner.name`) | Plugin | error |
-| M008 | `marketplace-plugins-empty` | `marketplace.json` plugins array is empty. Claude Code treats this as a non-blocking warning. | Plugin | warn |
+| M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name`, `owner.name`, or `plugins`) | Plugin | error |
+| M008 | `marketplace-plugins-empty` | `marketplace.json` `plugins` is empty or has the wrong type. Claude Code treats an empty array as a non-blocking warning. | Plugin | warn |
 | M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name` or `source` | Plugin | error |
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | warn |
@@ -57,6 +57,7 @@ run only when their platform is auto-detected or force-enabled in
 | M016 | `lsp-server-invalid` | `plugin.json` `lspServers` entry missing `command` or `extensionToLanguage` | Plugin | error |
 | M017 | `channel-server-missing` | `plugin.json` `channels` entry does not reference a `server` | Plugin | warn |
 | M018 | `plugin-version-missing` | `plugin.json` omits optional `version`; Claude Code falls back to the Git commit SHA. | Plugin | warn |
+| M020 | `author-type-invalid` | `plugin.json` `author` is present but not an object. Claude Code rejects non-object authors as manifest load errors. | Plugin | error |
 
 M003, M004, and M018 follow the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and its [plugin manifest schema](https://www.schemastore.org/claude-code-plugin-manifest.json). M005 and M008 follow the [Claude Code marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces); M005 remains an agent-lint advisory for repositories that intend to publish a self-hosted marketplace.
 
@@ -640,7 +641,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 290):**
+**Auto-fixable rules (11 of 291):**
 
 | Rule | Code | Fix |
 |------|------|-----|

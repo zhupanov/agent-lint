@@ -5,22 +5,76 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub enum ManifestState {
     Missing,
-    Invalid(String),
+    Invalid(ManifestError),
     Parsed(Value),
 }
 
+/// A manifest loading failure and, when JSON parsing reached a source point,
+/// its one-based location. Keeping this parse state with the loaded manifest
+/// lets every consuming validator report the same structured fact.
+#[derive(Debug)]
+pub struct ManifestError {
+    message: String,
+    location: Option<ManifestErrorLocation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManifestErrorLocation {
+    line: usize,
+    column: Option<usize>,
+}
+
+impl ManifestError {
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn location(&self) -> Option<ManifestErrorLocation> {
+        self.location
+    }
+}
+
+impl ManifestErrorLocation {
+    pub fn line(self) -> usize {
+        self.line
+    }
+
+    pub fn column(self) -> Option<usize> {
+        self.column
+    }
+}
+
 impl ManifestState {
-    pub fn load(path: &Path) -> Self {
+    /// Construct a synthetic invalid state for unit tests that do not exercise
+    /// the filesystem loader.
+    #[cfg(test)]
+    pub fn invalid(message: impl Into<String>) -> Self {
+        Self::Invalid(ManifestError {
+            message: message.into(),
+            location: None,
+        })
+    }
+
+    pub fn load(path: &Path, subject_path: &Path) -> Self {
         if !path.is_file() {
             return ManifestState::Missing;
         }
         match std::fs::read_to_string(path) {
-            Err(e) => ManifestState::Invalid(format!("cannot read {}: {e}", path.display())),
+            Err(e) => ManifestState::Invalid(ManifestError {
+                message: format!("cannot read {}: {e}", subject_path.display()),
+                location: None,
+            }),
             Ok(content) => match serde_json::from_str::<Value>(&content) {
                 Ok(val) => ManifestState::Parsed(val),
-                Err(e) => {
-                    ManifestState::Invalid(format!("{} is not valid JSON: {e}", path.display()))
-                }
+                Err(e) => ManifestState::Invalid(ManifestError {
+                    message: format!("{} is not valid JSON: {e}", subject_path.display()),
+                    location: Some(ManifestErrorLocation {
+                        line: e.line(),
+                        // serde_json uses column zero when an error has no
+                        // concrete point (for example an empty document).
+                        column: (e.column() > 0).then_some(e.column()),
+                    }),
+                }),
             },
         }
     }
@@ -72,17 +126,31 @@ impl LintContext {
     pub fn new(base_path: &Path, mode: LintMode) -> Self {
         // hooks_json, settings_json, and settings_local_json are always loaded
         // regardless of mode.
-        let hooks_json = ManifestState::load(&base_path.join("hooks/hooks.json"));
-        let settings_json = ManifestState::load(&base_path.join(".claude/settings.json"));
-        let settings_local_json =
-            ManifestState::load(&base_path.join(".claude/settings.local.json"));
+        let hooks_json = ManifestState::load(
+            &base_path.join("hooks/hooks.json"),
+            Path::new("hooks/hooks.json"),
+        );
+        let settings_json = ManifestState::load(
+            &base_path.join(".claude/settings.json"),
+            Path::new(".claude/settings.json"),
+        );
+        let settings_local_json = ManifestState::load(
+            &base_path.join(".claude/settings.local.json"),
+            Path::new(".claude/settings.local.json"),
+        );
 
         // plugin_json and marketplace_json are only loaded in Plugin mode.
         // In Basic mode, they are set to Missing since run_basic never accesses them.
         let (plugin_json, marketplace_json) = if mode == LintMode::Plugin {
             (
-                ManifestState::load(&base_path.join(".claude-plugin/plugin.json")),
-                ManifestState::load(&base_path.join(".claude-plugin/marketplace.json")),
+                ManifestState::load(
+                    &base_path.join(".claude-plugin/plugin.json"),
+                    Path::new(".claude-plugin/plugin.json"),
+                ),
+                ManifestState::load(
+                    &base_path.join(".claude-plugin/marketplace.json"),
+                    Path::new(".claude-plugin/marketplace.json"),
+                ),
             )
         } else {
             (ManifestState::Missing, ManifestState::Missing)
@@ -109,7 +177,7 @@ mod tests {
     fn load_missing_file_returns_missing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nonexistent.json");
-        let state = ManifestState::load(&path);
+        let state = ManifestState::load(&path, Path::new("nonexistent.json"));
         assert!(matches!(state, ManifestState::Missing));
     }
 
@@ -119,7 +187,7 @@ mod tests {
         let path = dir.path().join("valid.json");
         std::fs::write(&path, r#"{"name": "test"}"#).unwrap();
 
-        let state = ManifestState::load(&path);
+        let state = ManifestState::load(&path, Path::new("valid.json"));
         match state {
             ManifestState::Parsed(val) => {
                 assert_eq!(val["name"], "test");
@@ -134,10 +202,12 @@ mod tests {
         let path = dir.path().join("bad.json");
         std::fs::write(&path, "not json at all {{{").unwrap();
 
-        let state = ManifestState::load(&path);
+        let state = ManifestState::load(&path, Path::new("bad.json"));
         match state {
-            ManifestState::Invalid(msg) => {
-                assert!(msg.contains("not valid JSON"), "msg was: {msg}");
+            ManifestState::Invalid(error) => {
+                assert!(error.message().contains("not valid JSON"));
+                assert_eq!(error.location().unwrap().line(), 1);
+                assert!(error.location().unwrap().column().is_some());
             }
             other => panic!("expected Invalid, got {other:?}"),
         }
@@ -149,7 +219,7 @@ mod tests {
         let path = dir.path().join("empty.json");
         std::fs::write(&path, "").unwrap();
 
-        let state = ManifestState::load(&path);
+        let state = ManifestState::load(&path, Path::new("empty.json"));
         assert!(matches!(state, ManifestState::Invalid(_)));
     }
 
@@ -157,7 +227,7 @@ mod tests {
     fn load_directory_path_returns_missing() {
         let dir = tempfile::tempdir().unwrap();
         // Path::is_file() returns false for directories
-        let state = ManifestState::load(dir.path());
+        let state = ManifestState::load(dir.path(), Path::new("directory.json"));
         assert!(matches!(state, ManifestState::Missing));
     }
 
