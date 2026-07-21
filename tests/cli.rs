@@ -2522,6 +2522,159 @@ fn s018_autofix_rewrites_only_single_line_canonical_descriptions() {
 }
 
 #[test]
+fn s016_hard_negatives_stay_clean_through_cli() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join("skills/io/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"io-plugin"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &skill,
+        "---\nname: io\ndescription: Optimize file I/O operations for large datasets, i.e. streaming reads. Use when profiling disk throughput.\n---\nTune buffered reads for large inputs.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S016", "."]);
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    assert!(report["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn s016_s017_warn_normally_and_error_under_pedantic() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"severity-plugin"}"#,
+    )
+    .unwrap();
+    let person = tmp.path().join("skills/person/SKILL.md");
+    let trigger = tmp.path().join("skills/trigger/SKILL.md");
+    std::fs::create_dir_all(person.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(trigger.parent().unwrap()).unwrap();
+    std::fs::write(
+        &person,
+        "---\nname: person\ndescription: I can help you process uploaded files for analysis\n---\nBody content.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &trigger,
+        "---\nname: trigger\ndescription: A skill that analyzes repository source trees carefully\n---\nBody content.\n",
+    )
+    .unwrap();
+
+    let normal = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "S016,S017", "."],
+    );
+    assert_eq!(normal.status.code(), Some(0), "stderr: {}", stderr(&normal));
+    let normal_report = json(&normal);
+    let normal_severities: Vec<_> = normal_report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["code"].as_str().unwrap(), d["severity"].as_str().unwrap()))
+        .collect();
+    assert!(normal_severities.contains(&("S016", "warning")));
+    assert!(normal_severities.contains(&("S017", "warning")));
+
+    let pedantic = run_in(
+        tmp.path(),
+        &["--format", "json", "--pedantic", "--only", "S016,S017", "."],
+    );
+    assert_eq!(
+        pedantic.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&pedantic)
+    );
+    let pedantic_report = json(&pedantic);
+    let pedantic_severities: Vec<_> = pedantic_report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| (d["code"].as_str().unwrap(), d["severity"].as_str().unwrap()))
+        .collect();
+    assert!(pedantic_severities.contains(&("S016", "error")));
+    assert!(pedantic_severities.contains(&("S017", "error")));
+}
+
+#[test]
+fn s018_autofix_preserves_comparisons_and_autolinks() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/partition/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let original = "---\nname: partition\ndescription: Partition datasets when row count < 10000 or file size > 50MB before uploading to <ops@example.com> or <https://example.com>. Use when preparing bulk imports.\n---\nPrepare bulk imports safely.\n";
+    std::fs::write(&skill, original).unwrap();
+
+    let first = run_in(tmp.path(), &["--autofix", "--only", "S018", "."]);
+    assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), original);
+    assert!(!stderr(&first).contains("fixed[S018/desc-has-xml]"));
+
+    let second = run_in(tmp.path(), &["--autofix", "--only", "S018", "."]);
+    assert_eq!(second.status.code(), Some(0), "stderr: {}", stderr(&second));
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), original);
+}
+
+#[test]
+fn s018_autofix_strips_tags_and_is_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/tagged/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill,
+        "---\nname: tagged\ndescription: Use when <tag> XML needs removing from <file> paths\n---\nRemove XML tags.\n",
+    )
+    .unwrap();
+
+    let first = run_in(tmp.path(), &["--autofix", "--only", "S018", "."]);
+    assert_eq!(first.status.code(), Some(0), "stderr: {}", stderr(&first));
+    assert!(stderr(&first).contains("fixed[S018/desc-has-xml]"));
+    let after = std::fs::read_to_string(&skill).unwrap();
+    assert!(!after.contains("<tag>"));
+    assert!(!after.contains("<file>"));
+    assert!(after.contains("description: Use when"));
+
+    let second = run_in(tmp.path(), &["--autofix", "--only", "S018", "."]);
+    assert_eq!(second.status.code(), Some(0), "stderr: {}", stderr(&second));
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), after);
+    assert!(!stderr(&second).contains("fixed[S018/desc-has-xml]"));
+}
+
+#[test]
+fn s054_changelog_evidence_clean_through_cli() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"changelog-plugin"}"#,
+    )
+    .unwrap();
+    let skill = tmp.path().join("skills/changelog/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill,
+        "---\nname: changelog\ndescription: Generates changelogs and commit summaries from git diffs. Use when releasing versions.\n---\nGenerate a changelog entry, write a commit summary for each change, analyze the git diff, and record the released version.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S054", "."]);
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn invalid_yaml_description_skips_description_rules_and_reports_x001() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

@@ -1029,6 +1029,7 @@ impl LintRule {
             // ── Default-warning: style / quality (skills) ────────────
             Self::DescTruncated | Self::ConsecutiveBash |
             Self::NameVague | Self::DescTooShort | Self::BodyNoRefs |
+            Self::DescUsesPerson | Self::DescNoTrigger |
             Self::ForkNoTask | Self::BodyNoWorkflow | Self::RefNameGeneric |
             Self::DescVagueContent | Self::ScriptDepsMissing |
             Self::ScriptVerifyMissing | Self::TerminologyInconsistent |
@@ -1402,8 +1403,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            124,
-            "Expected 124 default-warning rules, got {}",
+            126,
+            "Expected 126 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1494,6 +1495,22 @@ mod tests {
     }
 
     #[test]
+    fn issue_319_s016_s017_are_default_warnings() {
+        assert_eq!(
+            LintRule::DescUsesPerson.default_severity(),
+            DefaultSeverity::Warning
+        );
+        assert_eq!(
+            LintRule::DescNoTrigger.default_severity(),
+            DefaultSeverity::Warning
+        );
+        assert_eq!(
+            LintRule::DescHasXml.default_severity(),
+            DefaultSeverity::Error
+        );
+    }
+
+    #[test]
     fn default_error_count() {
         let errors: Vec<_> = ALL_RULES
             .iter()
@@ -1501,8 +1518,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            168,
-            "Expected 168 default-error rules, got {}",
+            166,
+            "Expected 166 default-error rules, got {}",
             errors.len()
         );
     }

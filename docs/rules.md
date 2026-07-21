@@ -171,8 +171,8 @@ H008--H024 codes with a `… frontmatter` path label.
 |------|------|-------------|------|---------|
 | S014 | `desc-too-long` | Skill description exceeds 1024 characters | Always | error |
 | S015 | `desc-truncated` | Combined canonical `description` and `when_to_use` exceed the configurable per-entry listing cap (1536 by default); Claude Code can also truncate below this cap when its separate global listing budget overflows, which S015 does not model | Always | warn |
-| S016 | `desc-uses-person` | Skill description uses first/second person | Plugin | error |
-| S017 | `desc-no-trigger` | Skill description lacks trigger context (e.g., "Use when...") | Plugin | error |
+| S016 | `desc-uses-person` | Skill description uses first/second person | Plugin | warn |
+| S017 | `desc-no-trigger` | Skill description lacks trigger context (e.g., "Use when...") | Plugin | warn |
 | S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Always | error |
 | S034 | `desc-too-short` | Skill description under 20 characters | Always | warn |
 | S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin | warn |
