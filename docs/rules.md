@@ -89,7 +89,7 @@ M003, M004, and M018 follow the [Claude Code plugin reference](https://code.clau
 | H020 | `hook-once-invalid` | Hook `once` is not a boolean | Always | error |
 | H021 | `hook-if-invalid` | Hook `if` is not a non-empty string or is used outside a tool event | Always | warn |
 | H022 | `hook-shell-invalid` | Hook `shell` is not `bash`/`powershell` | Always | warn |
-| H023 | `hook-command-dangerous` | Dangerous command pattern in hook command (`rm -rf`, `git reset --hard`, `curl \| sh`, ...) | Always | warn |
+| H023 | `hook-command-dangerous` | Dangerous command pattern in hook command (`rm -rf` / split or long-form recursive+force, `git reset --hard`, `curl \| sh`, ...) | Always | warn |
 | H024 | `hook-headers-interpolated` | HTTP hook headers interpolate `$VAR` without `allowedEnvVars` | Always | warn |
 | H025 | `settings-local-invalid` | `.claude/settings.local.json` is not valid JSON | Always | error |
 
