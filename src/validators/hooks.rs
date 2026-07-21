@@ -1,20 +1,14 @@
-use crate::context::{LintContext, ManifestState, collect_json_strings};
-use crate::diagnostic::DiagnosticCollector;
+use crate::context::{LintContext, ManifestState};
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
+use crate::hook_commands::extract_hook_command_paths;
 use crate::rules::LintRule;
 use crate::validators::{common::manifest_error_metadata, hook_schema};
-use regex::Regex;
 use serde_json::Value;
 use std::path::Path;
-use std::sync::LazyLock;
-
-static RE_PLUGIN_ROOT_SH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}/[a-zA-Z0-9._/-]+\.sh").unwrap());
-static RE_PWD_SH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\$PWD/[a-zA-Z0-9._/-]+\.sh").unwrap());
 
 /// Validate hook command paths in a parsed JSON value.
-/// Extracts script paths matching ${CLAUDE_PLUGIN_ROOT}/...sh or $PWD/...sh
-/// from all string values, then verifies each resolved path exists and is executable.
+/// Extracts repository-resolvable paths only from hook command fields, then
+/// verifies each resolved path exists and is executable.
 fn validate_hook_command_paths(
     val: &Value,
     label: &str,
@@ -22,36 +16,32 @@ fn validate_hook_command_paths(
     not_exec_rule: LintRule,
     diag: &mut DiagnosticCollector,
 ) {
-    let strings = collect_json_strings(val);
-    for raw in &strings {
-        // Extract script paths from the string using regex (handles commands with arguments)
-        for cap in RE_PLUGIN_ROOT_SH.find_iter(raw) {
-            let reference = cap.as_str();
-            let rel = reference.replacen("${CLAUDE_PLUGIN_ROOT}/", "", 1);
-            check_hook_path(&rel, reference, label, missing_rule, not_exec_rule, diag);
-        }
-        for cap in RE_PWD_SH.find_iter(raw) {
-            let reference = cap.as_str();
-            let rel = reference.replacen("$PWD/", "", 1);
-            check_hook_path(&rel, reference, label, missing_rule, not_exec_rule, diag);
-        }
+    for reference in extract_hook_command_paths(val) {
+        check_hook_path(
+            &reference.path,
+            &reference.reference,
+            label,
+            missing_rule,
+            not_exec_rule,
+            diag,
+        );
     }
 }
 
 fn check_hook_path(
-    rel: &str,
+    path: &Path,
     reference: &str,
     label: &str,
     missing_rule: LintRule,
     not_exec_rule: LintRule,
     diag: &mut DiagnosticCollector,
 ) {
-    let path = Path::new(rel);
     if !path.is_file() {
-        diag.report_at(
+        diag.report_at_with(
             missing_rule,
             path,
             &format!("{label}: hook command missing on disk: {reference}"),
+            DiagnosticMetadata::default().with_evidence(reference),
         );
         return;
     }
@@ -61,10 +51,11 @@ fn check_hook_path(
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = path.metadata() {
             if meta.permissions().mode() & 0o111 == 0 {
-                diag.report_at(
+                diag.report_at_with(
                     not_exec_rule,
                     path,
                     &format!("{label}: hook command not executable: {reference}"),
+                    DiagnosticMetadata::default().with_evidence(reference),
                 );
             }
         }
@@ -388,6 +379,86 @@ mod tests {
         );
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn documented_command_paths_report_only_missing_or_non_executable_scripts() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all(".claude/hooks").unwrap();
+        std::fs::create_dir_all("bin").unwrap();
+
+        for path in ["scripts/check.py", "bin/check"] {
+            std::fs::write(path, "#!/usr/bin/env sh\n").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(".claude/hooks/no-extension", "#!/usr/bin/env sh\n").unwrap();
+        std::fs::set_permissions(
+            ".claude/hooks/no-extension",
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+
+        let val = json!({"hooks": {"PreToolUse": [{"hooks": [
+            {"command": "${CLAUDE_PLUGIN_ROOT}/scripts/missing.py"},
+            {"command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/check.py"},
+            {"command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/no-extension\""},
+            {"command": "$PWD/bin/check"}
+        ]}]}});
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hook_command_paths(
+            &val,
+            "test",
+            LintRule::HookCommandMissing,
+            LintRule::HookNotExecutable,
+            &mut diag,
+        );
+
+        assert_eq!(diag.error_count(), 2);
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .map(|diagnostic| (diagnostic.rule, diagnostic.subject_path.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    LintRule::HookCommandMissing,
+                    Some(Path::new("scripts/missing.py")),
+                ),
+                (
+                    LintRule::HookNotExecutable,
+                    Some(Path::new(".claude/hooks/no-extension")),
+                ),
+            ]
+        );
+        assert_eq!(
+            diag.diagnostics()[0].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/missing.py")
+        );
+    }
+
+    #[test]
+    fn prose_references_are_not_hook_command_paths() {
+        let val = json!({
+            "hooks": [{
+                "command": "echo ok",
+                "description": "Removed ${CLAUDE_PLUGIN_ROOT}/scripts/old-cleanup.sh"
+            }]
+        });
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hook_command_paths(
+            &val,
+            "test",
+            LintRule::HookCommandMissing,
+            LintRule::HookNotExecutable,
+            &mut diag,
+        );
+        assert_eq!(diag.error_count(), 0);
     }
 
     // ── Hook schema surfaces (H008-H025) ────────────────────────────

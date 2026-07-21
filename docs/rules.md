@@ -71,7 +71,7 @@ M003, M004, and M018 follow the [Claude Code plugin reference](https://code.clau
 | H002 | `hooks-json-invalid` | `hooks/hooks.json` is not valid JSON | Plugin | error |
 | H003 | `hooks-key-missing` | `hooks.json` missing top-level `hooks` key | Plugin | error |
 | H004 | `hook-command-missing` | Hook command script missing on disk | Always | error |
-| H005 | `hook-not-executable` | Hook command script not executable | Always | error |
+| H005 | `hook-not-executable` | Hook command script not executable (Unix only) | Always | error |
 | H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Always | error |
 | H007 | `hooks-array-empty` | `hooks.json` has empty `hooks` array | Plugin | error |
 | H008 | `hook-event-invalid` | Hook event name is not a recognized Claude Code event | Always | error |
@@ -689,4 +689,6 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 | tools-list-syntax | S045 | YAML list → comma-separated scalar |
 | pwd-in-skill | G001 | `$PWD/` → `${CLAUDE_PLUGIN_ROOT}/` |
 
-Each fix is logged to stderr.
+Each fix is logged to stderr. H005 enforcement and its `chmod +x` autofix are
+Unix-only because executable-bit permissions are not available on every
+platform.

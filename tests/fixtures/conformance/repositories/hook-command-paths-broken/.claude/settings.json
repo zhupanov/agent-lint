@@ -1,0 +1,14 @@
+{
+  "hooks": [
+    {
+      "command": "\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/non-executable.py"
+    },
+    {
+      "command": "$CLAUDE_PLUGIN_ROOT/scripts/missing"
+    },
+    {
+      "command": "echo ${CLAUDE_PLUGIN_DATA}/runtime-only"
+    }
+  ],
+  "description": "Removed ${CLAUDE_PLUGIN_ROOT}/scripts/prose-only.sh"
+}
