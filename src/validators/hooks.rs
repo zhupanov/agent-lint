@@ -345,7 +345,7 @@ mod tests {
     fn test_v3_non_collection_hooks_values_fire_h003() {
         for value in [json!(null), json!("not-a-collection"), json!(42)] {
             let ctx = make_ctx(
-                ManifestState::Parsed(json!({"hooks": value})),
+                ManifestState::parsed(json!({"hooks": value})),
                 ManifestState::Missing,
             );
             let mut diag = DiagnosticCollector::new_all_enabled();

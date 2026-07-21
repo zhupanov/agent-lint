@@ -90,14 +90,19 @@ impl ManifestErrorLocation {
 }
 
 impl ManifestState {
-    /// Construct a parsed manifest for tests and callers that only have a
+    /// Construct a parsed manifest for callers that only have a
     /// semantic JSON value. Source locations are unavailable in this form.
-    #[cfg(test)]
-    pub fn parsed(value: Value) -> Self {
+    pub fn from_value(value: Value) -> Self {
         Self::Parsed(ParsedManifest {
             value,
             source: None,
         })
+    }
+
+    /// Test shorthand for a parsed manifest without source text.
+    #[cfg(test)]
+    pub fn parsed(value: Value) -> Self {
+        Self::from_value(value)
     }
 
     /// Construct a synthetic invalid state for unit tests that do not exercise
@@ -266,7 +271,7 @@ fn collect_declared_hook_configs(
         }
         Value::Object(inline) => configs.push(DeclaredHookConfig {
             subject_path: PathBuf::from(".claude-plugin/plugin.json"),
-            state: ManifestState::Parsed(Value::Object(serde_json::Map::from_iter([(
+            state: ManifestState::from_value(Value::Object(serde_json::Map::from_iter([(
                 "hooks".to_owned(),
                 Value::Object(inline.clone()),
             )]))),

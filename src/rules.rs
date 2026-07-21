@@ -1084,8 +1084,8 @@ impl LintRule {
             Self::CursorHookFieldTypeInvalid | Self::CursorPromptHookPromptMissing |
             Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
 
-            // ── Default-warning: user config and contact metadata ───
-            Self::UserconfigKeyInvalid | Self::InvalidEmailFormat |
+            // ── Default-warning: contact metadata ───────────────────
+            Self::InvalidEmailFormat |
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
