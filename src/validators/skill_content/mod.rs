@@ -537,7 +537,7 @@ mod tests {
 
         let first = format!(
             "Extract PDF text tables OCR metadata and searchable archives {}",
-            "detailed ".repeat(140).trim_end()
+            "detailed ".repeat(180).trim_end()
         );
         let continuation =
             "You can inspect <tag> scanned contracts. Use when reviewing document workflows.";
