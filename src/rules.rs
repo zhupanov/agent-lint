@@ -180,7 +180,7 @@ pub enum LintRule {
     /// S004: SKILL.md has malformed frontmatter
     #[strum(props(code = "S004", name = "frontmatter-malformed"))]
     FrontmatterMalformed,
-    /// S005: SKILL.md missing required frontmatter field (name or description)
+    /// S005: SKILL.md required frontmatter field is missing or not a non-empty string
     #[strum(props(code = "S005", name = "frontmatter-field-missing"))]
     FrontmatterFieldMissing,
     /// S006: SKILL.md frontmatter name does not match directory name

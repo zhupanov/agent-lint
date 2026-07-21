@@ -238,6 +238,7 @@ fn validate_optional_surfaces(
     }
     if targets.agent_skills {
         skills::validate_agent_skill_frontmatter_with_prompt_pass(diag, exclude, prompt_pass);
+        skill_content::validate_agent_skills_name_contract(".agents/skills", diag, exclude);
     }
     if targets.codex {
         diag.with_subject_path(".codex/config.toml", |diag| {
@@ -246,6 +247,7 @@ fn validate_optional_surfaces(
         codex_surfaces::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
     if targets.cursor {
+        skill_content::validate_agent_skills_name_contract(".cursor/skills", diag, exclude);
         cursor::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
 }
@@ -570,6 +572,76 @@ mod tests {
                 codex_surface
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn name_contract_covers_each_active_skill_surface() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for base in [
+            "skills",
+            ".claude/skills",
+            ".agents/skills",
+            ".cursor/skills",
+        ] {
+            std::fs::create_dir_all(format!("{base}/Invalid")).unwrap();
+            std::fs::write(
+                format!("{base}/Invalid/SKILL.md"),
+                "---\nname: Invalid\ndescription: A valid skill description here\n---\nBody\n",
+            )
+            .unwrap();
+        }
+
+        let ctx = LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_all_with_targets(
+            &ctx,
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                codex: false,
+                claude_md: false,
+                agents_md: false,
+                agent_skills: true,
+            },
+        );
+        let mut subjects = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == crate::rules::LintRule::NameInvalidChars)
+            .filter_map(|item| item.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        subjects.sort();
+        assert_eq!(
+            subjects,
+            vec![
+                ".agents/skills/Invalid/SKILL.md",
+                ".claude/skills/Invalid/SKILL.md",
+                ".cursor/skills/Invalid/SKILL.md",
+                "skills/Invalid/SKILL.md",
+            ]
+        );
+
+        let mut disabled = DiagnosticCollector::new_all_enabled();
+        run_all_with_targets(
+            &ctx,
+            &mut disabled,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert_eq!(
+            disabled
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == crate::rules::LintRule::NameInvalidChars)
+                .count(),
+            2,
+            "platform-gated surfaces must respect resolved activation"
+        );
     }
 
     // Integration test: Plugin mode dispatches all validators

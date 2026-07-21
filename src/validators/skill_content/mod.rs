@@ -93,6 +93,23 @@ pub(crate) fn validate_private_skill_content_with_prompt_pass(
     cross_skill::validate_generic_ref_names(".claude/skills", diag, exclude);
 }
 
+/// Validate the Agent Skills name contract for a platform-gated skill surface.
+/// Full content validation remains owned by the public/private passes above.
+pub(crate) fn validate_agent_skills_name_contract(
+    base_dir: &str,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    for info in collect_skills(base_dir, exclude) {
+        let Some(name) = crate::frontmatter::get_strict_string_field(&info.fm_lines, "name") else {
+            continue;
+        };
+        diag.with_subject_path(&info.path, |diag| {
+            name::check_agent_skills_name_contract(&info, &name, diag);
+        });
+    }
+}
+
 fn run_content_checks(
     info: &SkillInfo,
     plugin_mode: bool,
@@ -163,6 +180,103 @@ mod tests {
         assert!(diag.errors().iter().any(|e| e.contains("exceeds 64")));
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn name_contract_uses_yaml_scalars_and_unicode_character_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".agents/skills/valid-name").unwrap();
+        let path = ".agents/skills/valid-name/SKILL.md";
+
+        for name in [
+            "valid-name # YAML comments are not part of the scalar",
+            "\"valid\\x2dname\" # quoted escapes are decoded by YAML",
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description here\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_agent_skills_name_contract(
+                ".agents/skills",
+                &mut diag,
+                &crate::config::ExcludeSet::default(),
+            );
+            assert!(
+                diag.diagnostics().is_empty(),
+                "{name}: {:#?}",
+                diag.diagnostics()
+            );
+        }
+
+        let multibyte_name = "é".repeat(64);
+        std::fs::write(
+            path,
+            format!("---\nname: {multibyte_name}\ndescription: A valid skill description here\n---\nBody\n"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_skills_name_contract(
+            ".agents/skills",
+            &mut diag,
+            &crate::config::ExcludeSet::default(),
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| item.rule != crate::rules::LintRule::NameTooLong)
+        );
+        let invalid = diag
+            .diagnostics()
+            .iter()
+            .find(|item| item.rule == crate::rules::LintRule::NameInvalidChars)
+            .expect("non-ASCII name is rejected by S010");
+        assert_eq!(
+            invalid.location,
+            Some(crate::diagnostic::SourceSpan::line(2))
+        );
+        assert_eq!(invalid.evidence.as_deref(), Some(multibyte_name.as_str()));
+        assert_eq!(
+            invalid.suggestion.as_deref(),
+            Some("use only lowercase ASCII letters, digits, and single hyphens")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn name_contract_skips_untrustworthy_yaml_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".agents/skills/example").unwrap();
+        let path = ".agents/skills/example/SKILL.md";
+
+        for name in ["[not-a-scalar]", "[unterminated"] {
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description here\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_agent_skills_name_contract(
+                ".agents/skills",
+                &mut diag,
+                &crate::config::ExcludeSet::default(),
+            );
+            assert!(
+                diag.diagnostics().is_empty(),
+                "{name}: {:#?}",
+                diag.diagnostics()
+            );
+        }
+    }
+
     // ── S010: name-invalid-chars ─────────────────────────────────────
 
     #[test]
@@ -206,6 +320,43 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("outside [a-z0-9-]"))
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s010_rejects_every_non_contract_character_class() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".agents/skills/example").unwrap();
+        let path = ".agents/skills/example/SKILL.md";
+
+        for name in [
+            "Uppercase",
+            "has space",
+            "under_score",
+            "punctuation!",
+            "café",
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description here\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_agent_skills_name_contract(
+                ".agents/skills",
+                &mut diag,
+                &crate::config::ExcludeSet::default(),
+            );
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|item| item.rule == crate::rules::LintRule::NameInvalidChars)
+            );
+        }
     }
 
     // ── S011: name-bad-hyphens ───────────────────────────────────────
