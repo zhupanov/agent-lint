@@ -74,6 +74,11 @@ pub struct MarkdownDocument {
     links: Vec<MarkdownLink>,
     inline_code: Vec<MarkdownInlineCode>,
     body_prose: Vec<MarkdownProseLine>,
+    /// Candidate lines for unfinished-work marker scanning (D003/G006/G007).
+    /// Same exclusions as `body_prose`, except HTML comments stay visible and
+    /// Markdown link/image spans are masked so label/destination prose cannot
+    /// look like debt markers.
+    unfinished_work_lines: Vec<MarkdownProseLine>,
 }
 
 impl MarkdownDocument {
@@ -108,6 +113,7 @@ impl MarkdownDocument {
         let mut inline_code = Vec::new();
         let mut excluded_lines = std::collections::HashSet::new();
         let mut inline_exclusions = Vec::new();
+        let mut link_exclusions = Vec::new();
         for node in root.descendants() {
             let data = node.data.borrow();
             match &data.value {
@@ -127,13 +133,29 @@ impl MarkdownDocument {
                         text,
                     });
                 }
-                NodeValue::Link(link) => links.push(MarkdownLink {
-                    destination: link.url.clone(),
-                    line: data.sourcepos.start.line,
-                    start_column: data.sourcepos.start.column,
-                    end_line: data.sourcepos.end.line,
-                    end_column: data.sourcepos.end.column,
-                }),
+                NodeValue::Link(link) => {
+                    links.push(MarkdownLink {
+                        destination: link.url.clone(),
+                        line: data.sourcepos.start.line,
+                        start_column: data.sourcepos.start.column,
+                        end_line: data.sourcepos.end.line,
+                        end_column: data.sourcepos.end.column,
+                    });
+                    link_exclusions.push((
+                        data.sourcepos.start.line,
+                        data.sourcepos.start.column,
+                        data.sourcepos.end.line,
+                        data.sourcepos.end.column,
+                    ));
+                }
+                NodeValue::Image(_) => {
+                    link_exclusions.push((
+                        data.sourcepos.start.line,
+                        data.sourcepos.start.column,
+                        data.sourcepos.end.line,
+                        data.sourcepos.end.column,
+                    ));
+                }
                 NodeValue::BlockQuote
                 | NodeValue::MultilineBlockQuote(_)
                 | NodeValue::Alert(_)
@@ -167,7 +189,8 @@ impl MarkdownDocument {
         } else {
             1
         };
-        let mut tracker = CodeFenceTracker::new();
+        let mut prose_tracker = CodeFenceTracker::new();
+        let mut debt_tracker = CodeFenceTracker::new();
         let mut in_html_comment = false;
         let body_prose = content
             .lines()
@@ -175,63 +198,52 @@ impl MarkdownDocument {
             .filter_map(|(index, line)| {
                 let line_number = index + 1;
                 if line_number < body_start_line
-                    || tracker.process_line(line) != LineClass::Outside
+                    || prose_tracker.process_line(line) != LineClass::Outside
                     || excluded_lines.contains(&line_number)
                 {
                     return None;
                 }
 
                 let mut text = line.to_string();
-                for &(start_line, start_column, end_line, end_column) in &inline_exclusions {
-                    if line_number < start_line || line_number > end_line {
-                        continue;
-                    }
-                    let first = if line_number == start_line {
-                        start_column
-                    } else {
-                        1
-                    };
-                    let last = if line_number == end_line {
-                        end_column
-                    } else {
-                        text.chars().count()
-                    };
-                    text = text
-                        .chars()
-                        .enumerate()
-                        .map(|(column, ch)| {
-                            if (first..=last).contains(&(column + 1)) {
-                                ' '
-                            } else {
-                                ch
-                            }
-                        })
-                        .collect();
-                }
+                text = mask_column_ranges(&text, line_number, &inline_exclusions);
                 text = mask_html_comments(&text, &mut in_html_comment);
                 text = mask_quoted_text(&text);
                 Some(MarkdownProseLine {
                     line: line_number,
                     text,
-                    masked_inline_code_columns: inline_exclusions
-                        .iter()
-                        .filter_map(|&(start_line, start_column, end_line, end_column)| {
-                            if line_number < start_line || line_number > end_line {
-                                return None;
-                            }
-                            let first = if line_number == start_line {
-                                start_column
-                            } else {
-                                1
-                            };
-                            let last = if line_number == end_line {
-                                end_column
-                            } else {
-                                line.chars().count()
-                            };
-                            Some(first..=last)
-                        })
-                        .collect(),
+                    masked_inline_code_columns: masked_ranges_for_line(
+                        line,
+                        line_number,
+                        &inline_exclusions,
+                    ),
+                })
+            })
+            .collect();
+
+        let unfinished_work_lines = content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let line_number = index + 1;
+                if line_number < body_start_line
+                    || debt_tracker.process_line(line) != LineClass::Outside
+                    || excluded_lines.contains(&line_number)
+                {
+                    return None;
+                }
+
+                let mut text = line.to_string();
+                text = mask_column_ranges(&text, line_number, &inline_exclusions);
+                text = mask_column_ranges(&text, line_number, &link_exclusions);
+                text = mask_quoted_text(&text);
+                Some(MarkdownProseLine {
+                    line: line_number,
+                    text,
+                    masked_inline_code_columns: masked_ranges_for_line(
+                        line,
+                        line_number,
+                        &inline_exclusions,
+                    ),
                 })
             })
             .collect();
@@ -247,6 +259,7 @@ impl MarkdownDocument {
             links,
             inline_code,
             body_prose,
+            unfinished_work_lines,
         }
     }
 
@@ -301,6 +314,76 @@ impl MarkdownDocument {
     pub fn body_prose(&self) -> &[MarkdownProseLine] {
         &self.body_prose
     }
+
+    /// Lines eligible for unfinished-work marker classification.
+    ///
+    /// Unlike [`body_prose`], HTML comments remain visible so
+    /// `<!-- TODO: ... -->` can qualify, and Markdown link/image spans are
+    /// masked so marker words inside labels or destinations stay clean.
+    pub fn unfinished_work_lines(&self) -> &[MarkdownProseLine] {
+        &self.unfinished_work_lines
+    }
+}
+
+fn mask_column_ranges(
+    text: &str,
+    line_number: usize,
+    ranges: &[(usize, usize, usize, usize)],
+) -> String {
+    let mut masked = text.to_string();
+    for &(start_line, start_column, end_line, end_column) in ranges {
+        if line_number < start_line || line_number > end_line {
+            continue;
+        }
+        let first = if line_number == start_line {
+            start_column
+        } else {
+            1
+        };
+        let last = if line_number == end_line {
+            end_column
+        } else {
+            masked.chars().count()
+        };
+        masked = masked
+            .chars()
+            .enumerate()
+            .map(|(column, ch)| {
+                if (first..=last).contains(&(column + 1)) {
+                    ' '
+                } else {
+                    ch
+                }
+            })
+            .collect();
+    }
+    masked
+}
+
+fn masked_ranges_for_line(
+    line: &str,
+    line_number: usize,
+    ranges: &[(usize, usize, usize, usize)],
+) -> Vec<RangeInclusive<usize>> {
+    ranges
+        .iter()
+        .filter_map(|&(start_line, start_column, end_line, end_column)| {
+            if line_number < start_line || line_number > end_line {
+                return None;
+            }
+            let first = if line_number == start_line {
+                start_column
+            } else {
+                1
+            };
+            let last = if line_number == end_line {
+                end_column
+            } else {
+                line.chars().count()
+            };
+            Some(first..=last)
+        })
+        .collect()
 }
 
 /// Replace HTML comments with spaces while retaining source columns.
@@ -491,5 +574,24 @@ mod tests {
                 ""
             ]
         );
+    }
+
+    #[test]
+    fn unfinished_work_lines_keep_html_comments_and_mask_links() {
+        let doc = MarkdownDocument::parse_body(
+            "Remove TODO markers. <!-- TODO: real -->\n\
+             Read [TODO:](https://example.com/TODO:x).\n\
+             The guide says \"FIXME: example\".\n",
+        );
+        let lines: Vec<_> = doc
+            .unfinished_work_lines()
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert!(lines[0].contains("<!-- TODO: real -->"));
+        assert!(!lines[1].contains("TODO"));
+        assert!(lines[1].starts_with("Read "));
+        assert!(lines[2].starts_with("The guide says"));
+        assert!(!lines[2].contains("FIXME"));
     }
 }

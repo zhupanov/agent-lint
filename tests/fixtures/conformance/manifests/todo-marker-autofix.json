@@ -1,0 +1,17 @@
+{
+  "class": "hard-negative",
+  "repository": "todo-marker-autofix",
+  "covers": ["basic-mode", "autofix", "normal", "json", "todo-marker"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--autofix", "--only", "D003", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "D003", "name": "todo-in-docs", "severity": "warning", "subject_path": "CLAUDE.md" }
+  ],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    { "path": "CLAUDE.md", "contents": "# Project\nTODO: finish release instructions\n" }
+  ]
+}

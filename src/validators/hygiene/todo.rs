@@ -2,12 +2,12 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use crate::traversal;
-use crate::validators::common::RE_TODO_MARKER;
+use crate::unfinished_work::find_first_unfinished_work_marker;
 use std::fs;
 use std::path::Path;
 
 /// G006: TODO/FIXME/HACK/XXX markers in published skill content.
-/// Scans skills/*/SKILL.md body text outside code fences.
+/// Scans skills/*/SKILL.md body text outside excluded Markdown contexts.
 pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
@@ -39,27 +39,23 @@ pub fn validate_todo_in_skills(diag: &mut DiagnosticCollector, exclude: &Exclude
             Err(_) => continue,
         };
 
-        // Extract body after frontmatter
-        let body = crate::frontmatter::extract_body(&content);
-
-        for line in crate::fence::lines_outside_fences(body) {
-            if let Some(m) = RE_TODO_MARKER.find(line) {
-                diag.report_at(
-                    LintRule::TodoInSkill,
-                    &skill_path,
-                    &format!(
-                        "skills/{dir_name}/SKILL.md contains {} marker; remove before publishing",
-                        m.as_str()
-                    ),
-                );
-                break; // Report once per file
-            }
-        }
+        let Some(hit) = find_first_unfinished_work_marker(&content) else {
+            continue;
+        };
+        diag.report_at_with(
+            LintRule::TodoInSkill,
+            &skill_path,
+            &format!(
+                "skills/{dir_name}/SKILL.md contains {} marker; remove before publishing",
+                hit.marker
+            ),
+            hit.metadata(),
+        );
     }
 }
 
 /// G007: TODO/FIXME/HACK/XXX markers in agent .md files.
-/// Scans agents/*.md body text outside code fences.
+/// Scans agents/*.md body text outside excluded Markdown contexts.
 pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let agents_dir = Path::new("agents");
     if !agents_dir.is_dir() {
@@ -83,19 +79,17 @@ pub fn validate_todo_in_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
             Err(_) => continue,
         };
 
-        let body = crate::frontmatter::extract_body(&content);
-        for line in crate::fence::lines_outside_fences(body) {
-            if let Some(m) = RE_TODO_MARKER.find(line) {
-                diag.report_at(
-                    LintRule::TodoInAgent,
-                    &agent_path,
-                    &format!(
-                        "agents/{name} contains {} marker; remove before publishing",
-                        m.as_str()
-                    ),
-                );
-                break; // Report once per file
-            }
-        }
+        let Some(hit) = find_first_unfinished_work_marker(&content) else {
+            continue;
+        };
+        diag.report_at_with(
+            LintRule::TodoInAgent,
+            &agent_path,
+            &format!(
+                "agents/{name} contains {} marker; remove before publishing",
+                hit.marker
+            ),
+            hit.metadata(),
+        );
     }
 }

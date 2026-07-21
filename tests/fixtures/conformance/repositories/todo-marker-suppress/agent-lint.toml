@@ -1,0 +1,4 @@
+[[lint.overrides]]
+files = ["CLAUDE.md"]
+suppress = ["D003"]
+reason = "Tracked unfinished docs work is intentional for this fixture"

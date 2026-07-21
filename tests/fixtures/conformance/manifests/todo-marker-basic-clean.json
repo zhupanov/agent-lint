@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "todo-marker-basic-clean",
+  "covers": ["basic-mode", "normal", "json", "todo-marker"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "D003", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

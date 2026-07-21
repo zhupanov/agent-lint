@@ -1,12 +1,11 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
+use crate::unfinished_work::find_first_unfinished_work_marker;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
-
-use super::common::RE_TODO_MARKER;
 
 static RE_DOCS_REF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"docs/[a-zA-Z0-9._/-]+\.md").unwrap());
@@ -87,19 +86,18 @@ pub fn validate_claudemd_todos(diag: &mut DiagnosticCollector, exclude: &Exclude
         Err(_) => return,
     };
 
-    for line in crate::fence::lines_outside_fences(&content) {
-        if let Some(m) = RE_TODO_MARKER.find(line) {
-            diag.report_at(
-                LintRule::TodoInDocs,
-                claude_md,
-                &format!(
-                    "CLAUDE.md contains {} marker; remove before publishing",
-                    m.as_str()
-                ),
-            );
-            break; // Report once per file (matches G006/G007 pattern)
-        }
-    }
+    let Some(hit) = find_first_unfinished_work_marker(&content) else {
+        return;
+    };
+    diag.report_at_with(
+        LintRule::TodoInDocs,
+        claude_md,
+        &format!(
+            "CLAUDE.md contains {} marker; remove before publishing",
+            hit.marker
+        ),
+        hit.metadata(),
+    );
 }
 
 /// X002–X005: fence / XML structure checks for CLAUDE.md.
@@ -333,6 +331,49 @@ Should not be here\n\
             !diag.errors().iter().any(|e| e.contains("TODO")),
             "TODO inside nested 4-backtick fence should not trigger D003"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_d003_inline_code_prose_is_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write(
+            "CLAUDE.md",
+            "# Docs\nThe literal marker `TODO` is prohibited in committed instructions.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_d003_reports_structured_marker_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write(
+            "CLAUDE.md",
+            "# Docs\nTODO: finish release instructions\nTODO: second\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_claudemd_todos(&mut diag, &crate::config::ExcludeSet::default());
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::TodoInDocs)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].evidence.as_deref(), Some("TODO"));
+        assert_eq!(
+            findings[0].location,
+            Some(crate::diagnostic::SourceSpan::range(2, 1, 2, 5))
+        );
+        assert!(!findings[0].message.contains("finish release"));
     }
 
     #[test]

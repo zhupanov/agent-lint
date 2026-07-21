@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Narrowed D003/G006/G007 unfinished-work detection to a shared syntactic
+  marker grammar (`TODO:` / `FIXME(owner):` / comment and unchecked-task
+  forms) with Markdown context exclusions, structured span/evidence/suggestion
+  metadata, once-per-file reporting, and Basic-mode dispatch for D003 so
+  prose about marker words no longer false-positives
 - Unified S008/S029/S036 shared-Markdown reference recognition into one
   scanner: brace-less `$CLAUDE_PLUGIN_ROOT/...` forms, exact `.md` token
   boundaries (no `.md.backup` / `.mdx` / `.md/child` prefix truncation), and
