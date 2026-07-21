@@ -3,7 +3,7 @@ use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::platforms::ValidationTargets;
 use crate::rules::LintRule;
-use crate::sensitive::is_sensitive_key;
+use crate::sensitive::{is_safe_env_placeholder, is_sensitive_key};
 use crate::traversal;
 use crate::validators::common::is_nonlocal_url_with_scheme;
 use regex::Regex;
@@ -79,10 +79,6 @@ impl McpTransport {
     }
 }
 
-static RE_CLAUDE_ENV_EXPANSION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}$")
-        .expect("valid Claude env-expansion regex")
-});
 static RE_PAYLOAD_DOWNLOAD_PIPE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)\b(?:curl|wget|invoke-webrequest|iwr)\b[^|\n]*\|\s*(?:(?:ba)?sh|dash|zsh|ksh|csh|tcsh|fish|cmd(?:\.exe)?|powershell(?:\.exe)?|pwsh(?:\.exe)?|iex|invoke-expression)\b",
@@ -628,13 +624,7 @@ fn offending_secret_keys(env: Option<&Value>, allow_claude_expansion: bool) -> V
 }
 
 fn is_safe_claude_env_reference(value: &str) -> bool {
-    let Some(captures) = RE_CLAUDE_ENV_EXPANSION.captures(value) else {
-        return false;
-    };
-    match captures.get(2) {
-        None => true,                                 // exact ${NAME}
-        Some(default) => default.as_str().is_empty(), // ${NAME:-} with empty default
-    }
+    is_safe_env_placeholder(value, false)
 }
 
 fn dangerous_command_threat(config: &serde_json::Map<String, Value>) -> Option<DangerousThreat> {

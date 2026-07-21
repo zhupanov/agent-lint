@@ -14,6 +14,7 @@ regex = "1"
 url = "2"
 walkdir = "2"
 toml = "0.8"
+toml_edit = "0.22"
 globset = "0.4"
 jsonschema = { version = "0.48", default-features = false }
 noyalib = "0.0.15"

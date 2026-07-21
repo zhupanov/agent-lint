@@ -538,7 +538,7 @@ schema and are covered by the unknown-key rules.
 | CX009 | `codex-personality` | Invalid personality | Always | error |
 | CX011 | `codex-shell-inherit` | Invalid shell environment inheritance mode | Always | error |
 | CX012 | `codex-mcp-transport` | MCP server has an invalid transport shape or field | Always | error |
-| CX013 | `codex-secret-literal` | MCP configuration contains a hardcoded secret | Always | error |
+| CX013 | `codex-secret-literal` | Codex MCP `env` or `http_headers` contains a literal credential, or another literal MCP value has an explicit token signature | Always | error |
 | CX014 | `codex-cli-credentials` | Invalid credential-store mode | Always | error |
 | CX015 | `codex-workspace-write` | Invalid workspace-write field type | Always | error |
 | CX016–CX024 | — | Invalid Codex scalar/table type or model token limit | Always | warn/error |

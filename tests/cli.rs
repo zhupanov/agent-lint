@@ -2680,6 +2680,99 @@ fn codex_config_rules_honor_cli_mode_platform_policy_and_autofix_contracts() {
 }
 
 #[test]
+fn cx013_cli_is_precise_across_modes_suppression_and_plugin_dispatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    let secret = "sk-abcdefghijklmnopqrstuvwxyz";
+    let server = "sk-abcdefghijklmnopqrstuv";
+    let config = format!(
+        "[mcp_servers.{server}]\ncommand = 'server'\nenv = {{ API_KEY = '${{GITHUB_TOKEN}}', ORDINARY = '{secret}' }}\n"
+    );
+    let config_path = tmp.path().join(".codex/config.toml");
+    std::fs::write(&config_path, &config).unwrap();
+
+    for arguments in [
+        vec!["--format", "json", "--only", "CX013", "."],
+        vec!["--format", "json", "--pedantic", "--only", "CX013", "."],
+        vec!["--format", "json", "--all", "--only", "CX013", "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic["code"], "CX013");
+        assert_eq!(diagnostic["severity"], "error");
+        assert_eq!(diagnostic["subject_path"], ".codex/config.toml");
+        assert_eq!(diagnostic["evidence"], "ORDINARY");
+        assert_eq!(diagnostic["location"]["start"]["line"], 3);
+        assert!(
+            diagnostic["suggestion"]
+                .as_str()
+                .unwrap()
+                .contains("env_vars")
+        );
+        let serialized = report.to_string();
+        assert!(!serialized.contains(secret));
+        assert!(!serialized.contains(server));
+    }
+
+    let text = run_in(tmp.path(), &["--only", "CX013", "."]);
+    let text = stderr(&text);
+    assert!(!text.contains(secret));
+    assert!(!text.contains(server));
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"CX013\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--format", "json", "--only", "CX013", "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert_eq!(json(&suppressed)["counts"]["suppressed"], 1);
+    assert_eq!(
+        run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", "CX013", "."]
+        )
+        .status
+        .code(),
+        Some(1)
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".codex/config.toml\"]\nsuppress = [\"CX013\"]\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX013", "."])
+            .status
+            .success()
+    );
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"example"}"#,
+    )
+    .unwrap();
+    let plugin = run_in(tmp.path(), &["--format", "json", "--only", "CX013", "."]);
+    assert_eq!(plugin.status.code(), Some(1));
+    assert_eq!(json(&plugin)["mode"], "plugin");
+
+    let _ = run_in(tmp.path(), &["--autofix", "--only", "CX013", "."]);
+    assert_eq!(std::fs::read_to_string(config_path).unwrap(), config);
+}
+
+#[test]
 fn inline_path_rules_share_clean_normalized_and_fence_aware_behavior() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

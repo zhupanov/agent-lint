@@ -143,6 +143,40 @@ pub(crate) fn is_sensitive_key(key: &str) -> bool {
     })
 }
 
+/// Return whether `value` is exactly an environment-variable reference with
+/// no literal fallback. `allow_unbraced` controls support for `$NAME`; Claude
+/// MCP's documented grammar accepts only the braced spelling, while Codex
+/// accepts both spellings for the purpose of literal-secret classification.
+pub(crate) fn is_safe_env_placeholder(value: &str, allow_unbraced: bool) -> bool {
+    if allow_unbraced && RE_PLACEHOLDER.is_match(value) {
+        return true;
+    }
+    let Some(captures) = RE_BRACE_PLACEHOLDER.captures(value) else {
+        return false;
+    };
+    match captures.get(2) {
+        None => true,
+        Some(default) => default.as_str().is_empty(),
+    }
+}
+
+/// Explicit token signatures used by the typed Codex MCP secret analyzer.
+///
+/// This deliberately does not share the broad `contains_possible_secret`
+/// heuristic: CX013 owns only these signatures outside typed credential maps.
+pub(crate) fn contains_codex_mcp_token_signature(value: &str) -> bool {
+    static CODEX_MCP_TOKEN_SIGNATURES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+        vec![
+            Regex::new(r"sk-[a-zA-Z0-9]{20,}").expect("valid sk- signature"),
+            Regex::new(r"ghp_[a-zA-Z0-9]{36,}").expect("valid ghp_ signature"),
+            Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\\-]{8,}").expect("valid slack signature"),
+        ]
+    });
+    CODEX_MCP_TOKEN_SIGNATURES
+        .iter()
+        .any(|pattern| pattern.is_match(value))
+}
+
 /// First I002 hit in byte order: either a sensitive assignment key or a fixed
 /// signature category label. Evidence never includes credential value bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,19 +271,13 @@ fn strip_assignment_quotes(value: &str) -> &str {
 }
 
 fn is_instruction_secret_placeholder(value: &str) -> bool {
-    if RE_PLACEHOLDER.is_match(value)
+    if is_safe_env_placeholder(value, true)
         || RE_MUSTACHE_PLACEHOLDER.is_match(value)
         || RE_ANGLE_PLACEHOLDER.is_match(value)
     {
         return true;
     }
-    let Some(captures) = RE_BRACE_PLACEHOLDER.captures(value) else {
-        return false;
-    };
-    match captures.get(2) {
-        None => true,
-        Some(default) => default.as_str().is_empty(),
-    }
+    false
 }
 
 #[cfg(test)]
@@ -291,6 +319,30 @@ mod tests {
             "username",
         ] {
             assert!(!is_sensitive_key(key), "{key}");
+        }
+    }
+
+    #[test]
+    fn codex_mcp_placeholders_and_signature_scope_are_precise() {
+        for value in ["$NAME", "${NAME}", "${NAME:-}"] {
+            assert!(is_safe_env_placeholder(value, true), "{value}");
+        }
+        assert!(!is_safe_env_placeholder("$NAME", false));
+        for value in ["${NAME:-default}", "prefix$NAME", "${NAME}suffix"] {
+            assert!(!is_safe_env_placeholder(value, true), "{value}");
+        }
+        for value in [
+            "sk-abcdefghijklmnopqrstuvwxyz",
+            "ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+            "xoxp-1abcdefghij",
+        ] {
+            assert!(contains_codex_mcp_token_signature(value), "{value}");
+        }
+        for value in [
+            "github_pat_abcdefghijklmnopqrstuvwxyz",
+            "AKIAIOSFODNN7EXAMPLE",
+        ] {
+            assert!(!contains_codex_mcp_token_signature(value), "{value}");
         }
     }
 
