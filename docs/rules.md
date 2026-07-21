@@ -191,7 +191,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | S019 | `body-too-long` | `SKILL.md` body exceeds 500 lines | Always | suppressed |
 | S020 | `body-empty` | `SKILL.md` has no content after frontmatter | Always | error |
 | S021 | `consecutive-bash` | Consecutive bash code blocks, including reference-file blocks separated by short breadcrumbs/comments, that could be combined | Always | warn |
-| S022 | `backslash-path` | Windows-style backslash paths in skill content | Always | error |
+| S022 | `backslash-path` | Windows-style backslash paths in skill content (single-letter first path segments and adjacent named TeX escapes such as `\alpha\beta` are accepted false negatives to avoid rewriting escapes) | Always | error |
 | S037 | `body-no-refs` | Body exceeds 300 lines with no file references | Plugin | warn |
 | S038 | `time-sensitive` | Body contains time-sensitive date/year patterns | Plugin | warn |
 | S041 | `fork-no-task` | `context: fork` set but body lacks task instructions | Always | warn |
@@ -799,7 +799,7 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 | frontmatter-field-empty | S007 | Remove a bare empty optional field only when it has no YAML continuation or child lines |
 | desc-has-xml | S018 | Strip XML tags from description |
 | consecutive-bash | S021 | Merge adjacent bash blocks |
-| backslash-path | S022 | Replace `\` with `/` in body |
+| backslash-path | S022 | Replace every separator in each detected body path run with `/` |
 | non-https-url | S031 | `http://` → `https://` (Claude surfaces only: `skills/` and `.claude/skills/`; `.agents/skills/` and `.cursor/skills/` report diagnostics without rewriting) |
 | frontmatter-backslash | S043 | Replace `\` with `/` in frontmatter |
 | tools-list-syntax | S045 | YAML list → comma-separated scalar |
