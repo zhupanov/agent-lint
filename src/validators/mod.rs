@@ -95,8 +95,6 @@ fn run_plugin(
     let mut prompt_pass = prompt_content::PromptContentPass::default();
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag, exclude);
-    hygiene::validate_private_script_references(diag, exclude);
-    hygiene::validate_private_executability(diag, exclude);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
     claude_config::validate_private_config(diag, exclude);
@@ -131,9 +129,9 @@ fn run_plugin(
     // V8: PWD hygiene
     hygiene::validate_pwd_hygiene(diag, exclude);
     // V9: script reference integrity
-    hygiene::validate_script_references(diag, exclude);
+    hygiene::scripts::validate_script_references_for_mode(LintMode::Plugin, diag, exclude);
     // V10: executability (generic, no hardcoded block-submodule-edit.sh)
-    hygiene::validate_executability(diag, exclude);
+    hygiene::scripts::validate_executability_for_mode(LintMode::Plugin, diag, exclude);
     // V11: dead-script detection
     hygiene::validate_dead_scripts(ctx, diag, exclude);
     // V12: marketplace enriched metadata

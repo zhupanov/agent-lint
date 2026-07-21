@@ -128,37 +128,18 @@ fn fix_executability_hooks(_mode: LintMode, _config: &LintConfig) -> bool {
 
 #[cfg(unix)]
 fn fix_executability_scripts(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
-    use crate::validators::hygiene::scripts::{BASIC_SCRIPT_DIRS, PLUGIN_SCRIPT_DIRS};
-
-    let dirs = match mode {
-        LintMode::Plugin => PLUGIN_SCRIPT_DIRS,
-        LintMode::Basic => BASIC_SCRIPT_DIRS,
-    };
-
     let mut fixed = false;
-    for pattern in dirs {
-        for dir in glob_dirs(pattern) {
-            for entry in traversal::shallow_files(&dir, Path::new("."), None).entries {
-                let path = entry.path;
-                let name = match path.file_name().and_then(|n| n.to_str()) {
-                    Some(n) if n.ends_with(".sh") => n,
-                    _ => continue,
-                };
-                let display = path.display().to_string();
-                if exclude.is_excluded(&display)
-                    || is_suppressed(config, LintRule::ScriptNotExecutable, &path)
-                {
-                    continue;
-                }
-                if make_executable(path.to_str().unwrap_or("")) {
-                    log_fix(
-                        LintRule::ScriptNotExecutable,
-                        &format!("made executable: {display}"),
-                    );
-                    fixed = true;
-                }
-                let _ = name;
-            }
+    for path in crate::validators::hygiene::scripts::direct_script_paths(mode, exclude) {
+        let display = path.display().to_string();
+        if is_suppressed(config, LintRule::ScriptNotExecutable, &path) {
+            continue;
+        }
+        if make_executable(path.to_str().unwrap_or("")) {
+            log_fix(
+                LintRule::ScriptNotExecutable,
+                &format!("made executable: {display}"),
+            );
+            fixed = true;
         }
     }
     fixed
@@ -184,38 +165,8 @@ fn make_executable(path: &str) -> bool {
     if mode & 0o111 != 0 {
         return false; // Already executable
     }
-    let new_mode = mode | 0o111;
+    let new_mode = mode | ((mode & 0o444) >> 2);
     fs::set_permissions(p, std::os::unix::fs::PermissionsExt::from_mode(new_mode)).is_ok()
-}
-
-/// Expand simple glob patterns like "scripts" or "skills/*/scripts".
-fn glob_dirs(pattern: &str) -> Vec<std::path::PathBuf> {
-    if !pattern.contains('*') {
-        let p = Path::new(pattern);
-        if p.is_dir() {
-            return vec![p.to_path_buf()];
-        }
-        return vec![];
-    }
-    // Split on '*' — only support one-level wildcard
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() != 2 {
-        return vec![];
-    }
-    let prefix = parts[0].trim_end_matches('/');
-    let suffix = parts[1].trim_start_matches('/');
-    let base = Path::new(prefix);
-    if !base.is_dir() {
-        return vec![];
-    }
-    let mut result = Vec::new();
-    for entry in traversal::shallow_directories(base, Path::new("."), None).entries {
-        let candidate = entry.path.join(suffix);
-        if candidate.is_dir() {
-            result.push(candidate);
-        }
-    }
-    result
 }
 
 // ── S006: frontmatter name mismatch ─────────────────────────────────────

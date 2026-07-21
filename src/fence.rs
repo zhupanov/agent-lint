@@ -322,6 +322,7 @@ pub fn lines_outside_fences(text: &str) -> impl Iterator<Item = &str> {
 
 /// Returns an iterator over lines that are inside code fences.
 /// Fence delimiter lines are excluded.
+#[cfg(test)]
 pub fn lines_inside_fences(text: &str) -> impl Iterator<Item = &str> {
     let mut tracker = CodeFenceTracker::new();
     text.lines()

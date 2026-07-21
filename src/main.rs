@@ -13,6 +13,7 @@ mod markdown;
 mod platforms;
 mod prompt_budget;
 mod rules;
+mod script_paths;
 mod sensitive;
 #[cfg(test)]
 mod test_helpers;
