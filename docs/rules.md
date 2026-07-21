@@ -396,13 +396,23 @@ evaluated as joined sentences while retaining source locations.
 
 Q006 models each operative output directive as a typed constraint (an exclusive
 format requirement, or a size/shape bound) and reports only the pairs that
-cannot both hold within one heading-delimited response scope. It never counts
-raw format keywords: mere multi-format mention, conditional routing, either/or
-alternatives, input-format mentions, examples, and separately headed response
-modes stay clean. The diagnostic exposes both conflicting constraints as
-structured evidence and suggests clarification without choosing between them; it
-has no autofix. Typed frontmatter output-contract conflicts are intentionally
-out of scope for the first version.
+cannot both hold within one response scope. Response scopes follow the heading
+tree: a requirement inherits every operative constraint from its ancestor
+sections, and ordinary organizational headings do not begin a new scope. A
+heading delineates a distinct child scope only when its words carry a fixed
+boundary cue — a recognized output format; one of the fixed cue words `mode`,
+`format`, `response`, `reply`, `request`, or `output` (the last four also match
+their plural forms); leading `if`, `when`, `unless`, or `otherwise` wording; or
+a recognized non-response artifact (commit message, PR/issue description,
+changelog, documentation, file/path, or log). Sibling and nested boundary scopes
+do not inherit each other's incompatible constraints, so explicitly delineated
+response modes and artifacts stay clean while an ordinary subsection cannot hide
+a same-response conflict. It never counts raw format keywords: mere multi-format
+mention, conditional routing, either/or alternatives, input-format mentions, and
+examples stay clean. The diagnostic exposes both conflicting constraints — each
+with its line and column — as structured evidence and suggests clarification
+without choosing between them; it has no autofix. Typed frontmatter
+output-contract conflicts are intentionally out of scope for the first version.
 
 ## Claude Configuration Rules (R/O/T)
 

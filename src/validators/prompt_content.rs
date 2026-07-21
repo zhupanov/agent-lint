@@ -6,7 +6,7 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
-use crate::markdown::MarkdownDocument;
+use crate::markdown::{MarkdownDocument, MarkdownHeading};
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::common::{NEVER_INVENT_PROHIBITION, has_bound_or_fallback, sentence_ranges};
@@ -870,6 +870,32 @@ const NON_RESPONSE_ARTIFACTS: &[NonResponseArtifact] = &[
     NonResponseArtifact::NamedPath,
 ];
 
+/// The closed set of heading words that, on their own, delineate a distinct
+/// response scope. They sit alongside the recognized output formats, the leading
+/// conditional wording, and the non-response artifact vocabulary consulted by
+/// `heading_is_response_boundary`. Matched as whole words, so ordinary document
+/// organization (`## Required details`) is not mistaken for a boundary. Plurals
+/// are enumerated explicitly rather than derived, so only the forms listed here
+/// count: `responses` is a cue but `modes`/`formats` are not, keeping the set
+/// aligned exactly with the rule's contract.
+const BOUNDARY_CUE_WORDS: &[&str] = &[
+    "mode",
+    "format",
+    "response",
+    "responses",
+    "reply",
+    "replies",
+    "request",
+    "requests",
+    "output",
+    "outputs",
+];
+
+/// Leading words that make a heading a conditional response scope, mirroring the
+/// sentence-level conditional routing exclusions but restricted to the fixed set
+/// named for headings.
+const BOUNDARY_CONDITION_LEAD_INS: &[&str] = &["if", "when", "unless", "otherwise"];
+
 /// Markers that turn an otherwise agent-output-looking clause into a
 /// description of a past response rather than a live instruction.
 const HISTORICAL_OUTPUT_REFERENCES: &[&str] = &[
@@ -955,6 +981,8 @@ fn check_output_conflict(
 ) {
     let lines = document.prose_lines();
     let example = document.example_scopes();
+    let headings = document.headings();
+    let scope_roots = heading_scope_roots(headings);
     let mut requirements: Vec<DetectedRequirement> = Vec::new();
 
     for (index, line) in lines.iter().enumerate() {
@@ -963,14 +991,10 @@ fn check_output_conflict(
         }
         // Heading lines define response scopes; they are never operative output
         // instructions themselves.
-        if document
-            .headings()
-            .iter()
-            .any(|heading| heading.line == line.line)
-        {
+        if headings.iter().any(|heading| heading.line == line.line) {
             continue;
         }
-        let scope = scope_of(document, line.line);
+        let scope = enclosing_response_scope(headings, &scope_roots, line.line);
         for (sentence_offset, sentence) in split_on(&line.text, SENTENCE_DELIMITERS) {
             // Conditionality is judged on the whole sentence first so a leading
             // "For X, ..." condition still guards the directive that follows it.
@@ -1312,13 +1336,97 @@ fn parse_count(raw: &str) -> Option<u32> {
     }
 }
 
-fn scope_of(document: &LiveInstructionDocument<'_>, line_number: usize) -> Option<usize> {
-    document
-        .headings()
+/// The response scope each heading belongs to, in document order.
+///
+/// A heading opens its own response scope only when its text carries a fixed
+/// boundary cue (see `heading_is_response_boundary`). An ordinary heading is
+/// document organization: it shares the nearest enclosing boundary scope, or the
+/// document root when no ancestor is a boundary. Requirements therefore inherit
+/// every operative constraint from ancestor sections until a boundary heading
+/// interrupts the chain, and two boundary siblings never share a scope.
+fn heading_scope_roots(headings: &[MarkdownHeading]) -> Vec<Option<usize>> {
+    let mut roots = Vec::with_capacity(headings.len());
+    // The open ancestor chain at the current heading: `(level, scope root)`.
+    // Headings are consumed in ascending source order, so popping every entry at
+    // or below the incoming level leaves exactly the enclosing ancestors.
+    let mut open: Vec<(u8, Option<usize>)> = Vec::new();
+    for heading in headings {
+        while open
+            .last()
+            .is_some_and(|&(level, _)| level >= heading.level)
+        {
+            open.pop();
+        }
+        let inherited = open.last().and_then(|&(_, root)| root);
+        let root = if heading_is_response_boundary(&heading.text) {
+            Some(heading.line)
+        } else {
+            inherited
+        };
+        roots.push(root);
+        open.push((heading.level, root));
+    }
+    roots
+}
+
+/// The response scope a source line belongs to: the scope root of its nearest
+/// enclosing heading, or the document root when no heading precedes it.
+fn enclosing_response_scope(
+    headings: &[MarkdownHeading],
+    scope_roots: &[Option<usize>],
+    line_number: usize,
+) -> Option<usize> {
+    headings
         .iter()
-        .filter(|heading| heading.line < line_number)
-        .map(|heading| heading.line)
-        .max()
+        .enumerate()
+        .filter(|(_, heading)| heading.line < line_number)
+        .max_by_key(|(_, heading)| heading.line)
+        .and_then(|(index, _)| scope_roots[index])
+}
+
+/// Whether a heading introduces a distinct child response scope rather than
+/// merely organizing the document. Only a fixed boundary cue qualifies: a
+/// recognized output format, one of the fixed cue words, leading conditional
+/// wording, or a recognized non-response artifact. This keeps ordinary Markdown
+/// nesting from hiding a same-response conflict while leaving explicitly
+/// delineated modes and artifacts clean.
+fn heading_is_response_boundary(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    OUTPUT_FORMATS
+        .iter()
+        .any(|(token, _)| contains_phrase(&lower, std::slice::from_ref(token)))
+        || contains_phrase(&lower, BOUNDARY_CUE_WORDS)
+        || heading_leads_with_condition(&lower)
+        || heading_names_non_response_artifact(&lower)
+}
+
+fn heading_leads_with_condition(lower: &str) -> bool {
+    // Strip punctuation abutting the leading word so a branch-label heading such
+    // as `## Otherwise:` or `## If, be brief` is still recognized as a leading
+    // conditional, matching the normalization `sentence_is_conditional` applies.
+    lower
+        .split_whitespace()
+        .next()
+        .map(|word| word.trim_matches(|character: char| !character.is_alphanumeric()))
+        .is_some_and(|word| BOUNDARY_CONDITION_LEAD_INS.contains(&word))
+}
+
+/// Whether a heading names a non-response artifact anywhere in its words. Unlike
+/// the clause-level `artifact_starts`, which requires the artifact to be the
+/// directive's object (prefix match), a heading that merely mentions an artifact
+/// is taken to scope the section to that artifact; the spec's cue model is
+/// satisfied when the heading's normalized words contain the artifact, so this
+/// deliberately uses whole-word containment against the shared vocabulary.
+fn heading_names_non_response_artifact(lower: &str) -> bool {
+    NON_RESPONSE_ARTIFACTS
+        .iter()
+        .any(|artifact| match artifact {
+            NonResponseArtifact::NamedPath => lower.split_whitespace().any(starts_with_named_path),
+            other => other
+                .phrases()
+                .iter()
+                .any(|phrase| contains_phrase(lower, std::slice::from_ref(phrase))),
+        })
 }
 
 fn split_on<'a>(text: &'a str, delimiters: &'static [char]) -> Vec<(usize, &'a str)> {
@@ -1500,10 +1608,16 @@ fn emit_output_conflict(
     let descriptor_b = describe_requirement(&second.requirement);
     let line_a = first.line;
     let line_b = second.line;
+    let column_a = first.column;
+    let column_b = second.column;
+    // Both coordinates are reported so that two conflicting constraints on one
+    // line stay unambiguous; the earlier constraint remains the primary range.
     let message = format!(
-        "{path}: incompatible {subject} instructions in the same response scope ({descriptor_a} at line {line_a}, {descriptor_b} at line {line_b}); clarify which single requirement applies"
+        "{path}: incompatible {subject} instructions in the same response scope ({descriptor_a} at line {line_a} column {column_a}, {descriptor_b} at line {line_b} column {column_b}); clarify which single requirement applies"
     );
-    let evidence = format!("line {line_a}: {descriptor_a}; line {line_b}: {descriptor_b}");
+    let evidence = format!(
+        "line {line_a} column {column_a}: {descriptor_a}; line {line_b} column {column_b}: {descriptor_b}"
+    );
     diag.report_with(
         LintRule::PromptOutputConflict,
         &message,
@@ -2564,8 +2678,8 @@ mod tests {
         assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 1);
         // Both conflicting constraints are exposed structurally, not via message text.
         let evidence = diagnostics[0].evidence.as_deref().unwrap();
-        assert!(evidence.starts_with("line 1:"), "{evidence}");
-        assert!(evidence.contains("line 2:"), "{evidence}");
+        assert!(evidence.starts_with("line 1 column 1:"), "{evidence}");
+        assert!(evidence.contains("line 2 column 1:"), "{evidence}");
         assert!(evidence.contains("JSON"), "{evidence}");
         assert!(evidence.contains("Markdown"), "{evidence}");
         // The suggestion asks for clarification and does not choose a side.
@@ -2626,6 +2740,185 @@ mod tests {
                 "## JSON responses\nReturn only JSON.\n## Markdown responses\nRespond in Markdown.\n"
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn q006_inherited_scope_reports_ordinary_child_and_sibling_conflicts() {
+        for positive in [
+            // Parent boundary + ordinary child: the child inherits the parent
+            // mandate, so the same-response conflict is reported. This is the
+            // #362 evidence repro that the nearest-heading model missed.
+            "# Output requirements\nReturn only JSON.\n## Required details\nRespond in Markdown.\n",
+            // Two ordinary sibling headings share the document-root scope.
+            "## Overview\nReturn only JSON.\n## Details\nRespond in Markdown.\n",
+            // Shape conflict inherited across a parent boundary (`output`) plus an
+            // ordinary child, matching the format case above for the shape class.
+            "# Output length\nAnswer in exactly one sentence.\n## Notes\nInclude at least three paragraphs.\n",
+            // Shape conflict across two ordinary siblings.
+            "## Overview\nUse at most two sentences.\n## Extra\nWrite at least five sentences.\n",
+        ] {
+            assert_eq!(
+                q006_diagnostics(positive).len(),
+                1,
+                "expected conflict: {positive:?}"
+            );
+        }
+
+        // Acceptance criterion: the exact evidence repro emits one warning that
+        // exposes both structured coordinates, earlier constraint first.
+        let repro = q006_diagnostics(
+            "# Output requirements\nReturn only JSON.\n## Required details\nRespond in Markdown.\n",
+        );
+        assert_eq!(repro.len(), 1);
+        assert_eq!(
+            repro[0].evidence.as_deref().unwrap(),
+            "line 2 column 1: exclusive JSON output; line 4 column 1: exclusive Markdown output"
+        );
+    }
+
+    #[test]
+    fn q006_explicitly_delineated_boundaries_stay_clean() {
+        for clean in [
+            // Pinned sibling pair: recognized formats plus the `responses` cue.
+            "## JSON responses\nReturn only JSON.\n## Markdown responses\nRespond in Markdown.\n",
+            // Pinned sibling pair: a non-response artifact and the `replies` cue,
+            // both carrying identical inner directives yet staying isolated.
+            "## Commit messages\nWrite in plain text only.\n## Review replies\nRespond in Markdown.\n",
+            // The `mode` cue word delineates two response modes.
+            "## JSON mode\nReturn only JSON.\n## Prose mode\nRespond in Markdown.\n",
+            // The `format` cue word.
+            "## Primary format\nReturn only JSON.\n## Fallback format\nRespond in Markdown.\n",
+            // Leading conditional wording opens a distinct scope per branch.
+            "## When the caller wants data\nReturn only JSON.\n## Otherwise\nRespond in Markdown.\n",
+            // Artifact boundaries: documentation versus changelog.
+            "## Documentation\nWrite in Markdown only.\n## Changelog\nReturn only JSON.\n",
+        ] {
+            assert!(
+                q006_diagnostics(clean).is_empty(),
+                "expected clean: {clean:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn q006_heading_boundary_cue_vocabulary_matches_the_documented_set() {
+        // Every fixed cue word delineates a scope as a whole word.
+        for &word in BOUNDARY_CUE_WORDS {
+            assert!(
+                heading_is_response_boundary(&format!("Section about {word}")),
+                "cue word not recognized: {word}"
+            );
+        }
+        // Every recognized output format delineates a scope.
+        for &(token, _) in OUTPUT_FORMATS {
+            assert!(
+                heading_is_response_boundary(&format!("{token} section")),
+                "format not recognized: {token}"
+            );
+        }
+        // Leading conditional wording delineates a scope, including the
+        // branch-label form where punctuation abuts the leading word.
+        for heading in [
+            "If large",
+            "When done",
+            "Unless empty",
+            "Otherwise",
+            "Otherwise:",
+            "If, be brief",
+        ] {
+            assert!(
+                heading_is_response_boundary(heading),
+                "conditional not recognized: {heading}"
+            );
+        }
+        // Representative non-response artifacts delineate a scope.
+        for heading in [
+            "Commit messages",
+            "Changelog",
+            "Documentation",
+            "Error logs",
+            "docs/guide.md",
+        ] {
+            assert!(
+                heading_is_response_boundary(heading),
+                "artifact not recognized: {heading}"
+            );
+        }
+        // Ordinary organization and substring look-alikes are not boundaries, so
+        // they cannot hide a same-response conflict. `Modes`/`Formats` document
+        // the deliberate singular-only cue for `mode`/`format`.
+        for heading in [
+            "Required details",
+            "Overview",
+            "Reformatting notes",
+            "Profile settings",
+            "Modes",
+            "Formats",
+        ] {
+            assert!(
+                !heading_is_response_boundary(heading),
+                "unexpected boundary: {heading}"
+            );
+        }
+    }
+
+    #[test]
+    fn q006_deep_mixed_trees_stop_inheritance_only_at_boundaries() {
+        // Inheritance flows through ordinary headings of any depth: the JSON
+        // mandate reaches a directive nested two ordinary levels below it.
+        let through_ordinary = "# Output requirements\nReturn only JSON.\n## Section\n### Subsection\nRespond in Markdown.\n";
+        assert_eq!(
+            q006_diagnostics(through_ordinary).len(),
+            1,
+            "{through_ordinary:?}"
+        );
+
+        // A boundary heading interrupts the chain: the same directive nested
+        // under `## Markdown mode` no longer inherits the parent JSON mandate.
+        let stopped_by_boundary = "# Output requirements\nReturn only JSON.\n## Markdown mode\n### Subsection\nRespond in Markdown.\n";
+        assert!(
+            q006_diagnostics(stopped_by_boundary).is_empty(),
+            "{stopped_by_boundary:?}"
+        );
+
+        // Ordinary siblings under one boundary share its scope and conflict,
+        // while a sibling boundary with the same directive stays isolated.
+        let mixed = "# Output requirements\n## First details\nReturn only JSON.\n## Second details\nRespond in Markdown.\n## JSON mode\nReturn only JSON.\n";
+        assert_eq!(q006_diagnostics(mixed).len(), 1, "{mixed:?}");
+    }
+
+    #[test]
+    fn q006_reports_both_coordinates_for_same_line_and_cross_line_pairs() {
+        // Two exclusive formats on one line: distinct columns keep the pair
+        // unambiguous, and exactly one pair is reported (no duplicate).
+        let same_line = q006_diagnostics("Return only JSON. Respond only in XML.\n");
+        assert_eq!(same_line.len(), 1);
+        assert_eq!(
+            same_line[0].evidence.as_deref().unwrap(),
+            "line 1 column 1: exclusive JSON output; line 1 column 19: exclusive XML output"
+        );
+        // The primary range is the earlier constraint on the shared line.
+        let location = same_line[0].location.unwrap();
+        assert_eq!(location.start().line_number(), 1);
+        assert_eq!(location.start().column_number(), Some(1));
+
+        // A cross-line pair carries both coordinates in source order.
+        let cross_line = q006_diagnostics("Return only JSON.\nRespond only in XML.\n");
+        assert_eq!(cross_line.len(), 1);
+        assert_eq!(
+            cross_line[0].evidence.as_deref().unwrap(),
+            "line 1 column 1: exclusive JSON output; line 2 column 1: exclusive XML output"
+        );
+
+        // Two shape directives on one line: the columns point at each shape
+        // phrase (not the line start), so a same-line shape pair is unambiguous.
+        let same_line_shape =
+            q006_diagnostics("Use exactly two sentences. Use exactly five sentences.\n");
+        assert_eq!(same_line_shape.len(), 1);
+        assert_eq!(
+            same_line_shape[0].evidence.as_deref().unwrap(),
+            "line 1 column 5: exactly 2 sentence; line 1 column 32: exactly 5 sentence"
         );
     }
 
@@ -2846,6 +3139,61 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
+    fn q006_inherited_scope_holds_in_basic_and_plugin_modes() {
+        for mode in [LintMode::Basic, LintMode::Plugin] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::create_dir_all("nested").unwrap();
+
+            // An ordinary subsection previously hid this conflict; the inherited
+            // response scope must report it through the real dispatch in both modes.
+            std::fs::write(
+                "nested/AGENTS.md",
+                "# Output requirements\nReturn only JSON.\n## Required details\nRespond in Markdown.\n",
+            )
+            .unwrap();
+            // Explicitly delineated boundary siblings must stay clean in both modes.
+            std::fs::write(
+                "AGENTS.md",
+                "## JSON responses\nReturn only JSON.\n## Markdown responses\nRespond in Markdown.\n",
+            )
+            .unwrap();
+
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            super::super::run_all_with_targets(
+                &context(tmp.path(), mode),
+                &mut diag,
+                &ExcludeSet::default(),
+                ValidationTargets {
+                    cursor: false,
+                    codex: false,
+                    claude_md: false,
+                    agents_md: true,
+                    agent_skills: false,
+                },
+            );
+
+            let conflicts: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::PromptOutputConflict)
+                .collect();
+            assert_eq!(
+                conflicts.len(),
+                1,
+                "{mode:?}: only the inherited-scope conflict should fire: {conflicts:?}"
+            );
+            assert_eq!(
+                conflicts[0].subject_path.as_deref(),
+                Some(Path::new("nested/AGENTS.md")),
+                "{mode:?}: conflict is attributed to the inherited-scope document"
+            );
+        }
+    }
+
+    #[test]
     fn q006_reports_every_deterministic_format_conflict_pair_per_scope() {
         let diagnostics =
             q006_diagnostics("Output only JSON.\nReturn only XML.\nRespond only in YAML.\n");
@@ -2854,9 +3202,9 @@ mod tests {
             .iter()
             .map(|diagnostic| diagnostic.evidence.as_deref().unwrap())
             .collect::<Vec<_>>();
-        assert!(pairs[0].starts_with("line 1:") && pairs[0].contains("line 2:"));
-        assert!(pairs[1].starts_with("line 1:") && pairs[1].contains("line 3:"));
-        assert!(pairs[2].starts_with("line 2:") && pairs[2].contains("line 3:"));
+        assert!(pairs[0].starts_with("line 1 column 1:") && pairs[0].contains("line 2 column 1:"));
+        assert!(pairs[1].starts_with("line 1 column 1:") && pairs[1].contains("line 3 column 1:"));
+        assert!(pairs[2].starts_with("line 2 column 1:") && pairs[2].contains("line 3 column 1:"));
     }
 
     #[test]
@@ -2869,9 +3217,11 @@ mod tests {
             .iter()
             .map(|diagnostic| diagnostic.evidence.as_deref().unwrap())
             .collect::<Vec<_>>();
-        assert!(pairs[0].starts_with("line 1:") && pairs[0].contains("line 2:"));
-        assert!(pairs[1].starts_with("line 1:") && pairs[1].contains("line 3:"));
-        assert!(pairs[2].starts_with("line 2:") && pairs[2].contains("line 3:"));
+        // Shape directives start mid-clause, so the pinned columns also prove the
+        // per-constraint column tracks the shape phrase, not the line start.
+        assert!(pairs[0].starts_with("line 1 column 11:") && pairs[0].contains("line 2 column 9:"));
+        assert!(pairs[1].starts_with("line 1 column 11:") && pairs[1].contains("line 3 column 5:"));
+        assert!(pairs[2].starts_with("line 2 column 9:") && pairs[2].contains("line 3 column 5:"));
     }
 
     #[test]
@@ -2901,8 +3251,10 @@ mod tests {
             InstructionSurfaceKind::Skill,
             InstructionSurfaceKind::Agent,
             InstructionSurfaceKind::AgentsMd,
+            InstructionSurfaceKind::CodexAgentsOverride,
             InstructionSurfaceKind::CursorRule,
             InstructionSurfaceKind::CursorLegacyRule,
+            InstructionSurfaceKind::CursorSkill,
         ] {
             // A real conflict fires on every live-instruction surface...
             assert_eq!(
@@ -2929,8 +3281,10 @@ mod tests {
             InstructionSurfaceKind::Skill,
             InstructionSurfaceKind::Agent,
             InstructionSurfaceKind::AgentsMd,
+            InstructionSurfaceKind::CodexAgentsOverride,
             InstructionSurfaceKind::CursorRule,
             InstructionSurfaceKind::CursorLegacyRule,
+            InstructionSurfaceKind::CursorSkill,
         ] {
             assert_eq!(
                 q006_count_on_surface(
