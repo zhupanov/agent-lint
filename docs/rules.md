@@ -188,7 +188,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | S022 | `backslash-path` | Windows-style backslash paths in skill content | Always | error |
 | S037 | `body-no-refs` | Body exceeds 300 lines with no file references | Plugin | warn |
 | S038 | `time-sensitive` | Body contains time-sensitive date/year patterns | Plugin | warn |
-| S041 | `fork-no-task` | `context: fork` set but body lacks task instructions | Always | error |
+| S041 | `fork-no-task` | `context: fork` set but body lacks task instructions | Always | warn |
 | S046 | `body-no-workflow` | Body exceeds 300 lines with no workflow structure | Plugin | warn |
 | S047 | `body-no-examples` | Body exceeds 200 lines with no examples or templates | Plugin | suppressed |
 | S051 | `script-deps-missing` | Script-backed skill lacks dependency/package documentation | Plugin | warn |

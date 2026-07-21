@@ -2351,7 +2351,7 @@ suppress = ["S033"]
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\n---\nThis is just guidelines about how to behave.\n",
+            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\n---\nThis skill is about weather data.\n",
         ).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
@@ -2380,6 +2380,62 @@ suppress = ["S033"]
                 .errors()
                 .iter()
                 .any(|e| e.contains("fork") && e.contains("task"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s041_fork_review_verbs_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\n---\nReview the diff and check for bugs. Summarize findings and report back concisely.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("fork") && e.contains("task")),
+            "S041 must not fire on review/check/summarize/report fork prompts"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s041_defaults_to_warning() {
+        assert_eq!(
+            crate::rules::LintRule::ForkNoTask.default_severity(),
+            crate::rules::DefaultSeverity::Warning
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\ncontext: fork\n---\nThis skill is about weather data.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.warnings()
+                .iter()
+                .any(|e| e.contains("fork") && e.contains("task")),
+            "S041 should fire as a warning under default config"
+        );
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("fork") && e.contains("task")),
+            "S041 should not fire as an error under default config"
         );
     }
 
@@ -2608,6 +2664,60 @@ suppress = ["S033"]
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s046_numbered_list_with_continuation_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut body = "Some text\n".repeat(295);
+        body.push_str(
+            "1. Step number 1 does something.\n   Continuation detail for step 1.\n\
+             2. Step number 2 does something.\n   Continuation detail for step 2.\n\
+             3. Step number 3 does something.\n   Continuation detail for step 3.\n",
+        );
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("workflow structure")),
+            "S046 must accept numbered lists with indented continuation lines"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s046_paren_numbered_list_workflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut body = "Some text\n".repeat(298);
+        body.push_str("1) First step\n2) Second step\n3) Third step\n");
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("workflow structure")),
+            "S046 must accept CommonMark 1) ordered lists"
+        );
+    }
+
     // ── S047: body-no-examples ──────────────────────────────────────────
 
     #[test]
@@ -2651,6 +2761,81 @@ suppress = ["S033"]
                 .errors()
                 .iter()
                 .any(|e| e.contains("examples or templates"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s047_plural_examples_heading_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut body = "Some text\n".repeat(200);
+        body.push_str("## Examples\n");
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("examples or templates")),
+            "S047 must accept ## Examples"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s047_plural_examples_bold_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut body = "Some text\n".repeat(200);
+        body.push_str("**Examples:**\n");
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("examples or templates")),
+            "S047 must accept **Examples:**"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s047_plural_templates_heading_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut body = "Some text\n".repeat(200);
+        body.push_str("## Templates\n");
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("examples or templates")),
+            "S047 must accept ## Templates"
         );
     }
 
@@ -4481,6 +4666,62 @@ warn = ["name-not-gerund"]
                 .iter()
                 .any(|e| e.contains("lacks error handling")),
             "S055 should not fire when || exit present"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_sh_with_compound_or_exit_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/robust.sh",
+            "#!/bin/bash\ncp \"$1\" \"$2\" || { echo \"copy failed\" >&2; exit 1; }\necho step1\necho step2\necho step3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/robust.sh to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 must accept || {{ ...; exit 1; }} compound handlers"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_sh_with_if_not_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/robust.sh",
+            "#!/bin/bash\nif ! grep -q done \"$2\"; then\n  echo \"marker missing\" >&2\n  exit 1\nfi\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/robust.sh to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("lacks error handling")),
+            "S055 must accept if ! cmd negated-command guards"
         );
     }
 

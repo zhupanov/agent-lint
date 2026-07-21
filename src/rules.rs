@@ -1026,7 +1026,7 @@ impl LintRule {
             // ── Default-warning: style / quality (skills) ────────────
             Self::DescTruncated | Self::ConsecutiveBash |
             Self::NameVague | Self::DescTooShort | Self::BodyNoRefs |
-            Self::BodyNoWorkflow | Self::RefNameGeneric |
+            Self::ForkNoTask | Self::BodyNoWorkflow | Self::RefNameGeneric |
             Self::DescVagueContent | Self::ScriptDepsMissing |
             Self::ScriptVerifyMissing | Self::TerminologyInconsistent |
             Self::DescBodyMisalign | Self::ScriptErrhandMissing |
@@ -1378,8 +1378,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            121,
-            "Expected 121 default-warning rules, got {}",
+            122,
+            "Expected 122 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1400,6 +1400,14 @@ mod tests {
         ] {
             assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
         }
+    }
+
+    #[test]
+    fn issue_328_s041_is_a_default_warning() {
+        assert_eq!(
+            LintRule::ForkNoTask.default_severity(),
+            DefaultSeverity::Warning
+        );
     }
 
     #[test]
@@ -1460,8 +1468,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            170,
-            "Expected 170 default-error rules, got {}",
+            169,
+            "Expected 169 default-error rules, got {}",
             errors.len()
         );
     }

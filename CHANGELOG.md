@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Broadened body-content recognizers for S041/S046/S047/S055: wider S041 task
+  verbs, numbered-list continuations and `1)` markers for S046, plural example
+  headings for S047, and shell `|| { …; exit|return; }` / `if !` idioms for
+  S055. S041 (`fork-no-task`) now defaults to warning instead of error
 - **BREAKING**: Removed repository-specific Slack rule K001
   (`slack-fallback-mismatch`) and its validator. The rule hardcoded
   `LARCH_SLACK_*` fallback names that belong to the separate Larch consumer,
