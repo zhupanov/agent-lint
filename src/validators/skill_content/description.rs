@@ -5,10 +5,11 @@ use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::sync::LazyLock;
 
-use super::name::RE_XML_TAG;
-
 const MAX_DESC_CHARS: usize = 1024;
 const MIN_DESC_CHARS: usize = 20;
+
+// S018: XML tags in descriptions
+static RE_XML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
 
 // S050: vague description content (plugin-only)
 #[rustfmt::skip]

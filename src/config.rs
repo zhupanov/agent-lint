@@ -1302,6 +1302,22 @@ suppress = ["S033"]
 
     #[test]
     #[serial_test::serial]
+    fn retired_skill_name_rules_are_invalid_config_identifiers() {
+        let tmp = tempfile::tempdir().unwrap();
+        for identifier in ["S012", "S013", "name-reserved-word", "name-has-xml"] {
+            std::fs::write(
+                tmp.path().join("agent-lint.toml"),
+                format!("[lint]\nsuppress = [\"{identifier}\"]\n"),
+            )
+            .unwrap();
+            let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+            assert!(err.contains("unknown rule"), "{identifier}: {err}");
+            assert!(err.contains(identifier), "{identifier}: {err}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn malformed_toml_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("agent-lint.toml"), "not valid toml {{{\n").unwrap();
@@ -2122,7 +2138,7 @@ root-max-lines = 10
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 291);
+        assert_eq!(config.error.len(), 289);
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }

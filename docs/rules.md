@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 291 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 289 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -143,15 +143,13 @@ H008--H024 codes with a `… frontmatter` path label.
 | S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Always | error |
 | S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin | error |
 
-### Name Validation (S009--S013, S033, S049)
+### Name Validation (S009--S011, S033, S049)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S009 | `name-too-long` | Skill name exceeds 64 characters | Always | error |
 | S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | Always | error |
 | S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | Always | error |
-| S012 | `name-reserved-word` | Skill name contains reserved word (`anthropic`/`claude` substring, or exact `skill`) | Always | error |
-| S013 | `name-has-xml` | Skill name contains XML/HTML tags | Always | error |
 | S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin | warn |
 | S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin | suppressed |
 
@@ -633,7 +631,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 291):**
+**Auto-fixable rules (11 of 289):**
 
 | Rule | Code | Fix |
 |------|------|-----|
@@ -641,7 +639,6 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 | script-not-executable | G003 | `chmod +x` on script |
 | frontmatter-name-mismatch | S006 | Set `name:` to match directory |
 | frontmatter-field-empty | S007 | Remove empty optional field |
-| name-has-xml | S013 | Strip XML tags from name |
 | desc-has-xml | S018 | Strip XML tags from description |
 | consecutive-bash | S021 | Merge adjacent bash blocks |
 | backslash-path | S022 | Replace `\` with `/` in body |

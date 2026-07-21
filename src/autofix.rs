@@ -34,7 +34,6 @@ pub fn apply_fix(
         LintRule::ScriptNotExecutable => fix_executability_scripts(mode, exclude, config),
         LintRule::FrontmatterNameMismatch => fix_frontmatter_name_mismatch(exclude, config),
         LintRule::FrontmatterFieldEmpty => fix_frontmatter_field_empty(mode, exclude, config),
-        LintRule::NameHasXml => fix_name_has_xml(mode, exclude, config),
         LintRule::DescHasXml => fix_desc_has_xml(mode, exclude, config),
         LintRule::ConsecutiveBash => fix_consecutive_bash(mode, exclude, config),
         LintRule::BackslashPath => fix_backslash_path(mode, exclude, config),
@@ -376,23 +375,6 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &Li
         }
     }
     fixed
-}
-
-// ── S013: XML tags in name ──────────────────────────────────────────────
-
-fn fix_name_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
-    fix_frontmatter_field_regex(
-        mode,
-        exclude,
-        config,
-        FrontmatterRegexFix {
-            field_name: "name",
-            pattern: &RE_XML_TAG,
-            replacement: "",
-            rule: LintRule::NameHasXml,
-            fix_desc: "stripped XML tags from name",
-        },
-    )
 }
 
 // ── S018: XML tags in description ───────────────────────────────────────

@@ -488,7 +488,15 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().to_string_lossy().into_owned();
 
-    for only in ["NOT_A_RULE", "Q006,", ",Q006"] {
+    for only in [
+        "NOT_A_RULE",
+        "S012",
+        "S013",
+        "name-reserved-word",
+        "name-has-xml",
+        "Q006,",
+        ",Q006",
+    ] {
         let output = run(&["--format", "json", "--only", only, &target]);
         assert_eq!(output.status.code(), Some(2), "--only {only}");
         let report = json(&output);
@@ -497,16 +505,92 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
         assert_eq!(report["notices"][0]["kind"], "repository-root");
         assert_eq!(report["notices"][1]["kind"], "usage");
         let message = report["notices"][1]["message"].as_str().unwrap();
-        if only == "NOT_A_RULE" {
-            assert!(message.contains("invalid rule identifier 'NOT_A_RULE'"));
-        } else {
+        if matches!(only, "Q006," | ",Q006") {
             assert!(message.contains("empty rule identifier"));
+        } else {
+            assert!(message.contains(&format!("invalid rule identifier '{only}'")));
         }
     }
 
-    let text = run(&["--only", "NOT_A_RULE", &target]);
-    assert_eq!(text.status.code(), Some(2));
-    assert!(stderr(&text).contains("invalid rule identifier 'NOT_A_RULE'"));
+    for (mode, mode_args) in [
+        ("normal", vec![]),
+        ("pedantic", vec!["--pedantic"]),
+        ("all", vec!["--all"]),
+        ("autofix", vec!["--autofix"]),
+    ] {
+        for only in [
+            "NOT_A_RULE",
+            "S012",
+            "S013",
+            "name-reserved-word",
+            "name-has-xml",
+        ] {
+            let mut args = mode_args.clone();
+            args.extend(["--only", only, &target]);
+            let text = run(&args);
+            assert_eq!(text.status.code(), Some(2), "{mode}: --only {only}");
+            assert!(
+                stderr(&text).contains(&format!("invalid rule identifier '{only}'")),
+                "{mode}: --only {only}: {}",
+                stderr(&text)
+            );
+        }
+    }
+}
+
+#[test]
+fn angle_bracket_skill_names_report_s010_once_and_are_never_autofixed() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/invalid/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let content =
+        "---\nname: invalid-<tag>\ndescription: Use when testing invalid skill names\n---\nBody\n";
+    std::fs::write(&skill, content).unwrap();
+
+    for (mode, args) in [
+        ("normal", vec!["--only", "S010", "."]),
+        ("pedantic", vec!["--pedantic", "--only", "S010", "."]),
+        ("all", vec!["--all", "--only", "S010", "."]),
+        ("autofix", vec!["--autofix", "--only", "S010", "."]),
+    ] {
+        let output = run_in(tmp.path(), &args);
+        let output_stderr = stderr(&output);
+        assert_eq!(output.status.code(), Some(1), "{mode}: {output_stderr}");
+        assert_eq!(
+            output_stderr.matches("S010/name-invalid-chars").count(),
+            1,
+            "{mode}: {output_stderr}"
+        );
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), content, "{mode}");
+    }
+}
+
+#[test]
+fn vendor_and_skill_names_are_valid_in_every_strictness_mode() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    for name in ["claude-api", "anthropic-tools", "skill", "skill-creator"] {
+        let skill = tmp.path().join(format!(".claude/skills/{name}/SKILL.md"));
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(
+            skill,
+            format!(
+                "---\nname: {name}\ndescription: Use when testing valid skill names\n---\nBody\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    for (mode, args) in [
+        ("normal", vec!["--only", "S010", "."]),
+        ("pedantic", vec!["--pedantic", "--only", "S010", "."]),
+        ("all", vec!["--all", "--only", "S010", "."]),
+    ] {
+        let output = run_in(tmp.path(), &args);
+        assert!(output.status.success(), "{mode}: {}", stderr(&output));
+        assert!(!stderr(&output).contains("S010/name-invalid-chars"));
+    }
 }
 
 #[test]
