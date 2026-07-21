@@ -2113,6 +2113,64 @@ fn only_applies_and_validates_autofixes_for_selected_rules() {
 }
 
 #[test]
+fn s031_autofix_rewrites_claude_surfaces_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let http_body = "---\nname: leaky\ndescription: A valid skill description here\n---\nFetch from http://api.corp/x\n";
+    for relative in [
+        ".claude/skills/leaky/SKILL.md",
+        ".agents/skills/leaky/SKILL.md",
+        ".cursor/skills/leaky/SKILL.md",
+    ] {
+        let path = tmp.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, http_body).unwrap();
+    }
+
+    let output = run_in(
+        tmp.path(),
+        &["--autofix", "--format", "json", "--only", "S031", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    assert!(
+        stderr(&output).contains("fixed[S031/non-https-url]"),
+        "stderr: {}",
+        stderr(&output)
+    );
+    let report = json_document(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    let mut subjects: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+        .collect();
+    subjects.sort();
+    assert_eq!(
+        subjects,
+        vec![
+            ".agents/skills/leaky/SKILL.md",
+            ".cursor/skills/leaky/SKILL.md",
+        ]
+    );
+
+    let claude = std::fs::read_to_string(tmp.path().join(".claude/skills/leaky/SKILL.md")).unwrap();
+    assert!(
+        claude.contains("https://api.corp/x"),
+        "Claude surface should be rewritten: {claude}"
+    );
+    for relative in [
+        ".agents/skills/leaky/SKILL.md",
+        ".cursor/skills/leaky/SKILL.md",
+    ] {
+        let content = std::fs::read_to_string(tmp.path().join(relative)).unwrap();
+        assert!(
+            content.contains("http://api.corp/x"),
+            "{relative} must not be rewritten by S031 autofix: {content}"
+        );
+        assert!(!content.contains("https://api.corp/x"));
+    }
+}
+
+#[test]
 fn only_filters_basic_plugin_codex_and_cursor_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();

@@ -212,6 +212,7 @@ fn validate_optional_surfaces(
     if targets.agent_skills {
         skills::validate_agent_skill_frontmatter_with_prompt_pass(diag, exclude, prompt_pass);
         skill_content::validate_agent_skills_name_contract(".agents/skills", diag, exclude);
+        skill_content::validate_agent_skills_content_security(".agents/skills", diag, exclude);
     }
     if targets.codex {
         diag.with_subject_path(".codex/config.toml", |diag| {
@@ -221,6 +222,7 @@ fn validate_optional_surfaces(
     }
     if targets.cursor {
         skill_content::validate_agent_skills_name_contract(".cursor/skills", diag, exclude);
+        skill_content::validate_agent_skills_content_security(".cursor/skills", diag, exclude);
         cursor::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
 }
@@ -619,6 +621,118 @@ mod tests {
             2,
             "platform-gated surfaces must respect resolved activation"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn content_security_covers_each_active_skill_surface() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let skill_body = |name: &str, body: &str| {
+            format!("---\nname: {name}\ndescription: A valid skill description here\n---\n{body}\n")
+        };
+        std::fs::create_dir_all("skills/leaky").unwrap();
+        std::fs::write(
+            "skills/leaky/SKILL.md",
+            skill_body("leaky", "Set key to sk-aBcDeFgHiJkLmNoPqRsT1234"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(".claude/skills/leaky").unwrap();
+        std::fs::write(
+            ".claude/skills/leaky/SKILL.md",
+            skill_body("leaky", "Fetch from http://api.corp/x"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(".agents/skills/leaky").unwrap();
+        std::fs::write(
+            ".agents/skills/leaky/SKILL.md",
+            skill_body("leaky", "Set key to sk-aBcDeFgHiJkLmNoPqRsT1234"),
+        )
+        .unwrap();
+        std::fs::create_dir_all(".cursor/skills/leaky").unwrap();
+        std::fs::write(
+            ".cursor/skills/leaky/SKILL.md",
+            skill_body("leaky", "Fetch from http://api.corp/x"),
+        )
+        .unwrap();
+
+        let ctx = LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_all_with_targets(
+            &ctx,
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                codex: false,
+                claude_md: false,
+                agents_md: false,
+                agent_skills: true,
+            },
+        );
+
+        let mut secret_subjects = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == crate::rules::LintRule::HardcodedSecret)
+            .filter_map(|item| item.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        secret_subjects.sort();
+        assert_eq!(
+            secret_subjects,
+            vec![".agents/skills/leaky/SKILL.md", "skills/leaky/SKILL.md",]
+        );
+
+        let mut http_subjects = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == crate::rules::LintRule::NonHttpsUrl)
+            .filter_map(|item| item.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        http_subjects.sort();
+        assert_eq!(
+            http_subjects,
+            vec![
+                ".claude/skills/leaky/SKILL.md",
+                ".cursor/skills/leaky/SKILL.md",
+            ]
+        );
+
+        let mut gated_off = DiagnosticCollector::new_all_enabled();
+        run_all_with_targets(
+            &ctx,
+            &mut gated_off,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert!(
+            !gated_off.diagnostics().iter().any(|item| {
+                matches!(
+                    item.rule,
+                    crate::rules::LintRule::HardcodedSecret | crate::rules::LintRule::NonHttpsUrl
+                ) && item.subject_path.as_ref().is_some_and(|path| {
+                    let path = path.to_string_lossy();
+                    path.starts_with(".agents/") || path.starts_with(".cursor/")
+                })
+            }),
+            "platform-gated security checks must respect resolved activation"
+        );
+        assert!(gated_off.diagnostics().iter().any(|item| {
+            item.rule == crate::rules::LintRule::HardcodedSecret
+                && item
+                    .subject_path
+                    .as_ref()
+                    .is_some_and(|path| path.to_string_lossy() == "skills/leaky/SKILL.md")
+        }));
+        assert!(gated_off.diagnostics().iter().any(|item| item.rule
+            == crate::rules::LintRule::NonHttpsUrl
+            && item.subject_path.as_ref().is_some_and(|path| {
+                path.to_string_lossy() == ".claude/skills/leaky/SKILL.md"
+            })));
     }
 
     // Integration test: Plugin mode dispatches all validators

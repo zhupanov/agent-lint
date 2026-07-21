@@ -95,7 +95,8 @@ pub(crate) fn validate_private_skill_content_with_prompt_pass(
 }
 
 /// Validate the Agent Skills name contract for a platform-gated skill surface.
-/// Full content validation remains owned by the public/private passes above.
+/// Broader content validation remains owned by the public/private passes;
+/// S031/S032 reuse `validate_agent_skills_content_security` on these surfaces.
 pub(crate) fn validate_agent_skills_name_contract(
     base_dir: &str,
     diag: &mut DiagnosticCollector,
@@ -107,6 +108,23 @@ pub(crate) fn validate_agent_skills_name_contract(
         };
         diag.with_subject_path(&info.path, |diag| {
             name::check_agent_skills_name_contract(&info, &name, diag);
+        });
+    }
+}
+
+/// Run S031/S032 content-security checks on a platform-gated skill surface.
+///
+/// Secrets and non-HTTPS URLs are platform-independent defects, so these rules
+/// apply wherever a skill prompt is loaded. Autofix for S031 remains scoped to
+/// the Claude surfaces only.
+pub(crate) fn validate_agent_skills_content_security(
+    base_dir: &str,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    for info in collect_skills(base_dir, exclude) {
+        diag.with_subject_path(&info.path, |diag| {
+            security::check_content_security(&info, diag);
         });
     }
 }
@@ -1450,6 +1468,139 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("hardcoded secret")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn content_security_reports_on_agent_and_cursor_surfaces() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        for (base, body, rule) in [
+            (
+                ".agents/skills",
+                "Set key to sk-aBcDeFgHiJkLmNoPqRsT1234",
+                LintRule::HardcodedSecret,
+            ),
+            (
+                ".agents/skills",
+                "Fetch from http://api.corp/x",
+                LintRule::NonHttpsUrl,
+            ),
+            (
+                ".cursor/skills",
+                "Set key to sk-aBcDeFgHiJkLmNoPqRsT1234",
+                LintRule::HardcodedSecret,
+            ),
+            (
+                ".cursor/skills",
+                "Fetch from http://api.corp/x",
+                LintRule::NonHttpsUrl,
+            ),
+        ] {
+            let skill_dir = format!("{base}/leaky");
+            std::fs::create_dir_all(&skill_dir).unwrap();
+            let path = format!("{skill_dir}/SKILL.md");
+            std::fs::write(
+                &path,
+                format!(
+                    "---\nname: leaky\ndescription: A valid skill description here\n---\n{body}\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_agent_skills_content_security(
+                base,
+                &mut diag,
+                &crate::config::ExcludeSet::default(),
+            );
+            let finding = diag
+                .diagnostics()
+                .iter()
+                .find(|item| item.rule == rule)
+                .unwrap_or_else(|| panic!("expected {rule:?} for {path}"));
+            assert_eq!(
+                finding.subject_path.as_ref().map(|p| p.to_string_lossy()),
+                Some(std::borrow::Cow::Borrowed(path.as_str()))
+            );
+            std::fs::remove_dir_all(base).unwrap();
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn content_security_respects_exclusion_and_per_file_suppression() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".agents/skills/leaky").unwrap();
+        std::fs::write(
+            ".agents/skills/leaky/SKILL.md",
+            "---\nname: leaky\ndescription: A valid skill description here\n---\nSet key to sk-aBcDeFgHiJkLmNoPqRsT1234\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(".agents/skills/safe").unwrap();
+        std::fs::write(
+            ".agents/skills/safe/SKILL.md",
+            "---\nname: safe\ndescription: A valid skill description here\n---\nSet key to sk-aBcDeFgHiJkLmNoPqRsT1234\n",
+        )
+        .unwrap();
+
+        let excluded =
+            crate::config::ExcludeSet::new(&[".agents/skills/leaky/**".to_string()]).unwrap();
+        let mut with_exclude = DiagnosticCollector::new_all_enabled();
+        validate_agent_skills_content_security(".agents/skills", &mut with_exclude, &excluded);
+        assert_eq!(
+            with_exclude
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::HardcodedSecret)
+                .count(),
+            1
+        );
+        assert_eq!(
+            with_exclude.diagnostics()[0]
+                .subject_path
+                .as_ref()
+                .map(|p| p.to_string_lossy()),
+            Some(std::borrow::Cow::Borrowed(".agents/skills/safe/SKILL.md"))
+        );
+
+        std::fs::write(
+            "agent-lint.toml",
+            r#"
+[lint]
+[[lint.overrides]]
+files = [".agents/skills/leaky/SKILL.md"]
+suppress = ["S032"]
+"#,
+        )
+        .unwrap();
+        let config = crate::config::LintConfig::load(tmp.path()).unwrap();
+        let mut overridden = DiagnosticCollector::with_config(config);
+        validate_agent_skills_content_security(
+            ".agents/skills",
+            &mut overridden,
+            &crate::config::ExcludeSet::default(),
+        );
+        assert_eq!(overridden.suppressed_count(), 1);
+        assert_eq!(
+            overridden
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::HardcodedSecret)
+                .count(),
+            1
+        );
+        assert_eq!(
+            overridden.diagnostics()[0]
+                .subject_path
+                .as_ref()
+                .map(|p| p.to_string_lossy()),
+            Some(std::borrow::Cow::Borrowed(".agents/skills/safe/SKILL.md"))
+        );
     }
 
     // ── S033: name-vague ─────────────────────────────────────────────

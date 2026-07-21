@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Extended S031 (`non-https-url`) and S032 (`hardcoded-secret`) to
+  platform-gated `.agents/skills/` and `.cursor/skills/` surfaces when those
+  targets are active. Autofix for S031 remains scoped to `skills/` and
+  `.claude/skills/`
 - Added U008 (`userconfig-option-invalid`) for non-object `userConfig` option
   entries, unknown option fields, invalid optional field shapes, and type
   semantic combinations on top-level and channel surfaces
