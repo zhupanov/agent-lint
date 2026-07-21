@@ -28,7 +28,7 @@ The recommended ways to use agent-lint are via
 ### GitHub Action
 
 ```yaml
-- uses: zhupanov/agent-lint@v3
+- uses: zhupanov/agent-lint@v4
   with:
     version: "4.0.0"
     path: "."

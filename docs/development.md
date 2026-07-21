@@ -133,9 +133,10 @@ Runs on pull requests to `main` and `workflow_dispatch`:
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
 - **self-lint** -- runs agent-lint against its own repo and validates
   `--list-scripts` output
-- **e2e-test** -- runs the released `zhupanov/agent-lint@v3` GitHub Action
-  against this repository in default, pedantic, and all modes, serving as
-  both end-to-end validation and a reference model for users adding CI
+- **e2e-test** -- runs the latest published `zhupanov/agent-lint` GitHub
+  Action against this repository in default, pedantic, and all modes, serving
+  as both end-to-end validation and a reference model for users adding CI
+  (workflow pins may lag the in-tree package version during unreleased majors)
 
 ### Release (`.github/workflows/release.yml`)
 
@@ -146,5 +147,5 @@ Triggered only by `workflow_dispatch`, normally by the repository-local
    (aarch64)
 2. **release** -- creates a GitHub Release with tarballs and checksums
 3. **floating-major promotion** -- after the workflow succeeds, moves the
-   floating `v3` tag forward so `@v3` action references resolve to the newest
-   3.x release
+   floating `v4` tag forward so `@v4` action references resolve to the newest
+   4.x release
