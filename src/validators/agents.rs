@@ -5,9 +5,11 @@ use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
+use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use super::common::{RE_NAME_INVALID, is_known_tool_name};
 
@@ -23,6 +25,42 @@ const STOPWORDS: &[&str] = &[
 /// Agent frontmatter fields that Claude Code does not honor for agents shipped
 /// by a plugin. Revisit as plugin agent support matures.
 const UNSUPPORTED_PLUGIN_FIELDS: &[&str] = &["hooks", "mcpServers", "permissionMode"];
+
+/// Tools which can carry out iterative work, mutate a repository, access an
+/// external system, or delegate work to another agent. Read-only discovery and
+/// task-status tools are deliberately absent: declaring metadata or inspection
+/// capabilities alone is not enough to trigger A029.
+const EXECUTION_TOOLS: &[&str] = &[
+    "Agent",
+    "Bash",
+    "Edit",
+    "NotebookEdit",
+    "Task",
+    "WebFetch",
+    "WebSearch",
+    "Write",
+];
+
+static ATTEMPT_BOUND: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:at most|no more than|up to|maximum(?: of)?|max|limit|cap)\s+\d+\s+(?:attempts?|retries|iterations?|tool[- ]?calls?|steps?)\b|\b(?:attempts?|retries|iterations?|tool[- ]?calls?|steps?)\s*(?:<=|≤|:|=)\s*\d+\b",
+    )
+    .expect("A029 attempt-bound regex is valid")
+});
+
+static EXPLICIT_BUDGET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:timeout|deadline|time[- ]?(?:limit|budget)|token[- ]?budget|cost[- ]?budget|budget)\b.{0,40}(?:\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec(?:onds?)?|m|mins?|minutes?|h|hours?|tokens?|%|usd|dollars?)\b|\$\s*\d+\b)|\b(?:within|for no more than|at most)\s+\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec(?:onds?)?|m|mins?|minutes?|h|hours?)\b",
+    )
+    .expect("A029 budget regex is valid")
+});
+
+static FAILURE_FALLBACK: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)\b(?:if|when|after)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no progress|unable to (?:make progress|continue))\b.{0,120}\b(?:stop|report|escalat(?:e|ion)|ask (?:for )?help|handoff|return)\b|\b(?:stop and report|report and stop|escalat(?:e|ion)|ask (?:for )?help|handoff|return)\b.{0,100}\b(?:if|when|after)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no progress|unable to (?:make progress|continue))\b",
+    )
+    .expect("A029 failure-fallback regex is valid")
+});
 
 /// Check whether an agent description is too similar to the agent name.
 ///
@@ -227,7 +265,7 @@ fn validate_agent_file(
     };
 
     // X001: strict YAML; CC-AG-011: hooks schema when present.
-    match frontmatter::parse_yaml_strict(fm_lines) {
+    let frontmatter_is_valid = match frontmatter::parse_yaml_strict(fm_lines) {
         Ok(yaml) => {
             if let Some(hooks) = yaml.get("hooks") {
                 super::hook_schema::validate_frontmatter_hooks(
@@ -236,6 +274,7 @@ fn validate_agent_file(
                     diag,
                 );
             }
+            true
         }
         Err((line, msg)) => {
             diag.report_with(
@@ -243,8 +282,9 @@ fn validate_agent_file(
                 &format!("{agent_path}:{line}: frontmatter is not valid YAML: {msg}"),
                 DiagnosticMetadata::at_line(line),
             );
+            false
         }
-    }
+    };
 
     // X002–X005 on the full agent markdown file.
     super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
@@ -314,6 +354,9 @@ fn validate_agent_file(
         InstructionSurfaceKind::Agent,
         &markdown,
     );
+    if frontmatter_is_valid {
+        check_agent_stop_control(diag, agent_path, fm_lines, &markdown);
+    }
     prompt_pass.validate(&prompt_document, diag);
 }
 
@@ -449,6 +492,67 @@ fn get_field_items(fm_lines: &[String], key: &str) -> Vec<String> {
     items
 }
 
+/// A positive `maxTurns` is an explicit, schema-validated agent turn bound.
+fn has_valid_max_turns(fm_lines: &[String]) -> bool {
+    frontmatter::get_field(fm_lines, "maxTurns").is_some_and(|turns| {
+        turns.chars().all(|c| c.is_ascii_digit())
+            && turns.parse::<u64>().is_ok_and(|turns| turns >= 1)
+    })
+}
+
+/// Return whether an explicitly declared tool can perform execution-like work.
+/// MCP tools are included because their fully qualified syntax is the supported
+/// declaration form and each invokes an external server operation.
+fn is_execution_tool(tool: &str) -> bool {
+    if !is_known_tool_name(tool) {
+        return false;
+    }
+    let base_name = tool.split_once('(').map_or(tool, |(base, _)| base).trim();
+    base_name.starts_with("mcp__") || EXECUTION_TOOLS.contains(&base_name)
+}
+
+/// A029: tool-using agents need one concrete stop control or failure outcome.
+///
+/// This intentionally examines only Markdown prose already isolated by the
+/// shared parser. Frontmatter is considered solely for a valid `maxTurns`;
+/// fences, inline code, block quotes, and quoted examples cannot satisfy a
+/// body control.
+fn check_agent_stop_control(
+    diag: &mut DiagnosticCollector,
+    agent_path: &str,
+    fm_lines: &[String],
+    markdown: &MarkdownDocument,
+) {
+    let execution_tools: Vec<_> = get_field_items(fm_lines, "tools")
+        .into_iter()
+        .filter(|tool| is_execution_tool(tool))
+        .collect();
+    if execution_tools.is_empty() || has_valid_max_turns(fm_lines) {
+        return;
+    }
+
+    let prose = markdown
+        .body_prose()
+        .iter()
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let has_body_control = ATTEMPT_BOUND.is_match(&prose)
+        || EXPLICIT_BUDGET.is_match(&prose)
+        || FAILURE_FALLBACK.is_match(&prose);
+    if has_body_control {
+        return;
+    }
+
+    diag.report(
+        LintRule::AgentStopMissing,
+        &format!(
+            "{agent_path}: execution tools [{}] have no maximum attempt/tool-call/step count, explicit timeout/deadline/token/cost budget, progress/failure threshold, or stop-and-report/escalation fallback; add a concrete bound and a failure outcome",
+            execution_tools.join(", "),
+        ),
+    );
+}
+
 /// Collect top-level (non-indented, non-list) frontmatter keys.
 fn collect_top_level_keys(fm_lines: &[String]) -> Vec<String> {
     let mut keys = Vec::new();
@@ -562,9 +666,7 @@ fn check_agent_field_values(diag: &mut DiagnosticCollector, agent_path: &str, fm
 
     // A026: maxTurns must be a positive integer (CC-AG-017).
     if let Some(turns) = frontmatter::get_field(fm_lines, "maxTurns") {
-        let ok =
-            turns.chars().all(|c| c.is_ascii_digit()) && turns.parse::<u64>().is_ok_and(|n| n >= 1);
-        if !ok {
+        if !has_valid_max_turns(fm_lines) {
             diag.report(
                 LintRule::AgentMaxturnsInvalid,
                 &format!(
@@ -1320,6 +1422,144 @@ mod tests {
     }
 
     const GOOD_DESC: &str = "A general-purpose code review assistant";
+
+    // ── A029: agent-stop-missing ───────────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a029_tool_using_agent_without_controls_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Read\n---\nInvestigate the failure and implement the repair.\n"
+        );
+        run_agent(&content, |diag| {
+            let finding = diag
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing)
+                .expect("A029 reports an unbounded execution-capable agent");
+            assert_eq!(
+                finding.subject_path.as_deref(),
+                Some(Path::new("agents/general.md"))
+            );
+            assert!(finding.message.contains("Bash"));
+            assert!(finding.message.contains("failure outcome"));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a029_valid_max_turns_satisfies_stop_control() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\nmaxTurns: 4\n---\nInvestigate the failure and implement the repair.\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing)
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a029_recognizes_documented_body_controls() {
+        for body in [
+            "Make at most 3 tool calls before returning the result.",
+            "Make a maximum 3 attempts before returning the result.",
+            "Use a timeout of 15 minutes for the investigation.",
+            "Use a cost budget of $5 for the investigation.",
+            "If there is no progress, stop and report the blocker.",
+        ] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: WebFetch\n---\n{body}\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(
+                    !diag
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing),
+                    "A029 must accept documented control: {body}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a029_rejects_vague_and_nonoperative_controls() {
+        for content in [
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\nBe careful, respect limits, and eventually finish.\n"
+            ),
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\ncontrol: timeout 10 minutes\n---\nInvestigate the failure.\n"
+            ),
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\n```text\nUse a timeout of 10 minutes.\n```\nInvestigate the failure.\n"
+            ),
+        ] {
+            run_agent(&content, |diag| {
+                assert!(
+                    diag.diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing),
+                    "A029 must not accept vague, frontmatter, or code-example text"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a029_skips_non_execution_tools_and_invalid_frontmatter() {
+        for content in [
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\n---\nInvestigate the failure.\n"
+            ),
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: Read, Grep, TaskList\n---\nInvestigate the failure.\n"
+            ),
+            format!(
+                "---\nname: general\n\tdescription: {GOOD_DESC}\ntools: Bash\n---\nInvestigate the failure.\n"
+            ),
+        ] {
+            run_agent(&content, |diag| {
+                assert!(
+                    !diag
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing),
+                    "A029 must require valid frontmatter and an explicit execution tool"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_a029_applies_to_private_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            ".claude/agents/general.md",
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: mcp__search__query\n---\nInvestigate the failure.\n"
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(diag.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == LintRule::AgentStopMissing
+                && diagnostic.subject_path.as_deref()
+                    == Some(Path::new(".claude/agents/general.md"))
+        }));
+    }
 
     // ── A014: agent-model-invalid ────────────────────────────────────
 

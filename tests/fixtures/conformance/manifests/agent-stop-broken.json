@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "agent-stop-broken",
+  "covers": ["agent-stop", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A029", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A029", "name": "agent-stop-missing", "severity": "warning", "subject_path": ".claude/agents/runner.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 286 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 287 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -275,6 +275,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | A026 | `agent-maxturns-invalid` | Agent `maxTurns` is not a positive integer | Always | error |
 | A027 | `agent-field-unknown` | Unrecognized agent frontmatter field (possible typo) | Always | warn |
 | A028 | `agent-field-unsupported` | Agent frontmatter uses `hooks`, `mcpServers`, or `permissionMode`, which are unsupported for plugin agents | Plugin | warn |
+| A029 | `agent-stop-missing` | Tool-using agent has no explicit stop control or failure outcome | Always | warn |
 
 > **Agent field-value rules (A014-A027).** These spec-grounded checks run on
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
@@ -283,6 +284,14 @@ H008--H024 codes with a `… frontmatter` path label.
 > near-zero false-positive risk. The larch-specific template rules A005-A007
 > remain Plugin-only. The known-tool list is shared with S040
 > (`skill allowed-tools`); `mcp__<server>__<tool>` names are accepted.
+> **Stop controls (A029).** A029 applies only to valid Claude/plugin agent
+> frontmatter that explicitly declares an execution-capable tool: `Agent`,
+> `Bash`, `Edit`, `NotebookEdit`, `Task`, `WebFetch`, `WebSearch`, `Write`, or
+> a qualified `mcp__<server>__<tool>`. Read-only discovery and task-status
+> tools do not activate the rule. A positive `maxTurns`, an explicit numeric
+> attempt/tool-call/step bound, an explicit time/token/cost budget, or a
+> stop/report/escalation fallback after failure or no progress satisfies it.
+> Frontmatter other than `maxTurns`, code, and quoted examples are ignored.
 
 ## Prompt Content Rules (Q)
 
@@ -549,7 +558,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 286):**
+**Auto-fixable rules (12 of 287):**
 
 | Rule | Code | Fix |
 |------|------|-----|

@@ -473,6 +473,9 @@ pub enum LintRule {
     /// A028: agent frontmatter uses a field unsupported for plugin agents
     #[strum(props(code = "A028", name = "agent-field-unsupported"))]
     AgentFieldUnsupported,
+    /// A029: tool-using agent has no explicit stop control or failure outcome
+    #[strum(props(code = "A029", name = "agent-stop-missing"))]
+    AgentStopMissing,
 
     // ── Prompt content (Q) ───────────────────────────────────────
     /// Q001: generic filler instruction that provides no actionable guidance
@@ -1020,7 +1023,7 @@ impl LintRule {
             // ── Default-warning: agent field-value (advisory) ────────
             Self::AgentBypassPermissions | Self::AgentSkillKebab |
             Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
-            Self::AgentFieldUnsupported |
+            Self::AgentFieldUnsupported | Self::AgentStopMissing |
 
             // ── Default-warning: Claude configuration (advisory) ──
             Self::RulesFieldUnknown | Self::OutputStyleDescriptionMissing |
@@ -1203,7 +1206,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            286,
+            287,
             "every enum variant must be registered"
         );
     }
@@ -1348,8 +1351,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            111,
-            "Expected 111 default-warning rules, got {}",
+            112,
+            "Expected 112 default-warning rules, got {}",
             warnings.len()
         );
     }
