@@ -309,6 +309,9 @@ H008--H024 codes with a `… frontmatter` path label.
 > tools do not activate the rule. A positive `maxTurns`, an explicit numeric
 > attempt/tool-call/step bound, an explicit time/token/cost budget, or a
 > stop/report/escalation fallback after failure or no progress satisfies it.
+> Attempt counts accept digits and small word numbers, including `limit of 5
+> attempts`, `retry at most 3 times`, and `stop after three attempts`.
+> Failure fallbacks include `on`/`upon failure` and `cannot make progress`.
 > A body control must be an operative instruction for the current agent;
 > example scopes and historical or descriptive mentions do not satisfy the
 > rule. Frontmatter other than `maxTurns`, code, and quoted examples are
@@ -344,13 +347,16 @@ or security policy violations. Safety-adjacent words elsewhere in a sentence
 do not exempt an unrelated style negative.
 
 Q005 recognizes narrow, operative forms such as `continue indefinitely`, `loop
-forever`, `retry as many times as needed`, `keep trying until it succeeds`,
-`retry until success`, and `do not stop until it succeeds`. It ignores examples,
+forever`, `retry indefinitely`, `keep trying until it succeeds`, `try again
+until it works`, `retry until success`, and `do not stop until it succeeds`.
+It ignores examples,
 quotations, code, frontmatter, explicit prohibitions of unbounded retry, finite
 non-retry workflows, and instructions with an applicable attempt, tool-call,
 step, timeout, token/cost budget, deadline, concrete failure outcome, or a
 validated agent `maxTurns` bound. Its diagnostic reports bounded matched
-evidence and asks for a bound or failure outcome; it has no autofix.
+evidence and asks for a bound or failure outcome; it has no autofix. Its bound
+and fallback vocabulary is shared with A029, and ordinary hard-wrapped prose is
+evaluated as joined sentences while retaining source locations.
 
 Q006 models each operative output directive as a typed constraint (an exclusive
 format requirement, or a size/shape bound) and reports only the pairs that

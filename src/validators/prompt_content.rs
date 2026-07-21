@@ -8,7 +8,7 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
-use crate::validators::common::NEVER_INVENT_PROHIBITION;
+use crate::validators::common::{NEVER_INVENT_PROHIBITION, has_bound_or_fallback, sentence_ranges};
 use regex::Regex;
 use std::collections::HashSet;
 use std::fs;
@@ -37,10 +37,10 @@ const MIN_SHARED_README_LINES: usize = 3;
 const UNBOUNDED_RETRY_PATTERNS: &[&str] = &[
     r"\bcontinue\s+indefinitely\b",
     r"\bloop\s+forever\b",
+    r"\bretry\s+indefinitely\b",
     r"\bretry\s+as\s+many\s+times\s+as\s+(?:needed|necessary)\b",
-    r"\bkeep\s+trying\s+until\s+(?:it\s+)?succeeds\b",
-    r"\bretry\s+until\s+(?:success|it\s+succeeds)\b",
-    r"\bdo\s+not\s+stop\s+until\s+(?:it\s+)?(?:(?:the\s+)?(?:task|operation|command|tool\s+call|test\s+suite)\s+)?(?:succeeds|passes|works|is\s+(?:complete|completed|resolved))\b",
+    r"\b(?:keep\s+(?:retrying|trying)|retry|try\s+again|repeat|continue)\s+until\s+(?:success|(?:(?:it|the\s+(?:build|tests?|task|operation|command|tool\s+call|test\s+suite))\s+)?(?:succeeds|pass(?:es)?|works|is\s+(?:complete|completed|resolved)))\b",
+    r"\bdo\s+not\s+(?:give\s+up|stop)\s+until\s+(?:it\s+)?(?:(?:the\s+)?(?:build|tests?|task|operation|command|tool\s+call|test\s+suite)\s+)?(?:succeeds|pass(?:es)?|works|is\s+(?:complete|completed|resolved))\b",
 ];
 
 static UNBOUNDED_RETRY_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -50,34 +50,16 @@ static UNBOUNDED_RETRY_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         .collect()
 });
 
-static APPLICABLE_RETRY_BOUNDS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-    [
-        r"\b(?:at\s+most|no\s+more\s+than|up\s+to|within|after|for|(?:a\s+)?maximum\s+of)\s+\d+\s+(?:attempts?|retries|tries|tool[ -]?calls?|steps?)\b",
-        r"\b\d+\s+(?:attempts?|retries|tries|tool[ -]?calls?|steps?)\s+(?:maximum|max)\b",
-        r"\b(?:timeout|time(?:\s|-)?limit)\s*(?:of|:|is)?\s*\d+\s*(?:milliseconds?|seconds?|minutes?|hours?|ms|secs?|mins?|hrs?)\b",
-        r"\bwithin\s+\d+\s*(?:milliseconds?|seconds?|minutes?|hours?|ms|secs?|mins?|hrs?)\b",
-        r"\b(?:token|cost)\s+budget\s*(?:of|:|is)?\s*(?:\$?\d[\d,.]*|\d+[kKmM]?)\b",
-        r"\b(?:at\s+most|no\s+more\s+than|up\s+to)\s+(?:\$?\d[\d,.]*|\d+[kKmM]?)\s+(?:tokens?|dollars?|usd)\b",
-        r"\b(?:deadline\s*(?:of|:|is)?|by)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}\s*(?:am|pm)?|end\s+of\s+(?:day|week)|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b",
-        r"\b(?:if|when)\s+(?:it|the\s+(?:retry|operation|task|command|tool\s+call))\s+fails?\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b",
-        r"\b(?:on|upon)\s+failure\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b",
-        r"\botherwise\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b",
-    ]
-    .into_iter()
-    .map(|pattern| Regex::new(pattern).expect("Q005 bound pattern is valid"))
-    .collect()
-});
-
 static OPERATIVE_RETRY_SETUP_CLAUSE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"^(?:when|if|after|before)\b[^,]*,\s*(?:continue|loop|retry|keep trying|do not stop)\b",
+        r"^(?:when|if|after|before)\b[^,]*,\s*(?:continue|loop|retry|keep (?:trying|retrying)|try again|repeat|do not (?:give up|stop))\b",
     )
     .expect("Q005 setup-clause pattern is valid")
 });
 
 static OPERATIVE_RETRY_SUBJECT_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"^(?:you|agents?|assistant|model)\s+(?:must|should|shall|will)\s+(?:continue|loop|retry|keep trying|not stop)\b",
+        r"^(?:the\s+)?(?:you|agents?|assistant|model)\s+(?:must|should|shall|will)\s+(?:continue|loop|retry|keep (?:trying|retrying)|try again|repeat|not (?:give up|stop))\b",
     )
     .expect("Q005 subject directive pattern is valid")
 });
@@ -87,6 +69,10 @@ static UNBOUNDED_RETRY_PROHIBITION: LazyLock<Regex> = LazyLock::new(|| {
         r"^(?:do\s+not|don't|never|avoid)\s+(?:keep\s+trying|retrying|retry|continuing|looping)\b",
     )
     .expect("Q005 prohibition pattern is valid")
+});
+
+static EMPHASIS_LABEL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:important|note|warning)\s*:\s*").expect("Q005 emphasis-label regex is valid")
 });
 
 static PRECISE_SAFETY_PROHIBITIONS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -156,61 +142,84 @@ fn check_unbounded_retry(
 
     let example_scopes = document.example_scopes();
     for scope in retry_instruction_scopes(document, &example_scopes) {
-        let normalized_scope = scope
-            .iter()
-            .map(|line| line.text.to_ascii_lowercase())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if APPLICABLE_RETRY_BOUNDS
-            .iter()
-            .any(|pattern| pattern.is_match(&normalized_scope))
-        {
+        let joined_scope = JoinedProseScope::new(&scope);
+        if has_bound_or_fallback(&joined_scope.text) {
             continue;
         }
 
-        for line in scope {
-            let mut sentence_offset = 0;
-            for sentence in line.text.split_inclusive(['.', '!', '?', ';']) {
-                let normalized_sentence = sentence.to_ascii_lowercase();
-                if !is_operative_retry_instruction(&normalized_sentence)
-                    || explicitly_prohibits_unbounded_retry(&normalized_sentence)
-                {
-                    sentence_offset += sentence.chars().count();
-                    continue;
-                }
-                let Some(matched) = UNBOUNDED_RETRY_REGEXES
-                    .iter()
-                    .find_map(|pattern| pattern.find(&normalized_sentence))
-                else {
-                    sentence_offset += sentence.chars().count();
-                    continue;
-                };
-
-                let start_column =
-                    sentence_offset + normalized_sentence[..matched.start()].chars().count() + 1;
-                let end_column =
-                    sentence_offset + normalized_sentence[..matched.end()].chars().count() + 1;
-                let evidence = sentence.trim();
-                diag.report_with(
-                    LintRule::PromptUnboundedRetry,
-                    &format!(
-                        "{path}: unbounded retry or continuation instruction; add an explicit bound or concrete failure outcome"
-                    ),
-                    DiagnosticMetadata::default()
-                        .with_location(SourceSpan::range(
-                            line.line,
-                            start_column,
-                            line.line,
-                            end_column,
-                        ))
-                        .with_evidence(evidence)
-                        .with_suggestion(
-                            "Add an explicit attempt, step, tool-call, timeout, token/cost budget, deadline, or concrete failure outcome.",
-                        ),
-                );
-                return;
+        for sentence_range in sentence_ranges(&joined_scope.text) {
+            let sentence = &joined_scope.text[sentence_range.clone()];
+            let normalized_sentence = sentence.to_ascii_lowercase();
+            if !is_operative_retry_instruction(&normalized_sentence)
+                || explicitly_prohibits_unbounded_retry(&normalized_sentence)
+            {
+                continue;
             }
+            let Some(matched) = UNBOUNDED_RETRY_REGEXES
+                .iter()
+                .find_map(|pattern| pattern.find(&normalized_sentence))
+            else {
+                continue;
+            };
+
+            let matched_range =
+                sentence_range.start + matched.start()..sentence_range.start + matched.end();
+            let (start_line, start_column) = joined_scope.position_at(matched_range.start);
+            let (end_line, end_column) = joined_scope.position_at(matched_range.end);
+            diag.report_with(
+                LintRule::PromptUnboundedRetry,
+                &format!(
+                    "{path}: unbounded retry or continuation instruction; add an explicit bound or concrete failure outcome"
+                ),
+                DiagnosticMetadata::default()
+                    .with_location(SourceSpan::range(
+                        start_line,
+                        start_column,
+                        end_line,
+                        end_column,
+                    ))
+                    .with_evidence(sentence.trim())
+                    .with_suggestion(
+                        "Add an explicit attempt, step, tool-call, timeout, token/cost budget, deadline, or concrete failure outcome.",
+                    ),
+            );
         }
+    }
+}
+
+/// Prose lines joined exactly as the sentence parser sees them, retaining the
+/// original source coordinates for structured Q005 diagnostics.
+struct JoinedProseScope<'a> {
+    text: String,
+    segments: Vec<(
+        std::ops::Range<usize>,
+        &'a crate::markdown::MarkdownProseLine,
+    )>,
+}
+
+impl<'a> JoinedProseScope<'a> {
+    fn new(lines: &[&'a crate::markdown::MarkdownProseLine]) -> Self {
+        let mut text = String::new();
+        let mut segments = Vec::with_capacity(lines.len());
+        for line in lines {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            let start = text.len();
+            text.push_str(&line.text);
+            segments.push((start..text.len(), *line));
+        }
+        Self { text, segments }
+    }
+
+    fn position_at(&self, offset: usize) -> (usize, usize) {
+        let (range, line) = self
+            .segments
+            .iter()
+            .find(|(range, _)| range.start <= offset && offset <= range.end)
+            .expect("Q005 match offset belongs to a source prose line");
+        let local_offset = offset.saturating_sub(range.start).min(line.text.len());
+        (line.line, line.text[..local_offset].chars().count() + 1)
     }
 }
 
@@ -249,17 +258,25 @@ fn retry_instruction_scopes<'a>(
 }
 
 fn is_operative_retry_instruction(sentence: &str) -> bool {
-    let sentence = sentence.trim().trim_start_matches(|character: char| {
+    let mut sentence = sentence.trim().trim_start_matches(|character: char| {
         character.is_whitespace()
             || matches!(character, '#' | '-' | '*' | '+' | '(' | ')' | '[' | ']')
             || character.is_ascii_digit()
             || character == '.'
     });
+    sentence = sentence.trim_start_matches("always ");
+    if let Some(after_label) = EMPHASIS_LABEL_PREFIX.find(sentence) {
+        sentence = &sentence[after_label.end()..];
+    }
     let directive = [
         "continue",
         "loop",
         "retry",
         "keep trying",
+        "keep retrying",
+        "try again",
+        "repeat",
+        "do not give up",
         "do not stop",
         "please continue",
         "please retry",
@@ -1694,14 +1711,23 @@ mod tests {
         for instruction in [
             "Continue indefinitely.",
             "Loop forever.",
+            "Retry indefinitely.",
             "Retry as many times as needed.",
             "Keep trying until it succeeds.",
+            "Keep retrying until the build passes.",
+            "Try again until it works.",
+            "Continue until success.",
+            "Repeat until the tests pass.",
+            "Do not give up until it succeeds.",
             "Retry until success.",
             "Retry until it succeeds.",
             "Do not stop until it is resolved.",
             "Do not stop until the test suite passes.",
             "When a tool fails, retry until success.",
             "Agents must retry until success.",
+            "The agent must retry until success.",
+            "Always retry until success.",
+            "IMPORTANT: Retry until success.",
         ] {
             let diagnostics = q005_diagnostics(instruction);
             assert_eq!(diagnostics.len(), 1, "{instruction}");
@@ -1737,6 +1763,18 @@ mod tests {
     fn unbounded_retry_respects_only_applicable_bounds_and_exemptions() {
         for exempt in [
             "Retry until success, but stop after 3 attempts.",
+            "Retry until success, up to 3 times.",
+            "Retry until success (max 3 attempts).",
+            "Retry until success or 3 attempts, whichever comes first.",
+            "Retry until success. Stop after 3 attempts and report the remaining failure.",
+            "Retry until success. Give up after 3 attempts and report the blocker.",
+            "Retry until success. Set a limit of 5 attempts for the repair.",
+            "Retry until success. On failure, escalate to the user with a summary.",
+            "Retry until success. Upon failure, stop and report the blocker.",
+            "Retry until success. When you cannot make progress, escalate to the user.",
+            "Retry until success. Abort after 10 minutes and summarize progress.",
+            "Retry until success. Retry at most 3 times, then report the failure.",
+            "Retry until success. Make at most three attempts before reporting the failure.",
             "Retry until success. On failure, escalate.",
             "Retry until success within 10 minutes.",
             "Retry until success with a token budget of 5000.",
@@ -1766,6 +1804,31 @@ mod tests {
             q005_diagnostics("Retry until success.\n- Use a limit in the report.").len(),
             1
         );
+    }
+
+    #[test]
+    fn unbounded_retry_handles_wrapped_prose_and_keeps_negated_descriptive_and_question_controls() {
+        for wrapped in [
+            "Retry until\nsuccess.",
+            "- Keep trying until it\n  succeeds.",
+        ] {
+            assert_eq!(q005_diagnostics(wrapped).len(), 1, "{wrapped}");
+        }
+        for excluded in [
+            "Do not retry until success.",
+            "The legacy documentation said: retry until success.",
+            "Should I retry until success?",
+        ] {
+            assert!(q005_diagnostics(excluded).is_empty(), "{excluded}");
+        }
+    }
+
+    #[test]
+    fn unbounded_retry_reports_each_sentence_in_source_order() {
+        let diagnostics = q005_diagnostics("Retry until success.\n\nLoop forever.");
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 1);
+        assert_eq!(diagnostics[1].location.unwrap().start().line_number(), 3);
     }
 
     #[test]

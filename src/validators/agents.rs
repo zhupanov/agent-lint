@@ -12,7 +12,7 @@ use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use super::common::{RE_NAME_INVALID, is_known_tool_name};
+use super::common::{RE_NAME_INVALID, has_bound_or_fallback, is_known_tool_name, sentence_ranges};
 
 /// Jaccard similarity threshold (strict greater-than).
 const JACCARD_THRESHOLD: f64 = 0.8;
@@ -42,27 +42,6 @@ const EXECUTION_TOOLS: &[&str] = &[
     "Write",
 ];
 
-static ATTEMPT_BOUND: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)\b(?:at most|no more than|up to|maximum(?: of)?|max|limit|cap)\s+\d+\s+(?:attempts?|retries|iterations?|tool[- ]?calls?|steps?)\b|\b(?:attempts?|retries|iterations?|tool[- ]?calls?|steps?)\s*(?:<=|≤|:|=)\s*\d+\b",
-    )
-    .expect("A029 attempt-bound regex is valid")
-});
-
-static EXPLICIT_BUDGET: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)\b(?:timeout|deadline|time[- ]?(?:limit|budget)|token[- ]?budget|cost[- ]?budget|budget)\b.{0,40}(?:\b\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec(?:onds?)?|m|mins?|minutes?|h|hours?|tokens?|%|usd|dollars?)\b|\$\s*\d+\b)|\b(?:within|for no more than|at most)\s+\d+(?:\.\d+)?\s*(?:ms|milliseconds?|s|sec(?:onds?)?|m|mins?|minutes?|h|hours?)\b",
-    )
-    .expect("A029 budget regex is valid")
-});
-
-static FAILURE_FALLBACK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)\b(?:if|when|after)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no progress|unable to (?:make progress|continue))\b.{0,120}\b(?:stop|report|escalat(?:e|ion)|ask (?:for )?help|handoff|return)\b|\b(?:stop and report|report and stop|escalat(?:e|ion)|ask (?:for )?help|handoff|return)\b.{0,100}\b(?:if|when|after)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no progress|unable to (?:make progress|continue))\b",
-    )
-    .expect("A029 failure-fallback regex is valid")
-});
-
 /// A029 controls must be addressed to the current agent, not merely describe
 /// a historical agent or an example. Keep this intentionally narrow: these
 /// forms cover the documented direct imperative, subject directive, and
@@ -72,16 +51,20 @@ static OPERATIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
         r"(?ix)^\s*(?:[-*+]\s*)?(?:
             (?:you|the\s+agent|this\s+agent|agents?|assistant|model)\s+
                 (?:must|should|shall|will|need\s+to|are\s+to)\b |
-            (?:if|when|after|before|unless|for|during|on)\b[^.!?;,:]*[,;:]\s*
+            (?:if|when|after|before|unless|for|during|on|upon)\b[^.!?;,:]*[,;:]\s*
                 (?:(?:you|the\s+agent|this\s+agent|agents?|assistant|model)\s+
                     (?:must|should|shall|will|need\s+to|are\s+to)\s+)?
-                (?:make|use|set|limit|cap|stop|report|escalate|ask|handoff|return)\b |
-            (?:make|use|set|limit|cap|stop|report|escalate|ask|handoff|return)\b |
-            (?:at\s+most|no\s+more\s+than|up\s+to|maximum(?:\s+of)?|max|limit|cap)\b |
-            (?:timeout|deadline|time[-\s]?(?:limit|budget)|token[-\s]?budget|cost[-\s]?budget|budget)\b
+                (?:make|use|set|limit|cap|retry|abort|give\s+up|halt|stop|report|escalate|ask|handoff|return)\b |
+            (?:make|use|set|limit|cap|retry|abort|give\s+up|halt|stop|report|escalate|ask|handoff|return)\b |
+            (?:timeout|deadline|time[-\s]?(?:limit|budget)|token[-\s]?budget|cost[-\s]?budget|budget)\s*:
         )",
     )
     .expect("A029 operative-control prefix regex is valid")
+});
+
+static DESCRIPTIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*(?:use\s+of\b|(?:timeout|deadline|budget|max(?:imum)?|limit|cap)\b.{0,80}\b(?:was|were|had|used\s+to|once\s+forced)\b)")
+        .expect("A029 descriptive-control prefix regex is valid")
 });
 
 /// Check whether an agent description is too similar to the agent name.
@@ -615,15 +598,13 @@ fn has_operative_body_control(document: &LiveInstructionDocument<'_>) -> bool {
     }
 
     scopes.into_iter().any(|scope| {
-        scope
-            .join(" ")
-            .split_inclusive(['.', '!', '?', ';'])
-            .any(|sentence| {
-                OPERATIVE_CONTROL_PREFIX.is_match(sentence)
-                    && (ATTEMPT_BOUND.is_match(sentence)
-                        || EXPLICIT_BUDGET.is_match(sentence)
-                        || FAILURE_FALLBACK.is_match(sentence))
-            })
+        let scope = scope.join(" ");
+        sentence_ranges(&scope).into_iter().any(|range| {
+            let sentence = &scope[range];
+            OPERATIVE_CONTROL_PREFIX.is_match(sentence)
+                && !DESCRIPTIVE_CONTROL_PREFIX.is_match(sentence)
+                && has_bound_or_fallback(sentence)
+        })
     })
 }
 
@@ -1576,6 +1557,18 @@ mod tests {
             "Use a timeout of 15 minutes for the investigation.",
             "Use a cost budget of $5 for the investigation.",
             "If there is no progress, stop and report the blocker.",
+            "Stop after 3 attempts and report the remaining failure.",
+            "Give up after 3 attempts and report the blocker.",
+            "Set a limit of 5 attempts for the repair.",
+            "On failure, escalate to the user with a summary.",
+            "Upon failure, stop and report the blocker.",
+            "When you cannot make progress, escalate to the user.",
+            "Abort after 10 minutes and summarize progress.",
+            "Retry at most 3 times, then report the failure.",
+            "Make at most three attempts before reporting the failure.",
+            "Timeout: 1.5 hours for the whole repair.",
+            "Timeout: 2.5 minutes for the whole repair.",
+            "Retry until success, but stop after 3 attempts.",
         ] {
             let content = format!(
                 "---\nname: general\ndescription: {GOOD_DESC}\ntools: WebFetch\n---\n{body}\n"
@@ -1624,6 +1617,10 @@ mod tests {
             "# Examples\nUse a timeout of 10 minutes.\n\n# Task\nInvestigate the failure.\n",
             "The legacy runner used a timeout of 10 minutes for each investigation.\n",
             "# Example workflow\nIf there is no progress, stop and report the blocker.\n\n# Task\nInvestigate the failure and implement the repair.\n",
+            "Timeout of 10 minutes was the legacy default.\n\nInvestigate the failure and implement the repair.\n",
+            "Max 3 attempts was the old rule for the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
+            "Use of a timeout of 10 minutes was common in the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
+            "Budget pressures once forced a timeout of 10 minutes on the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
         ] {
             let content =
                 format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\n{body}");
