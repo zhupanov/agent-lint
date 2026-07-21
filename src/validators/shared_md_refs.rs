@@ -168,8 +168,7 @@ See ${CLAUDE_PLUGIN_ROOT}/skills/shared/a.md and \
 $CLAUDE_PLUGIN_ROOT/skills/shared/b.md.\n";
         let refs = find_shared_md_refs(content, "skills");
         assert_eq!(
-            refs
-                .iter()
+            refs.iter()
                 .map(|r| r.relative_path.as_str())
                 .collect::<Vec<_>>(),
             ["skills/shared/a.md", "skills/shared/b.md"]

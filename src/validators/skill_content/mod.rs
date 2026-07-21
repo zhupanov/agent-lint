@@ -1617,10 +1617,7 @@ mod tests {
             ".claude/skills",
         );
         assert_eq!(claude.len(), 1);
-        assert_eq!(
-            claude[0].relative_path,
-            ".claude/skills/shared/helpers.md"
-        );
+        assert_eq!(claude[0].relative_path, ".claude/skills/shared/helpers.md");
     }
 
     #[test]
@@ -1755,9 +1752,7 @@ mod tests {
         let long = "line\n".repeat(101);
         std::fs::write(
             "skills/shared/prefix.md",
-            format!(
-                "{long}See ${{CLAUDE_PLUGIN_ROOT}}/skills/shared/other.md\n"
-            ),
+            format!("{long}See ${{CLAUDE_PLUGIN_ROOT}}/skills/shared/other.md\n"),
         )
         .unwrap();
         std::fs::write("skills/shared/other.md", "# Other\n").unwrap();
@@ -1773,7 +1768,10 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
-            !diag.errors().iter().any(|e| e.contains("itself references")),
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("itself references")),
             "S029 must ignore comment/prefix tokens: {:?}",
             diag.errors()
         );

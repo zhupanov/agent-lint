@@ -160,9 +160,7 @@ pub struct YamlStrictError {
 /// On success returns the parsed document. On failure returns a file-relative
 /// location and a message that does not embed the parser's YAML-relative
 /// `at line N, column M` coordinates.
-pub fn parse_yaml_strict(
-    fm_lines: &[String],
-) -> Result<crate::yaml::Value, YamlStrictError> {
+pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, YamlStrictError> {
     let text = fm_lines.join("\n");
     match crate::yaml::parse(&text) {
         Ok(value) => Ok(value),

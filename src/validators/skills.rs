@@ -906,7 +906,9 @@ mod tests {
                 )
             });
         assert_eq!(
-            diagnostic.location.map(|location| location.start().line_number()),
+            diagnostic
+                .location
+                .map(|location| location.start().line_number()),
             Some(3)
         );
         assert!(
@@ -1285,7 +1287,9 @@ mod tests {
             .find(|d| d.message.contains("shared/missing.md"))
             .expect("missing.md");
         assert_eq!(
-            first.location.map(|location| location.start().line_number()),
+            first
+                .location
+                .map(|location| location.start().line_number()),
             Some(5)
         );
         let unbraced = missing
@@ -1294,7 +1298,9 @@ mod tests {
             .expect("unbraced");
         assert!(unbraced.message.contains("$CLAUDE_PLUGIN_ROOT/"));
         assert_eq!(
-            unbraced.location.map(|location| location.start().line_number()),
+            unbraced
+                .location
+                .map(|location| location.start().line_number()),
             Some(8)
         );
     }
@@ -1370,7 +1376,8 @@ mod tests {
             .iter()
             .find(|d| {
                 d.rule == LintRule::FrontmatterMalformed
-                    && d.subject_path.as_deref() == Some(std::path::Path::new("skills/plain/SKILL.md"))
+                    && d.subject_path.as_deref()
+                        == Some(std::path::Path::new("skills/plain/SKILL.md"))
             })
             .expect("plain S004");
         assert!(
@@ -1379,7 +1386,9 @@ mod tests {
             plain.message
         );
         assert_eq!(
-            plain.location.map(|location| location.start().line_number()),
+            plain
+                .location
+                .map(|location| location.start().line_number()),
             Some(1)
         );
     }
