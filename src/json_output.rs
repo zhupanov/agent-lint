@@ -103,6 +103,8 @@ struct OutputDiagnostic {
     severity: OutputSeverity,
     #[serde(skip_serializing_if = "Option::is_none")]
     subject_path: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    related_subjects: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     location: Option<OutputLocation>,
     message: String,
@@ -165,6 +167,11 @@ impl From<&Diagnostic> for OutputDiagnostic {
                 .subject_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().replace('\\', "/")),
+            related_subjects: diagnostic
+                .related_subjects
+                .iter()
+                .map(|path| path.to_string_lossy().replace('\\', "/"))
+                .collect(),
             location: diagnostic.location.map(OutputLocation::from),
             message: diagnostic.message.clone(),
             evidence: diagnostic.evidence.clone(),
@@ -359,6 +366,37 @@ mod tests {
         assert_eq!(diagnostic["location"]["end"]["column"], 5);
         assert_eq!(diagnostic["evidence"], "safe evidence");
         assert_eq!(diagnostic["suggestion"], "add the missing manifest");
+
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../schemas/diagnostic-output-v1.schema.json"))
+                .unwrap();
+        assert!(jsonschema::validator_for(&schema).unwrap().is_valid(&value));
+    }
+
+    #[test]
+    fn serializes_related_subjects_for_pathless_multi_source_findings() {
+        let mut diagnostics = DiagnosticCollector::new();
+        diagnostics.report_with(
+            LintRule::AgentDescOverlap,
+            "agents/a.md and agents/b.md have overlapping routing descriptions (similarity 1.00)",
+            DiagnosticMetadata::default().with_related_subjects(["agents/a.md", "agents/b.md"]),
+        );
+        let report = build_report(
+            Some(LintMode::Basic),
+            CliMode::Normal,
+            &RunPolicy::default(),
+            ValidationTargets::default(),
+            Some(&diagnostics),
+            Vec::new(),
+        );
+        let value = serde_json::to_value(report).unwrap();
+        let diagnostic = &value["diagnostics"][0];
+
+        assert!(diagnostic.get("subject_path").is_none());
+        assert_eq!(
+            diagnostic["related_subjects"],
+            serde_json::json!(["agents/a.md", "agents/b.md"])
+        );
 
         let schema: serde_json::Value =
             serde_json::from_str(include_str!("../schemas/diagnostic-output-v1.schema.json"))

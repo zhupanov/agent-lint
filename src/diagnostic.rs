@@ -146,6 +146,7 @@ pub struct DiagnosticMetadata {
     location: Option<SourceSpan>,
     evidence: Option<String>,
     suggestion: Option<String>,
+    related_subjects: Vec<PathBuf>,
 }
 
 impl DiagnosticMetadata {
@@ -176,6 +177,23 @@ impl DiagnosticMetadata {
         self.suggestion = Some(suggestion.into());
         self
     }
+
+    /// Attach additional repository-relative subjects for multi-source findings.
+    ///
+    /// Related subjects are structured identity only. They do not become the
+    /// diagnostic's `subject_path` and therefore do not participate in
+    /// per-file override matching (I-Diag-2).
+    pub fn with_related_subjects<I, P>(mut self, subjects: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        self.related_subjects = subjects
+            .into_iter()
+            .map(|path| path.as_ref().to_path_buf())
+            .collect();
+        self
+    }
 }
 
 #[allow(dead_code)] // used by the incremental evidence reporting API
@@ -202,6 +220,10 @@ pub struct Diagnostic {
     pub severity: Severity,
     #[allow(dead_code)] // consumed by autofix and available through diagnostics()
     pub subject_path: Option<PathBuf>,
+    /// Additional repository-relative subjects for multi-source findings.
+    /// Empty for ordinary single-subject diagnostics. Never used for per-file
+    /// override matching; only `subject_path` participates in that policy.
+    pub related_subjects: Vec<PathBuf>,
     #[allow(dead_code)] // read by #[cfg(test)] accessors and available via diagnostics()
     pub message: String,
     #[allow(dead_code)] // consumed by renderer leaves through diagnostics()
@@ -399,10 +421,16 @@ impl DiagnosticCollector {
             }
         };
 
+        let related_subjects = metadata
+            .related_subjects
+            .into_iter()
+            .map(|related| PathBuf::from(self.config.normalize_subject_path(&related)))
+            .collect();
         let diagnostic = Diagnostic {
             rule,
             severity,
             subject_path: path.map(|path| PathBuf::from(self.config.normalize_subject_path(path))),
+            related_subjects,
             message: msg.to_string(),
             location: metadata.location,
             evidence: metadata.evidence,
@@ -900,6 +928,28 @@ suppress = ["M001", "H001"]
         assert_eq!(range.end(), Some(SourcePosition::point(4, 6)));
         assert_eq!(ranged.evidence.as_deref(), Some("bad value"));
         assert_eq!(ranged.suggestion.as_deref(), Some("use a supported value"));
+    }
+
+    #[test]
+    fn related_subjects_are_structured_and_do_not_match_per_file_overrides() {
+        let config = config_with_overrides(
+            "[lint]\n[[lint.overrides]]\nfiles = [\"agents/*.md\"]\nsuppress = [\"A030\"]\n",
+        );
+        let mut diag = DiagnosticCollector::with_config(config);
+        diag.report_with(
+            LintRule::AgentDescOverlap,
+            "agents/a.md and agents/b.md overlap",
+            DiagnosticMetadata::default().with_related_subjects(["agents/a.md", "agents/b.md"]),
+        );
+
+        assert_eq!(diag.suppressed_count(), 0);
+        assert_eq!(diag.warning_count(), 1);
+        let diagnostic = &diag.diagnostics()[0];
+        assert_eq!(diagnostic.subject_path, None);
+        assert_eq!(
+            diagnostic.related_subjects,
+            vec![PathBuf::from("agents/a.md"), PathBuf::from("agents/b.md")]
+        );
     }
 
     #[test]

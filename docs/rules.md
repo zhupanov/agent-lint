@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 289 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 291 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -155,7 +155,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin | warn |
 | S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin | suppressed |
 
-### Description Validation (S014--S018, S034, S050)
+### Description Validation (S014--S018, S034, S050, S074)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
@@ -166,6 +166,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Always | error |
 | S034 | `desc-too-short` | Skill description under 20 characters | Always | warn |
 | S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin | warn |
+| S074 | `skill-desc-overlap` | Two skill routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
 ### Body Content (S019--S022, S037--S038, S041, S046--S047, S051--S053, S055--S057)
 
@@ -276,7 +277,21 @@ H008--H024 codes with a `… frontmatter` path label.
 | A027 | `agent-field-unknown` | Unrecognized agent frontmatter field (possible typo) | Always | warn |
 | A028 | `agent-field-unsupported` | Agent frontmatter uses `hooks`, `mcpServers`, or `permissionMode`, which are unsupported for plugin agents | Plugin | warn |
 | A029 | `agent-stop-missing` | Tool-using agent has no explicit stop control or failure outcome | Always | warn |
+| A030 | `agent-desc-overlap` | Two agent routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
+> **Routing-description overlap (A030 / S074).** These warnings compare
+> frontmatter `description` values with a deterministic shared helper: Unicode
+> lowercase tokenization, punctuation and stopword removal, stripping of
+> routing boilerplate (`use when` / `use this` / `use for` / `trigger when`),
+> a four-token floor, and Jaccard similarity with a checked-in 0.85 threshold.
+> Missing, invalid, or under-20-character descriptions stay owned by existing
+> short/missing rules and are skipped. Claude private and plugin trees that can
+> load together form one runtime-union namespace (`agents/` ∪ `.claude/agents/`,
+> `skills/` ∪ `.claude/skills/` in Plugin mode). Cross-client `.agents/skills/`
+> stays separate. Agents are never compared with skills. Findings are pathless
+> multi-source diagnostics that name both repository-relative paths and the
+> score in `related_subjects`; global `suppress` works, but per-file overrides
+> cannot match them.
 > **Agent field-value rules (A014-A027).** These spec-grounded checks run on
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
 > (Basic mode). They catch typos and invalid enum values (e.g. `model: sonet`,
@@ -579,7 +594,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 289):**
+**Auto-fixable rules (12 of 291):**
 
 | Rule | Code | Fix |
 |------|------|-----|

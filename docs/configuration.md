@@ -172,7 +172,9 @@ syntax. Multiple matching blocks combine; ordering does not affect the result.
 Only the listed rule is suppressed for a matching path, while other rules for
 that file and the same rule for other files continue to report. Truly
 repository-wide and multi-source diagnostics have no single subject path and
-can be suppressed only by global `suppress`.
+can be suppressed only by global `suppress`. Multi-source findings may still
+list participating paths in structured `related_subjects` JSON metadata; that
+array does not participate in per-file override matching.
 
 An override rule entry that suppresses no diagnostic during the final visible
 lint pass emits a non-failing `config/unused-override` warning with its rule,
