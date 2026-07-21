@@ -2807,6 +2807,138 @@ fn s031_json_carries_line_metadata_and_url_evidence() {
 }
 
 #[test]
+fn t001_t002_cli_preserve_fixed_path_policy_metadata_and_strictness() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude")).unwrap();
+    let settings = tmp.path().join(".claude/settings.json");
+    let local_settings = tmp.path().join(".claude/settings.local.json");
+    let settings_content = r#"{
+  "prUrlTemplate": "not-a-url/{number}?token=sk_this-value-must-not-appear",
+  "channelsEnabled": false
+}"#;
+    std::fs::write(&settings, settings_content).unwrap();
+    std::fs::write(&local_settings, r#"{"channelsEnabled":[]}"#).unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+exclude = [".claude/settings.json", ".claude/settings.local.json"]
+"#,
+    )
+    .unwrap();
+
+    let normal = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "T001,T002", "."],
+    );
+    assert!(normal.status.success(), "stderr: {}", stderr(&normal));
+    let report = json(&normal);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 3);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["severity"] == "warning")
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["location"].is_object())
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["evidence"].is_string())
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["suggestion"].is_string())
+    );
+    assert_eq!(diagnostics[0]["code"], "T001");
+    assert_eq!(diagnostics[0]["subject_path"], ".claude/settings.json");
+    assert_eq!(
+        diagnostics[0]["evidence"],
+        "prUrlTemplate: invalid rendered URL"
+    );
+    assert_eq!(diagnostics[1]["name"], "channels-enabled-unsupported");
+    assert!(
+        !normal
+            .stdout
+            .windows(b"sk_this-value-must-not-appear".len())
+            .any(|bytes| bytes == b"sk_this-value-must-not-appear")
+    );
+
+    for strictness in ["--pedantic", "--all"] {
+        let output = run_in(
+            tmp.path(),
+            &["--format", "json", strictness, "--only", "T001,T002", "."],
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{strictness}: {}",
+            stderr(&output)
+        );
+        assert!(
+            json(&output)["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|diagnostic| diagnostic["severity"] == "error")
+        );
+    }
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+suppress = ["T001"]
+[[lint.overrides]]
+files = [".claude/settings.local.json"]
+suppress = ["channels-enabled-invalid"]
+reason = "managed policy is tracked elsewhere"
+"#,
+    )
+    .unwrap();
+    let overridden = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "T001,T002", "."],
+    );
+    assert!(
+        overridden.status.success(),
+        "stderr: {}",
+        stderr(&overridden)
+    );
+    let overridden_diagnostics = json(&overridden)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(overridden_diagnostics.len(), 1);
+    assert_eq!(overridden_diagnostics[0]["code"], "T002");
+    assert_eq!(
+        overridden_diagnostics[0]["subject_path"],
+        ".claude/settings.json"
+    );
+
+    let before = std::fs::read_to_string(&settings).unwrap();
+    let autofix = run_in(tmp.path(), &["--autofix", "--only", "T001,T002", "."]);
+    assert!(autofix.status.success(), "stderr: {}", stderr(&autofix));
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), before);
+
+    std::fs::write(&settings, "{").unwrap();
+    let invalid = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "H006,T001,T002", "."],
+    );
+    assert_eq!(
+        invalid.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&invalid)
+    );
+    let invalid_diagnostics = json(&invalid)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(invalid_diagnostics.len(), 1);
+    assert_eq!(invalid_diagnostics[0]["code"], "H006");
+}
+
+#[test]
 fn only_filters_basic_plugin_codex_and_cursor_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();

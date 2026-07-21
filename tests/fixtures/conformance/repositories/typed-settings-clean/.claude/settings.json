@@ -1,0 +1,3 @@
+{
+  "prUrlTemplate": "https://{host}/{owner}/{repo}/pull/{number}?source={url}"
+}

@@ -1,0 +1,16 @@
+{
+  "class": "broken",
+  "repository": "typed-settings-broken",
+  "covers": ["typed-settings", "plugin-mode", "pedantic", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--pedantic", "--only", "T001,T002", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "T001", "name": "pr-template-invalid", "severity": "error", "subject_path": ".claude/settings.json" },
+    { "code": "T002", "name": "channels-enabled-unsupported", "severity": "error", "subject_path": ".claude/settings.json" },
+    { "code": "T002", "name": "channels-enabled-unsupported", "severity": "error", "subject_path": ".claude/settings.local.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

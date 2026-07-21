@@ -1,0 +1,3 @@
+{
+  "prUrlTemplate": "https://例え.テスト:8443/%7Bbrace%7D?target={url}#{number}"
+}

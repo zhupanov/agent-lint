@@ -1,0 +1,4 @@
+{
+  "prUrlTemplate": "https://reviews.example/{number}/{ticket}",
+  "channelsEnabled": false
+}
