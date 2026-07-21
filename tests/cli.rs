@@ -873,9 +873,15 @@ fn q006_json_pairs_are_complete_stable_and_exclude_non_output_shape_prose() {
         .iter()
         .map(|diagnostic| diagnostic["evidence"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert!(evidence[0].starts_with("line 1:") && evidence[0].contains("line 2:"));
-    assert!(evidence[1].starts_with("line 1:") && evidence[1].contains("line 3:"));
-    assert!(evidence[2].starts_with("line 2:") && evidence[2].contains("line 3:"));
+    assert!(
+        evidence[0].starts_with("line 1 column 1:") && evidence[0].contains("line 2 column 1:")
+    );
+    assert!(
+        evidence[1].starts_with("line 1 column 1:") && evidence[1].contains("line 3 column 1:")
+    );
+    assert!(
+        evidence[2].starts_with("line 2 column 1:") && evidence[2].contains("line 3 column 1:")
+    );
 }
 
 #[test]
