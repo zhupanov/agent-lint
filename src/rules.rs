@@ -835,9 +835,6 @@ pub enum LintRule {
     /// U002: userConfig entry missing or invalid description
     #[strum(props(code = "U002", name = "userconfig-desc-missing"))]
     UserconfigDescMissing,
-    /// U003: userConfig key has no corresponding env var reference in scripts/
-    #[strum(props(code = "U003", name = "userconfig-env-missing"))]
-    UserconfigEnvMissing,
     /// U004: userConfig sensitive field must be a boolean
     #[strum(props(code = "U004", name = "userconfig-sensitive-type"))]
     UserconfigSensitiveType,
@@ -850,6 +847,9 @@ pub enum LintRule {
     /// U007: userConfig key is not a valid identifier
     #[strum(props(code = "U007", name = "userconfig-key-invalid"))]
     UserconfigKeyInvalid,
+    /// U008: userConfig option entry is not an object or has an invalid optional field
+    #[strum(props(code = "U008", name = "userconfig-option-invalid"))]
+    UserconfigOptionInvalid,
 
     // ── Slack (K) ─────────────────────────────────────────────────
     /// K001: Slack fallback variable without corresponding CLAUDE_PLUGIN_OPTION_ reference
@@ -1080,9 +1080,6 @@ impl LintRule {
             Self::CursorRuleDescriptionMissing | Self::CursorHookEventUnknown |
             Self::CursorHookFieldTypeInvalid | Self::CursorPromptHookPromptMissing |
             Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
-
-            // ── Default-warning: user config ─────────────────────────
-            Self::UserconfigKeyInvalid |
 
             // ── Default-warning: hygiene ─────────────────────────────
             Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
@@ -1383,8 +1380,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            120,
-            "Expected 120 default-warning rules, got {}",
+            119,
+            "Expected 119 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1458,8 +1455,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            171,
-            "Expected 171 default-error rules, got {}",
+            172,
+            "Expected 172 default-error rules, got {}",
             errors.len()
         );
     }

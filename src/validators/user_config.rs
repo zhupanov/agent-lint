@@ -1,244 +1,465 @@
 use crate::context::{LintContext, ManifestState};
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::rules::LintRule;
-use crate::traversal;
 use regex::Regex;
-use std::path::Path;
+use serde_json::{Map, Value};
 use std::sync::LazyLock;
 
-/// A valid userConfig key: an identifier starting with a letter or underscore.
-/// `-` and `.` are accepted because `to_upper_snake_case` maps both to `_` when
-/// deriving the `CLAUDE_PLUGIN_OPTION_` env var name (U003).
-static RE_CONFIG_KEY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_.-]*$").unwrap());
+const PLUGIN_JSON: &str = ".claude-plugin/plugin.json";
 
-fn get_user_config<'a>(
-    ctx: &'a LintContext,
-    diag: &mut DiagnosticCollector,
-) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
-    let f = ".claude-plugin/plugin.json";
+/// Exact Claude Code / SchemaStore identifier grammar for userConfig keys.
+static RE_CONFIG_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap());
+
+const VALID_TYPES: &[&str] = &["string", "number", "boolean", "directory", "file"];
+
+const KNOWN_OPTION_FIELDS: &[&str] = &[
+    "type",
+    "title",
+    "description",
+    "required",
+    "default",
+    "multiple",
+    "sensitive",
+    "min",
+    "max",
+];
+
+/// Validate top-level and channel `userConfig` surfaces (U001–U002, U004–U008).
+///
+/// U003 (scripts-only env-var mapping) was removed: option use is not inferred
+/// from repository text. Title and description enforce a non-empty-after-trim
+/// usability policy that is intentionally stricter than the JSON schema.
+pub fn validate_user_config(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let val = match &ctx.plugin_json {
         ManifestState::Parsed(v) => v,
-        _ => return None,
+        _ => return,
     };
 
-    let uc = val.get("userConfig")?;
+    if let Some(user_config) = val.get("userConfig") {
+        validate_container(diag, "userConfig", "/userConfig", user_config);
+    }
 
-    match uc {
-        serde_json::Value::Object(map) => Some(map),
-        _ => {
-            diag.report(
-                LintRule::UserconfigNotObject,
-                &format!("{f} userConfig must be an object"),
+    match val.get("channels") {
+        Some(Value::Array(entries)) => {
+            for (index, entry) in entries.iter().enumerate() {
+                if let Some(user_config) = entry.get("userConfig") {
+                    validate_container(
+                        diag,
+                        &format!("channels[{index}].userConfig"),
+                        &format!("/channels/{index}/userConfig"),
+                        user_config,
+                    );
+                }
+            }
+        }
+        Some(Value::Object(entries)) => {
+            let mut names: Vec<&String> = entries.keys().collect();
+            names.sort();
+            for name in names {
+                if let Some(user_config) = entries[name].get("userConfig") {
+                    validate_container(
+                        diag,
+                        &format!("channels.{name}.userConfig"),
+                        &format!("/channels/{}/userConfig", json_pointer_escape(name)),
+                        user_config,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_container(
+    diag: &mut DiagnosticCollector,
+    display: &str,
+    pointer: &str,
+    user_config: &Value,
+) {
+    let Some(map) = user_config.as_object() else {
+        report(
+            diag,
+            LintRule::UserconfigNotObject,
+            &format!("{PLUGIN_JSON} {display} must be an object"),
+            pointer,
+            &format!("change {display} to a JSON object of option entries"),
+        );
+        return;
+    };
+
+    let mut keys: Vec<&String> = map.keys().collect();
+    keys.sort();
+    for key in keys {
+        validate_option(diag, display, pointer, key, &map[key]);
+    }
+}
+
+fn validate_option(
+    diag: &mut DiagnosticCollector,
+    container_display: &str,
+    container_pointer: &str,
+    key: &str,
+    entry: &Value,
+) {
+    let option_display = format!("{container_display}.{key}");
+    let option_pointer = format!("{container_pointer}/{}", json_pointer_escape(key));
+
+    if !RE_CONFIG_KEY.is_match(key) {
+        report(
+            diag,
+            LintRule::UserconfigKeyInvalid,
+            &format!(
+                "{PLUGIN_JSON} {option_display} key is not a valid identifier (must match ^[A-Za-z_][A-Za-z0-9_]*$)"
+            ),
+            &option_pointer,
+            "rename the key to an ASCII identifier starting with a letter or underscore, containing only letters, digits, and underscores",
+        );
+    }
+
+    let Some(fields) = entry.as_object() else {
+        report(
+            diag,
+            LintRule::UserconfigOptionInvalid,
+            &format!("{PLUGIN_JSON} {option_display} must be an object"),
+            &option_pointer,
+            "replace the entry with an object that declares type, title, and description",
+        );
+        return;
+    };
+
+    let type_name = validate_type(diag, &option_display, &option_pointer, fields);
+    validate_title(diag, &option_display, &option_pointer, fields);
+    validate_description(diag, &option_display, &option_pointer, fields);
+    validate_sensitive(diag, &option_display, &option_pointer, fields);
+    validate_optional_shapes(diag, &option_display, &option_pointer, fields);
+    if let Some(type_name) = type_name {
+        validate_semantic_combinations(diag, &option_display, &option_pointer, fields, type_name);
+    }
+}
+
+fn validate_type(
+    diag: &mut DiagnosticCollector,
+    option_display: &str,
+    option_pointer: &str,
+    fields: &Map<String, Value>,
+) -> Option<&'static str> {
+    let pointer = format!("{option_pointer}/type");
+    match fields.get("type") {
+        Some(Value::String(value)) => {
+            if let Some(valid) = VALID_TYPES
+                .iter()
+                .copied()
+                .find(|candidate| candidate == value)
+            {
+                Some(valid)
+            } else {
+                report(
+                    diag,
+                    LintRule::UserconfigTypeMissing,
+                    &format!(
+                        "{PLUGIN_JSON} {option_display}.type must be one of string, number, boolean, directory, or file"
+                    ),
+                    &pointer,
+                    "set type to string, number, boolean, directory, or file",
+                );
+                None
+            }
+        }
+        Some(_) => {
+            report(
+                diag,
+                LintRule::UserconfigTypeMissing,
+                &format!(
+                    "{PLUGIN_JSON} {option_display}.type must be one of string, number, boolean, directory, or file"
+                ),
+                &pointer,
+                "set type to a string enum value: string, number, boolean, directory, or file",
+            );
+            None
+        }
+        None => {
+            report(
+                diag,
+                LintRule::UserconfigTypeMissing,
+                &format!(
+                    "{PLUGIN_JSON} {option_display} missing type (must be string, number, boolean, directory, or file)"
+                ),
+                option_pointer,
+                "add a type field set to string, number, boolean, directory, or file",
             );
             None
         }
     }
 }
 
-/// V18: userConfig structure
-pub fn validate_userconfig_structure(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let f = ".claude-plugin/plugin.json";
-    let map = match get_user_config(ctx, diag) {
-        Some(m) => m,
-        None => return,
-    };
-
-    for key in map.keys() {
-        let entry = &map[key];
-        match entry.get("description") {
-            Some(desc) if desc.is_string() && !desc.as_str().unwrap_or("").is_empty() => {}
-            _ => {
-                diag.report(
-                    LintRule::UserconfigDescMissing,
-                    &format!("{f} userConfig.{key} missing or invalid description (must be a non-empty string)"),
-                );
-            }
-        }
+fn validate_title(
+    diag: &mut DiagnosticCollector,
+    option_display: &str,
+    option_pointer: &str,
+    fields: &Map<String, Value>,
+) {
+    let pointer = format!("{option_pointer}/title");
+    match fields.get("title") {
+        Some(Value::String(value)) if !value.trim().is_empty() => {}
+        Some(Value::String(_)) => report(
+            diag,
+            LintRule::UserconfigTitleMissing,
+            &format!(
+                "{PLUGIN_JSON} {option_display}.title must be a non-empty string after trimming whitespace"
+            ),
+            &pointer,
+            "provide a non-empty title label for the config dialog",
+        ),
+        Some(_) => report(
+            diag,
+            LintRule::UserconfigTitleMissing,
+            &format!("{PLUGIN_JSON} {option_display}.title must be a non-empty string"),
+            &pointer,
+            "set title to a non-empty string",
+        ),
+        None => report(
+            diag,
+            LintRule::UserconfigTitleMissing,
+            &format!("{PLUGIN_JSON} {option_display} missing title (must be a non-empty string)"),
+            option_pointer,
+            "add a non-empty title string",
+        ),
     }
 }
 
-/// V20: userConfig key → env var mapping.
-pub fn validate_userconfig_env_mapping(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let val = match &ctx.plugin_json {
-        ManifestState::Parsed(v) => v,
-        _ => return,
-    };
-
-    let user_config = match val.get("userConfig").and_then(|v| v.as_object()) {
-        Some(m) => m,
-        None => return,
-    };
-
-    let scripts_dir = Path::new("scripts");
-
-    // Collect all script content; if scripts/ doesn't exist, this stays empty
-    // and every userConfig key will correctly trigger U003.
-    let mut scripts_content = String::new();
-    if scripts_dir.is_dir() {
-        for entry in traversal::recursive_files(scripts_dir, Path::new("."), None).entries {
-            if let Some(name) = entry.path.file_name().and_then(|n| n.to_str())
-                && name.ends_with(".sh")
-                && let Ok(content) = std::fs::read_to_string(&entry.path)
-            {
-                scripts_content.push_str(&content);
-                scripts_content.push('\n');
-            }
-        }
+fn validate_description(
+    diag: &mut DiagnosticCollector,
+    option_display: &str,
+    option_pointer: &str,
+    fields: &Map<String, Value>,
+) {
+    let pointer = format!("{option_pointer}/description");
+    match fields.get("description") {
+        Some(Value::String(value)) if !value.trim().is_empty() => {}
+        Some(Value::String(_)) => report(
+            diag,
+            LintRule::UserconfigDescMissing,
+            &format!(
+                "{PLUGIN_JSON} {option_display}.description must be a non-empty string after trimming whitespace"
+            ),
+            &pointer,
+            "provide a non-empty description for the config dialog",
+        ),
+        Some(_) => report(
+            diag,
+            LintRule::UserconfigDescMissing,
+            &format!("{PLUGIN_JSON} {option_display}.description must be a non-empty string"),
+            &pointer,
+            "set description to a non-empty string",
+        ),
+        None => report(
+            diag,
+            LintRule::UserconfigDescMissing,
+            &format!(
+                "{PLUGIN_JSON} {option_display} missing description (must be a non-empty string)"
+            ),
+            option_pointer,
+            "add a non-empty description string",
+        ),
     }
+}
 
-    for key in user_config.keys() {
-        let upper_key = to_upper_snake_case(key);
-        let env_var = format!("CLAUDE_PLUGIN_OPTION_{upper_key}");
-        if !scripts_content.contains(&env_var) {
-            diag.report(
-                LintRule::UserconfigEnvMissing,
+fn validate_sensitive(
+    diag: &mut DiagnosticCollector,
+    option_display: &str,
+    option_pointer: &str,
+    fields: &Map<String, Value>,
+) {
+    if let Some(sensitive) = fields.get("sensitive")
+        && !sensitive.is_boolean()
+    {
+        report(
+            diag,
+            LintRule::UserconfigSensitiveType,
+            &format!("{PLUGIN_JSON} {option_display}.sensitive must be a boolean"),
+            &format!("{option_pointer}/sensitive"),
+            "set sensitive to true or false",
+        );
+    }
+}
+
+fn validate_optional_shapes(
+    diag: &mut DiagnosticCollector,
+    option_display: &str,
+    option_pointer: &str,
+    fields: &Map<String, Value>,
+) {
+    let mut names: Vec<&String> = fields.keys().collect();
+    names.sort();
+    for name in names {
+        let field_pointer = format!("{option_pointer}/{}", json_pointer_escape(name));
+        let value = &fields[name];
+        if !KNOWN_OPTION_FIELDS.contains(&name.as_str()) {
+            report(
+                diag,
+                LintRule::UserconfigOptionInvalid,
+                &format!("{PLUGIN_JSON} {option_display} has unknown field '{name}'"),
+                &field_pointer,
+                "remove the unknown field; allowed fields are type, title, description, required, default, multiple, sensitive, min, and max",
+            );
+            continue;
+        }
+        match name.as_str() {
+            "required" | "multiple" if !value.is_boolean() => report(
+                diag,
+                LintRule::UserconfigOptionInvalid,
+                &format!("{PLUGIN_JSON} {option_display}.{name} must be a boolean"),
+                &field_pointer,
+                &format!("set {name} to true or false"),
+            ),
+            "min" | "max" if !is_finite_number(value) => report(
+                diag,
+                LintRule::UserconfigOptionInvalid,
+                &format!("{PLUGIN_JSON} {option_display}.{name} must be a finite JSON number"),
+                &field_pointer,
+                &format!("set {name} to a finite number"),
+            ),
+            "default" if !is_allowed_default_shape(value) => report(
+                diag,
+                LintRule::UserconfigOptionInvalid,
                 &format!(
-                    "userConfig key '{key}' has no corresponding {env_var} reference in scripts/"
+                    "{PLUGIN_JSON} {option_display}.default must be a string, finite number, boolean, or array of strings"
                 ),
-            );
+                &field_pointer,
+                "set default to a string, finite number, boolean, or string array that matches the option type",
+            ),
+            _ => {}
         }
     }
 }
 
-fn to_upper_snake_case(key: &str) -> String {
-    let mut result = String::new();
-    let mut prev = '_';
-    for c in key.chars() {
-        if c == '-' || c == '.' {
-            result.push('_');
-            prev = '_';
-        } else if c.is_uppercase() {
-            if prev.is_lowercase() {
-                result.push('_');
-            }
-            result.push(c);
-            prev = c;
-        } else {
-            result.push(c);
-            prev = c;
+fn validate_semantic_combinations(
+    diag: &mut DiagnosticCollector,
+    option_display: &str,
+    option_pointer: &str,
+    fields: &Map<String, Value>,
+    type_name: &str,
+) {
+    if let Some(Value::Bool(true)) = fields.get("multiple")
+        && type_name != "string"
+    {
+        report(
+            diag,
+            LintRule::UserconfigOptionInvalid,
+            &format!(
+                "{PLUGIN_JSON} {option_display}.multiple is only permitted when type is string"
+            ),
+            &format!("{option_pointer}/multiple"),
+            "remove multiple or change type to string",
+        );
+    }
+
+    for bound in ["min", "max"] {
+        match fields.get(bound) {
+            Some(value) if is_finite_number(value) && type_name != "number" => report(
+                diag,
+                LintRule::UserconfigOptionInvalid,
+                &format!(
+                    "{PLUGIN_JSON} {option_display}.{bound} is only permitted when type is number"
+                ),
+                &format!("{option_pointer}/{bound}"),
+                "remove the bound or change type to number",
+            ),
+            _ => {}
         }
     }
-    result.to_uppercase()
-}
 
-/// V23: userConfig sensitive type
-pub fn validate_userconfig_sensitive_type(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let f = ".claude-plugin/plugin.json";
-    let val = match &ctx.plugin_json {
-        ManifestState::Parsed(v) => v,
-        _ => return,
-    };
-
-    let user_config = match val.get("userConfig").and_then(|v| v.as_object()) {
-        Some(m) => m,
-        None => return,
-    };
-
-    for (key, entry) in user_config {
-        if let Some(sensitive) = entry.get("sensitive") {
-            if !sensitive.is_boolean() {
-                diag.report(
-                    LintRule::UserconfigSensitiveType,
-                    &format!("{f} userConfig.{key}.sensitive must be a boolean (true/false)"),
-                );
-            }
-        }
+    if type_name == "number"
+        && let (Some(min), Some(max)) = (fields.get("min"), fields.get("max"))
+        && let (Some(min_n), Some(max_n)) = (min.as_f64(), max.as_f64())
+        && min_n.is_finite()
+        && max_n.is_finite()
+        && min_n > max_n
+    {
+        report(
+            diag,
+            LintRule::UserconfigOptionInvalid,
+            &format!("{PLUGIN_JSON} {option_display}.min must be less than or equal to max"),
+            option_pointer,
+            "swap or adjust min and max so min <= max",
+        );
     }
-}
 
-/// V24: userConfig title field
-pub fn validate_userconfig_title(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let f = ".claude-plugin/plugin.json";
-    let val = match &ctx.plugin_json {
-        ManifestState::Parsed(v) => v,
-        _ => return,
-    };
-
-    let user_config = match val.get("userConfig").and_then(|v| v.as_object()) {
-        Some(m) => m,
-        None => return,
-    };
-
-    for key in user_config.keys() {
-        let entry = &user_config[key];
-        match entry.get("title") {
-            Some(title) if title.is_string() && !title.as_str().unwrap_or("").is_empty() => {}
-            _ => {
-                diag.report(
-                    LintRule::UserconfigTitleMissing,
-                    &format!(
-                        "{f} userConfig.{key} missing or invalid title (must be a non-empty string)"
-                    ),
-                );
-            }
-        }
+    if let Some(default) = fields.get("default")
+        && is_allowed_default_shape(default)
+        && !default_matches_type(default, type_name, fields.get("multiple"))
+    {
+        report(
+            diag,
+            LintRule::UserconfigOptionInvalid,
+            &format!(
+                "{PLUGIN_JSON} {option_display}.default does not match the declared type '{type_name}'"
+            ),
+            &format!("{option_pointer}/default"),
+            "set default to a value that matches the option type (string arrays require type string with multiple true)",
+        );
     }
 }
 
-/// V25: userConfig type field
-pub fn validate_userconfig_type(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let f = ".claude-plugin/plugin.json";
-    let val = match &ctx.plugin_json {
-        ManifestState::Parsed(v) => v,
-        _ => return,
-    };
-
-    let user_config = match val.get("userConfig").and_then(|v| v.as_object()) {
-        Some(m) => m,
-        None => return,
-    };
-
-    for key in user_config.keys() {
-        let entry = &user_config[key];
-        match entry.get("type") {
-            Some(t) if t.is_string() && !t.as_str().unwrap_or("").is_empty() => {}
-            _ => {
-                diag.report(
-                    LintRule::UserconfigTypeMissing,
-                    &format!(
-                        "{f} userConfig.{key} missing or invalid type (must be a non-empty string)"
-                    ),
-                );
-            }
-        }
+fn default_matches_type(default: &Value, type_name: &str, multiple: Option<&Value>) -> bool {
+    let multiple = matches!(multiple, Some(Value::Bool(true)));
+    match type_name {
+        "string" => match default {
+            Value::String(_) => true,
+            Value::Array(items) => multiple && items.iter().all(Value::is_string),
+            _ => false,
+        },
+        "number" => is_finite_number(default),
+        "boolean" => default.is_boolean(),
+        "directory" | "file" => default.is_string(),
+        _ => false,
     }
 }
 
-/// V33: userConfig key format
-pub fn validate_userconfig_key_format(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let f = ".claude-plugin/plugin.json";
-    let val = match &ctx.plugin_json {
-        ManifestState::Parsed(v) => v,
-        _ => return,
-    };
-
-    let user_config = match val.get("userConfig").and_then(|v| v.as_object()) {
-        Some(m) => m,
-        None => return,
-    };
-
-    for key in user_config.keys() {
-        if !RE_CONFIG_KEY.is_match(key) {
-            diag.report(
-                LintRule::UserconfigKeyInvalid,
-                &format!("{f} userConfig key '{key}' is not a valid identifier"),
-            );
-        }
+fn is_allowed_default_shape(value: &Value) -> bool {
+    match value {
+        Value::String(_) | Value::Bool(_) => true,
+        Value::Number(_) => is_finite_number(value),
+        Value::Array(items) => items.iter().all(Value::is_string),
+        _ => false,
     }
+}
+
+fn is_finite_number(value: &Value) -> bool {
+    value.as_f64().is_some_and(f64::is_finite)
+}
+
+fn json_pointer_escape(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
+}
+
+fn report(
+    diag: &mut DiagnosticCollector,
+    rule: LintRule,
+    message: &str,
+    evidence: &str,
+    suggestion: &str,
+) {
+    diag.report_with(
+        rule,
+        message,
+        DiagnosticMetadata::default()
+            .with_evidence(evidence)
+            .with_suggestion(suggestion),
+    );
+}
+
+/// ASCII-uppercase environment name for a valid userConfig key.
+#[cfg(test)]
+fn env_option_name(key: &str) -> String {
+    format!("CLAUDE_PLUGIN_OPTION_{}", key.to_ascii_uppercase())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_to_upper_snake_case() {
-        assert_eq!(to_upper_snake_case("slackBotToken"), "SLACK_BOT_TOKEN");
-        assert_eq!(to_upper_snake_case("slack-channel-id"), "SLACK_CHANNEL_ID");
-        assert_eq!(to_upper_snake_case("slack.user.id"), "SLACK_USER_ID");
-        assert_eq!(to_upper_snake_case("simple"), "SIMPLE");
-    }
+    use crate::diagnostic::Severity;
 
     fn make_ctx(plugin: ManifestState) -> LintContext {
         LintContext {
@@ -253,204 +474,313 @@ mod tests {
         }
     }
 
+    fn run(val: Value) -> DiagnosticCollector {
+        let ctx = make_ctx(ManifestState::Parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_user_config(&ctx, &mut diag);
+        diag
+    }
+
+    fn codes(diag: &DiagnosticCollector) -> Vec<&str> {
+        diag.diagnostics().iter().map(|d| d.rule.code()).collect()
+    }
+
+    fn valid_option() -> Value {
+        serde_json::json!({
+            "type": "string",
+            "title": "Token",
+            "description": "Bot token"
+        })
+    }
+
     #[test]
-    fn test_v18_valid_structure() {
-        let val = serde_json::json!({
-            "userConfig": {
-                "slackBotToken": {"description": "Bot token for Slack"}
+    fn env_option_name_is_ascii_uppercase_only() {
+        assert_eq!(
+            env_option_name("slackBotToken"),
+            "CLAUDE_PLUGIN_OPTION_SLACKBOTTOKEN"
+        );
+        assert_eq!(env_option_name("api_key"), "CLAUDE_PLUGIN_OPTION_API_KEY");
+    }
+
+    #[test]
+    fn absent_userconfig_is_silent() {
+        let diag = run(serde_json::json!({"name": "p"}));
+        assert!(diag.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn top_level_non_object_container_is_u001() {
+        let diag = run(serde_json::json!({"userConfig": []}));
+        assert_eq!(codes(&diag), ["U001"]);
+        assert_eq!(
+            diag.diagnostics()[0].evidence.as_deref(),
+            Some("/userConfig")
+        );
+    }
+
+    #[test]
+    fn channel_array_and_object_surfaces_are_validated() {
+        let diag = run(serde_json::json!({
+            "channels": [
+                {"server": "a", "userConfig": "bad"},
+                {
+                    "server": "b",
+                    "userConfig": {
+                        "nested_bad": {
+                            "type": "bogus",
+                            "title": 42,
+                            "description": false,
+                            "sensitive": "yes"
+                        }
+                    }
+                }
+            ]
+        }));
+        let reported = codes(&diag);
+        assert!(reported.contains(&"U001"), "{reported:?}");
+        assert!(reported.contains(&"U006"), "{reported:?}");
+        assert!(reported.contains(&"U005"), "{reported:?}");
+        assert!(reported.contains(&"U002"), "{reported:?}");
+        assert!(reported.contains(&"U004"), "{reported:?}");
+
+        let diag = run(serde_json::json!({
+            "channels": {
+                "alerts": {
+                    "server": "a",
+                    "userConfig": {
+                        "ok": {
+                            "type": "boolean",
+                            "title": "On",
+                            "description": "Enable"
+                        }
+                    }
+                }
             }
-        });
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_structure(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
+        }));
+        assert!(diag.diagnostics().is_empty());
     }
 
     #[test]
-    fn test_v18_missing_description() {
-        let val = serde_json::json!({
+    fn non_object_entry_emits_u008_without_cascading_required_fields() {
+        let diag = run(serde_json::json!({
             "userConfig": {
-                "slackBotToken": {"title": "Token"}
+                "token": "not-an-object"
             }
-        });
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_structure(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("description"));
+        }));
+        assert_eq!(codes(&diag), ["U008"]);
     }
 
     #[test]
-    fn test_v18_no_userconfig_silent() {
-        let val = serde_json::json!({"name": "p", "version": "1.0.0"});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_structure(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_v20_valid_env_mapping() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-
-        std::fs::create_dir_all("scripts").unwrap();
-        std::fs::write(
-            "scripts/run.sh",
-            "#!/bin/bash\necho $CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN\n",
-        )
-        .unwrap();
-
-        let val = serde_json::json!({
+    fn required_fields_and_trim_policy() {
+        let diag = run(serde_json::json!({
             "userConfig": {
-                "slackBotToken": {"description": "token"}
+                "token": {
+                    "type": "string",
+                    "title": "  ",
+                    "description": "\u{00a0}"
+                }
             }
-        });
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_env_mapping(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
+        }));
+        let reported = codes(&diag);
+        assert!(reported.contains(&"U005"), "{reported:?}");
+        assert!(reported.contains(&"U002"), "{reported:?}");
+        assert!(!reported.contains(&"U006"), "{reported:?}");
     }
 
     #[test]
-    #[serial_test::serial]
-    fn test_v20_missing_env_mapping() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
+    fn all_five_types_pass_and_invalid_type_is_u006() {
+        for type_name in VALID_TYPES {
+            let diag = run(serde_json::json!({
+                "userConfig": {
+                    "opt": {
+                        "type": type_name,
+                        "title": "T",
+                        "description": "D"
+                    }
+                }
+            }));
+            assert!(
+                diag.diagnostics().is_empty(),
+                "type {type_name} should pass: {:?}",
+                codes(&diag)
+            );
+        }
 
-        std::fs::create_dir_all("scripts").unwrap();
-        std::fs::write("scripts/run.sh", "#!/bin/bash\necho hello\n").unwrap();
-
-        let val = serde_json::json!({
+        let diag = run(serde_json::json!({
             "userConfig": {
-                "slackBotToken": {"description": "token"}
+                "opt": {"type": "enum", "title": "T", "description": "D"}
             }
-        });
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_env_mapping(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
+        }));
+        assert_eq!(codes(&diag), ["U006"]);
     }
 
     #[test]
-    #[serial_test::serial]
-    fn test_v20_no_scripts_dir_fires_error() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        // No scripts/ directory at all
-
-        let val = serde_json::json!({
-            "userConfig": {
-                "slackBotToken": {"description": "token"}
-            }
-        });
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_env_mapping(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("CLAUDE_PLUGIN_OPTION_SLACK_BOT_TOKEN"));
-    }
-
-    #[test]
-    fn test_v23_valid_sensitive_boolean() {
-        let val = serde_json::json!({"userConfig": {"token": {"sensitive": true}}});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_sensitive_type(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
-    }
-
-    #[test]
-    fn test_v23_invalid_sensitive_string() {
-        let val = serde_json::json!({"userConfig": {"token": {"sensitive": "yes"}}});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_sensitive_type(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("boolean"));
-    }
-
-    #[test]
-    fn test_v24_valid_title() {
-        let val = serde_json::json!({"userConfig": {"token": {"title": "Bot Token"}}});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_title(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
-    }
-
-    #[test]
-    fn test_v24_missing_title() {
-        let val = serde_json::json!({"userConfig": {"token": {"description": "desc"}}});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_title(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("title"));
-    }
-
-    #[test]
-    fn test_v25_valid_type() {
-        let val = serde_json::json!({"userConfig": {"token": {"type": "string"}}});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_type(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
-    }
-
-    #[test]
-    fn test_v25_missing_type() {
-        let val = serde_json::json!({"userConfig": {"token": {"description": "desc"}}});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_type(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("type"));
-    }
-
-    // ── U007: userconfig-key-invalid ────────────────────────────────
-
-    #[test]
-    fn test_u007_valid_keys_pass() {
-        // The shapes to_upper_snake_case already maps to env var names.
-        let val = serde_json::json!({
-            "userConfig": {
-                "slackBotToken": {},
-                "slack-channel-id": {},
-                "slack.user.id": {},
-                "_private": {},
-                "simple": {}
-            }
-        });
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_key_format(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
-    }
-
-    #[test]
-    fn test_u007_invalid_keys_fire() {
-        for key in ["has space", "9lives", "a$b", "", "with/slash"] {
-            let val = serde_json::json!({"userConfig": {key: {}}});
-            let ctx = make_ctx(ManifestState::Parsed(val));
-            let mut diag = DiagnosticCollector::new_all_enabled();
-            validate_userconfig_key_format(&ctx, &mut diag);
-            assert_eq!(diag.error_count(), 1, "expected key '{key}' to be rejected");
-            assert!(diag.errors()[0].contains("not a valid identifier"));
+    fn key_grammar_boundaries() {
+        for key in ["a", "_a", "a0", "slackBotToken", "api_key"] {
+            let diag = run(serde_json::json!({
+                "userConfig": { key: valid_option() }
+            }));
+            assert!(
+                !codes(&diag).contains(&"U007"),
+                "key {key} should be accepted"
+            );
+        }
+        for key in [
+            "9lives",
+            "hyphen-key",
+            "dot.key",
+            "has space",
+            "with/slash",
+            "café",
+            "",
+        ] {
+            let diag = run(serde_json::json!({
+                "userConfig": { key: valid_option() }
+            }));
+            assert!(
+                codes(&diag).contains(&"U007"),
+                "key {key:?} should be rejected"
+            );
+            assert_eq!(diag.diagnostics()[0].severity, Severity::Error);
         }
     }
 
     #[test]
-    fn test_u007_no_userconfig_silent() {
-        let val = serde_json::json!({"name": "p", "version": "1.0.0"});
-        let ctx = make_ctx(ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_userconfig_key_format(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
+    fn u008_unknown_fields_and_shapes() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {
+                    "type": "string",
+                    "title": "T",
+                    "description": "D",
+                    "required": "yes",
+                    "multiple": 1,
+                    "extra": true,
+                    "default": {"nested": true}
+                }
+            }
+        }));
+        let reported = codes(&diag);
+        assert_eq!(reported.iter().filter(|c| **c == "U008").count(), 4);
+    }
+
+    #[test]
+    fn u008_semantic_combinations() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {
+                    "type": "number",
+                    "title": "T",
+                    "description": "D",
+                    "multiple": true,
+                    "min": 5,
+                    "max": 1,
+                    "default": "nope"
+                }
+            }
+        }));
+        let u008 = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule.code() == "U008")
+            .count();
+        assert_eq!(u008, 3, "{:?}", codes(&diag));
+
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {
+                    "type": "string",
+                    "title": "T",
+                    "description": "D",
+                    "multiple": true,
+                    "default": ["a", "b"]
+                }
+            }
+        }));
+        assert!(diag.diagnostics().is_empty(), "{:?}", codes(&diag));
+    }
+
+    #[test]
+    fn invalid_min_shape_does_not_also_emit_type_combination_u008() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {
+                    "type": "string",
+                    "title": "T",
+                    "description": "D",
+                    "min": "1"
+                }
+            }
+        }));
+        assert_eq!(codes(&diag), ["U008"]);
+        assert!(
+            diag.diagnostics()[0]
+                .message
+                .contains("must be a finite JSON number"),
+            "{}",
+            diag.diagnostics()[0].message
+        );
+    }
+
+    #[test]
+    fn type_dependent_semantics_skip_when_type_invalid() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {
+                    "type": "enum",
+                    "title": "T",
+                    "description": "D",
+                    "multiple": true,
+                    "min": 1,
+                    "default": true
+                }
+            }
+        }));
+        assert_eq!(codes(&diag), ["U006"]);
+    }
+
+    #[test]
+    fn never_exposes_default_values_in_diagnostics() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {
+                    "type": "number",
+                    "title": "T",
+                    "description": "D",
+                    "default": "secret-default-value"
+                }
+            }
+        }));
+        let text = format!("{:?}", diag.diagnostics());
+        assert!(!text.contains("secret-default-value"), "{text}");
+    }
+
+    #[test]
+    fn reproduction_manifest_diagnoses_schema_errors() {
+        let diag = run(serde_json::json!({
+            "name": "p",
+            "userConfig": {
+                "hyphen-key": {"type": "enum", "title": "T", "description": "D"}
+            },
+            "channels": [{
+                "server": "slack",
+                "userConfig": {
+                    "nested-bad": {
+                        "type": "bogus",
+                        "title": 42,
+                        "description": false,
+                        "sensitive": "yes"
+                    }
+                }
+            }],
+            "mcpServers": {"slack": {"command": "slack-server"}}
+        }));
+        let reported = codes(&diag);
+        assert!(reported.contains(&"U007"), "{reported:?}");
+        assert!(reported.contains(&"U006"), "{reported:?}");
+        assert!(reported.contains(&"U005"), "{reported:?}");
+        assert!(reported.contains(&"U002"), "{reported:?}");
+        assert!(reported.contains(&"U004"), "{reported:?}");
+        assert!(!reported.contains(&"U003"), "{reported:?}");
     }
 }

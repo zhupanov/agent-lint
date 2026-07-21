@@ -1,0 +1,38 @@
+{
+  "name": "userconfig-broken",
+  "version": "1.0.0",
+  "userConfig": {
+    "hyphen-key": {
+      "type": "enum",
+      "title": "T",
+      "description": "D"
+    }
+  },
+  "channels": [
+    {
+      "server": "slack",
+      "userConfig": {
+        "nested-bad": {
+          "type": "bogus",
+          "title": 42,
+          "description": false,
+          "sensitive": "yes"
+        }
+      }
+    },
+    {
+      "server": "other",
+      "userConfig": {
+        "okKey": "not-an-object"
+      }
+    }
+  ],
+  "mcpServers": {
+    "slack": {
+      "command": "slack-server"
+    },
+    "other": {
+      "command": "other-server"
+    }
+  }
+}

@@ -563,15 +563,22 @@ repository wants its portability policy visible in configuration.
 
 ## User Config Rules (U)
 
+Top-level `.claude-plugin/plugin.json#userConfig` and every
+`channels[].userConfig` / `channels.<name>.userConfig` share the same schema.
+Title and description require a non-empty string after Unicode trimming; that
+usability check is intentionally stricter than the upstream JSON schema.
+U003 (`userconfig-env-missing`) was removed: agent-lint does not infer option
+use from repository text.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| U001 | `userconfig-not-object` | `userConfig` in `.claude/settings.json` must be an object | Plugin | error |
-| U002 | `userconfig-desc-missing` | `userConfig` entry missing or invalid description | Plugin | error |
-| U003 | `userconfig-env-missing` | `userConfig` key has no corresponding env var reference in `scripts/` | Plugin | error |
-| U004 | `userconfig-sensitive-type` | `userConfig` `sensitive` field must be a boolean | Plugin | error |
-| U005 | `userconfig-title-missing` | `userConfig` entry missing or invalid title | Plugin | error |
-| U006 | `userconfig-type-missing` | `userConfig` entry missing or invalid type | Plugin | error |
-| U007 | `userconfig-key-invalid` | `userConfig` key is not a valid identifier (letters, digits, `_`, `-`, `.`; must start with a letter or `_`) | Plugin | warn |
+| U001 | `userconfig-not-object` | Present `userConfig` container in `.claude-plugin/plugin.json` (top-level or channel) is not an object | Plugin | error |
+| U002 | `userconfig-desc-missing` | `userConfig` entry missing, non-string, empty, or whitespace-only description | Plugin | error |
+| U004 | `userconfig-sensitive-type` | Present `userConfig` `sensitive` value is not a boolean | Plugin | error |
+| U005 | `userconfig-title-missing` | `userConfig` entry missing, non-string, empty, or whitespace-only title | Plugin | error |
+| U006 | `userconfig-type-missing` | `userConfig` entry missing or invalid `type` (must be `string`, `number`, `boolean`, `directory`, or `file`) | Plugin | error |
+| U007 | `userconfig-key-invalid` | `userConfig` key is not a valid identifier (`^[A-Za-z_][A-Za-z0-9_]*$`) | Plugin | error |
+| U008 | `userconfig-option-invalid` | `userConfig` option entry is not an object, has an unknown field, or has an invalid optional/semantic field shape | Plugin | error |
 
 ## MCP Configuration Rules (P)
 

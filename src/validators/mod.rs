@@ -153,34 +153,18 @@ fn run_plugin(
     agents::validate_agent_template_alignment(diag, exclude);
     // V17: email format
     email::validate_email_format(ctx, diag);
-    // V18: userConfig structure
+    // V18/V23–V25/V33/U008: userConfig schema (top-level and channels)
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        user_config::validate_userconfig_structure(ctx, diag);
+        user_config::validate_user_config(ctx, diag);
     });
     // V19: Slack fallback consistency (larch-specific convention)
     diag.with_subject_path(".claude-plugin/marketplace.json", |diag| {
         slack::validate_slack_fallback_consistency(diag, exclude);
     });
-    // V20: userConfig→env mapping
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        user_config::validate_userconfig_env_mapping(ctx, diag);
-    });
     // V21: agent-template count
     agents::validate_agent_template_count(diag, exclude);
     // V22: docs file references
     docs::validate_docs_references(diag, exclude);
-    // V23: userConfig sensitive type
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        user_config::validate_userconfig_sensitive_type(ctx, diag);
-    });
-    // V24: userConfig title field
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        user_config::validate_userconfig_title(ctx, diag);
-    });
-    // V25: userConfig type field
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        user_config::validate_userconfig_type(ctx, diag);
-    });
     // V29: component path safety and layout
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
         manifest::validate_component_paths(ctx, diag);
@@ -196,10 +180,6 @@ fn run_plugin(
     // V32: plugin.json channels entries
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
         manifest::validate_channels(ctx, diag);
-    });
-    // V33: userConfig key format
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        user_config::validate_userconfig_key_format(ctx, diag);
     });
     // Original skill content checks (S009-S057, including plugin-only rules)
     skill_content::validate_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);

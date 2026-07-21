@@ -1,0 +1,61 @@
+{
+  "name": "userconfig-clean",
+  "version": "1.0.0",
+  "userConfig": {
+    "apiToken": {
+      "type": "string",
+      "title": "API token",
+      "description": "Token used by the MCP server",
+      "sensitive": true
+    },
+    "retry_limit": {
+      "type": "number",
+      "title": "Retry limit",
+      "description": "Maximum retries",
+      "min": 0,
+      "max": 10,
+      "default": 3
+    },
+    "workspace": {
+      "type": "directory",
+      "title": "Workspace",
+      "description": "Working directory",
+      "required": true
+    },
+    "configFile": {
+      "type": "file",
+      "title": "Config file",
+      "description": "Optional config path"
+    },
+    "enabled": {
+      "type": "boolean",
+      "title": "Enabled",
+      "description": "Turn the integration on",
+      "default": true
+    },
+    "tags": {
+      "type": "string",
+      "title": "Tags",
+      "description": "One or more tags",
+      "multiple": true,
+      "default": ["alpha", "beta"]
+    }
+  },
+  "channels": [
+    {
+      "server": "slack",
+      "userConfig": {
+        "channelId": {
+          "type": "string",
+          "title": "Channel",
+          "description": "Slack channel id"
+        }
+      }
+    }
+  ],
+  "mcpServers": {
+    "slack": {
+      "command": "slack-server"
+    }
+  }
+}

@@ -4,7 +4,7 @@
 
 | Input | Description | Default |
 |-------|-------------|---------|
-| `version` | Version of agent-lint (e.g., `version: "3.0.1"`) | Latest release |
+| `version` | Version of agent-lint (e.g., `version: "4.0.0"`) | Latest release |
 | `path` | Path to the repository to lint | `"."` |
 | `github-token` | GitHub token for resolving latest version | `""` (see below) |
 | `pedantic` | Enable pedantic mode (promote warnings to errors, except too-long) | `"false"` |
@@ -17,7 +17,7 @@
 The `github-token` input is **optional** and has a narrow purpose: it is
 used solely to call the GitHub API to resolve the latest release version
 when no explicit `version` is provided. If you pin `version` (e.g.,
-`version: "3.0.1"`), no API call is made and the token is never used.
+`version: "4.0.0"`), no API call is made and the token is never used.
 
 **When omitted**, the action automatically falls back to the built-in
 `github.token` that GitHub provides to every workflow run. You do not need
@@ -35,14 +35,14 @@ GitHub App token with restricted permissions, and the default
 
 ```yaml
 # Minimal -- version resolved via API, token handled automatically:
-- uses: zhupanov/agent-lint@v3
+- uses: zhupanov/agent-lint@v4
   with:
     path: "."
 
 # Explicit version -- no token needed at all:
-- uses: zhupanov/agent-lint@v3
+- uses: zhupanov/agent-lint@v4
   with:
-    version: "3.0.1"
+    version: "4.0.0"
 ```
 
 ## Add CI to Your Repo
@@ -52,11 +52,11 @@ Give this prompt to Claude running in your repository:
 > **Add a GitHub Actions CI job called `agent-lint` that runs on pull requests
 > to `main`. The job should use `ubuntu-latest`, have a 5-minute timeout,
 > check out the repo with `actions/checkout@v4`, and then run
-> `zhupanov/agent-lint@v3` with `path: "."` and `version: "3.0.1"`. Add it
+> `zhupanov/agent-lint@v4` with `path: "."` and `version: "4.0.0"`. Add it
 > to the existing CI workflow if one exists, otherwise create
 > `.github/workflows/ci.yaml` with `permissions: contents: read`.**
 >
-> **Pin to an exact version** (e.g., `version: "3.0.1"`) to protect your
+> **Pin to an exact version** (e.g., `version: "4.0.0"`) to protect your
 > CI from breaking changes. agent-lint is under active development and
 > minor/patch releases may change lint behavior.
 
@@ -68,8 +68,8 @@ The resulting job should look like:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - uses: zhupanov/agent-lint@v3
+      - uses: zhupanov/agent-lint@v4
         with:
-          version: "3.0.1"
+          version: "4.0.0"
           path: "."
 ```

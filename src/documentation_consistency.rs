@@ -1,8 +1,6 @@
 use crate::rules::ALL_RULES;
 use regex::Regex;
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
 
 const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 const PACKAGE_MANIFEST: &str = include_str!("../package.json");
@@ -21,33 +19,13 @@ const RELEASE_EXAMPLE_DOCUMENTS: &[(&str, &str)] = &[
 ];
 
 fn release_example_files() -> Result<Vec<(String, String)>, String> {
+    // Documentation examples must track the package version and floating major.
+    // CI workflow e2e pins intentionally stay on the latest *published* release
+    // so they keep downloading during unreleased major bumps.
     let mut files: Vec<_> = RELEASE_EXAMPLE_DOCUMENTS
         .iter()
         .map(|(path, contents)| ((*path).to_owned(), (*contents).to_owned()))
         .collect();
-    let workflows = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
-    let entries = fs::read_dir(&workflows)
-        .map_err(|error| format!("cannot read {}: {error}", workflows.display()))?;
-
-    for entry in entries {
-        let path = entry
-            .map_err(|error| format!("cannot read workflow entry: {error}"))?
-            .path();
-        if !matches!(
-            path.extension().and_then(|extension| extension.to_str()),
-            Some("yml" | "yaml")
-        ) {
-            continue;
-        }
-        let contents = fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-        let relative = path
-            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-            .unwrap_or(&path)
-            .display()
-            .to_string();
-        files.push((relative, contents));
-    }
     files.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(files)
 }

@@ -2073,3 +2073,156 @@ fn hooks_json_non_collection_values_are_h003_not_h007() {
         assert_eq!(diagnostics[0]["subject_path"], "hooks/hooks.json");
     }
 }
+
+#[test]
+fn userconfig_rules_cover_modes_focus_suppression_and_exclude_boundary() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{
+          "name": "p",
+          "userConfig": {
+            "hyphen-key": {"type": "enum", "title": "T", "description": "D"},
+            "token": {"type": "string", "title": "Token", "description": "Desc", "extra": true}
+          },
+          "channels": [{
+            "server": "slack",
+            "userConfig": {
+              "nested_bad": {
+                "type": "bogus",
+                "title": 42,
+                "description": false,
+                "sensitive": "yes"
+              }
+            }
+          }],
+          "mcpServers": {"slack": {"command": "slack-server"}}
+        }"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("scripts")).unwrap();
+    std::fs::write(
+        tmp.path().join("scripts/unused.sh"),
+        "# CLAUDE_PLUGIN_OPTION_TOKEN\necho hi\n",
+    )
+    .unwrap();
+
+    let only = "U001,U002,U004,U005,U006,U007,U008";
+
+    let basic_tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(basic_tmp.path().join(".claude")).unwrap();
+    std::fs::write(basic_tmp.path().join(".claude/settings.json"), "{}").unwrap();
+    let basic = run_in(basic_tmp.path(), &["--format", "json", "--only", only, "."]);
+    assert!(basic.status.success(), "stderr: {}", stderr(&basic));
+    assert_eq!(json(&basic)["diagnostics"], serde_json::json!([]));
+
+    let normal = run_in(tmp.path(), &["--format", "json", "--only", only, "."]);
+    assert_eq!(normal.status.code(), Some(1), "stderr: {}", stderr(&normal));
+    let diagnostics = json(&normal)["diagnostics"].as_array().unwrap().clone();
+    assert!(!diagnostics.is_empty(), "{diagnostics:#?}");
+    for diagnostic in &diagnostics {
+        assert_eq!(diagnostic["subject_path"], ".claude-plugin/plugin.json");
+        assert!(diagnostic["evidence"].is_string(), "{diagnostic:#}");
+        assert!(diagnostic["suggestion"].is_string(), "{diagnostic:#}");
+        assert_ne!(diagnostic["code"], "U003");
+    }
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|d| d["code"].as_str().unwrap())
+        .collect();
+    for required in ["U002", "U004", "U005", "U006", "U007", "U008"] {
+        assert!(codes.contains(&required), "missing {required}: {codes:?}");
+    }
+
+    let focused = run_in(tmp.path(), &["--format", "json", "--only", "U007", "."]);
+    let focused_report = json(&focused);
+    let focused_codes: Vec<_> = focused_report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["code"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(focused_codes, vec!["U007".to_string()]);
+
+    let pedantic = run_in(
+        tmp.path(),
+        &["--format", "json", "--pedantic", "--only", only, "."],
+    );
+    assert_eq!(pedantic.status.code(), Some(1));
+    assert!(
+        !json(&pedantic)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"U007\", \"U006\", \"U005\", \"U002\", \"U004\", \"U008\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--format", "json", "--only", only, "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert_eq!(json(&suppressed)["diagnostics"], serde_json::json!([]));
+    assert!(json(&suppressed)["counts"]["suppressed"].as_u64().unwrap() >= 1);
+
+    let all_mode = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", only, "."],
+    );
+    assert_eq!(all_mode.status.code(), Some(1));
+    assert!(
+        !json(&all_mode)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".claude-plugin/plugin.json\"]\nsuppress = [\"U007\", \"U006\", \"U005\", \"U002\", \"U004\", \"U008\"]\n",
+    )
+    .unwrap();
+    let per_file = run_in(tmp.path(), &["--format", "json", "--only", only, "."]);
+    assert!(per_file.status.success(), "stderr: {}", stderr(&per_file));
+    assert_eq!(json(&per_file)["diagnostics"], serde_json::json!([]));
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\".claude-plugin/plugin.json\"]\n",
+    )
+    .unwrap();
+    let excluded = run_in(tmp.path(), &["--format", "json", "--only", only, "."]);
+    assert_eq!(
+        excluded.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&excluded)
+    );
+    assert!(
+        !json(&excluded)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "fixed-path userConfig rules must ignore [lint].exclude"
+    );
+
+    std::fs::write(tmp.path().join(".claude-plugin/plugin.json"), "{").unwrap();
+    let malformed = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M002,U006", "."],
+    );
+    let malformed_report = json(&malformed);
+    let malformed_codes: Vec<_> = malformed_report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(malformed_codes, vec!["M002"]);
+}

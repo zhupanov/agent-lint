@@ -1,0 +1,19 @@
+{
+  "name": "userconfig-hard-negative",
+  "version": "1.0.0",
+  "userConfig": {
+    "mcpOnlyToken": {
+      "type": "string",
+      "title": "MCP token",
+      "description": "Consumed only via MCP substitution, never in scripts/"
+    }
+  },
+  "mcpServers": {
+    "demo": {
+      "command": "demo-server",
+      "env": {
+        "TOKEN": "${user_config.mcpOnlyToken}"
+      }
+    }
+  }
+}
