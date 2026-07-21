@@ -54,6 +54,7 @@ fn run_basic(
     exclude: &ExcludeSet,
     targets: ValidationTargets,
 ) {
+    let mut prompt_pass = prompt_content::PromptContentPass::default();
     // V4: settings.json hook paths
     hooks::validate_settings_hooks(ctx, diag);
     // V27: settings.json hook schema
@@ -68,12 +69,12 @@ fn run_basic(
     // V10-adapted: executability for .claude/skills/*/scripts/*.sh
     hygiene::validate_private_executability(diag, exclude);
     // Skill content checks (both-mode subset: excludes S016, S017, S029, S033)
-    skill_content::validate_private_skill_content(diag, exclude);
+    skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
-    agents::validate_private_agents(diag, exclude);
+    agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
     claude_config::validate_private_config(diag, exclude);
-    validate_optional_surfaces(diag, exclude, targets);
-    prompt_content::validate_claude_md(diag, exclude);
+    validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
+    prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // X002–X005: CLAUDE.md structure (when present)
     docs::validate_claudemd_structure(diag, exclude);
     // Shared prompt/reference/script contracts for private configuration and
@@ -88,15 +89,16 @@ fn run_plugin(
     exclude: &ExcludeSet,
     targets: ValidationTargets,
 ) {
+    let mut prompt_pass = prompt_content::PromptContentPass::default();
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag, exclude);
     hygiene::validate_private_script_references(diag, exclude);
     hygiene::validate_private_executability(diag, exclude);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
-    agents::validate_private_agents(diag, exclude);
+    agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
     claude_config::validate_private_config(diag, exclude);
-    validate_optional_surfaces(diag, exclude, targets);
-    prompt_content::validate_claude_md(diag, exclude);
+    validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
+    prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
 
     // V1: plugin.json
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
@@ -122,7 +124,7 @@ fn run_plugin(
     // V6: SKILL.md frontmatter (public)
     skills::validate_skill_frontmatter(diag, exclude);
     // V7: agents frontmatter
-    agents::validate_agents(diag, exclude);
+    agents::validate_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // V8: PWD hygiene
     hygiene::validate_pwd_hygiene(diag, exclude);
     // V9: script reference integrity
@@ -196,9 +198,9 @@ fn run_plugin(
         user_config::validate_userconfig_key_format(ctx, diag);
     });
     // Original skill content checks (S009-S057, including plugin-only rules)
-    skill_content::validate_skill_content(diag, exclude);
+    skill_content::validate_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // Private skill content checks (both-mode subset)
-    skill_content::validate_private_skill_content(diag, exclude);
+    skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // D002: CLAUDE.md size
     docs::validate_claudemd_size(diag, exclude);
     // D003: TODO/FIXME in CLAUDE.md
@@ -217,9 +219,15 @@ fn validate_optional_surfaces(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     targets: ValidationTargets,
+    prompt_pass: &mut prompt_content::PromptContentPass,
 ) {
     if targets.agents_md {
-        instruction_files::validate_agents_files(diag, exclude, targets.codex);
+        instruction_files::validate_agents_files_with_prompt_pass(
+            diag,
+            exclude,
+            targets.codex,
+            prompt_pass,
+        );
     }
     if targets.agent_skills {
         skills::validate_agent_skill_frontmatter(diag, exclude);
@@ -231,7 +239,7 @@ fn validate_optional_surfaces(
         codex_surfaces::validate(diag, exclude);
     }
     if targets.cursor {
-        cursor::validate(diag, exclude);
+        cursor::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
 }
 

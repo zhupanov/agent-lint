@@ -10,8 +10,10 @@ pub(crate) mod security;
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
+use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::validators::skills::{SkillInfo, collect_skills};
 use regex::Regex;
+use std::path::Path;
 use std::sync::LazyLock;
 
 // S022/S043: Backslash paths — shared between body.rs and frontmatter_extended.rs
@@ -48,10 +50,20 @@ pub(crate) const KNOWN_SKILL_FRONTMATTER_FIELDS: &[&str] = &[
 pub(crate) const OPTIONAL_NONEMPTY_SCALAR_FIELDS: &[&str] = &["argument-hint", "allowed-tools"];
 
 /// Validate skill content for public skills (skills/). Runs S009-S057 and S063-S071 rules.
+#[cfg(test)]
 pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let mut prompt_pass = super::prompt_content::PromptContentPass::default();
+    validate_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
+}
+
+pub(crate) fn validate_skill_content_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let skills = collect_skills("skills", exclude);
     for info in &skills {
-        run_content_checks(info, true, diag, exclude);
+        run_content_checks(info, true, diag, exclude, prompt_pass);
     }
     // Cross-skill checks (plugin-only: S029, S036; both-mode: S030, S048)
     cross_skill::validate_nested_references("skills", &skills, diag);
@@ -62,10 +74,20 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 
 /// Validate skill content for private skills (.claude/skills/).
 /// Runs only "both-mode" rules (excludes S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056, S057).
+#[cfg(test)]
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let mut prompt_pass = super::prompt_content::PromptContentPass::default();
+    validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
+}
+
+pub(crate) fn validate_private_skill_content_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let skills = collect_skills(".claude/skills", exclude);
     for info in &skills {
-        run_content_checks(info, false, diag, exclude);
+        run_content_checks(info, false, diag, exclude, prompt_pass);
     }
     cross_skill::validate_orphaned_skill_files(".claude/skills", diag, exclude);
     cross_skill::validate_generic_ref_names(".claude/skills", diag, exclude);
@@ -76,12 +98,18 @@ fn run_content_checks(
     plugin_mode: bool,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
     diag.with_subject_path(&info.path, |diag| {
         name::check_name_format(info, plugin_mode, diag);
         description::check_description_quality(info, plugin_mode, diag);
         body::check_body_content(info, plugin_mode, diag, exclude);
-        super::prompt_content::validate_document_body(&info.path, &info.document, diag);
+        let prompt_document = LiveInstructionDocument::new(
+            Path::new(&info.path),
+            InstructionSurfaceKind::Skill,
+            &info.document,
+        );
+        prompt_pass.validate(&prompt_document, diag);
         frontmatter_fields::check_frontmatter_fields(info, diag);
         frontmatter_extended::check_frontmatter_extended(info, diag);
         cross_field::check_cross_field(info, plugin_mode, diag);

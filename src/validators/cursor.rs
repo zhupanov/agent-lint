@@ -11,6 +11,8 @@ use serde_json::{Value as JsonValue, json};
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
+use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::yaml::{Mapping, Value as YamlValue};
@@ -83,9 +85,19 @@ static CURSOR_ENVIRONMENT_VALIDATOR: LazyLock<jsonschema::Validator> = LazyLock:
 
 /// Validate Cursor surfaces when they are present. Every validator is
 /// file-gated, so Claude-only repositories receive no Cursor diagnostics.
+#[cfg(test)]
 pub fn validate(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_legacy_rules(diag, exclude);
-    validate_project_rules(diag, exclude);
+    let mut prompt_pass = super::prompt_content::PromptContentPass::default();
+    validate_with_prompt_pass(diag, exclude, &mut prompt_pass);
+}
+
+pub(crate) fn validate_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
+    validate_legacy_rules(diag, exclude, prompt_pass);
+    validate_project_rules(diag, exclude, prompt_pass);
     validate_hooks(diag, exclude);
     validate_agents(diag, exclude);
     validate_environment(diag, exclude);
@@ -100,7 +112,11 @@ fn yaml_string<'a>(map: &'a Mapping, name: &str) -> Option<&'a str> {
     map.get(name).and_then(YamlValue::as_str)
 }
 
-fn validate_legacy_rules(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn validate_legacy_rules(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     const PATH: &str = ".cursorrules";
     if exclude.is_excluded(PATH) || !Path::new(PATH).is_file() {
         return;
@@ -111,33 +127,62 @@ fn validate_legacy_rules(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         PATH,
         "legacy .cursorrules file is present; migrate to .cursor/rules/*.mdc",
     );
-    if fs::read_to_string(PATH).is_ok_and(|content| content.trim().is_empty()) {
-        report(
-            diag,
-            LintRule::CursorRuleEmpty,
-            PATH,
-            "rule file has no instructions",
+    if let Ok(content) = fs::read_to_string(PATH) {
+        if content.trim().is_empty() {
+            report(
+                diag,
+                LintRule::CursorRuleEmpty,
+                PATH,
+                "rule file has no instructions",
+            );
+        }
+        let markdown = MarkdownDocument::parse_body(&content);
+        let document = LiveInstructionDocument::new(
+            Path::new(PATH),
+            InstructionSurfaceKind::CursorLegacyRule,
+            &markdown,
         );
+        prompt_pass.validate(&document, diag);
     }
 }
 
-fn validate_project_rules(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn validate_project_rules(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let root = Path::new(".cursor/rules");
     if !root.is_dir() {
         return;
     }
     for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
-        if entry.path.extension().is_none_or(|ext| ext != "mdc") {
+        let extension = entry.path.extension().and_then(|ext| ext.to_str());
+        if !matches!(extension, Some("md" | "mdc")) {
             continue;
         }
         let path = entry.display;
         if let Ok(content) = fs::read_to_string(&entry.path) {
-            validate_rule_file(diag, &path, &content);
+            if extension == Some("mdc") {
+                validate_rule_file(diag, &path, &content, prompt_pass);
+            } else {
+                let markdown = MarkdownDocument::parse_body(&content);
+                let document = LiveInstructionDocument::new(
+                    Path::new(&path),
+                    InstructionSurfaceKind::CursorRule,
+                    &markdown,
+                );
+                prompt_pass.validate(&document, diag);
+            }
         }
     }
 }
 
-fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str) {
+fn validate_rule_file(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     if content.trim().is_empty() {
         report(
             diag,
@@ -264,6 +309,13 @@ fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str)
             "agent-requested rule needs a non-empty 'description'",
         );
     }
+    let markdown = MarkdownDocument::parse(content);
+    let document = LiveInstructionDocument::new(
+        Path::new(path),
+        InstructionSurfaceKind::CursorRule,
+        &markdown,
+    );
+    prompt_pass.validate(&document, diag);
 }
 
 fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
