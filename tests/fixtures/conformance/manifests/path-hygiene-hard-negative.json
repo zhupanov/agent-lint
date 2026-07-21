@@ -1,0 +1,16 @@
+{
+  "class": "hard-negative",
+  "repository": "path-hygiene-hard-negative",
+  "covers": ["plugin-mode", "normal", "json", "path-hygiene"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "G001,G012", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "G012", "name": "hardcoded-machine-path", "severity": "warning", "subject_path": "skills/path-hygiene/SKILL.md" },
+    { "code": "G012", "name": "hardcoded-machine-path", "severity": "warning", "subject_path": "skills/path-hygiene/SKILL.md" },
+    { "code": "G012", "name": "hardcoded-machine-path", "severity": "warning", "subject_path": "skills/path-hygiene/SKILL.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

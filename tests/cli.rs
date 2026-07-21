@@ -65,6 +65,113 @@ fn init_git(path: &std::path::Path) {
     );
 }
 
+fn write_public_path_hygiene_fixture(root: &std::path::Path) -> std::path::PathBuf {
+    init_git(root);
+    let plugin = root.join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+    std::fs::write(
+        plugin,
+        r#"{"name":"path-hygiene","version":"1.0.0","description":"Fixture"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("scripts")).unwrap();
+    std::fs::write(root.join("scripts/check.sh"), "#!/bin/sh\n").unwrap();
+    let skill = root.join("skills/path-hygiene/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill,
+        "---\nname: path-hygiene\ndescription: Exercise plugin path hygiene behavior\n---\nRun $PWD/scripts/check.sh.\nRead $PWD/package.json from the project.\n",
+    )
+    .unwrap();
+    skill
+}
+
+#[test]
+fn path_hygiene_preserves_rule_severity_location_and_focused_autofix_contract() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill = write_public_path_hygiene_fixture(tmp.path());
+
+    for (arguments, severity, exit_code) in [
+        (
+            vec!["--format", "json", "--only", "G012", "."],
+            "warning",
+            0,
+        ),
+        (
+            vec!["--format", "json", "--pedantic", "--only", "G012", "."],
+            "error",
+            1,
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "G012", "."],
+            "error",
+            1,
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "stderr: {}",
+            stderr(&output)
+        );
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic["code"], "G012");
+        assert_eq!(diagnostic["severity"], severity);
+        assert_eq!(diagnostic["subject_path"], "skills/path-hygiene/SKILL.md");
+        assert_eq!(diagnostic["location"]["start"]["line"], 6);
+        assert_eq!(diagnostic["location"]["start"]["column"], 6);
+        assert_eq!(diagnostic["evidence"], "$PWD/package.json");
+        assert!(
+            diagnostic["suggestion"]
+                .as_str()
+                .unwrap()
+                .contains("CLAUDE_PROJECT_DIR")
+        );
+    }
+
+    let first = run_in(tmp.path(), &["--autofix", "--only", "G001", "."]);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let fixed = std::fs::read_to_string(&skill).unwrap();
+    assert!(fixed.contains("${CLAUDE_PLUGIN_ROOT}/scripts/check.sh"));
+    assert!(fixed.contains("$PWD/package.json"));
+
+    let second = run_in(tmp.path(), &["--autofix", "--only", "G001", "."]);
+    assert!(second.status.success(), "stderr: {}", stderr(&second));
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), fixed);
+}
+
+#[test]
+fn path_hygiene_autofix_respects_per_file_suppression_and_exclusion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let skill = write_public_path_hygiene_fixture(tmp.path());
+    let original = std::fs::read_to_string(&skill).unwrap();
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"skills/path-hygiene/SKILL.md\"]\nsuppress = [\"G001\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--autofix", "--only", "G001", "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), original);
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\"skills/path-hygiene/**\"]\n",
+    )
+    .unwrap();
+    let excluded = run_in(tmp.path(), &["--autofix", "--only", "G001", "."]);
+    assert!(excluded.status.success(), "stderr: {}", stderr(&excluded));
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), original);
+}
+
 #[test]
 fn mcp_remote_transport_contract_has_exact_json_diagnostics_in_normal_and_all_modes() {
     let tmp = tempfile::tempdir().unwrap();

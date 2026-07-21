@@ -1,0 +1,17 @@
+{
+  "class": "broken",
+  "repository": "path-hygiene-broken",
+  "covers": ["plugin-mode", "normal", "json", "autofix", "path-hygiene"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--autofix", "--only", "G001,G012", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "G012", "name": "hardcoded-machine-path", "severity": "warning", "subject_path": "skills/path-hygiene/SKILL.md" }
+  ],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    { "path": "skills/path-hygiene/SKILL.md", "contents": "---\nname: path-hygiene\ndescription: Exercise conservative plugin path autofix behavior\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh.\nRead $PWD/package.json from the project.\n" }
+  ]
+}

@@ -80,7 +80,61 @@ mod tests {
         let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
         validate_pwd_hygiene(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("hardcoded path"));
+        assert_eq!(
+            diag.diagnostics()[0].rule,
+            crate::rules::LintRule::HardcodedMachinePath
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_v8_reports_rule_specific_location_evidence_and_suggestion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/check.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\n---\nRun $PWD/scripts/check.sh.\nRead $PWD/package.json.\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_pwd_hygiene(&mut diag, &crate::config::ExcludeSet::default());
+
+        assert_eq!(diag.diagnostics().len(), 2);
+        let bundled = &diag.diagnostics()[0];
+        assert_eq!(bundled.rule, crate::rules::LintRule::PwdInSkill);
+        assert_eq!(
+            bundled.subject_path.as_deref(),
+            Some(std::path::Path::new("skills/my-skill/SKILL.md"))
+        );
+        assert_eq!(bundled.location.unwrap().start().line_number(), 4);
+        assert_eq!(bundled.location.unwrap().start().column_number(), Some(5));
+        assert_eq!(bundled.evidence.as_deref(), Some("$PWD/scripts/check.sh"));
+        assert!(
+            bundled
+                .suggestion
+                .as_deref()
+                .unwrap()
+                .contains("CLAUDE_PLUGIN_ROOT")
+        );
+
+        let ambiguous = &diag.diagnostics()[1];
+        assert_eq!(ambiguous.rule, crate::rules::LintRule::HardcodedMachinePath);
+        assert_eq!(ambiguous.location.unwrap().start().line_number(), 5);
+        assert_eq!(ambiguous.location.unwrap().start().column_number(), Some(6));
+        assert_eq!(ambiguous.evidence.as_deref(), Some("$PWD/package.json"));
+        assert!(
+            ambiguous
+                .suggestion
+                .as_deref()
+                .unwrap()
+                .contains("CLAUDE_PROJECT_DIR")
+        );
     }
 
     // V10: validate_executability

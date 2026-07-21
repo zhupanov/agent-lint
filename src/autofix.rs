@@ -3,6 +3,7 @@ use crate::context::LintMode;
 use crate::fence::CodeFenceTracker;
 use crate::frontmatter;
 use crate::hook_commands::extract_hook_command_paths;
+use crate::pwd_hygiene::replace_bundled_asset_prefixes;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::skills::collect_skills;
@@ -865,15 +866,16 @@ fn fix_pwd_in_skill(exclude: &ExcludeSet, config: &LintConfig) -> bool {
             Err(_) => continue,
         };
 
-        // Replace $PWD/ and ${PWD}/ with ${CLAUDE_PLUGIN_ROOT}/
-        let new_content = content
-            .replace("$PWD/", "${CLAUDE_PLUGIN_ROOT}/")
-            .replace("${PWD}/", "${CLAUDE_PLUGIN_ROOT}/");
+        let Some(new_content) = replace_bundled_asset_prefixes(&content) else {
+            continue;
+        };
 
         if new_content != content && fs::write(&skill_md, &new_content).is_ok() {
             log_fix(
                 LintRule::PwdInSkill,
-                &format!("{skill_path}: replaced $PWD/ with ${{CLAUDE_PLUGIN_ROOT}}/"),
+                &format!(
+                    "{skill_path}: replaced bundled-asset PWD prefix with ${{CLAUDE_PLUGIN_ROOT}}/"
+                ),
             );
             fixed = true;
         }

@@ -789,7 +789,7 @@ pub enum LintRule {
     CursorSkillFieldUnsupported,
 
     // ── Hygiene / Scripts (G) ─────────────────────────────────────
-    /// G001: SKILL.md uses $PWD/ or hardcoded path instead of ${CLAUDE_PLUGIN_ROOT}/
+    /// G001: bundled plugin asset uses $PWD instead of ${CLAUDE_PLUGIN_ROOT}
     #[strum(props(code = "G001", name = "pwd-in-skill"))]
     PwdInSkill,
     /// G002: script reference missing on disk
@@ -823,6 +823,9 @@ pub enum LintRule {
     /// G011: dynamic awk regex contains non-ASCII text
     #[strum(props(code = "G011", name = "awk-regex-nonascii"))]
     AwkRegexNonascii,
+    /// G012: skill contains a machine-specific or ambiguous runtime path
+    #[strum(props(code = "G012", name = "hardcoded-machine-path"))]
+    HardcodedMachinePath,
 
     // ── Email (E) ─────────────────────────────────────────────────
     /// E001: email address does not meet the contact-metadata quality convention
@@ -1100,6 +1103,7 @@ impl LintRule {
 
             // ── Default-warning: link/import integrity ───────────────
             Self::DuplicateImport | Self::BrokenMarkdownLink |
+            Self::HardcodedMachinePath |
             Self::NpmScriptMissing
                 => DefaultSeverity::Warning,
 
@@ -1235,7 +1239,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            294,
+            295,
             "every enum variant must be registered"
         );
     }
@@ -1398,8 +1402,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            123,
-            "Expected 123 default-warning rules, got {}",
+            124,
+            "Expected 124 default-warning rules, got {}",
             warnings.len()
         );
     }
