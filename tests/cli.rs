@@ -740,6 +740,50 @@ suppress = ["M001"]
 }
 
 #[test]
+fn agent_stop_missing_respects_strictness_only_and_per_file_suppression() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude/agents")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews changes and makes targeted repairs when needed\ntools: Bash\n---\nInvestigate the failure and implement a repair.\n",
+    )
+    .unwrap();
+
+    let normal = run_in(tmp.path(), &["--only", "A029", "."]);
+    let normal_stderr = stderr(&normal);
+    assert!(normal.status.success(), "stderr: {normal_stderr}");
+    assert!(normal_stderr.contains("warning[A029/agent-stop-missing]"));
+
+    for strictness in ["--pedantic", "--all"] {
+        let output = run_in(tmp.path(), &[strictness, "--only", "A029", "."]);
+        let output_stderr = stderr(&output);
+        assert_eq!(output.status.code(), Some(1), "stderr: {output_stderr}");
+        assert!(output_stderr.contains("error[A029/agent-stop-missing]"));
+    }
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = [".claude/agents/reviewer.md"]
+suppress = ["agent-stop-missing"]
+"#,
+    )
+    .unwrap();
+    for args in [
+        vec!["--only", "A029", "."],
+        vec!["--pedantic", "--only", "A029", "."],
+    ] {
+        let output = run_in(tmp.path(), &args);
+        let output_stderr = stderr(&output);
+        assert!(output.status.success(), "stderr: {output_stderr}");
+        assert!(!output_stderr.contains("A029/agent-stop-missing"));
+        assert!(output_stderr.contains("(1 suppressed)"));
+    }
+}
+
+#[test]
 fn only_excludes_unselected_rules_from_suppressed_and_unused_counts() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
