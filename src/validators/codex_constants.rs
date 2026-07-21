@@ -1,20 +1,23 @@
-//! Codex configuration allowlists, verified against the live schema on 2026-07-16.
+//! Codex configuration allowlists, rechecked with codex-cli 0.144.6 on 2026-07-21.
 //!
 //! Keep these values together so schema updates are a localized maintenance change.
 
-pub const APPROVAL_POLICIES: &[&str] = &["untrusted", "on-request", "never"];
+pub const APPROVAL_POLICIES: &[&str] = &["untrusted", "on-request", "on-failure", "never"];
 pub const SANDBOX_MODES: &[&str] = &["read-only", "workspace-write", "danger-full-access"];
-pub const REASONING_EFFORTS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh"];
 pub const VERBOSITIES: &[&str] = &["low", "medium", "high"];
 pub const PERSONALITIES: &[&str] = &["none", "friendly", "pragmatic"];
 pub const CREDENTIAL_STORES: &[&str] = &["file", "keyring", "auto", "ephemeral"];
 pub const MCP_CREDENTIAL_STORES: &[&str] = &["file", "keyring", "auto"];
 pub const REASONING_SUMMARIES: &[&str] = &["auto", "none", "concise", "detailed"];
 pub const APPROVAL_REVIEWERS: &[&str] = &["user", "auto_review", "guardian_subagent"];
-pub const SERVICE_TIERS: &[&str] = &["default", "priority", "flex", "fast"];
 pub const SHELL_INHERIT_VALUES: &[&str] = &["core", "all", "none"];
 pub const APP_APPROVAL_MODES: &[&str] = &["auto", "prompt", "writes", "approve"];
-pub const WORKSPACE_WRITE_MODES: &[&str] = &["allowlist", "denylist", "all"];
+pub const SANDBOX_WORKSPACE_WRITE_KEYS: &[&str] = &[
+    "writable_roots",
+    "network_access",
+    "exclude_tmpdir_env_var",
+    "exclude_slash_tmp",
+];
 
 pub const TOP_LEVEL_KEYS: &[&str] = &[
     "agents",
@@ -118,6 +121,7 @@ pub const FEATURE_KEYS: &[&str] = &[
     "apply_patch_streaming_events",
     "apps",
     "apps_mcp_path_override",
+    "artifact",
     "auth_elicitation",
     "browser_use",
     "browser_use_external",
