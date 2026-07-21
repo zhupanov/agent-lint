@@ -591,6 +591,23 @@ Duplicate top-level `mcpServers` keys are P027, while P023 remains limited to
 duplicate names in a valid server map. P027 is diagnostic-only and has no
 autofix.
 
+P018 treats only exact Claude expansion forms `${NAME}` and `${NAME:-DEFAULT}`
+(with `NAME` matching `[A-Za-z_][A-Za-z0-9_]*`) as references on Claude MCP
+surfaces. Cursor MCP has no documented expansion grammar here, so sensitive
+values there are treated as literals. Unsupported `$...` / `{{...}}` strings and
+non-empty defaults on sensitive keys are literals. Sensitive keys are matched by
+ASCII identifier segments (`SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, plus
+`PRIVATE_KEY` / `ACCESS_KEY` / `API_KEY` / `CLIENT_SECRET`), so names like
+`TOKENIZER_MODEL` stay clean. Diagnostics name the env key and never echo the
+value.
+
+P019 preserves command/argv boundaries. Shell and Windows-interpreter payloads
+are inspected only when the selected executable is a known shell/`cmd`/
+PowerShell/`pwsh` and a `-c` / `/c`/`/k` / `-Command` (or documented abbreviation)
+payload is present. Direct `rm`/`sudo rm` recursive+force against `/`, and
+Windows `rd`/`rmdir /s /q` against a drive root, are detected from argv.
+Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | P001 | `mcp-json-invalid` | MCP configuration is not valid JSON | Always | error |
