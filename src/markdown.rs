@@ -8,6 +8,7 @@
 
 use comrak::nodes::NodeValue;
 use comrak::{Arena, Options, parse_document};
+use std::ops::RangeInclusive;
 
 use crate::fence::{CodeFenceTracker, LineClass, MarkdownFence};
 
@@ -31,6 +32,10 @@ pub struct MarkdownLink {
 pub struct MarkdownProseLine {
     pub line: usize,
     pub text: String,
+    /// Original one-based character columns whose contents were masked because
+    /// they belong to inline code. Consumers that normalize prose can retain a
+    /// stable mask boundary without recovering the code contents.
+    pub masked_inline_code_columns: Vec<RangeInclusive<usize>>,
 }
 
 /// An owned view of a Markdown document and the syntax facts validators share.
@@ -170,6 +175,25 @@ impl MarkdownDocument {
                 Some(MarkdownProseLine {
                     line: line_number,
                     text,
+                    masked_inline_code_columns: inline_exclusions
+                        .iter()
+                        .filter_map(|&(start_line, start_column, end_line, end_column)| {
+                            if line_number < start_line || line_number > end_line {
+                                return None;
+                            }
+                            let first = if line_number == start_line {
+                                start_column
+                            } else {
+                                1
+                            };
+                            let last = if line_number == end_line {
+                                end_column
+                            } else {
+                                line.chars().count()
+                            };
+                            Some(first..=last)
+                        })
+                        .collect(),
                 })
             })
             .collect();

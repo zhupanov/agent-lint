@@ -1032,7 +1032,7 @@ impl LintRule {
             Self::DescBodyMisalign | Self::ScriptErrhandMissing |
             Self::BodyNoDefault | Self::MagicNumberUndoc |
             Self::SkillClosureLarge | Self::PromptGenericFiller |
-            Self::PromptOutputConflict |
+            Self::PromptOutputConflict | Self::ClaudeReadmeDuplicate |
 
             // ── Default-warning: niche (skills) ──────────────────────
             Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
@@ -1378,8 +1378,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            120,
-            "Expected 120 default-warning rules, got {}",
+            121,
+            "Expected 121 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1394,13 +1394,20 @@ mod tests {
             LintRule::CodexAgentsConfigConflict,
             LintRule::PromptNegativeOnly,
             LintRule::PromptWeakCritical,
-            LintRule::ClaudeReadmeDuplicate,
             LintRule::PromptUnboundedRetry,
             LintRule::CursorPromptHookModelInvalid,
             LintRule::SkillRefNested,
         ] {
             assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
         }
+    }
+
+    #[test]
+    fn issue_360_q004_is_a_default_warning() {
+        assert_eq!(
+            LintRule::ClaudeReadmeDuplicate.default_severity(),
+            DefaultSeverity::Warning
+        );
     }
 
     #[test]
@@ -1453,8 +1460,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            171,
-            "Expected 171 default-error rules, got {}",
+            170,
+            "Expected 170 default-error rules, got {}",
             errors.len()
         );
     }

@@ -345,7 +345,7 @@ not exempt the remaining live prose. Q004 applies only when both root
 | Q001 | `prompt-generic-filler` | Generic instruction that adds no actionable guidance | Always | warn |
 | Q002 | `prompt-negative-only` | Operative style/behavior negative without `instead`/`rather`/`prefer` within three prose lines; precise safety and integrity prohibitions are exempt | Always | error |
 | Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | error |
-| Q004 | `claude-readme-duplicate` | More than 40% of normalized `CLAUDE.md` prose lines also occur in `README.md` (at least three shared lines) | Always | error |
+| Q004 | `claude-readme-duplicate` | More than 40% of eligible `CLAUDE.md` live-prose lines are duplicated in `README.md`, counted as a multiset (at least three matched lines) | Always | warn |
 | Q005 | `prompt-unbounded-retry` | Operative unbounded retry or continuation instruction without an applicable bound or concrete failure outcome | Always | error |
 | Q006 | `prompt-output-conflict` | Two mechanically incompatible operative output instructions (exclusive formats, or contradictory size/shape bounds) in one response scope | Always | warn |
 
