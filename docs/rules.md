@@ -140,6 +140,14 @@ H008--H024 codes with a `… frontmatter` path label.
 | X004 | `xml-tag-mismatched` | Mismatched closing XML tag in markdown body | Always | warn |
 | X005 | `xml-tag-orphan` | Closing XML tag with no matching opener | Always | warn |
 
+X002 recognizes fence openers only when they have at most three leading
+spaces; tab-indented and four-space-indented fence-lookalikes are treated as
+prose. Consequently, a real fence nested in a list item at four or more spaces
+is not tracked: balanced nested fences are treated as prose and unclosed ones
+may be missed. This deliberate warning-grade false-negative trade-off avoids
+error-grade false positives on indented code blocks; full list-context tracking
+would require a block parser.
+
 ## Skills Rules (S)
 
 ### Structure and Frontmatter (S001--S008)

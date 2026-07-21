@@ -5,7 +5,7 @@
 
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::fence::LineClass;
-use crate::markdown::MarkdownDocument;
+use crate::markdown::{MarkdownDocument, mask_html_comments};
 use crate::rules::LintRule;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -56,6 +56,7 @@ pub(crate) fn check_markdown_document(
 fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut DiagnosticCollector) {
     let body_start = document.body_start_line();
     let mut tracker = crate::fence::CodeFenceTracker::new();
+    let mut in_html_comment = false;
     let mut stack: Vec<(String, usize)> = Vec::new();
 
     for (idx, raw_line) in document.content().lines().enumerate() {
@@ -68,7 +69,8 @@ fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut Diagnos
             continue;
         }
 
-        let scanned = RE_INLINE_CODE.replace_all(raw_line, "");
+        let inline_masked = RE_INLINE_CODE.replace_all(raw_line, "");
+        let scanned = mask_html_comments(&inline_masked, &mut in_html_comment);
         for caps in RE_XML_TAG.captures_iter(&scanned) {
             let is_close = caps.get(1).is_some();
             let name = caps.get(2).map(|m| m.as_str()).unwrap_or("");
@@ -87,22 +89,24 @@ fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut Diagnos
                         stack.pop();
                     }
                     Some((open_name, open_line)) => {
-                        diag.report_at(
+                        diag.report_at_with(
                             LintRule::XmlTagMismatched,
                             path,
                             &format!(
                                 "{path}:{line_no}: mismatched closing tag '</{name}>' (open '<{open_name}>' at line {open_line})"
                             ),
+                            DiagnosticMetadata::at_line(line_no),
                         );
                         stack.pop();
                     }
                     None => {
-                        diag.report_at(
+                        diag.report_at_with(
                             LintRule::XmlTagOrphan,
                             path,
                             &format!(
                                 "{path}:{line_no}: closing tag '</{name}>' has no opening tag"
                             ),
+                            DiagnosticMetadata::at_line(line_no),
                         );
                     }
                 }
@@ -113,10 +117,11 @@ fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut Diagnos
     }
 
     for (name, line) in stack {
-        diag.report_at(
+        diag.report_at_with(
             LintRule::XmlTagUnclosed,
             path,
             &format!("{path}:{line}: unclosed XML tag '<{name}>'"),
+            DiagnosticMetadata::at_line(line),
         );
     }
 }
@@ -174,6 +179,32 @@ mod tests {
     }
 
     #[test]
+    fn xml_in_html_comments_is_ignored() {
+        for content in [
+            "<!-- <div> -->\n",
+            "<!--\n<section>\n-->\n",
+            "<!-- <div> --> <!-- <section> -->\n",
+            "<!-- <div> --> <section>\n</section> <!-- <article> -->\n",
+            "<!-- <div>\n<section>\n",
+        ] {
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            check_markdown_structure("f.md", content, &mut diag);
+            assert!(codes(&diag).is_empty(), "{content:?}: {:?}", codes(&diag));
+        }
+    }
+
+    #[test]
+    fn tags_outside_html_comments_on_the_same_line_are_scanned() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure("f.md", "<div><!-- <section> --></div>\n", &mut diag);
+        assert!(codes(&diag).is_empty());
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure("f.md", "<div><!-- <section> -->\n", &mut diag);
+        assert_eq!(codes(&diag), vec!["X003"]);
+    }
+
+    #[test]
     fn comparison_and_numeric_placeholder_ignored() {
         let mut diag = DiagnosticCollector::new_all_enabled();
         check_markdown_structure("f.md", "when a < b and use <1 for first\n", &mut diag);
@@ -188,6 +219,45 @@ mod tests {
         assert!(c.iter().any(|x| x == "X004"));
         assert!(c.iter().any(|x| x == "X005"));
         assert!(c.iter().any(|x| x == "X003"));
+    }
+
+    #[test]
+    fn xml_diagnostics_have_their_source_line() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure("f.md", "<a>\n</b>\n</c>\n<div>\n", &mut diag);
+
+        for (rule, line) in [
+            (LintRule::XmlTagMismatched, 2),
+            (LintRule::XmlTagOrphan, 3),
+            (LintRule::XmlTagUnclosed, 4),
+        ] {
+            let diagnostic = diag
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| diagnostic.rule == rule)
+                .unwrap();
+            assert_eq!(
+                diagnostic.location.map(|location| location.start()),
+                Some(crate::diagnostic::SourcePosition::line(line)),
+                "{}",
+                rule.code()
+            );
+        }
+    }
+
+    #[test]
+    fn indented_fence_lookalike_does_not_hide_xml_diagnostics() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(
+            "f.md",
+            "    ```bash\n<div>\n</span>\n</orphan>\n<section>\n",
+            &mut diag,
+        );
+        let reported = codes(&diag);
+        assert!(reported.iter().any(|code| code == "X003"));
+        assert!(reported.iter().any(|code| code == "X004"));
+        assert!(reported.iter().any(|code| code == "X005"));
+        assert!(!reported.iter().any(|code| code == "X002"));
     }
 
     #[test]
