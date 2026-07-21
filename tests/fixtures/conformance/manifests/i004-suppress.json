@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "i004-suppress",
+  "covers": ["global-suppression", "per-file-suppression", "basic-mode", "normal", "json", "i004-generic", "i001-empty"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "I001,I004", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 2,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

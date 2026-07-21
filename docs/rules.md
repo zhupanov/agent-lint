@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 295 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 294 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -429,8 +429,18 @@ metadata, dependencies, and conventional build output.
 | I001 | `instruction-file-empty` | `AGENTS.md` is empty or whitespace-only | Always | error |
 | I002 | `instruction-file-secret` | `AGENTS.md` contains a potential hardcoded credential | Always | error |
 | I003 | `instruction-file-path` | Backtick-quoted path in `AGENTS.md` is missing | Always | warn |
-| I004 | `instruction-file-generic` | `AGENTS.md` is generic-only | Always | error |
-| I005 | `instruction-file-structure` | `AGENTS.md` lacks project-specific structure | Always | error |
+| I004 | `instruction-file-generic` | `AGENTS.md` prose is only exact generic guidance phrases | Always | warn |
+
+I004 parses live Markdown prose with the shared document model. Headings are
+ignored as organization, and frontmatter, fenced or indented code, inline code,
+links, quotes, and identifiable examples are excluded. Remaining non-empty
+prose clauses must each be exactly one of `be helpful`, `be accurate`,
+`write good code`, or `follow best practices`, or a conjunction composed only
+of those complete phrases, after case, ASCII punctuation, and whitespace
+normalization. Substring matches are not enough. Empty or whitespace-only
+files remain exclusively I001. I004 emits once per file with a span on the
+first qualifying clause, bounded evidence, and suggestion
+`add concrete project commands, paths, or constraints`. It is not auto-fixable.
 
 I003 scans paired backticks on individual prose lines; fence delimiters and
 fence interiors are ignored. It treats explicit relative paths (for example
@@ -458,8 +468,10 @@ configured `inline-path-prefixes` match. The D005-only
 `<!-- lint-doc-pointer-paths: ok reason -->` marker suppresses its source line
 when it includes a non-empty reason; it does not suppress I003.
 
-The former CX037, CX038, CX041, CX043, and CX044 identifiers and names remain
-accepted as configuration aliases for these shared rules.
+The former CX037, CX038, CX041, and CX043 identifiers and names remain
+accepted as configuration aliases for these shared rules. The retired I005 /
+`instruction-file-structure` rule and its CX044 / `codex-agents-structure`
+aliases are no longer recognized.
 
 ## Codex Configuration Rules (CX)
 
@@ -715,7 +727,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 295):**
+**Auto-fixable rules (11 of 294):**
 
 | Rule | Code | Fix |
 |------|------|-----|

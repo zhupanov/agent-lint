@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "i004-excluded",
+  "covers": ["basic-mode", "normal", "json", "i004-generic"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "I004", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "I004", "name": "instruction-file-generic", "severity": "warning", "subject_path": "AGENTS.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

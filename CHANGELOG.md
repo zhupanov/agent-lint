@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING**: Removed I005 (`instruction-file-structure`) and its legacy
+  CX044 / `codex-agents-structure` aliases. Syntax and byte-length heuristics
+  cannot soundly decide whether inherited instruction files are
+  project-specific; existing `agent-lint.toml` references and `--only`
+  selections using those identifiers now fail as invalid rule identifiers.
+- Narrowed I004 (`instruction-file-generic`) to exact generic-only Markdown
+  prose (`be helpful`, `be accurate`, `write good code`, `follow best
+  practices`, and conjunctions of those complete phrases) after shared
+  Markdown exclusions, and re-severitized it to a default warning with
+  structured location, bounded evidence, and suggestion metadata
 - Broadened body-content recognizers for S041/S046/S047/S055: wider S041 task
   verbs, numbered-list continuations and `1)` markers for S046, plural example
   headings for S047, and shell `|| { …; exit|return; }` / `if !` idioms for

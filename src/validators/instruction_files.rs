@@ -48,7 +48,7 @@ pub(crate) fn validate_agents_files_with_prompt_pass(
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
         };
-        let markdown = MarkdownDocument::parse_body(&content);
+        let markdown = MarkdownDocument::parse(&content);
         let prompt_document = LiveInstructionDocument::new(
             Path::new(&display),
             InstructionSurfaceKind::AgentsMd,
@@ -56,7 +56,7 @@ pub(crate) fn validate_agents_files_with_prompt_pass(
         );
 
         diag.with_subject_path(&display, |diag| {
-            validate_shared_rules(diag, path, &display, &content);
+            validate_shared_rules(diag, path, &display, &content, &prompt_document);
             prompt_pass.validate(&prompt_document, diag);
             if let Some(max_bytes) = codex_max_bytes {
                 validate_codex_rules(diag, exclude, &display, &content, max_bytes);
@@ -70,12 +70,14 @@ fn validate_shared_rules(
     path: &Path,
     display: &str,
     content: &str,
+    document: &LiveInstructionDocument<'_>,
 ) {
     if content.trim().is_empty() {
         diag.report(
             LintRule::InstructionFileEmpty,
             &format!("{display} is empty or whitespace-only"),
         );
+        return;
     }
     if contains_possible_secret(content) {
         diag.report(
@@ -84,15 +86,17 @@ fn validate_shared_rules(
         );
     }
     validate_inline_paths(diag, path, display, content);
-    if is_generic_guidance(content) {
-        diag.report(LintRule::InstructionFileGenericGuidance, &format!("{display} contains only generic guidance; add project-specific commands, paths, or constraints"));
-    }
-    if lacks_project_structure(content) {
-        diag.report(
-            LintRule::InstructionFileMissingStructure,
-            &format!(
-                "{display} lacks project-specific headings, commands, paths, or sufficient detail"
-            ),
+    if let Some(finding) = generic_only_guidance(content, document) {
+        let metadata = SourceSpan::from_byte_range(content, finding.range.clone())
+            .map_or_else(DiagnosticMetadata::default, |location| {
+                DiagnosticMetadata::default().with_location(location)
+            })
+            .with_evidence(finding.evidence)
+            .with_suggestion("add concrete project commands, paths, or constraints");
+        diag.report_with(
+            LintRule::InstructionFileGenericGuidance,
+            &format!("{display} contains only generic guidance; add project-specific commands, paths, or constraints"),
+            metadata,
         );
     }
 }
@@ -219,27 +223,275 @@ fn backtick_tokens_in_line<'a>(line: &'a str, offset: usize, result: &mut Vec<Ba
     }
 }
 
-fn is_generic_guidance(content: &str) -> bool {
-    let normalized = content.trim().to_ascii_lowercase();
-    normalized.len() < 120
-        && !normalized.contains(['`', '/', '\\'])
-        && [
-            "be helpful",
-            "be accurate",
-            "write good code",
-            "follow best practices",
-        ]
-        .iter()
-        .any(|phrase| normalized.contains(phrase))
+/// Exact generic phrases owned by I004. Longer phrases are listed first so
+/// conjunction matching prefers complete phrases over accidental prefixes.
+const GENERIC_GUIDANCE_PHRASES: &[&str] = &[
+    "follow best practices",
+    "write good code",
+    "be helpful",
+    "be accurate",
+];
+
+struct GenericGuidanceFinding {
+    range: Range<usize>,
+    evidence: String,
 }
 
-fn lacks_project_structure(content: &str) -> bool {
-    let trimmed = content.trim();
-    !trimmed.is_empty()
-        && trimmed.len() < 200
-        && !trimmed.contains("# ")
-        && !trimmed.contains('`')
-        && !trimmed.contains(['/', '\\'])
+struct ProseClause {
+    range: Range<usize>,
+    normalized: String,
+    evidence: String,
+}
+
+fn generic_only_guidance(
+    content: &str,
+    document: &LiveInstructionDocument<'_>,
+) -> Option<GenericGuidanceFinding> {
+    let headings = document.headings();
+    let example_scopes = document.example_scopes();
+    let mut clauses = Vec::new();
+
+    for (line, is_example) in document.prose_lines().iter().zip(example_scopes) {
+        if is_example || headings.iter().any(|heading| heading.line == line.line) {
+            continue;
+        }
+        let Some(line_start) = line_start_offset(content, line.line) else {
+            continue;
+        };
+        let (marker_bytes, unmarked) = strip_leading_list_marker(&line.text);
+        collect_prose_clauses(line_start + marker_bytes, unmarked, &mut clauses);
+    }
+
+    let operative: Vec<_> = clauses
+        .into_iter()
+        .filter(|clause| !clause.normalized.is_empty())
+        .collect();
+    if operative.is_empty()
+        || !operative
+            .iter()
+            .all(|clause| is_generic_conjunction(&clause.normalized))
+    {
+        return None;
+    }
+    let first = &operative[0];
+    Some(GenericGuidanceFinding {
+        range: first.range.clone(),
+        evidence: first.evidence.clone(),
+    })
+}
+
+fn collect_prose_clauses(line_start: usize, line: &str, clauses: &mut Vec<ProseClause>) {
+    let mut index = 0;
+    let chars: Vec<(usize, char)> = line.char_indices().collect();
+    while index < chars.len() {
+        while index < chars.len() && chars[index].1.is_whitespace() {
+            index += 1;
+        }
+        if index >= chars.len() {
+            break;
+        }
+        let clause_start = chars[index].0;
+        let mut clause_end = clause_start;
+        let mut end_index = index;
+        while end_index < chars.len() {
+            let (offset, ch) = chars[end_index];
+            if is_clause_terminator(&chars, end_index) {
+                clause_end = offset;
+                end_index += 1;
+                break;
+            }
+            clause_end = offset + ch.len_utf8();
+            end_index += 1;
+        }
+        let raw = &line[clause_start..clause_end];
+        let evidence = raw.trim();
+        if !evidence.is_empty() {
+            let leading = raw.len() - raw.trim_start().len();
+            let trailing = raw.len() - raw.trim_end().len();
+            let normalized = normalize_prose(&mask_markdown_links(evidence));
+            clauses.push(ProseClause {
+                range: (line_start + clause_start + leading)..(line_start + clause_end - trailing),
+                normalized,
+                evidence: evidence.to_string(),
+            });
+        }
+        index = end_index;
+    }
+}
+
+fn is_clause_terminator(chars: &[(usize, char)], index: usize) -> bool {
+    match chars.get(index).map(|(_, character)| *character) {
+        Some('!' | '?' | ';') => true,
+        Some('.') => chars
+            .get(index + 1)
+            .is_none_or(|(_, next)| next.is_whitespace()),
+        _ => false,
+    }
+}
+
+fn is_generic_conjunction(normalized: &str) -> bool {
+    let mut rest = normalized.trim();
+    if rest.is_empty() {
+        return false;
+    }
+    let mut matched = false;
+    while !rest.is_empty() {
+        if matched {
+            if let Some(after_and) = rest.strip_prefix("and ") {
+                rest = after_and.trim_start();
+            } else if rest == "and" {
+                return false;
+            }
+        }
+        let Some(phrase) = GENERIC_GUIDANCE_PHRASES
+            .iter()
+            .copied()
+            .find(|phrase| rest == *phrase || rest.starts_with(&format!("{phrase} ")))
+        else {
+            return false;
+        };
+        matched = true;
+        rest = rest[phrase.len()..].trim_start();
+    }
+    matched
+}
+
+fn normalize_prose(text: &str) -> String {
+    let mut normalized = String::new();
+    let mut last_was_space = true;
+    for character in text.chars() {
+        if character.is_ascii_alphanumeric() {
+            normalized.push(character.to_ascii_lowercase());
+            last_was_space = false;
+        } else if character.is_alphanumeric() {
+            for lower in character.to_lowercase() {
+                normalized.push(lower);
+            }
+            last_was_space = false;
+        } else if !last_was_space {
+            normalized.push(' ');
+            last_was_space = true;
+        }
+    }
+    normalized.trim().to_string()
+}
+
+fn mask_markdown_links(text: &str) -> String {
+    let mut chars: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == '!' && chars.get(index + 1) == Some(&'[') {
+            if let Some(end) = link_span_end(&chars, index + 1) {
+                chars[index..=end].fill(' ');
+                index = end + 1;
+                continue;
+            }
+        }
+        if chars[index] == '[' {
+            if let Some(end) = link_span_end(&chars, index) {
+                chars[index..=end].fill(' ');
+                index = end + 1;
+                continue;
+            }
+        }
+        if chars[index] == '<' {
+            if let Some(end) = autolink_span_end(&chars, index) {
+                chars[index..=end].fill(' ');
+                index = end + 1;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    chars.into_iter().collect()
+}
+
+fn link_span_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut index = start + 1;
+    while index < chars.len() {
+        if chars[index] == ']' {
+            break;
+        }
+        if chars[index] == '[' {
+            return None;
+        }
+        index += 1;
+    }
+    if index >= chars.len() || chars.get(index + 1) != Some(&'(') {
+        return None;
+    }
+    index += 2;
+    let mut depth = 1;
+    while index < chars.len() {
+        match chars[index] {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn autolink_span_end(chars: &[char], start: usize) -> Option<usize> {
+    let body: String = chars
+        .get(start + 1..)?
+        .iter()
+        .take_while(|character| **character != '>')
+        .collect();
+    if body.is_empty() || body.contains(char::is_whitespace) {
+        return None;
+    }
+    let lower = body.to_ascii_lowercase();
+    if !(lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("mailto:"))
+    {
+        return None;
+    }
+    Some(start + 1 + body.chars().count())
+}
+
+fn strip_leading_list_marker(text: &str) -> (usize, &str) {
+    let trimmed_start = text.trim_start();
+    let unmarked = trimmed_start
+        .strip_prefix("- ")
+        .or_else(|| trimmed_start.strip_prefix("* "))
+        .or_else(|| trimmed_start.strip_prefix("+ "))
+        .or_else(|| {
+            let digits = trimmed_start
+                .chars()
+                .take_while(|character| character.is_ascii_digit())
+                .count();
+            if digits > 0 {
+                trimmed_start
+                    .get(digits..)
+                    .and_then(|rest| rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")))
+            } else {
+                None
+            }
+        })
+        .unwrap_or(trimmed_start);
+    (text.len() - unmarked.len(), unmarked)
+}
+
+fn line_start_offset(content: &str, line_number: usize) -> Option<usize> {
+    if line_number == 0 {
+        return None;
+    }
+    let mut offset = 0;
+    for (index, line) in content.split_inclusive('\n').enumerate() {
+        if index + 1 == line_number {
+            return Some(offset);
+        }
+        offset += line.len();
+    }
+    None
 }
 
 fn agents_conflicts_with_config(content: &str, exclude: &ExcludeSet) -> bool {
@@ -549,7 +801,6 @@ mod tests {
             LintRule::InstructionFileSecret,
             LintRule::InstructionFilePathMissing,
             LintRule::InstructionFileGenericGuidance,
-            LintRule::InstructionFileMissingStructure,
         ] {
             assert!(
                 diag.diagnostics().iter().any(|item| item.rule == rule),
@@ -563,6 +814,153 @@ mod tests {
                 | LintRule::CodexAgentsDocLimit
                 | LintRule::CodexAgentsConfigConflict
         )));
+    }
+
+    fn report_i004(content: &str) -> Option<crate::diagnostic::Diagnostic> {
+        let markdown = MarkdownDocument::parse(content);
+        let document = LiveInstructionDocument::new(
+            Path::new("AGENTS.md"),
+            InstructionSurfaceKind::AgentsMd,
+            &markdown,
+        );
+        let mut diag = DiagnosticCollector::new();
+        diag.with_subject_path("AGENTS.md", |diag| {
+            validate_shared_rules(
+                diag,
+                Path::new("AGENTS.md"),
+                "AGENTS.md",
+                content,
+                &document,
+            );
+        });
+        diag.diagnostics()
+            .iter()
+            .find(|item| item.rule == LintRule::InstructionFileGenericGuidance)
+            .cloned()
+    }
+
+    #[test]
+    fn i004_table_covers_exact_phrases_conjunctions_and_organization() {
+        for content in [
+            "Be helpful.",
+            "BE ACCURATE!",
+            "Write good code?",
+            "Follow best practices",
+            "Be helpful and write good code.",
+            "Be helpful, be accurate, and follow best practices.",
+            "# Guidance\nBe helpful.\n",
+            "Be helpful.\nBe accurate.\n",
+            "- Be helpful\n",
+            "1. Follow best practices\n",
+        ] {
+            let finding =
+                report_i004(content).unwrap_or_else(|| panic!("expected I004 for {content:?}"));
+            assert_eq!(
+                LintRule::InstructionFileGenericGuidance.default_severity(),
+                crate::rules::DefaultSeverity::Warning
+            );
+            assert_eq!(finding.severity, crate::diagnostic::Severity::Warning);
+            assert_eq!(
+                finding.suggestion.as_deref(),
+                Some("add concrete project commands, paths, or constraints")
+            );
+            assert!(finding.location.is_some(), "missing span for {content:?}");
+            assert!(
+                finding
+                    .evidence
+                    .as_ref()
+                    .is_some_and(|evidence| !evidence.is_empty())
+            );
+        }
+    }
+
+    #[test]
+    fn i004_hard_negatives_stay_clean() {
+        for content in [
+            "Run cargo test before each commit and never modify generated protobufs.",
+            "Follow best practices when updating Acme billing schema 17; preserve audit event order.",
+            "Be helpfully specific about crate boundaries.",
+            "Please be helpful about release notes and write changelog entries.",
+            "Run cargo test before each commit.\n",
+            "```\nBe helpful.\n```\n",
+            "> Be helpful.\n",
+            "The guide says \"Be helpful.\"\nThen run cargo test.\n",
+            "See [Be helpful](./README.md) for tone.\nRun cargo test.\n",
+            "## Examples\nBe helpful.\n## Real rules\nRun cargo test.\n",
+            "For example, be helpful.\nRun cargo test.\n",
+            " \n\t",
+        ] {
+            assert!(
+                report_i004(content).is_none(),
+                "unexpected I004 for {content:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn empty_agents_emits_only_i001() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write("AGENTS.md", " \n\t\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), false);
+
+        let rules: Vec<_> = diag.diagnostics().iter().map(|item| item.rule).collect();
+        assert_eq!(rules, vec![LintRule::InstructionFileEmpty]);
+    }
+
+    #[test]
+    fn i004_span_stays_aligned_when_earlier_multibyte_link_is_masked() {
+        let content = "[文档](./README.md). Be helpful.\n";
+        let finding = report_i004(content).expect("expected I004");
+        assert_eq!(finding.evidence.as_deref(), Some("Be helpful"));
+        let start = content.find("Be helpful").expect("clause text present");
+        assert_eq!(
+            finding.location,
+            SourceSpan::from_byte_range(content, start..start + "Be helpful".len())
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn i004_emits_once_with_first_clause_span() {
+        let content = "Be helpful.\nWrite good code.\n";
+        let finding = report_i004(content).expect("expected I004");
+        assert_eq!(finding.evidence.as_deref(), Some("Be helpful"));
+        assert_eq!(
+            finding.location.map(|span| span.start().line_number()),
+            Some(1)
+        );
+        assert_eq!(
+            diag_rule_count(content, LintRule::InstructionFileGenericGuidance),
+            1
+        );
+    }
+
+    fn diag_rule_count(content: &str, rule: LintRule) -> usize {
+        let markdown = MarkdownDocument::parse(content);
+        let document = LiveInstructionDocument::new(
+            Path::new("AGENTS.md"),
+            InstructionSurfaceKind::AgentsMd,
+            &markdown,
+        );
+        let mut diag = DiagnosticCollector::new();
+        diag.with_subject_path("AGENTS.md", |diag| {
+            validate_shared_rules(
+                diag,
+                Path::new("AGENTS.md"),
+                "AGENTS.md",
+                content,
+                &document,
+            );
+        });
+        diag.diagnostics()
+            .iter()
+            .filter(|item| item.rule == rule)
+            .count()
     }
 
     #[test]
