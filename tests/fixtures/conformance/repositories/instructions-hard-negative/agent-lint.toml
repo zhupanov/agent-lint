@@ -1,0 +1,4 @@
+[[lint.overrides]]
+files = ["nested/AGENTS.md"]
+suppress = ["Q002"]
+reason = "Quoted examples remain non-operative"

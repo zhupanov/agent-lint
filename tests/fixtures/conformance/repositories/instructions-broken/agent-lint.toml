@@ -1,0 +1,4 @@
+[[lint.overrides]]
+files = ["nested/AGENTS.md"]
+suppress = ["Q002"]
+reason = "The legacy wording is tracked separately"

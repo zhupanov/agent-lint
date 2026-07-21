@@ -1,0 +1,7 @@
+---
+description: Explain migration from the legacy Cursor rules filename
+alwaysApply: true
+---
+# Migration example
+
+Documentation may quote `.cursorrules` without creating that legacy root file.

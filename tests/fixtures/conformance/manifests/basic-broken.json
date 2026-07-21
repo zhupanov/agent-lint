@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "basic-broken",
+  "covers": ["basic-mode", "claude-skill-prompt", "claude-agent-prompt", "global-suppression", "all", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--all", "--only", "Q002", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "Q002", "name": "prompt-negative-only", "severity": "error", "subject_path": ".claude/skills/reviewer/SKILL.md" },
+    { "code": "Q002", "name": "prompt-negative-only", "severity": "error", "subject_path": ".claude/agents/reviewer.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

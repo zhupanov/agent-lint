@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "basic-clean",
+  "covers": ["basic-mode", "claude-skill-prompt", "claude-agent-prompt", "global-suppression", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "Q002", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 1,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "codex-mcp-broken",
+  "covers": ["codex", "mcp", "all", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--all", "--only", "CX001,P001", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CX001", "name": "codex-toml-invalid", "severity": "error", "subject_path": ".codex/config.toml" },
+    { "code": "P001", "name": "mcp-json-invalid", "severity": "error", "subject_path": ".mcp.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

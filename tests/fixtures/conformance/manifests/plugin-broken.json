@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "plugin-broken",
+  "covers": ["plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "M003", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "M003", "name": "plugin-field-missing", "severity": "error", "subject_path": ".claude-plugin/plugin.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

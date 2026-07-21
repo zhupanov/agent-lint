@@ -3,7 +3,9 @@
 # /relevant-checks uses: pre-commit run --files <changed-files> (scoped)
 # Developers use: pre-commit install (opt-in git hook)
 
-exclude: ^(\.venv/|node_modules/|larch-logs/)
+# Conformance repositories intentionally contain malformed inputs. Their
+# manifests, harness, and documentation remain subject to every applicable hook.
+exclude: ^(\.venv/|node_modules/|larch-logs/|tests/fixtures/conformance/repositories/)
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
