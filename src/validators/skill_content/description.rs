@@ -8,8 +8,9 @@ use std::sync::LazyLock;
 const MAX_DESC_CHARS: usize = 1024;
 const MIN_DESC_CHARS: usize = 20;
 
-// S018: XML tags in descriptions
-static RE_XML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
+// S018: tag-shaped spans in descriptions (`</?[A-Za-z][^<>]*>`).
+// Autolink exclusions (://, mailto:, bare email) are applied after matching.
+static RE_XML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"</?[A-Za-z][^<>]*>").unwrap());
 
 // S050: vague description content (plugin-only)
 #[rustfmt::skip]
@@ -30,13 +31,125 @@ pub(super) const STOPWORDS: &[&str] = &[
     "needed", "using", "used",
 ];
 
-// S016/S017: Description quality (plugin-only)
-static RE_PERSON: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b(I|you|we|my|your|our)\b").unwrap());
+// S016: first/second-person pronoun tokens (plugin-only)
+#[rustfmt::skip]
+const PERSON_PRONOUNS: &[&str] = &["you", "we", "my", "your", "our"];
+#[rustfmt::skip]
+const PERSON_CONTRACTIONS: &[&str] = &[
+    "i'm", "i'll", "i've", "i'd",
+    "you're", "you'll", "you've", "you'd",
+    "we're", "we'll", "we've", "we'd",
+];
+
+// S017: Description quality (plugin-only)
 pub(super) static RE_TRIGGER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(use\s+when|use\s+this|use\s+for|trigger\s+when|do\s+not\s+trigger|\bwhen\b)")
         .unwrap()
 });
+
+/// True when `inner` (content between `<` and `>`) is a Markdown autolink, not a tag.
+fn is_markdown_autolink_inner(inner: &str) -> bool {
+    if inner.contains("://") {
+        return true;
+    }
+    let trimmed = inner.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(address) = lower.strip_prefix("mailto:") {
+        return !address.is_empty() && !address.chars().any(char::is_whitespace);
+    }
+    // Bare email: exactly one `@`, nonempty local and domain, no whitespace.
+    let Some((local, domain)) = trimmed.split_once('@') else {
+        return false;
+    };
+    !local.is_empty()
+        && !domain.is_empty()
+        && !domain.contains('@')
+        && !local.chars().any(char::is_whitespace)
+        && !domain.chars().any(char::is_whitespace)
+}
+
+/// True when a matched angle-span is an S018 XML/HTML tag (not an autolink).
+fn is_xml_tag_match(matched: &str) -> bool {
+    let Some(inner) = matched
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+    else {
+        return false;
+    };
+    !is_markdown_autolink_inner(inner)
+}
+
+/// Whether a description contains S018-flaggable XML/HTML tags.
+pub(crate) fn description_contains_xml_tags(desc: &str) -> bool {
+    RE_XML_TAG
+        .find_iter(desc)
+        .any(|m| is_xml_tag_match(m.as_str()))
+}
+
+/// Strip S018-flaggable XML/HTML tags from a description (shared with autofix).
+pub(crate) fn strip_description_xml_tags(desc: &str) -> String {
+    RE_XML_TAG
+        .replace_all(desc, |caps: &regex::Captures| {
+            let matched = caps.get(0).map(|m| m.as_str()).unwrap_or("");
+            if is_xml_tag_match(matched) {
+                String::new()
+            } else {
+                matched.to_string()
+            }
+        })
+        .into_owned()
+}
+
+/// Trim leading/trailing punctuation. Interior `/`, `.`, and apostrophes stay
+/// because tokenization only splits on whitespace.
+fn trim_token_punctuation(token: &str) -> &str {
+    let mut start = 0;
+    let mut end = token.len();
+    while start < end {
+        let ch = token[start..].chars().next().unwrap();
+        if ch.is_alphanumeric() {
+            break;
+        }
+        start += ch.len_utf8();
+    }
+    while end > start {
+        let ch = token[..end].chars().next_back().unwrap();
+        if ch.is_alphanumeric() {
+            break;
+        }
+        end -= ch.len_utf8();
+    }
+    &token[start..end]
+}
+
+/// Normalize curly apostrophes so contraction matching is ASCII-case-insensitive.
+fn normalize_apostrophes(token: &str) -> String {
+    token.replace('\u{2019}', "'")
+}
+
+/// S016: token-based first/second-person detection.
+fn description_uses_person(desc: &str) -> bool {
+    for raw in desc.split_whitespace() {
+        let token = trim_token_punctuation(raw);
+        if token.is_empty() {
+            continue;
+        }
+        // Case-sensitive bare `I`.
+        if token == "I" {
+            return true;
+        }
+        let lower = normalize_apostrophes(token).to_ascii_lowercase();
+        if PERSON_PRONOUNS.contains(&lower.as_str())
+            || PERSON_CONTRACTIONS.contains(&lower.as_str())
+        {
+            return true;
+        }
+    }
+    false
+}
 
 fn is_description_vague(desc: &str) -> bool {
     let stripped = RE_TRIGGER.replace_all(desc, " ");
@@ -131,7 +244,7 @@ pub(super) fn check_description_quality(
     }
 
     // S016: uses first/second person (plugin-only)
-    if plugin_mode && RE_PERSON.is_match(&desc) {
+    if plugin_mode && description_uses_person(&desc) {
         diag.report(
             LintRule::DescUsesPerson,
             &format!(
@@ -153,7 +266,7 @@ pub(super) fn check_description_quality(
     }
 
     // S018: XML tags in description
-    if RE_XML_TAG.is_match(&desc) {
+    if description_contains_xml_tags(&desc) {
         diag.report(
             LintRule::DescHasXml,
             &format!("{}: description contains XML/HTML tags", info.path),
@@ -234,5 +347,109 @@ mod tests {
     fn low_information_density() {
         assert!(is_description_vague("Does stuff"));
         assert!(is_description_vague("Works with things"));
+    }
+
+    #[test]
+    fn s016_hard_negatives() {
+        assert!(!description_uses_person(
+            "Optimize file I/O operations for large datasets, i.e. streaming reads. Use when profiling disk throughput."
+        ));
+        assert!(!description_uses_person(
+            "Explains acronyms, e.g. HTTP, when onboarding. Use when documenting APIs."
+        ));
+        assert!(!description_uses_person(
+            "Tunes CI pipelines for monorepos. Use when builds are slow."
+        ));
+        assert!(!description_uses_person(
+            "Tracks IT budgets across teams. Use when planning spend."
+        ));
+    }
+
+    #[test]
+    fn s016_positives() {
+        assert!(description_uses_person(
+            "I can help you process files. Use when ingesting uploads."
+        ));
+        assert!(description_uses_person(
+            "Use when you need to export reports from the warehouse."
+        ));
+        assert!(description_uses_person(
+            "I'm a helper for release notes. Use when cutting a release."
+        ));
+        assert!(description_uses_person(
+            "Tracks your progress through migrations. Use when upgrading schemas."
+        ));
+        assert!(description_uses_person(
+            "Improves our workflow. Use when coordinating releases."
+        ));
+        assert!(description_uses_person(
+            "I'll summarize the diff. Use when reviewing PRs."
+        ));
+        assert!(description_uses_person(
+            "You’re blocked without credentials. Use when rotating secrets."
+        ));
+        assert!(description_uses_person("Use when you need exports."));
+        assert!(description_uses_person("Tracks progress for you."));
+    }
+
+    #[test]
+    fn s018_hard_negatives() {
+        assert!(!description_contains_xml_tags(
+            "Partition datasets when row count < 10000 or file size > 50MB before uploading. Use when preparing bulk imports."
+        ));
+        assert!(!description_contains_xml_tags("Compare a < b carefully."));
+        assert!(!description_contains_xml_tags("Threshold is <10> items."));
+        assert!(!description_contains_xml_tags(
+            "Fetch docs from <https://example.com>. Use when syncing references."
+        ));
+        assert!(!description_contains_xml_tags(
+            "Sends deployment alerts to <ops@example.com>. Use when production releases complete."
+        ));
+        assert!(!description_contains_xml_tags(
+            "Opens <mailto:ops@example.com> for escalation. Use when on-call handoff is required."
+        ));
+        assert!(!description_contains_xml_tags(
+            "Opens <MAILTO:Ops@Example.com> for escalation. Use when on-call handoff is required."
+        ));
+    }
+
+    #[test]
+    fn s018_positives() {
+        assert!(description_contains_xml_tags("Contains a <tag> marker."));
+        assert!(description_contains_xml_tags("Contains a </div> closer."));
+        assert!(description_contains_xml_tags("Contains a <br/> break."));
+        assert!(description_contains_xml_tags("References a <file> path."));
+        assert!(description_contains_xml_tags(
+            "Namespace <svg:path> still tags."
+        ));
+    }
+
+    #[test]
+    fn s018_malformed_emails_are_not_autolink_exemptions() {
+        // `<@…>` is not tag-shaped (no leading letter), so it stays clean.
+        assert!(!description_contains_xml_tags("Bad local <@example.com>."));
+        // Empty domain / empty mailto are not autolinks; tag-shaped forms still flag.
+        assert!(description_contains_xml_tags("Bad domain <ops@>."));
+        assert!(description_contains_xml_tags(
+            "Empty mailto <mailto:> is not an autolink exemption."
+        ));
+    }
+
+    #[test]
+    fn s018_strip_preserves_autolinks_and_removes_tags() {
+        let mixed = "Alert <ops@example.com> via <tag> and <https://example.com> plus <br/>.";
+        let stripped = strip_description_xml_tags(mixed);
+        assert_eq!(
+            stripped,
+            "Alert <ops@example.com> via  and <https://example.com> plus ."
+        );
+        assert_eq!(strip_description_xml_tags(&stripped), stripped);
+    }
+
+    #[test]
+    fn s018_strip_is_noop_on_comparisons() {
+        let prose =
+            "Partition datasets when row count < 10000 or file size > 50MB before uploading.";
+        assert_eq!(strip_description_xml_tags(prose), prose);
     }
 }

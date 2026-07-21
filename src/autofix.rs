@@ -18,7 +18,6 @@ static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
 });
 static RE_HTTP_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"http://[a-zA-Z0-9]").unwrap());
-static RE_XML_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
 static RE_BASH_FENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
 static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
@@ -346,10 +345,10 @@ fn fix_desc_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -
                 Some(v) => v,
                 None => continue,
             };
-            if !RE_XML_TAG.is_match(&value) {
+            if !crate::validators::skill_content::description_contains_xml_tags(&value) {
                 continue;
             }
-            let new_value = RE_XML_TAG.replace_all(&value, "").to_string();
+            let new_value = crate::validators::skill_content::strip_description_xml_tags(&value);
             let new_value = new_value.trim().to_string();
             if new_value == value || new_value.is_empty() {
                 continue;

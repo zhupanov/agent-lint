@@ -8,6 +8,8 @@ mod mcp;
 mod name;
 pub(crate) mod security;
 
+pub(crate) use description::{description_contains_xml_tags, strip_description_xml_tags};
+
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
@@ -3695,6 +3697,95 @@ suppress = ["S033"]
                 .any(|e| e.contains("description keywords not reflected in body")),
             "S054 should not fire when body is empty (S020 handles that)"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s054_changelog_inflection_alignment_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/changelog").unwrap();
+        std::fs::write(
+            "skills/changelog/SKILL.md",
+            "---\nname: changelog\ndescription: Generates changelogs and commit summaries from git diffs. Use when releasing versions.\n---\nGenerate a changelog entry, write a commit summary for each change, analyze the git diff, and record the released version.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("description keywords not reflected in body")),
+            "S054 should score 8/8 after stemming for the changelog evidence case"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s016_s017_default_warning_pedantic_and_all() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/person").unwrap();
+        std::fs::write(
+            "skills/person/SKILL.md",
+            "---\nname: person\ndescription: I can help you process uploaded files for analysis\n---\nBody content for person pronoun severity coverage.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all("skills/trigger").unwrap();
+        std::fs::write(
+            "skills/trigger/SKILL.md",
+            "---\nname: trigger\ndescription: A skill that analyzes repository source trees carefully\n---\nBody content for missing trigger severity coverage.\n",
+        )
+        .unwrap();
+
+        let mut normal = DiagnosticCollector::new();
+        validate_skill_content(&mut normal, &crate::config::ExcludeSet::default());
+        assert!(
+            normal
+                .warnings()
+                .iter()
+                .any(|e| e.contains("first/second person")),
+            "S016 defaults to warning: {:?}",
+            normal.warnings()
+        );
+        assert!(
+            normal.warnings().iter().any(|e| e.contains("trigger")),
+            "S017 defaults to warning: {:?}",
+            normal.warnings()
+        );
+        assert!(
+            !normal
+                .errors()
+                .iter()
+                .any(|e| e.contains("first/second person") || e.contains("trigger")),
+            "S016/S017 must not be errors in normal mode"
+        );
+
+        let mut pedantic_config = crate::config::LintConfig::default();
+        pedantic_config.apply_cli_mode(crate::config::CliMode::Pedantic);
+        let mut pedantic = DiagnosticCollector::with_config(pedantic_config);
+        validate_skill_content(&mut pedantic, &crate::config::ExcludeSet::default());
+        assert!(
+            pedantic
+                .errors()
+                .iter()
+                .any(|e| e.contains("first/second person"))
+        );
+        assert!(pedantic.errors().iter().any(|e| e.contains("trigger")));
+
+        let mut all_config = crate::config::LintConfig::default();
+        all_config.apply_cli_mode(crate::config::CliMode::All);
+        let mut all = DiagnosticCollector::with_config(all_config);
+        validate_skill_content(&mut all, &crate::config::ExcludeSet::default());
+        assert!(
+            all.errors()
+                .iter()
+                .any(|e| e.contains("first/second person"))
+        );
+        assert!(all.errors().iter().any(|e| e.contains("trigger")));
     }
 
     // ═══════════════════════════════════════════════════════════════════

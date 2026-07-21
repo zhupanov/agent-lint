@@ -1,0 +1,15 @@
+{
+  "class": "hard-negative",
+  "repository": "s016-hard-negative",
+  "covers": ["plugin-mode", "normal", "json", "desc-person"],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": ["--format", "json", "--only", "S016", "."]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

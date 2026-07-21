@@ -16,7 +16,7 @@ static RE_ARGS: LazyLock<Regex> =
 static RE_INLINE_INJECT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?:^|[ \t])!`[^`]+`").unwrap());
 
-/// Minimum number of keywords required from description to run S053.
+/// Minimum number of keywords required from description to run S054.
 const MIN_KEYWORDS: usize = 3;
 
 /// Warn when more than this many dynamic injections appear in the body.
@@ -56,7 +56,7 @@ pub(super) fn check_cross_field(
 
     check_injection_overflow(info, diag);
 
-    // S053: description/body keyword alignment (plugin-only)
+    // S054: description/body keyword alignment (plugin-only)
     if plugin_mode {
         check_desc_body_alignment(info, diag);
     }
@@ -84,10 +84,35 @@ fn check_injection_overflow(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     }
 }
 
+/// Deterministic light stemming for S054 keyword alignment.
+fn stem_keyword(token: &str) -> String {
+    let len = token.len();
+    if len > 4 && token.ends_with("ies") {
+        return format!("{}y", &token[..len - 3]);
+    }
+    if len > 5 && token.ends_with("ing") {
+        return token[..len - 3].to_string();
+    }
+    if len > 4 && token.ends_with("ed") {
+        return token[..len - 2].to_string();
+    }
+    if len > 4 && token.ends_with("es") {
+        let before_es = token.as_bytes()[len - 3];
+        if matches!(before_es, b's' | b'x' | b'z' | b'h') {
+            return token[..len - 2].to_string();
+        }
+    }
+    if len > 3 && token.ends_with('s') && !token.ends_with("ss") {
+        return token[..len - 1].to_string();
+    }
+    token.to_string()
+}
+
 fn extract_keywords(text: &str) -> HashSet<String> {
     text.split(|c: char| !c.is_alphanumeric())
         .map(|w| w.to_lowercase())
         .filter(|w| w.len() > 2 && !STOPWORDS.contains(&w.as_str()))
+        .map(|w| stem_keyword(&w))
         .collect()
 }
 
@@ -137,5 +162,29 @@ fn check_desc_body_alignment(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                 info.path, matched, total
             ),
         );
+    }
+}
+
+#[cfg(test)]
+mod stem_tests {
+    use super::stem_keyword;
+
+    #[test]
+    fn stems_inflections_for_alignment() {
+        assert_eq!(stem_keyword("releasing"), "releas");
+        assert_eq!(stem_keyword("released"), "releas");
+        assert_eq!(stem_keyword("processes"), "process");
+        assert_eq!(stem_keyword("process"), "process");
+        assert_eq!(stem_keyword("summaries"), "summary");
+        assert_eq!(stem_keyword("changelogs"), "changelog");
+        assert_eq!(stem_keyword("generates"), "generate");
+        assert_eq!(stem_keyword("diffs"), "diff");
+        assert_eq!(stem_keyword("versions"), "version");
+    }
+
+    #[test]
+    fn ss_guard_keeps_final_s() {
+        assert_eq!(stem_keyword("class"), "class");
+        assert_eq!(stem_keyword("process"), "process");
     }
 }
