@@ -14,7 +14,7 @@ use std::sync::LazyLock;
 
 use super::common::{
     RE_NAME_INVALID, has_bound_or_fallback, is_known_tool_name, is_valid_model_value,
-    sentence_ranges,
+    normalize_emphasis_for_gates, sentence_ranges,
 };
 
 /// Jaccard similarity threshold (strict greater-than).
@@ -620,9 +620,10 @@ fn has_operative_body_control(document: &LiveInstructionDocument<'_>) -> bool {
         let scope = scope.join(" ");
         sentence_ranges(&scope).into_iter().any(|range| {
             let sentence = &scope[range];
-            OPERATIVE_CONTROL_PREFIX.is_match(sentence)
-                && !DESCRIPTIVE_CONTROL_PREFIX.is_match(sentence)
-                && has_bound_or_fallback(sentence)
+            let gate_view = normalize_emphasis_for_gates(sentence);
+            OPERATIVE_CONTROL_PREFIX.is_match(&gate_view)
+                && !DESCRIPTIVE_CONTROL_PREFIX.is_match(&gate_view)
+                && has_bound_or_fallback(&gate_view)
         })
     })
 }
@@ -1716,6 +1717,10 @@ mod tests {
             "Timeout: 1.5 hours for the whole repair.",
             "Timeout: 2.5 minutes for the whole repair.",
             "Retry until success, but stop after 3 attempts.",
+            "**Stop after 3 attempts and report the blocker.**",
+            "- **Stop after 3 attempts and report the blocker.**",
+            "__Give up after 10 minutes and escalate.__",
+            "**You must stop after 3 attempts.**",
         ] {
             let content = format!(
                 "---\nname: general\ndescription: {GOOD_DESC}\ntools: WebFetch\n---\n{body}\n"
@@ -1768,6 +1773,7 @@ mod tests {
             "Max 3 attempts was the old rule for the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
             "Use of a timeout of 10 minutes was common in the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
             "Budget pressures once forced a timeout of 10 minutes on the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
+            "**Use of a timeout of 10 minutes was common in the legacy runner.**\n\nInvestigate the failure and implement the repair.\n",
         ] {
             let content =
                 format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\n{body}");

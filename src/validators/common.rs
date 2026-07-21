@@ -76,6 +76,43 @@ pub(crate) fn has_bound_or_fallback(text: &str) -> bool {
         .any(|pattern| pattern.is_match(text))
 }
 
+/// Strip Markdown emphasis marker runs for A029/Q005 operativity and label
+/// gates only.
+///
+/// Removes runs of `*`, `**`, `***`, `_`, or `__` (and longer same-marker runs)
+/// at token boundaries so bold/italic wrappers do not block directive-verb or
+/// `Important:`/`Note:`/`Warning:` matching. Mid-word markers such as `a*b` or
+/// `snake_case` are left untouched. Diagnostics must keep using the original
+/// sentence for evidence and coordinates.
+pub(crate) fn normalize_emphasis_for_gates(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut result = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < chars.len() {
+        let marker = chars[index];
+        if marker != '*' && marker != '_' {
+            result.push(marker);
+            index += 1;
+            continue;
+        }
+
+        let start = index;
+        index += 1;
+        while index < chars.len() && chars[index] == marker {
+            index += 1;
+        }
+
+        let before_is_word = start
+            .checked_sub(1)
+            .is_some_and(|previous| chars[previous].is_alphanumeric());
+        let after_is_word = chars.get(index).is_some_and(|next| next.is_alphanumeric());
+        if before_is_word && after_is_word {
+            result.extend(std::iter::repeat_n(marker, index - start));
+        }
+    }
+    result
+}
+
 /// Split prose into sentence ranges without treating the decimal point in a
 /// numeric value (for example `1.5 hours`) as a sentence boundary.
 pub(crate) fn sentence_ranges(text: &str) -> Vec<Range<usize>> {
@@ -419,6 +456,61 @@ mod tool_tests {
     fn rejects_unknown_tools() {
         assert!(!is_known_tool_name("UnknownTool"));
         assert!(!is_known_tool_name(""));
+    }
+}
+
+#[cfg(test)]
+mod emphasis_gate_normalization_tests {
+    use super::normalize_emphasis_for_gates;
+
+    #[test]
+    fn strips_boundary_marker_runs_and_preserves_mid_word_markers() {
+        assert_eq!(
+            normalize_emphasis_for_gates("**Stop after 3 attempts and report the blocker.**"),
+            "Stop after 3 attempts and report the blocker."
+        );
+        assert_eq!(
+            normalize_emphasis_for_gates("- **Stop after 3 attempts and report the blocker.**"),
+            "- Stop after 3 attempts and report the blocker."
+        );
+        assert_eq!(
+            normalize_emphasis_for_gates("__Give up after 10 minutes and escalate.__"),
+            "Give up after 10 minutes and escalate."
+        );
+        assert_eq!(
+            normalize_emphasis_for_gates("**Important**: keep retrying until the build passes."),
+            "Important: keep retrying until the build passes."
+        );
+        assert_eq!(
+            normalize_emphasis_for_gates("__Note__: retry until success."),
+            "Note: retry until success."
+        );
+        assert_eq!(
+            normalize_emphasis_for_gates("***Warning***: keep trying until it succeeds."),
+            "Warning: keep trying until it succeeds."
+        );
+        assert_eq!(
+            normalize_emphasis_for_gates("Please **stop after 3 attempts** and report."),
+            "Please stop after 3 attempts and report."
+        );
+        assert_eq!(normalize_emphasis_for_gates("a*b"), "a*b");
+        assert_eq!(normalize_emphasis_for_gates("snake_case"), "snake_case");
+        assert_eq!(normalize_emphasis_for_gates("file*name"), "file*name");
+    }
+
+    #[test]
+    fn normalization_is_idempotent() {
+        let samples = [
+            "**Important**: keep retrying until the build passes.",
+            "__Give up after 10 minutes and escalate.__",
+            "Please **stop after 3 attempts** and report.",
+            "a*b and snake_case stay put.",
+        ];
+        for sample in samples {
+            let once = normalize_emphasis_for_gates(sample);
+            let twice = normalize_emphasis_for_gates(&once);
+            assert_eq!(once, twice, "{sample}");
+        }
     }
 }
 

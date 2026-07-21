@@ -2226,6 +2226,57 @@ fn q005_and_a029_share_bound_recognition_through_the_real_binary() {
 }
 
 #[test]
+fn emphasized_a029_control_and_q005_label_work_through_the_real_binary() {
+    let clean = tempfile::tempdir().unwrap();
+    init_git(clean.path());
+    std::fs::create_dir_all(clean.path().join(".claude/agents")).unwrap();
+    std::fs::write(
+        clean.path().join(".claude/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews changes and makes targeted repairs when needed\ntools: Bash\n---\n**Stop after 3 attempts and report the blocker.**\n",
+    )
+    .unwrap();
+    let clean_output = run_in(
+        clean.path(),
+        &["--format", "json", "--only", "A029,Q005", "."],
+    );
+    assert!(
+        clean_output.status.success(),
+        "stderr: {}",
+        stderr(&clean_output)
+    );
+    assert_eq!(json(&clean_output)["diagnostics"], serde_json::json!([]));
+
+    let broken = tempfile::tempdir().unwrap();
+    init_git(broken.path());
+    std::fs::create_dir(broken.path().join(".claude")).unwrap();
+    std::fs::write(
+        broken.path().join("CLAUDE.md"),
+        "**Important**: keep retrying until the build passes.\n",
+    )
+    .unwrap();
+    let broken_output = run_in(
+        broken.path(),
+        &["--format", "json", "--only", "A029,Q005", "."],
+    );
+    assert_eq!(
+        broken_output.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&broken_output)
+    );
+    let diagnostics = json(&broken_output)["diagnostics"]
+        .as_array()
+        .unwrap()
+        .clone();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "Q005");
+    assert_eq!(
+        diagnostics[0]["evidence"],
+        "**Important**: keep retrying until the build passes."
+    );
+}
+
+#[test]
 fn q005_reports_wrapped_instructions_in_source_order_through_the_real_binary() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
