@@ -126,7 +126,8 @@ fn collect_agent_candidates(dirs: &[&str], exclude: &ExcludeSet) -> Vec<DescCand
             let Some(fm_lines) = frontmatter_lines(&content) else {
                 continue;
             };
-            let Some(description) = frontmatter::get_field(&fm_lines, "description") else {
+            let Some(description) = frontmatter::get_strict_string_field(&fm_lines, "description")
+            else {
                 continue;
             };
             if let Some(candidate) = candidate_from_description(path, &description) {
@@ -142,7 +143,9 @@ fn collect_skill_candidates(dirs: &[&str], exclude: &ExcludeSet) -> Vec<DescCand
     let mut candidates = Vec::new();
     for dir in dirs {
         for info in collect_skills(dir, exclude) {
-            let Some(description) = frontmatter::get_field(&info.fm_lines, "description") else {
+            let Some(description) =
+                frontmatter::get_strict_string_field(&info.fm_lines, "description")
+            else {
                 continue;
             };
             if let Some(candidate) = candidate_from_description(info.path, &description) {

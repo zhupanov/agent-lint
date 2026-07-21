@@ -162,6 +162,20 @@ pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, (usi
     }
 }
 
+/// Read a non-empty string field from strictly parsed mapping frontmatter.
+///
+/// This is for consumers that require a trustworthy schema value rather than
+/// the legacy line-oriented field lookup. Invalid YAML, non-mapping documents,
+/// non-string values, and empty strings do not yield a value.
+pub fn get_strict_string_field(fm_lines: &[String], key: &str) -> Option<String> {
+    let yaml = parse_yaml_strict(fm_lines).ok()?;
+    yaml.as_mapping()?
+        .get(key)?
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
 /// Convert a YAML value to JSON for reuse by JSON-shaped validators (e.g. hooks).
 pub fn yaml_to_json(value: &crate::yaml::Value) -> Option<serde_json::Value> {
     serde_json::to_value(value).ok()
@@ -343,6 +357,33 @@ mod tests {
         let fm = extract_frontmatter("---\nname: foo\n\tbad: tab\n---\n").unwrap();
         let (line, _msg) = parse_yaml_strict(&fm).unwrap_err();
         assert_eq!(line, 3, "file line should account for opening ---");
+    }
+
+    #[test]
+    fn strict_string_field_requires_valid_mapping_and_scalar() {
+        let cases = [
+            (
+                "description: A usable routing description",
+                Some("A usable routing description"),
+            ),
+            ("description:\n  - A usable routing description", None),
+            ("- description: A usable routing description", None),
+            (
+                "description: A usable routing description\ndescription: duplicate",
+                None,
+            ),
+            ("description: [A usable routing description", None),
+            ("description: \"\"", None),
+        ];
+
+        for (source, expected) in cases {
+            let fm = source.lines().map(str::to_owned).collect::<Vec<_>>();
+            assert_eq!(
+                get_strict_string_field(&fm, "description").as_deref(),
+                expected,
+                "{source}"
+            );
+        }
     }
 
     #[test]

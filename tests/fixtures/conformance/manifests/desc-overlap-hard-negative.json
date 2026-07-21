@@ -1,12 +1,17 @@
 {
   "class": "hard-negative",
   "repository": "desc-overlap-hard-negative",
-  "covers": ["basic-mode", "normal", "json", "desc-overlap", "desc-overlap-hard-negative"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A030,S074", "."] },
-  "expected_exit_code": 0,
-  "expected_status": "clean",
+  "covers": ["basic-mode", "normal", "json", "desc-overlap", "desc-overlap-hard-negative", "frontmatter-yaml-invalid"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "X001,A030,S074", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
   "expected_active_platforms": ["claude"],
   "expected_suppressed": 0,
-  "expected_diagnostics": [],
+  "expected_diagnostics": [
+    { "code": "X001", "name": "frontmatter-yaml-invalid", "severity": "error", "subject_path": ".claude/skills/invalid-duplicate/SKILL.md" },
+    { "code": "X001", "name": "frontmatter-yaml-invalid", "severity": "error", "subject_path": ".claude/skills/invalid-syntax/SKILL.md" },
+    { "code": "X001", "name": "frontmatter-yaml-invalid", "severity": "error", "subject_path": ".claude/agents/invalid-duplicate.md" },
+    { "code": "X001", "name": "frontmatter-yaml-invalid", "severity": "error", "subject_path": ".claude/agents/invalid-syntax.md" }
+  ],
   "allowed_additional_diagnostics": []
 }
