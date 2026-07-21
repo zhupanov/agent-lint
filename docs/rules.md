@@ -287,7 +287,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | A021 | `agent-bypass-permissions` | Agent `permissionMode: bypassPermissions` disables safety checks | Always | warn |
 | A022 | `agent-skill-kebab` | Agent `skills` entry is not kebab-case | Always | warn |
 | A023 | `agent-effort-invalid` | Agent `effort` is not `low`/`medium`/`high`/`xhigh`/`max` | Always | error |
-| A024 | `agent-isolation-invalid` | Agent `isolation` is not `worktree` | Always | error |
+| A024 | `agent-isolation-invalid` | Agent `isolation` is not `worktree` or `remote` | Always | error |
 | A025 | `agent-background-invalid` | Agent `background` is not a boolean | Always | warn |
 | A026 | `agent-maxturns-invalid` | Agent `maxTurns` is not a positive integer | Always | error |
 | A027 | `agent-field-unknown` | Unrecognized agent frontmatter field (possible typo) | Always | warn |

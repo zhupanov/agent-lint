@@ -1,0 +1,7 @@
+[lint]
+exclude = [".claude/agents/excluded.md"]
+
+[[lint.overrides]]
+files = [".claude/agents/suppressed.md"]
+suppress = ["A014"]
+reason = "The invalid model is tracked outside this focused fixture."
