@@ -556,7 +556,7 @@ fn is_safe_claude_env_reference(value: &str) -> bool {
         return false;
     };
     match captures.get(2) {
-        None => true,                   // exact ${NAME}
+        None => true,                                 // exact ${NAME}
         Some(default) => default.as_str().is_empty(), // ${NAME:-} with empty default
     }
 }
@@ -652,9 +652,8 @@ fn payload_has_destructive_rm(payload: &str) -> bool {
 }
 
 fn payload_has_destructive_rd(payload: &str) -> bool {
-    payload_command_segments(payload).any(|tokens| {
-        is_destructive_rd(&executable_basename(tokens[0]), &tokens[1..])
-    })
+    payload_command_segments(payload)
+        .any(|tokens| is_destructive_rd(&executable_basename(tokens[0]), &tokens[1..]))
 }
 
 fn executable_basename(command: &str) -> String {
@@ -729,10 +728,7 @@ fn powershell_payload<'a>(args: &[&'a str]) -> Option<InterpreterPayload<'a>> {
                     .map(InterpreterPayload::PowerShellEncoded);
             }
             Some(PowerShellFlag::Plain) => {
-                return args
-                    .get(index + 1)
-                    .copied()
-                    .map(InterpreterPayload::Plain);
+                return args.get(index + 1).copied().map(InterpreterPayload::Plain);
             }
             None => {}
         }
@@ -895,8 +891,6 @@ fn is_windows_drive_root(path: &str) -> bool {
             && path.as_bytes()[1] == b':'
             && matches!(path.as_bytes()[2], b'\\' | b'/'))
 }
-
-
 
 /// Serde intentionally keeps only the last duplicate key. This scanner runs
 /// after parsing succeeds so P023/P027 retain raw-key identity and spans.
@@ -1721,10 +1715,7 @@ mod tests {
             .filter(|diagnostic| diagnostic.rule == LintRule::McpCommandDangerous)
             .collect();
         assert_eq!(hits.len(), 1, "{diagnostics:#?}");
-        assert_eq!(
-            hits[0].evidence.as_deref(),
-            Some("download-piped-to-shell")
-        );
+        assert_eq!(hits[0].evidence.as_deref(), Some("download-piped-to-shell"));
     }
 
     #[test]

