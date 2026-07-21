@@ -28,7 +28,10 @@ static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b20[2-3][0-9]\b
 
 // S041: Fork-no-task
 static RE_IMPERATIVE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(run|execute|create|build|generate|invoke|call|launch|start|perform|apply|install|deploy|write|implement)\b").unwrap()
+    Regex::new(
+        r"(?i)\b(run|execute|create|build|generate|invoke|call|launch|start|perform|apply|install|deploy|write|implement|analyze|audit|check|collect|compare|compile|convert|describe|diagnose|document|evaluate|examine|explain|extract|find|fix|format|gather|identify|inspect|lint|list|locate|measure|merge|output|parse|produce|read|refactor|rename|replace|report|research|resolve|return|review|scan|search|summarize|test|update|validate|verify)\b",
+    )
+    .unwrap()
 });
 
 // S046: Workflow structure
@@ -40,11 +43,12 @@ static RE_WORKFLOW_STRUCTURE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // S046: Numbered list items (counted separately — need 3+ contiguous)
-static RE_NUMBERED_LIST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*\d+\.\s").unwrap());
+// Accepts both `1.` and `1)` CommonMark ordered-list markers.
+static RE_NUMBERED_LIST: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*\d+[.)]\s").unwrap());
 
-// S047: Example patterns
+// S047: Example patterns (singular and plural heading/marker forms)
 static RE_EXAMPLE_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^\s*(?:#{2,3} (?:Example|Usage|Template|Format)\b|\*\*(?:Example|Input|Output)(?:\s*\d*)?:\*\*)").unwrap()
+    Regex::new(r"(?m)^\s*(?:#{2,3} (?:Examples?|Usage|Templates?|Formats?)\b|\*\*(?:Examples?|Inputs?|Outputs?)(?:\s*\d*)?:\*\*)").unwrap()
 });
 
 // S051/S052: Script file reference (narrower than RE_BODY_FILE_REF — excludes .md, shared/, ${CLAUDE_PLUGIN_ROOT})
@@ -79,10 +83,11 @@ const SYNONYM_GROUPS: &[(&str, &[&str])] = &[
 static RE_PY_ERROR_HANDLING: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^\s*(try\s*:|except\b)").unwrap());
 
-// S055: Shell error handling patterns (set -e, set -o errexit, trap, || exit/return)
+// S055: Shell error handling patterns (set -e, set -o errexit, trap, || exit/return,
+// compound `|| { ...; exit|return; }`, and `if ! cmd` negated-command guards)
 static RE_SH_ERROR_HANDLING: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?m)(^\s*set\s+-[^\s]*e[^\s]*(\s|$)|^\s*set\s+-o\s+errexit\b|^\s*trap\b|\|\|\s*(exit|return))",
+        r"(?m)(^\s*set\s+-[^\s]*e[^\s]*(\s|$)|^\s*set\s+-o\s+errexit\b|^\s*trap\b|\|\|\s*(exit|return)|\|\|\s*\{[^}]*\b(?:exit|return)\b|^\s*if\s+!\s)",
     )
     .unwrap()
 });
@@ -221,7 +226,13 @@ pub(super) fn check_body_content(
                         has_workflow = true;
                     }
                 } else if !line.trim().is_empty() {
-                    numbered_count = 0;
+                    // Continuation lines (2+ spaces of indent) do not break
+                    // a contiguous numbered sequence; reset only on flush-left
+                    // or single-space non-matching non-empty lines.
+                    let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
+                    if leading_spaces < 2 {
+                        numbered_count = 0;
+                    }
                 }
             }
             if !has_examples && RE_EXAMPLE_PATTERN.is_match(line) {
