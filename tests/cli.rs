@@ -2201,6 +2201,72 @@ fn only_filters_basic_plugin_codex_and_cursor_dispatch() {
 }
 
 #[test]
+fn s018_autofix_rewrites_only_single_line_canonical_descriptions() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let single = tmp.path().join(".claude/skills/single/SKILL.md");
+    let block = tmp.path().join(".claude/skills/block/SKILL.md");
+    std::fs::create_dir_all(single.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(block.parent().unwrap()).unwrap();
+    std::fs::write(
+        &single,
+        "---\nname: single\ndescription: Use when <tag> XML needs removing\n---\nRemove XML tags.\n",
+    )
+    .unwrap();
+    let block_content = "---\nname: block\ndescription: >-\n  Use when <tag> XML appears in a multiline description\n  and must remain byte-for-byte unchanged by autofix.\n---\nRemove XML tags.\n";
+    std::fs::write(&block, block_content).unwrap();
+
+    let first = run_in(tmp.path(), &["--autofix", "--only", "S018", "."]);
+    assert_eq!(first.status.code(), Some(1), "stderr: {}", stderr(&first));
+    assert!(stderr(&first).contains("fixed[S018/desc-has-xml]"));
+    assert!(
+        !std::fs::read_to_string(&single).unwrap().contains("<tag>"),
+        "single-line description should have its XML tag removed"
+    );
+    assert_eq!(std::fs::read_to_string(&block).unwrap(), block_content);
+
+    let before_second = std::fs::read(&block).unwrap();
+    let second = run_in(tmp.path(), &["--autofix", "--only", "S018", "."]);
+    assert_eq!(second.status.code(), Some(1), "stderr: {}", stderr(&second));
+    assert_eq!(std::fs::read(&block).unwrap(), before_second);
+    assert!(!stderr(&second).contains("fixed[S018/desc-has-xml]"));
+}
+
+#[test]
+fn invalid_yaml_description_skips_description_rules_and_reports_x001() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/invalid/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: invalid\ndescription: >-\n\tUse when <tag> you process documents\n---\nBody\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--all",
+            "--only",
+            "X001,S014,S015,S016,S017,S018,S034,S050,S054",
+            ".",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let codes: Vec<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, vec!["X001"]);
+}
+
+#[test]
 fn only_filters_basic_mode_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude")).unwrap();

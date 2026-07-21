@@ -328,35 +328,6 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &Li
 // ── S018: XML tags in description ───────────────────────────────────────
 
 fn fix_desc_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
-    fix_frontmatter_field_regex(
-        mode,
-        exclude,
-        config,
-        FrontmatterRegexFix {
-            field_name: "description",
-            pattern: &RE_XML_TAG,
-            replacement: "",
-            rule: LintRule::DescHasXml,
-            fix_desc: "stripped XML tags from description",
-        },
-    )
-}
-
-struct FrontmatterRegexFix<'a> {
-    field_name: &'a str,
-    pattern: &'a Regex,
-    replacement: &'a str,
-    rule: LintRule,
-    fix_desc: &'a str,
-}
-
-/// Generic fix: apply a regex replacement on a frontmatter field value.
-fn fix_frontmatter_field_regex(
-    mode: LintMode,
-    exclude: &ExcludeSet,
-    config: &LintConfig,
-    fix: FrontmatterRegexFix<'_>,
-) -> bool {
     let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
@@ -366,17 +337,17 @@ fn fix_frontmatter_field_regex(
         let skills = collect_skills(base_dir, exclude);
         for info in &skills {
             let display = format!("{base_dir}/{}/SKILL.md", info.dir_name);
-            if is_suppressed(config, fix.rule, &display) {
+            if is_suppressed(config, LintRule::DescHasXml, &display) {
                 continue;
             }
-            let value = match frontmatter::get_field(&info.fm_lines, fix.field_name) {
+            let value = match frontmatter::get_strict_string_field(&info.fm_lines, "description") {
                 Some(v) => v,
                 None => continue,
             };
-            if !fix.pattern.is_match(&value) {
+            if !RE_XML_TAG.is_match(&value) {
                 continue;
             }
-            let new_value = fix.pattern.replace_all(&value, fix.replacement).to_string();
+            let new_value = RE_XML_TAG.replace_all(&value, "").to_string();
             let new_value = new_value.trim().to_string();
             if new_value == value || new_value.is_empty() {
                 continue;
@@ -388,20 +359,37 @@ fn fix_frontmatter_field_regex(
                 Err(_) => continue,
             };
 
-            // Use raw line from fm_lines (handles quoted values)
-            let prefix = format!("{}:", fix.field_name);
-            let raw_line = info
+            // A multiline or quoted scalar cannot be rewritten safely with a
+            // line replacement. Only rewrite a single raw value that is
+            // exactly the canonical parsed scalar.
+            let prefix = "description:";
+            let Some(raw_index) = info
                 .fm_lines
                 .iter()
-                .find(|l| l.starts_with(&prefix))
-                .cloned()
-                .unwrap_or_default();
-            let new_line = format!("{}: {new_value}", fix.field_name);
-            if let Some(new_content) = replace_in_frontmatter(&content, &raw_line, &new_line) {
+                .position(|line| line.starts_with(prefix))
+            else {
+                continue;
+            };
+            let raw_line = &info.fm_lines[raw_index];
+            let Some(raw_value) = raw_line.strip_prefix(prefix) else {
+                continue;
+            };
+            let has_continuation = info.fm_lines[raw_index + 1..]
+                .first()
+                .is_some_and(|line| line.is_empty() || line.starts_with(char::is_whitespace));
+            if has_continuation || raw_value.trim_start() != value {
+                continue;
+            }
+
+            let new_line = format!("description: {new_value}");
+            if let Some(new_content) = replace_in_frontmatter(&content, raw_line, &new_line) {
                 if fs::write(&skill_path, new_content).is_ok() {
                     log_fix(
-                        fix.rule,
-                        &format!("{base_dir}/{}/SKILL.md: {}", info.dir_name, fix.fix_desc),
+                        LintRule::DescHasXml,
+                        &format!(
+                            "{base_dir}/{}/SKILL.md: stripped XML tags from description",
+                            info.dir_name
+                        ),
                     );
                     fixed = true;
                 }

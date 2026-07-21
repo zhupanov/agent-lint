@@ -178,6 +178,8 @@ H008--H024 codes with a `… frontmatter` path label.
 | S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin | warn |
 | S074 | `skill-desc-overlap` | Two skill routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
+Description-content rules (S014--S018, S034, S050, and S054) use the canonical parsed YAML string scalar. Invalid or non-mapping YAML frontmatter and missing, empty, or non-string descriptions are skipped by these rules; X001 and the required-frontmatter rules retain ownership of those conditions.
+
 ### Body Content (S019--S022, S037--S038, S041, S046--S047, S051--S053, S055--S057)
 
 | Code | Name | Description | Mode | Default |

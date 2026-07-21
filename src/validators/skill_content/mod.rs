@@ -526,6 +526,185 @@ mod tests {
         }));
     }
 
+    // ── Canonical description scalars ───────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn description_rules_use_canonical_scalar_for_every_yaml_multiline_form() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let first = format!(
+            "Extract PDF text tables OCR metadata and searchable archives {}",
+            "detailed ".repeat(140).trim_end()
+        );
+        let continuation =
+            "You can inspect <tag> scanned contracts. Use when reviewing document workflows.";
+        let forms = [
+            ("folded-strip", format!(">-\n  {first}\n  {continuation}")),
+            ("folded-clip", format!(">\n  {first}\n  {continuation}")),
+            ("literal-clip", format!("|\n  {first}\n  {continuation}")),
+            ("literal-strip", format!("|-\n  {first}\n  {continuation}")),
+            ("plain", format!("{first}\n  {continuation}")),
+            ("double-quoted", format!("\"{first}\n  {continuation}\"")),
+            ("single-quoted", format!("'{first}\n  {continuation}'")),
+        ];
+
+        for (name, description) in forms {
+            let dir = format!("skills/{name}");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                format!("{dir}/SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: {description}\n---\nGarden watering schedules are documented separately.\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let plain_content = std::fs::read_to_string("skills/plain/SKILL.md").unwrap();
+        let plain_frontmatter = crate::frontmatter::extract_frontmatter(&plain_content).unwrap();
+        assert!(
+            crate::frontmatter::get_strict_string_field(&plain_frontmatter, "description")
+                .is_some(),
+            "plain scalar should parse: {:?}",
+            crate::frontmatter::parse_yaml_strict(&plain_frontmatter)
+        );
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+
+        for name in [
+            "folded-strip",
+            "folded-clip",
+            "literal-clip",
+            "literal-strip",
+            "plain",
+            "double-quoted",
+            "single-quoted",
+        ] {
+            let subject = format!("skills/{name}/SKILL.md");
+            let rules: std::collections::HashSet<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|diagnostic| diagnostic.subject_path.as_deref() == Some(subject.as_ref()))
+                .map(|diagnostic| diagnostic.rule)
+                .collect();
+            for expected in [
+                LintRule::DescTooLong,
+                LintRule::DescTruncated,
+                LintRule::DescUsesPerson,
+                LintRule::DescHasXml,
+                LintRule::DescBodyMisalign,
+            ] {
+                assert!(
+                    rules.contains(&expected),
+                    "{name} missing {expected:?}: {rules:?}"
+                );
+            }
+            for unexpected in [
+                LintRule::DescTooShort,
+                LintRule::DescNoTrigger,
+                LintRule::DescVagueContent,
+            ] {
+                assert!(
+                    !rules.contains(&unexpected),
+                    "{name} unexpectedly reported {unexpected:?}: {rules:?}"
+                );
+            }
+
+            let content = std::fs::read_to_string(&subject).unwrap();
+            let frontmatter = crate::frontmatter::extract_frontmatter(&content).unwrap();
+            let canonical =
+                crate::frontmatter::get_strict_string_field(&frontmatter, "description").unwrap();
+            let long_diagnostic = diag
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| {
+                    diagnostic.subject_path.as_deref() == Some(subject.as_ref())
+                        && diagnostic.rule == LintRule::DescTooLong
+                })
+                .unwrap();
+            assert!(
+                long_diagnostic
+                    .message
+                    .contains(&format!("({})", canonical.chars().count())),
+                "{name} must count canonical characters: {long_diagnostic:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn block_scalar_description_matches_the_equivalent_inline_description() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let description = "Extract text and tables from PDF files, fill forms, merge documents, and convert scanned pages to searchable text with OCR fallback logic. Use when the user asks to process, split, or repair any PDF document.";
+        let descriptions = vec![
+            (
+                "block-desc",
+                "description: >-\n  Extract text and tables from PDF files, fill forms, merge documents,\n  and convert scanned pages to searchable text with OCR fallback logic.\n  Use when the user asks to process, split, or repair any PDF document.".to_string(),
+            ),
+            ("inline-desc", format!("description: {description}")),
+        ];
+        for (name, frontmatter_description) in descriptions {
+            let dir = format!("skills/{name}");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                format!("{dir}/SKILL.md"),
+                format!("---\nname: {name}\n{frontmatter_description}\n---\n{description}\n"),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let description_rules = [
+            LintRule::DescTooLong,
+            LintRule::DescTruncated,
+            LintRule::DescUsesPerson,
+            LintRule::DescNoTrigger,
+            LintRule::DescHasXml,
+            LintRule::DescTooShort,
+            LintRule::DescVagueContent,
+            LintRule::DescBodyMisalign,
+        ];
+        for diagnostic in diag.diagnostics() {
+            assert!(
+                !description_rules.contains(&diagnostic.rule),
+                "unexpected canonical-description diagnostic: {diagnostic:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plain_scalar_trigger_on_continuation_line_is_recognized() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/plain-desc").unwrap();
+        std::fs::write(
+            "skills/plain-desc/SKILL.md",
+            "---\nname: plain-desc\ndescription: Extract text and tables from PDF files, fill forms,\n  merge documents, and convert scans. Use when processing PDF files.\n---\nExtract PDF text and tables while processing scans.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::DescNoTrigger),
+            "continuation-line trigger must suppress S017: {:?}",
+            diag.diagnostics()
+        );
+    }
+
     // ── S014: desc-too-long ──────────────────────────────────────────
 
     #[test]
