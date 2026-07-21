@@ -23,6 +23,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "pedantic",
     "per-file-suppression",
     "plugin-mode",
+    "q005-unbounded-retry",
 ];
 
 const REQUIRED_SMOKE_COVERAGE: &[&str] = &[
