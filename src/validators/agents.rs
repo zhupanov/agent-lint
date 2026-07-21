@@ -287,7 +287,7 @@ fn validate_agent_file(
     };
 
     // X001: strict YAML; CC-AG-011: hooks schema when present.
-    let frontmatter_is_valid = match frontmatter::parse_yaml_strict(fm_lines) {
+    let parsed_frontmatter = match frontmatter::parse_yaml_strict(fm_lines) {
         Ok(yaml) => {
             if let Some(hooks) = yaml.get("hooks") {
                 super::hook_schema::validate_frontmatter_hooks(
@@ -296,7 +296,7 @@ fn validate_agent_file(
                     diag,
                 );
             }
-            true
+            Some(yaml)
         }
         Err((line, msg)) => {
             diag.report_with(
@@ -304,7 +304,7 @@ fn validate_agent_file(
                 &format!("{agent_path}:{line}: frontmatter is not valid YAML: {msg}"),
                 DiagnosticMetadata::at_line(line),
             );
-            false
+            None
         }
     };
 
@@ -379,8 +379,14 @@ fn validate_agent_file(
         &markdown,
     )
     .with_outer_max_turns(max_turns);
-    if frontmatter_is_valid {
-        check_agent_stop_control(diag, agent_path, fm_lines, &prompt_document);
+    if let Some(parsed_frontmatter) = parsed_frontmatter.as_ref() {
+        check_agent_stop_control(
+            diag,
+            agent_path,
+            parsed_frontmatter,
+            fm_lines,
+            &prompt_document,
+        );
     }
     prompt_pass.validate(&prompt_document, diag);
 }
@@ -552,10 +558,11 @@ fn is_execution_tool(tool: &str) -> bool {
 fn check_agent_stop_control(
     diag: &mut DiagnosticCollector,
     agent_path: &str,
+    parsed_frontmatter: &crate::yaml::Value,
     fm_lines: &[String],
     document: &LiveInstructionDocument<'_>,
 ) {
-    let execution_tools: Vec<_> = get_field_items(fm_lines, "tools")
+    let execution_tools: Vec<_> = frontmatter::strict_string_items(parsed_frontmatter, "tools")
         .into_iter()
         .filter(|tool| is_execution_tool(tool))
         .collect();
@@ -1512,6 +1519,30 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn test_a029_uses_strict_yaml_tool_values() {
+        for tools in [
+            "tools: Bash # execute repository commands",
+            "tools: [Bash, Read] # execute repository commands",
+            "tools: \"Bash, Read\"",
+            "tools:\n  - Bash\n  - Read",
+            "tools: Bash(git *)",
+        ] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\n{tools}\n---\nInvestigate the failure and implement the repair.\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(
+                    diag.diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing),
+                    "A029 must use the parsed execution tool declaration: {tools}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_a029_valid_max_turns_satisfies_stop_control() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\nmaxTurns: 4\n---\nInvestigate the failure and implement the repair.\n"
@@ -1607,6 +1638,9 @@ mod tests {
             ),
             format!(
                 "---\nname: general\ndescription: {GOOD_DESC}\ntools: Read, Grep, TaskList\n---\nInvestigate the failure.\n"
+            ),
+            format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: UnknownTool\n---\nInvestigate the failure.\n"
             ),
             format!(
                 "---\nname: general\n\tdescription: {GOOD_DESC}\ntools: Bash\n---\nInvestigate the failure.\n"
