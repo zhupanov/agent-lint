@@ -172,6 +172,32 @@ fn q006_json_pairs_are_complete_stable_and_exclude_non_output_shape_prose() {
 }
 
 #[test]
+fn q006_discovers_cursor_mdc_and_legacy_rules_through_the_cli() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".cursor/rules")).unwrap();
+    let conflict = "Return only JSON.\nRespond in Markdown.\n";
+    std::fs::write(
+        tmp.path().join(".cursor/rules/project.mdc"),
+        format!("---\ndescription: Enforces a response format\nalwaysApply: true\n---\n{conflict}"),
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join(".cursorrules"), conflict).unwrap();
+
+    let report = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "Q006", "."],
+    ));
+    let subjects = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(subjects, vec![".cursorrules", ".cursor/rules/project.mdc"]);
+}
+
+#[test]
 fn json_no_work_run_is_clean_with_no_selected_mode() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
