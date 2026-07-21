@@ -216,7 +216,7 @@ pub enum LintRule {
     /// S014: skill description exceeds 1024 characters
     #[strum(props(code = "S014", name = "desc-too-long"))]
     DescTooLong,
-    /// S015: skill description exceeds 250 characters (listing truncation)
+    /// S015: combined skill listing entry exceeds its configured cap
     #[strum(props(code = "S015", name = "desc-truncated"))]
     DescTruncated,
     /// S016: skill description uses first/second person

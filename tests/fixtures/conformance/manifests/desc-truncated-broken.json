@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "desc-truncated-broken",
+  "covers": ["plugin-mode", "normal", "json", "desc-truncated"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "S015", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "S015", "name": "desc-truncated", "severity": "warning", "subject_path": "skills/listing/SKILL.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

@@ -11,7 +11,7 @@ suppress = ["M001"]                        # suppress entirely (by code)
 error    = ["S033", "G005"]                # promote to error (by code or name)
 warn     = ["plugin-json-invalid"]         # downgrade to warning (by name)
 exclude  = ["docs/*.md", "skills/internal-*/**"]  # skip files matching globs
-desc-truncated-max-chars = 200              # tighten S015 (default: 250)
+desc-truncated-max-chars = 200              # tighten S015 (default: 1536)
 skill-closure-max-lines = 700               # enable S062 budget
 claude-import-max-lines = 120               # enable D004 per-import budget
 claude-import-total-max-lines = 400          # enable D004 total budget
@@ -60,7 +60,7 @@ codex = false   # disable Codex checks even when Codex files exist
 | `warn` | string array | Rules to downgrade to warning (printed, but exit 0) |
 | `exclude` | string array | File glob patterns -- matching files are skipped entirely |
 | `overrides` | array of tables | Suppress selected rules only for matching diagnostic subject paths |
-| `desc-truncated-max-chars` | positive integer | S015 listing threshold; defaults to 250 |
+| `desc-truncated-max-chars` | positive integer | S015 per-entry listing cap for combined `description` and `when_to_use`; defaults to 1536 |
 | `skill-closure-max-lines` | positive integer | Enables S062 with a transitive Markdown prompt-source line budget |
 | `claude-import-max-lines` | positive integer | Enables D004 with a per-import line budget |
 | `claude-import-total-max-lines` | positive integer | Enables D004 with a total recursive `@`-import closure budget |
@@ -73,6 +73,10 @@ codex = false   # disable Codex checks even when Codex files exist
 Closure limits are disabled when omitted. The two D004 limits may be used
 independently. Import and Markdown-reference traversal is recursive, bounded,
 and counts each file once.
+
+S015 models Claude Code's per-entry listing cap only. Its separate global
+listing budget can truncate entries below that cap when many skills are
+installed, which Agent Lint does not model per file.
 
 ### Import path budgets
 
