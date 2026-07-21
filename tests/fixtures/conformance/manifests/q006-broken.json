@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "q006-broken",
+  "covers": ["nested-agents-md", "normal", "json", "q006-output-conflict"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "Q006", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "Q006", "name": "prompt-output-conflict", "severity": "warning", "subject_path": "nested/AGENTS.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

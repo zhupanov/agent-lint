@@ -493,6 +493,9 @@ pub enum LintRule {
     /// Q005: operative retry or continuation instruction has no bound or fallback
     #[strum(props(code = "Q005", name = "prompt-unbounded-retry"))]
     PromptUnboundedRetry,
+    /// Q006: mechanically incompatible operative output instructions in one response scope
+    #[strum(props(code = "Q006", name = "prompt-output-conflict"))]
+    PromptOutputConflict,
 
     // ── Claude configuration (R/O/T) ─────────────────────────────
     /// R001: .claude/rules frontmatter paths contains an invalid glob
@@ -1010,6 +1013,7 @@ impl LintRule {
             Self::DescBodyMisalign | Self::ScriptErrhandMissing |
             Self::BodyNoDefault | Self::MagicNumberUndoc |
             Self::SkillClosureLarge | Self::PromptGenericFiller |
+            Self::PromptOutputConflict |
 
             // ── Default-warning: niche (skills) ──────────────────────
             Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
@@ -1209,7 +1213,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            288,
+            289,
             "every enum variant must be registered"
         );
     }
@@ -1354,8 +1358,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            112,
-            "Expected 112 default-warning rules, got {}",
+            113,
+            "Expected 113 default-warning rules, got {}",
             warnings.len()
         );
     }

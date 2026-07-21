@@ -140,6 +140,7 @@ impl PromptContentPass {
             check_negative_only(&path, document, diag);
             check_weak_critical_language(&path, document, diag);
             check_unbounded_retry(&path, document, diag);
+            check_output_conflict(&path, document, diag);
         });
     }
 }
@@ -522,6 +523,658 @@ fn check_weak_critical_language(
                 DiagnosticMetadata::at_line(line_number),
             );
             return;
+        }
+    }
+}
+
+// ── Q006: mechanically incompatible output instructions ──────────────────
+//
+// Each operative output directive is modeled as a typed constraint and only
+// mechanically incompatible constraints that share one response scope are
+// reported. The rule never counts raw format keywords: a document may mention
+// many formats as long as no two exclusive operative requirements collide in
+// the same section. Conditional routing, examples, quoted/fenced text, and
+// separately headed response modes are excluded before comparison.
+
+/// A response output format recognized by the exclusive-format conflict class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputFormat {
+    Json,
+    Markdown,
+    Xml,
+    Yaml,
+    Html,
+    Csv,
+    PlainText,
+}
+
+impl OutputFormat {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Json => "JSON",
+            Self::Markdown => "Markdown",
+            Self::Xml => "XML",
+            Self::Yaml => "YAML",
+            Self::Html => "HTML",
+            Self::Csv => "CSV",
+            Self::PlainText => "plain text",
+        }
+    }
+}
+
+/// A response unit recognized by the size/shape conflict class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShapeUnit {
+    Character,
+    Word,
+    Sentence,
+    Paragraph,
+    Line,
+}
+
+impl ShapeUnit {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Character => "character",
+            Self::Word => "word",
+            Self::Sentence => "sentence",
+            Self::Paragraph => "paragraph",
+            Self::Line => "line",
+        }
+    }
+
+    /// Rank in the containment hierarchy character < word < sentence <
+    /// paragraph. `Line` does not nest cleanly and only participates in
+    /// same-unit comparisons.
+    fn nesting_rank(self) -> Option<u8> {
+        match self {
+            Self::Character => Some(0),
+            Self::Word => Some(1),
+            Self::Sentence => Some(2),
+            Self::Paragraph => Some(3),
+            Self::Line => None,
+        }
+    }
+}
+
+/// A response size/shape bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ShapeBound {
+    Exactly(u32),
+    AtLeast(u32),
+    AtMost(u32),
+}
+
+impl ShapeBound {
+    /// The smallest count this bound permits.
+    fn floor(self) -> u32 {
+        match self {
+            Self::Exactly(count) | Self::AtLeast(count) => count,
+            Self::AtMost(_) => 0,
+        }
+    }
+
+    /// The largest count this bound permits, or `None` when unbounded above.
+    fn cap(self) -> Option<u32> {
+        match self {
+            Self::Exactly(count) | Self::AtMost(count) => Some(count),
+            Self::AtLeast(_) => None,
+        }
+    }
+
+    fn label(self) -> String {
+        match self {
+            Self::Exactly(count) => format!("exactly {count}"),
+            Self::AtLeast(count) => format!("at least {count}"),
+            Self::AtMost(count) => format!("at most {count}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FormatConstraint {
+    format: OutputFormat,
+    exclusive: bool,
+}
+
+/// One typed operative output requirement located in the source.
+enum OutputRequirement {
+    Format(FormatConstraint),
+    Shape { unit: ShapeUnit, bound: ShapeBound },
+}
+
+struct DetectedRequirement {
+    line: usize,
+    scope: Option<usize>,
+    requirement: OutputRequirement,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ConflictCategory {
+    Format,
+    Shape,
+}
+
+const OUTPUT_FORMATS: &[(&str, OutputFormat)] = &[
+    ("json", OutputFormat::Json),
+    ("markdown", OutputFormat::Markdown),
+    ("xml", OutputFormat::Xml),
+    ("yaml", OutputFormat::Yaml),
+    ("html", OutputFormat::Html),
+    ("csv", OutputFormat::Csv),
+    ("plain text", OutputFormat::PlainText),
+    ("plaintext", OutputFormat::PlainText),
+];
+
+/// Verbs that mark a clause as an operative output instruction rather than a
+/// passing mention of a format.
+const OUTPUT_DIRECTIVE_VERBS: &[&str] = &[
+    "respond", "reply", "answer", "return", "output", "produce", "emit", "print", "render",
+    "format", "write", "provide", "give",
+];
+
+/// Directive phrases that frame the whole response as one format and therefore
+/// make the requirement exclusive on their own.
+const WHOLE_RESPONSE_DIRECTIVES: &[&str] = &[
+    "respond in",
+    "respond with",
+    "respond using",
+    "respond only in",
+    "respond only with",
+    "reply in",
+    "reply with",
+    "reply using",
+    "answer in",
+    "answer with",
+    "answer using",
+    "format your response",
+    "format the response",
+    "format your output",
+    "format the output",
+    "your response must be",
+    "your output must be",
+    "the response must be",
+    "the output must be",
+    "response must be",
+    "output must be",
+    "write your response",
+    "return your response",
+];
+
+const EXCLUSIVITY_MARKERS: &[&str] = &[
+    "only",
+    "exclusively",
+    "solely",
+    "nothing but",
+    "nothing else",
+];
+
+/// Words that introduce conditional routing when they lead a sentence. Matching
+/// these only at the head (plus the narrow subordinate markers below) keeps
+/// "For data requests ..." style delineation out of the conflict set without the
+/// over-broad effect of dropping any sentence that merely contains `for` or `or`.
+const CONDITIONAL_LEAD_INS: &[&str] = &[
+    "if",
+    "when",
+    "whenever",
+    "unless",
+    "for",
+    "where",
+    "wherever",
+    "given",
+    "once",
+    "depending",
+    "otherwise",
+    "either",
+    "assuming",
+    "provided",
+    "should",
+];
+
+/// Multi-word conditional lead-ins checked against the head of a sentence.
+const CONDITIONAL_LEAD_PHRASES: &[&str] = &["in case", "only if", "as long as", "in the case"];
+
+/// Subordinate-clause markers that make an instruction conditional even when it
+/// does not lead the sentence. Kept deliberately narrow (surrounded by spaces)
+/// so common prepositions do not silently drop real conflicts.
+const CONDITIONAL_CLAUSE_MARKERS: &[&str] = &[
+    " if ",
+    " when ",
+    " whenever ",
+    " unless ",
+    " otherwise ",
+    " depending on ",
+    " based on ",
+    " as needed",
+    " where ",
+];
+
+/// Adverbs, politeness words, and an optional second-person subject/modal that
+/// may precede an imperative directive verb without changing that the clause is
+/// an operative instruction.
+const IMPERATIVE_LEAD_SKIP: &[&str] = &[
+    "please", "always", "then", "first", "next", "finally", "also", "only", "kindly", "simply",
+    "just", "you", "must", "should", "shall", "will", "can", "may",
+];
+
+/// Explicit references to the agent's own response, which mark a non-imperative
+/// clause as still constraining output.
+const AGENT_OUTPUT_SUBJECTS: &[&str] = &[
+    "your response",
+    "your output",
+    "your reply",
+    "your answer",
+    "the response must",
+    "the response should",
+    "the output must",
+    "the output should",
+];
+
+const SENTENCE_DELIMITERS: &[char] = &['.', '!', '?', ';'];
+const CLAUSE_DELIMITERS: &[char] = &[','];
+
+#[derive(Debug, Clone, Copy)]
+enum ShapeBoundKind {
+    AtLeast,
+    AtMost,
+    AtMostStrict,
+    Exactly,
+    ExactlyOne,
+}
+
+static SHAPE_PATTERNS: LazyLock<Vec<(Regex, ShapeBoundKind)>> = LazyLock::new(|| {
+    const NUM: &str = r"(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)";
+    const UNIT: &str = r"(?P<u>words?|sentences?|paragraphs?|lines?|characters?|chars?)";
+    let anchored = |quantifier: &str| {
+        Regex::new(&format!(r"(?i)\b(?:{quantifier})\s+(?P<n>{NUM})\s+{UNIT}"))
+            .expect("Q006 shape pattern is valid")
+    };
+    vec![
+        (
+            anchored("at least|no fewer than|no less than|at a minimum of|a minimum of|minimum of"),
+            ShapeBoundKind::AtLeast,
+        ),
+        (
+            Regex::new(&format!(r"(?i)\b(?P<n>{NUM})\s+or\s+more\s+{UNIT}"))
+                .expect("Q006 shape pattern is valid"),
+            ShapeBoundKind::AtLeast,
+        ),
+        (
+            anchored("at most|no more than|up to|at a maximum of|a maximum of|maximum of"),
+            ShapeBoundKind::AtMost,
+        ),
+        (
+            Regex::new(&format!(r"(?i)\b(?P<n>{NUM})\s+or\s+(?:fewer|less)\s+{UNIT}"))
+                .expect("Q006 shape pattern is valid"),
+            ShapeBoundKind::AtMost,
+        ),
+        (
+            anchored("fewer than|less than|under"),
+            ShapeBoundKind::AtMostStrict,
+        ),
+        (anchored("exactly|precisely"), ShapeBoundKind::Exactly),
+        (
+            Regex::new(&format!(
+                r"(?i)\b(?:a single|one single|in a single|just one|only one|exactly one|precisely one|in one|to one)\s+{UNIT}"
+            ))
+            .expect("Q006 shape pattern is valid"),
+            ShapeBoundKind::ExactlyOne,
+        ),
+    ]
+});
+
+fn check_output_conflict(
+    path: &str,
+    document: &LiveInstructionDocument<'_>,
+    diag: &mut DiagnosticCollector,
+) {
+    let lines = document.prose_lines();
+    let example = example_scopes(document);
+    let mut requirements: Vec<DetectedRequirement> = Vec::new();
+
+    for (index, line) in lines.iter().enumerate() {
+        if example[index] {
+            continue;
+        }
+        // Heading lines define response scopes; they are never operative output
+        // instructions themselves.
+        if document
+            .headings()
+            .iter()
+            .any(|heading| heading.line == line.line)
+        {
+            continue;
+        }
+        let scope = scope_of(document, line.line);
+        for sentence in split_on(&line.text, SENTENCE_DELIMITERS) {
+            // Conditionality is judged on the whole sentence first so a leading
+            // "For X, ..." condition still guards the directive that follows it.
+            if sentence_is_conditional(sentence) {
+                continue;
+            }
+            for clause in split_on(sentence, CLAUSE_DELIMITERS) {
+                if sentence_is_conditional(clause) {
+                    continue;
+                }
+                for requirement in detect_requirements(clause) {
+                    requirements.push(DetectedRequirement {
+                        line: line.line,
+                        scope,
+                        requirement,
+                    });
+                }
+            }
+        }
+    }
+
+    report_output_conflicts(path, &requirements, diag);
+}
+
+fn detect_requirements(clause: &str) -> Vec<OutputRequirement> {
+    if let Some(format) = format_constraint(clause) {
+        return vec![OutputRequirement::Format(format)];
+    }
+    shape_constraints(clause)
+        .into_iter()
+        .map(|(unit, bound)| OutputRequirement::Shape { unit, bound })
+        .collect()
+}
+
+fn format_constraint(clause: &str) -> Option<FormatConstraint> {
+    let lower = clause.to_ascii_lowercase();
+    // Only an imperative directive, or an explicit constraint on the agent's own
+    // response, is an operative output requirement. This excludes input-format
+    // descriptions ("Users reply in plain text") and label/condition-prefixed
+    // routing ("Data requests: respond in JSON") even though both name a verb.
+    if !clause_states_output_directive(&lower) {
+        return None;
+    }
+    let mut formats: Vec<OutputFormat> = Vec::new();
+    for &(token, format) in OUTPUT_FORMATS {
+        if contains_phrase(&lower, &[token]) && !formats.contains(&format) {
+            formats.push(format);
+        }
+    }
+    // Exactly one distinct format keeps "respond in JSON or Markdown" and other
+    // multi-format wording out of the exclusive-conflict class.
+    if formats.len() != 1 {
+        return None;
+    }
+    let exclusive = contains_phrase(&lower, EXCLUSIVITY_MARKERS)
+        || contains_phrase(&lower, WHOLE_RESPONSE_DIRECTIVES);
+    Some(FormatConstraint {
+        format: formats[0],
+        exclusive,
+    })
+}
+
+/// Whether a lowercased clause states an operative output requirement: it is
+/// imperative (its first significant word is a directive verb, allowing leading
+/// adverbs and an optional `you [modal]` subject) or it explicitly constrains
+/// the agent's own response.
+fn clause_states_output_directive(lower: &str) -> bool {
+    let lead = lower.trim_start_matches(|character: char| {
+        character.is_whitespace()
+            || matches!(character, '#' | '-' | '*' | '+' | '>' | ')')
+            || character.is_ascii_digit()
+            || character == '.'
+    });
+    let mut words = lead.split_whitespace().peekable();
+    while words
+        .peek()
+        .is_some_and(|word| IMPERATIVE_LEAD_SKIP.contains(word))
+    {
+        words.next();
+    }
+    if words
+        .peek()
+        .is_some_and(|word| OUTPUT_DIRECTIVE_VERBS.contains(word))
+    {
+        return true;
+    }
+    AGENT_OUTPUT_SUBJECTS
+        .iter()
+        .any(|subject| lower.contains(subject))
+}
+
+/// Every recognized size/shape bound in a clause, kept left to right and
+/// non-overlapping so one clause can carry more than one requirement (e.g.
+/// "exactly one sentence but at least three paragraphs").
+fn shape_constraints(clause: &str) -> Vec<(ShapeUnit, ShapeBound)> {
+    let mut matches: Vec<(usize, usize, ShapeUnit, ShapeBound)> = Vec::new();
+    for (regex, kind) in SHAPE_PATTERNS.iter() {
+        for captures in regex.captures_iter(clause) {
+            let Some(unit) = captures.name("u").and_then(|unit| unit_of(unit.as_str())) else {
+                continue;
+            };
+            let count = match kind {
+                ShapeBoundKind::ExactlyOne => 1,
+                _ => match captures
+                    .name("n")
+                    .and_then(|number| parse_count(number.as_str()))
+                {
+                    Some(count) => count,
+                    None => continue,
+                },
+            };
+            let bound = match kind {
+                ShapeBoundKind::AtLeast => ShapeBound::AtLeast(count),
+                ShapeBoundKind::AtMost => ShapeBound::AtMost(count),
+                ShapeBoundKind::AtMostStrict => ShapeBound::AtMost(count.saturating_sub(1)),
+                ShapeBoundKind::Exactly | ShapeBoundKind::ExactlyOne => ShapeBound::Exactly(count),
+            };
+            let Some(whole) = captures.get(0) else {
+                continue;
+            };
+            matches.push((whole.start(), whole.end(), unit, bound));
+        }
+    }
+    // Earliest start first, longer match first on ties, so selection is
+    // deterministic regardless of pattern order.
+    matches.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+    let mut selected: Vec<(ShapeUnit, ShapeBound)> = Vec::new();
+    let mut consumed_end = 0usize;
+    for (start, end, unit, bound) in matches {
+        if start < consumed_end {
+            continue;
+        }
+        consumed_end = end;
+        selected.push((unit, bound));
+    }
+    selected
+}
+
+fn unit_of(raw: &str) -> Option<ShapeUnit> {
+    match raw.to_ascii_lowercase().trim_end_matches('s') {
+        "word" => Some(ShapeUnit::Word),
+        "sentence" => Some(ShapeUnit::Sentence),
+        "paragraph" => Some(ShapeUnit::Paragraph),
+        "line" => Some(ShapeUnit::Line),
+        "character" | "char" => Some(ShapeUnit::Character),
+        _ => None,
+    }
+}
+
+fn parse_count(raw: &str) -> Option<u32> {
+    match raw.to_ascii_lowercase().as_str() {
+        "one" => Some(1),
+        "two" => Some(2),
+        "three" => Some(3),
+        "four" => Some(4),
+        "five" => Some(5),
+        "six" => Some(6),
+        "seven" => Some(7),
+        "eight" => Some(8),
+        "nine" => Some(9),
+        "ten" => Some(10),
+        other => other.parse().ok(),
+    }
+}
+
+fn scope_of(document: &LiveInstructionDocument<'_>, line_number: usize) -> Option<usize> {
+    document
+        .headings()
+        .iter()
+        .filter(|heading| heading.line < line_number)
+        .map(|heading| heading.line)
+        .max()
+}
+
+fn split_on<'a>(text: &'a str, delimiters: &'static [char]) -> impl Iterator<Item = &'a str> {
+    text.split(|character| delimiters.contains(&character))
+        .map(str::trim)
+        .filter(|piece| !piece.is_empty())
+}
+
+fn sentence_is_conditional(clause: &str) -> bool {
+    let cleaned = clause
+        .trim_start_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(character, '#' | '-' | '*' | '+' | '>' | ')')
+                || character.is_ascii_digit()
+                || character == '.'
+        })
+        .to_ascii_lowercase();
+    if cleaned
+        .split_whitespace()
+        .next()
+        .is_some_and(|word| CONDITIONAL_LEAD_INS.contains(&word))
+    {
+        return true;
+    }
+    if CONDITIONAL_LEAD_PHRASES
+        .iter()
+        .any(|phrase| cleaned.starts_with(phrase))
+    {
+        return true;
+    }
+    CONDITIONAL_CLAUSE_MARKERS
+        .iter()
+        .any(|marker| cleaned.contains(marker))
+}
+
+fn report_output_conflicts(
+    path: &str,
+    requirements: &[DetectedRequirement],
+    diag: &mut DiagnosticCollector,
+) {
+    // At most one finding per (scope, category): the earliest minimal pair in
+    // source order. This keeps output deterministic and bounded even when a
+    // section stacks several incompatible requirements.
+    let mut reported: HashSet<(Option<usize>, ConflictCategory)> = HashSet::new();
+
+    for (index, first) in requirements.iter().enumerate() {
+        for second in &requirements[index + 1..] {
+            if first.scope != second.scope {
+                continue;
+            }
+            let Some(category) = conflict_between(&first.requirement, &second.requirement) else {
+                continue;
+            };
+            if reported.insert((first.scope, category)) {
+                emit_output_conflict(path, first, second, category, diag);
+            }
+        }
+    }
+}
+
+fn conflict_between(a: &OutputRequirement, b: &OutputRequirement) -> Option<ConflictCategory> {
+    match (a, b) {
+        (OutputRequirement::Format(first), OutputRequirement::Format(second)) => {
+            formats_conflict(*first, *second).then_some(ConflictCategory::Format)
+        }
+        (
+            OutputRequirement::Shape {
+                unit: unit_a,
+                bound: bound_a,
+            },
+            OutputRequirement::Shape {
+                unit: unit_b,
+                bound: bound_b,
+            },
+        ) => {
+            shapes_conflict(*unit_a, *bound_a, *unit_b, *bound_b).then_some(ConflictCategory::Shape)
+        }
+        _ => None,
+    }
+}
+
+fn formats_conflict(a: FormatConstraint, b: FormatConstraint) -> bool {
+    a.format != b.format && a.exclusive && b.exclusive
+}
+
+fn shapes_conflict(
+    unit_a: ShapeUnit,
+    bound_a: ShapeBound,
+    unit_b: ShapeUnit,
+    bound_b: ShapeBound,
+) -> bool {
+    if unit_a == unit_b {
+        return ranges_disjoint(bound_a, bound_b);
+    }
+    match (unit_a.nesting_rank(), unit_b.nesting_rank()) {
+        (Some(rank_a), Some(rank_b)) if rank_a != rank_b => {
+            // A floor on the larger unit forces at least that many of the
+            // smaller unit; a tighter cap on the smaller unit is unsatisfiable.
+            let (larger, smaller) = if rank_a > rank_b {
+                (bound_a, bound_b)
+            } else {
+                (bound_b, bound_a)
+            };
+            smaller.cap().is_some_and(|cap| larger.floor() > cap)
+        }
+        _ => false,
+    }
+}
+
+fn ranges_disjoint(a: ShapeBound, b: ShapeBound) -> bool {
+    b.cap().is_some_and(|cap| a.floor() > cap) || a.cap().is_some_and(|cap| b.floor() > cap)
+}
+
+fn emit_output_conflict(
+    path: &str,
+    first: &DetectedRequirement,
+    second: &DetectedRequirement,
+    category: ConflictCategory,
+    diag: &mut DiagnosticCollector,
+) {
+    let subject = match category {
+        ConflictCategory::Format => "output-format",
+        ConflictCategory::Shape => "output-shape",
+    };
+    let descriptor_a = describe_requirement(&first.requirement);
+    let descriptor_b = describe_requirement(&second.requirement);
+    let line_a = first.line;
+    let line_b = second.line;
+    let message = format!(
+        "{path}: incompatible {subject} instructions in the same response scope ({descriptor_a} at line {line_a}, {descriptor_b} at line {line_b}); clarify which single requirement applies"
+    );
+    let evidence = format!("line {line_a}: {descriptor_a}; line {line_b}: {descriptor_b}");
+    diag.report_with(
+        LintRule::PromptOutputConflict,
+        &message,
+        DiagnosticMetadata::at_line(line_a)
+            .with_evidence(evidence)
+            .with_suggestion(
+                "Clarify which single output requirement applies, or separate the instructions by explicit condition or response mode; this rule does not choose between them.",
+            ),
+    );
+}
+
+fn describe_requirement(requirement: &OutputRequirement) -> String {
+    match requirement {
+        OutputRequirement::Format(constraint) => {
+            let label = constraint.format.label();
+            if constraint.exclusive {
+                format!("exclusive {label} output")
+            } else {
+                format!("{label} output")
+            }
+        }
+        OutputRequirement::Shape { unit, bound } => {
+            let bound_label = bound.label();
+            let unit_label = unit.label();
+            format!("{bound_label} {unit_label}")
         }
     }
 }
@@ -1230,5 +1883,275 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    fn q006_diagnostics(body: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        diagnostics_for(body)
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptOutputConflict)
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn q006_reports_exclusive_format_conflict_with_structured_evidence() {
+        let diagnostics = q006_diagnostics("Return only JSON.\nRespond in Markdown.\n");
+        assert_eq!(diagnostics.len(), 1);
+        // Primary location is the earlier (deterministic) constraint.
+        assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 1);
+        // Both conflicting constraints are exposed structurally, not via message text.
+        let evidence = diagnostics[0].evidence.as_deref().unwrap();
+        assert!(evidence.starts_with("line 1:"), "{evidence}");
+        assert!(evidence.contains("line 2:"), "{evidence}");
+        assert!(evidence.contains("JSON"), "{evidence}");
+        assert!(evidence.contains("Markdown"), "{evidence}");
+        // The suggestion asks for clarification and does not choose a side.
+        assert!(
+            diagnostics[0]
+                .suggestion
+                .as_deref()
+                .unwrap()
+                .contains("Clarify")
+        );
+    }
+
+    #[test]
+    fn q006_reports_each_positive_class() {
+        // Class 1: two exclusive formats.
+        assert_eq!(
+            q006_diagnostics("Output XML only.\nReturn only JSON.\n").len(),
+            1
+        );
+        // Class 1: a trailing purpose phrase ("... for the API") must not mask a
+        // real conflict — conditionality is judged at the sentence head only.
+        assert_eq!(
+            q006_diagnostics("Return only JSON, formatted for the API.\nRespond in Markdown.\n")
+                .len(),
+            1
+        );
+        // Class 2: incompatible size/shape across nesting units.
+        assert_eq!(
+            q006_diagnostics(
+                "Answer in exactly one sentence.\nInclude at least three paragraphs.\n"
+            )
+            .len(),
+            1
+        );
+        // Class 2: incompatible same-unit minimum/maximum.
+        assert_eq!(
+            q006_diagnostics("Use at most two sentences.\nWrite at least five sentences.\n").len(),
+            1
+        );
+        // Class 2: two incompatible bounds inside a single clause.
+        assert_eq!(
+            q006_diagnostics("Respond in exactly one sentence but at least three paragraphs.\n")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn q006_conflict_is_scoped_to_one_section() {
+        // Same section: reported.
+        assert_eq!(
+            q006_diagnostics("# Output\nReturn only JSON.\nRespond in Markdown.\n").len(),
+            1
+        );
+        // Separate headings defining distinct response modes: clean.
+        assert!(
+            q006_diagnostics(
+                "## JSON responses\nReturn only JSON.\n## Markdown responses\nRespond in Markdown.\n"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn q006_ignores_every_hard_negative_class() {
+        for clean in [
+            // Mere multi-format mention.
+            "The pipeline reads JSON and emits Markdown examples.",
+            // Non-exclusive alternatives.
+            "Respond in JSON or Markdown.",
+            // Two non-exclusive single mentions.
+            "Return JSON.\nWe also emit Markdown.",
+            // Conditional routing (semicolon and comma forms).
+            "For data requests use JSON; for explanations use Markdown.",
+            "For data, respond in JSON. For prose, respond in Markdown.",
+            // Input-format versus output-format.
+            "The input is JSON.\nRespond in Markdown.",
+            // Fenced, inline-code, and quoted examples.
+            "`Return only JSON.`\n> Respond in Markdown.\n```\nOutput XML only.\n```",
+            // Explicit examples section.
+            "# Examples\nReturn only JSON.\nRespond in Markdown.",
+            // Compatible shape bounds (satisfiable together).
+            "Write at least two paragraphs.\nInclude at least three sentences.",
+            // Input-format described with a directive verb (subject is the user,
+            // not the agent) — not an operative output requirement.
+            "Users reply in plain text.\nRespond in Markdown.",
+            "The user will respond in JSON.\nAlways format your response in Markdown.",
+            // Label-routed response modes (delineation without a marker word).
+            "- Data requests: respond only in JSON.\n- Explanations: respond only in Markdown.",
+            "Data mode: respond only in JSON. Prose mode: respond only in Markdown.",
+        ] {
+            assert!(
+                q006_diagnostics(clean).is_empty(),
+                "expected no Q006 for {clean:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn q006_severity_follows_normal_pedantic_and_suppression() {
+        let body = "Return only JSON.\nRespond in Markdown.\n";
+
+        // Normal mode: the default-warning rule fires as a non-blocking warning.
+        let mut normal = DiagnosticCollector::new();
+        validate_body("skills/example/SKILL.md", body, &mut normal);
+        assert_eq!(normal.warning_count(), 1);
+        assert_eq!(normal.error_count(), 0);
+
+        // Pedantic mode: promoted to a blocking error.
+        let mut config = LintConfig::default();
+        config.apply_cli_mode(crate::config::CliMode::Pedantic);
+        let mut pedantic = DiagnosticCollector::with_config(config);
+        validate_body("skills/example/SKILL.md", body, &mut pedantic);
+        assert_eq!(pedantic.error_count(), 1);
+        assert_eq!(pedantic.warning_count(), 0);
+
+        // All mode: enabled as an error like every registered rule.
+        let mut all_config = LintConfig::default();
+        all_config.apply_cli_mode(crate::config::CliMode::All);
+        let mut all = DiagnosticCollector::with_config(all_config);
+        validate_body("skills/example/SKILL.md", body, &mut all);
+        assert_eq!(all.error_count(), 1);
+
+        // Suppression removes it entirely and is accounted for.
+        let suppressed_config = LintConfig {
+            suppress: HashSet::from([LintRule::PromptOutputConflict]),
+            ..LintConfig::default()
+        };
+        let mut suppressed = DiagnosticCollector::with_config(suppressed_config);
+        validate_body("skills/example/SKILL.md", body, &mut suppressed);
+        assert_eq!(suppressed.error_count() + suppressed.warning_count(), 0);
+        assert_eq!(suppressed.suppressed_count(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn q006_runs_on_every_live_instruction_surface() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/example").unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::create_dir_all(".cursor/rules").unwrap();
+
+        let conflict = "Return only JSON.\nRespond in Markdown.\n";
+        std::fs::write("CLAUDE.md", conflict).unwrap();
+        std::fs::write("AGENTS.md", conflict).unwrap();
+        std::fs::write(
+            ".claude/skills/example/SKILL.md",
+            format!(
+                "---\nname: example\ndescription: Use when you need reliable output support\n---\n{conflict}"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/example.md",
+            format!(
+                "---\nname: example\ndescription: Reviews changes with concrete test evidence\n---\n{conflict}"
+            ),
+        )
+        .unwrap();
+        std::fs::write(".cursor/rules/example.md", conflict).unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        super::super::run_all_with_targets(
+            &context(tmp.path(), LintMode::Basic),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                codex: false,
+                agents_md: true,
+                agent_skills: false,
+            },
+        );
+
+        for expected in [
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".claude/skills/example/SKILL.md",
+            ".claude/agents/example.md",
+            ".cursor/rules/example.md",
+        ] {
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .filter(|item| {
+                        item.rule == LintRule::PromptOutputConflict
+                            && item.subject_path.as_deref() == Some(Path::new(expected))
+                    })
+                    .count(),
+                1,
+                "missing Q006 for {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn q006_reports_one_deterministic_pair_per_scope() {
+        // Three mutually exclusive formats in one scope collapse to a single
+        // finding anchored at the earliest constraint — bounded, not three.
+        let diagnostics =
+            q006_diagnostics("Output only JSON.\nReturn only XML.\nRespond only in YAML.\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 1);
+        let evidence = diagnostics[0].evidence.as_deref().unwrap();
+        assert!(
+            evidence.starts_with("line 1:") && evidence.contains("line 2:"),
+            "{evidence}"
+        );
+    }
+
+    fn q006_count_on_surface(kind: InstructionSurfaceKind, content: &str) -> usize {
+        let markdown = MarkdownDocument::parse(content);
+        let document = LiveInstructionDocument::new(Path::new("surface.md"), kind, &markdown);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        PromptContentPass::default().validate(&document, &mut diag);
+        diag.diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptOutputConflict)
+            .count()
+    }
+
+    #[test]
+    fn q006_conflict_and_hard_negative_hold_across_surfaces() {
+        for kind in [
+            InstructionSurfaceKind::ClaudeProject,
+            InstructionSurfaceKind::Skill,
+            InstructionSurfaceKind::Agent,
+            InstructionSurfaceKind::AgentsMd,
+            InstructionSurfaceKind::CursorRule,
+            InstructionSurfaceKind::CursorLegacyRule,
+        ] {
+            // A real conflict fires on every live-instruction surface...
+            assert_eq!(
+                q006_count_on_surface(kind, "Return only JSON.\nRespond in Markdown.\n"),
+                1,
+                "{kind:?}"
+            );
+            // ...and conditional routing stays clean on every surface.
+            assert_eq!(
+                q006_count_on_surface(
+                    kind,
+                    "For data requests use JSON; for prose respond in Markdown.\n"
+                ),
+                0,
+                "{kind:?}"
+            );
+        }
     }
 }
