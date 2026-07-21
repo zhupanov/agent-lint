@@ -273,8 +273,9 @@ pub fn write_usage_error(
     run_policy: &RunPolicy,
     kind: &'static str,
     message: impl Into<String>,
+    mut notices: Vec<Notice>,
 ) {
-    let notices = vec![Notice::error(kind, message)];
+    notices.push(Notice::error(kind, message));
     write(Report {
         schema: SCHEMA_ID,
         schema_version: 1,

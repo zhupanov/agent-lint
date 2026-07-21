@@ -1,7 +1,7 @@
 {
   "class": "broken",
   "repository": "q006-broken",
-  "covers": ["nested-agents-md", "normal", "json", "q006-output-conflict"],
+  "covers": ["nested-agents-md", "normal", "json", "q006", "q006-output-conflict"],
   "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "Q006", "."] },
   "expected_exit_code": 0,
   "expected_status": "warnings",

@@ -1,7 +1,7 @@
 {
-  "class": "hard-negative",
-  "repository": "q006-hard-negative",
-  "covers": ["nested-agents-md", "normal", "json", "q006", "q006-multi-format-clean"],
+  "class": "clean",
+  "repository": "q006-clean",
+  "covers": ["nested-agents-md", "normal", "json", "q006"],
   "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "Q006", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",

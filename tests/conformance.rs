@@ -24,6 +24,9 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "per-file-suppression",
     "plugin-mode",
     "q005-unbounded-retry",
+    "q006",
+    "agent-stop",
+    "desc-overlap",
 ];
 
 const REQUIRED_SMOKE_COVERAGE: &[&str] = &[

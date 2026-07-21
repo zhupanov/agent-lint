@@ -28,24 +28,29 @@ commands retain their existing line-oriented and JSON output contracts.
   resolved absolute root is not disclosed.
 - `mode` is `basic`, `plugin`, or `null` when no lint mode was selected.
 - `strictness` is `normal`, `pedantic`, or `all`.
-- `selected_rules` is `null` for a full run. A focused `--only` run lists its
-  canonical rules in deterministic registry order, making incomplete scans
-  explicit to machine consumers.
+- `selected_rules` is `null` for a full run and for a `usage-error`. A focused
+  successful `--only` run lists its canonical rules in deterministic registry
+  order, making incomplete scans explicit to machine consumers.
 - `active_platforms` is deterministically ordered as Claude, Cursor, and
   Codex. Claude is active whenever Basic or Plugin mode selects the central
   Claude validation pipeline; Cursor and Codex appear when their platform
   validators are active. Shared surfaces do not create additional platform
   names.
-- `status` is `clean`, `warnings`, `errors`, or `usage-error`.
+- `status` is `clean`, `warnings`, `errors`, or `usage-error`. It is `errors`
+  when there are error diagnostics; otherwise it is `warnings` when there are
+  warning diagnostics or warning notices; otherwise it is `clean`.
 - `counts.errors` and `counts.warnings` count emitted rule diagnostics;
   `counts.suppressed` counts policy-suppressed diagnostics, and
   `counts.notices` counts non-rule notices.
-- `diagnostics` preserves validator emission order. Each item contains its
-  canonical rule code and name, resolved severity, message, and optional
-  structured path, location, evidence, and suggestion.
+- `diagnostics` preserves validator emission order for full runs. Focused
+  `--only` runs are ordered by the selected rules' registry rank. Each item
+  contains its canonical rule code and name, resolved severity, message, and
+  optional structured path, location, evidence, and suggestion.
 - `notices` contains non-rule conditions such as unused configuration
-  overrides, repository-root fallback warnings, and setup/configuration
-  errors. Notices do not pretend to be lint rules.
+  overrides, repository-root fallback warnings, and setup/configuration/usage
+  errors. Notice kinds are `repository-root`, `legacy-configuration`,
+  `unused-override`, `setup`, `configuration`, and `usage`. Notices do not
+  pretend to be lint rules.
 
 Locations use one-based lines and Unicode-scalar columns. Range starts are
 inclusive and ends are exclusive. Unknown paths, locations, columns,

@@ -282,16 +282,18 @@ H008--H024 codes with a `… frontmatter` path label.
 > **Routing-description overlap (A030 / S074).** These warnings compare
 > frontmatter `description` values with a deterministic shared helper: Unicode
 > lowercase tokenization, punctuation and stopword removal, stripping of
-> routing boilerplate (`use when` / `use this` / `use for` / `trigger when`),
-> a four-token floor, and Jaccard similarity with a checked-in 0.85 threshold.
+> routing boilerplate at token boundaries (`use when` / `use this` / `use for`
+> / `trigger when` / `do not trigger`), and Jaccard similarity with a checked-in 0.85 threshold.
+> Exact normalized duplicates with at least one meaningful token report even
+> below the four-token floor; the floor applies only to non-exact comparison.
 > Missing, empty, non-string, or under-20-character descriptions, and
 > descriptions in invalid or non-mapping YAML frontmatter, stay owned by
 > existing structural/short/missing rules and are skipped. Claude private and plugin trees that can
 > load together form one runtime-union namespace (`agents/` ∪ `.claude/agents/`,
 > `skills/` ∪ `.claude/skills/` in Plugin mode). Cross-client `.agents/skills/`
 > stays separate. Agents are never compared with skills. Findings are pathless
-> multi-source diagnostics that name both repository-relative paths and the
-> score in `related_subjects`; global `suppress` works, but per-file overrides
+> multi-source diagnostics that name both repository-relative paths in
+> `related_subjects` and the score in the message; global `suppress` works, but per-file overrides
 > cannot match them.
 > **Agent field-value rules (A014-A027).** These spec-grounded checks run on
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`

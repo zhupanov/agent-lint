@@ -367,6 +367,43 @@ fn json_setup_failure_is_one_document_and_exit_two() {
 }
 
 #[test]
+fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
+    let tmp = tempfile::tempdir().unwrap();
+    let target = tmp.path().to_string_lossy().into_owned();
+
+    for only in ["NOT_A_RULE", "Q006,", ",Q006"] {
+        let output = run(&["--format", "json", "--only", only, &target]);
+        assert_eq!(output.status.code(), Some(2), "--only {only}");
+        let report = json(&output);
+        assert_eq!(report["status"], "usage-error");
+        assert!(report["selected_rules"].is_null());
+        assert_eq!(report["notices"][0]["kind"], "repository-root");
+        assert_eq!(report["notices"][1]["kind"], "usage");
+        let message = report["notices"][1]["message"].as_str().unwrap();
+        if only == "NOT_A_RULE" {
+            assert!(message.contains("invalid rule identifier 'NOT_A_RULE'"));
+        } else {
+            assert!(message.contains("empty rule identifier"));
+        }
+    }
+
+    let text = run(&["--only", "NOT_A_RULE", &target]);
+    assert_eq!(text.status.code(), Some(2));
+    assert!(stderr(&text).contains("invalid rule identifier 'NOT_A_RULE'"));
+}
+
+#[test]
+fn json_repository_root_notice_makes_an_otherwise_clean_run_warning_status() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = run(&["--format", "json", tmp.path().to_string_lossy().as_ref()]);
+    assert!(output.status.success());
+    let report = json(&output);
+    assert_eq!(report["counts"]["warnings"], 0);
+    assert_eq!(report["status"], "warnings");
+    assert_eq!(report["notices"][0]["kind"], "repository-root");
+}
+
+#[test]
 fn json_autofix_serializes_only_the_final_validation() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
@@ -447,6 +484,12 @@ reason = "stale exception"
     let report = json(&output);
     assert_eq!(report["notices"][0]["kind"], "unused-override");
     assert_eq!(report["notices"][0]["severity"], "warning");
+    assert!(
+        !report["notices"][0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("warning[")
+    );
     assert_eq!(report["counts"]["notices"], 1);
 }
 
@@ -660,8 +703,8 @@ fn only_accepts_codes_names_commas_repetition_and_orders_by_registry() {
 fn only_rejects_unknown_and_empty_identifiers_as_usage_errors() {
     for (argument, invalid) in [
         ("X999", "X999"),
-        ("M001,,H001", "invalid rule identifier ''"),
-        ("", "invalid rule identifier ''"),
+        ("M001,,H001", "empty rule identifier"),
+        ("", "empty rule identifier"),
     ] {
         let output = run(&["--only", argument]);
         let stderr = stderr(&output);
