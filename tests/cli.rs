@@ -142,6 +142,36 @@ fn json_clean_run_is_schema_valid_and_deterministic() {
 }
 
 #[test]
+fn q006_json_pairs_are_complete_stable_and_exclude_non_output_shape_prose() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("AGENTS.md"),
+        "Return only JSON.\nReturn only XML.\nReturn only YAML.\n\
+         The input contains exactly one sentence.\nThe request contains at least three paragraphs.\n",
+    )
+    .unwrap();
+
+    let first = run_in(tmp.path(), &["--format", "json", "--only", "Q006", "."]);
+    let second = run_in(tmp.path(), &["--format", "json", "--only", "Q006", "."]);
+    assert!(first.status.success());
+    assert!(second.status.success());
+    let first = json(&first);
+    let second = json(&second);
+    assert_eq!(first, second);
+
+    let diagnostics = first["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 3);
+    let evidence = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["evidence"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(evidence[0].starts_with("line 1:") && evidence[0].contains("line 2:"));
+    assert!(evidence[1].starts_with("line 1:") && evidence[1].contains("line 3:"));
+    assert!(evidence[2].starts_with("line 2:") && evidence[2].contains("line 3:"));
+}
+
+#[test]
 fn json_no_work_run_is_clean_with_no_selected_mode() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
