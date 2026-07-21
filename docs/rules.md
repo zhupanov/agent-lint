@@ -468,9 +468,11 @@ alphanumerics/hyphens/underscores; `github_pat_` plus at least 20 ASCII
 alphanumerics/underscores; and a PEM opener matching
 `-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----`. Assignment findings expose
 only the key token as evidence; signature findings expose only a fixed category
-label such as `github-token-signature` or `private-key-block`. Message,
-evidence, suggestion, and rendered output never include the credential value or
-surrounding source line. Suggestion:
+label (`openai-api-key-signature`, `github-token-signature`,
+`github-fine-grained-token-signature`, `slack-token-signature`,
+`aws-access-key-signature`, `gitlab-token-signature`, or `private-key-block`).
+Message, evidence, suggestion, and rendered output never include the credential
+value or surrounding source line. Suggestion:
 `replace the literal with an environment-variable or secret-store reference`.
 Read failures stay outside I002; I001 remains the exclusive empty-file rule.
 
