@@ -50,8 +50,8 @@ run only when their platform is auto-detected or force-enabled in
 | M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name` or `source` | Plugin | error |
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | warn |
-| M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`) lives inside `.claude-plugin/`, or a manifest path points there | Plugin | error |
-| M013 | `component-path-unsafe` | Manifest component path is absolute (`/…`, `C:\…`) or uses `..` traversal | Plugin | error |
+| M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a manifest path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) points there | Plugin | error |
+| M013 | `component-path-unsafe` | A manifest component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`) or uses `..` traversal | Plugin | error |
 | M014 | `author-name-missing` | `plugin.json` `author` object present but `author.name` is missing or not a non-empty string | Plugin | warn |
 | M015 | `homepage-url-invalid` | `plugin.json` `homepage` is present but is not a valid http(s) URL | Plugin | warn |
 | M016 | `lsp-server-invalid` | `plugin.json` `lspServers` entry missing `command` or `extensionToLanguage` | Plugin | error |

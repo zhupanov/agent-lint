@@ -22,8 +22,65 @@ static RE_WIN_DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[
 /// The plugin manifest directory. Components must never live under it.
 const PLUGIN_DIR: &str = ".claude-plugin";
 
-/// plugin.json fields that point at plugin components.
-const COMPONENT_FIELDS: &[&str] = &["commands", "agents", "skills", "hooks"];
+/// A path-bearing plugin.json field and its location in the JSON object.
+struct ComponentPathField {
+    label: &'static str,
+    keys: &'static [&'static str],
+}
+
+/// plugin.json fields that may point at plugin components. Inline object forms
+/// are intentionally excluded: they configure a component rather than declare
+/// a component path.
+const COMPONENT_PATH_FIELDS: &[ComponentPathField] = &[
+    ComponentPathField {
+        label: "commands",
+        keys: &["commands"],
+    },
+    ComponentPathField {
+        label: "agents",
+        keys: &["agents"],
+    },
+    ComponentPathField {
+        label: "skills",
+        keys: &["skills"],
+    },
+    ComponentPathField {
+        label: "hooks",
+        keys: &["hooks"],
+    },
+    ComponentPathField {
+        label: "mcpServers",
+        keys: &["mcpServers"],
+    },
+    ComponentPathField {
+        label: "outputStyles",
+        keys: &["outputStyles"],
+    },
+    ComponentPathField {
+        label: "lspServers",
+        keys: &["lspServers"],
+    },
+    ComponentPathField {
+        label: "experimental.themes",
+        keys: &["experimental", "themes"],
+    },
+    ComponentPathField {
+        label: "experimental.monitors",
+        keys: &["experimental", "monitors"],
+    },
+];
+
+/// Directories that Claude Code requires at the plugin root rather than under
+/// the manifest directory.
+const COMPONENT_DIRECTORIES: &[&str] = &[
+    "commands",
+    "agents",
+    "skills",
+    "hooks",
+    "output-styles",
+    "themes",
+    "monitors",
+];
 
 /// Split a manifest path on POSIX and Windows separators, dropping empty and
 /// `.` segments so `./foo` and `foo` agree.
@@ -45,13 +102,15 @@ fn is_non_empty_string(v: Option<&Value>) -> bool {
 /// Collect the declared paths of a plugin.json component field, which may hold
 /// a single path or an array of paths. Non-path shapes (such as an inline
 /// `hooks` object) yield nothing.
-fn component_paths(val: &Value, field: &str) -> Vec<String> {
-    match val.get(field) {
-        Some(Value::String(s)) => vec![s.clone()],
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .filter_map(|v| v.as_str().map(str::to_string))
-            .collect(),
+fn component_paths<'a>(val: &'a Value, field: &ComponentPathField) -> Vec<&'a str> {
+    let value = field
+        .keys
+        .iter()
+        .try_fold(val, |value, key| value.get(*key));
+
+    match value {
+        Some(Value::String(s)) => vec![s],
+        Some(Value::Array(arr)) => arr.iter().filter_map(Value::as_str).collect(),
         _ => Vec::new(),
     }
 }
@@ -247,7 +306,7 @@ pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollecto
     let f = ".claude-plugin/plugin.json";
 
     // M012: components must not physically live under the manifest directory.
-    for field in COMPONENT_FIELDS {
+    for field in COMPONENT_DIRECTORIES {
         if Path::new(PLUGIN_DIR).join(field).is_dir() {
             diag.report(
                 LintRule::ComponentPathNested,
@@ -261,24 +320,30 @@ pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    for field in COMPONENT_FIELDS {
+    for field in COMPONENT_PATH_FIELDS {
         for p in component_paths(val, field) {
             // M013: an absolute or escaping path is rejected outright — where it
             // would land is not meaningful, so M012 is not also evaluated.
-            if is_absolute_path(&p) {
+            if is_absolute_path(p) {
                 diag.report(
                     LintRule::ComponentPathUnsafe,
-                    &format!("{f} {field} path '{p}' must be relative, not absolute"),
+                    &format!(
+                        "{f} {} path '{p}' must be relative, not absolute",
+                        field.label
+                    ),
                 );
-            } else if path_segments(&p).any(|s| s == "..") {
+            } else if path_segments(p).any(|s| s == "..") {
                 diag.report(
                     LintRule::ComponentPathUnsafe,
-                    &format!("{f} {field} path '{p}' must not use '..' traversal"),
+                    &format!("{f} {} path '{p}' must not use '..' traversal", field.label),
                 );
-            } else if path_segments(&p).next() == Some(PLUGIN_DIR) {
+            } else if path_segments(p).next() == Some(PLUGIN_DIR) {
                 diag.report(
                     LintRule::ComponentPathNested,
-                    &format!("{f} {field} path '{p}' must not point inside {PLUGIN_DIR}/"),
+                    &format!(
+                        "{f} {} path '{p}' must not point inside {PLUGIN_DIR}/",
+                        field.label
+                    ),
                 );
             }
         }
@@ -383,7 +448,7 @@ pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
 mod tests {
     use super::*;
     use crate::context::LintMode;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn make_ctx(plugin: ManifestState, marketplace: ManifestState) -> LintContext {
         LintContext {
@@ -395,6 +460,16 @@ mod tests {
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         }
+    }
+
+    fn manifest_with_component_path(field: &ComponentPathField, path: Value) -> Value {
+        let mut manifest = json!({"name": "p", "version": "1.0.0"});
+        match field.keys {
+            [key] => manifest[*key] = path,
+            [parent, key] => manifest[*parent] = json!({*key: path}),
+            _ => unreachable!("component path fields have one or two keys"),
+        }
+        manifest
     }
 
     // V1: validate_plugin_json
@@ -816,6 +891,122 @@ mod tests {
         assert_eq!(diag.error_count(), 0);
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_component_path_fields_check_string_and_array_forms() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let cases = [
+            (
+                "absolute takes precedence over traversal and nesting",
+                "/etc/../.claude-plugin/components",
+                LintRule::ComponentPathUnsafe,
+                "must be relative, not absolute",
+            ),
+            (
+                "Windows drive",
+                r"C:\\components",
+                LintRule::ComponentPathUnsafe,
+                "must be relative, not absolute",
+            ),
+            (
+                "leading backslash",
+                r"\\components",
+                LintRule::ComponentPathUnsafe,
+                "must be relative, not absolute",
+            ),
+            (
+                "escaping traversal",
+                "components/../../outside",
+                LintRule::ComponentPathUnsafe,
+                "must not use '..' traversal",
+            ),
+            (
+                "non-escaping traversal",
+                "components/../other",
+                LintRule::ComponentPathUnsafe,
+                "must not use '..' traversal",
+            ),
+            (
+                "nested manifest directory",
+                ".claude-plugin/components",
+                LintRule::ComponentPathNested,
+                "must not point inside .claude-plugin/",
+            ),
+        ];
+
+        for field in COMPONENT_PATH_FIELDS {
+            for (case_name, path, rule, expected_message) in cases {
+                for (shape, value) in [
+                    ("string", json!(path)),
+                    ("array", json!(["components", path])),
+                ] {
+                    let ctx = make_ctx(
+                        ManifestState::Parsed(manifest_with_component_path(field, value)),
+                        ManifestState::Missing,
+                    );
+                    let mut diag = DiagnosticCollector::new_all_enabled();
+                    validate_component_paths(&ctx, &mut diag);
+
+                    assert_eq!(diag.error_count(), 1, "{} {shape} {case_name}", field.label);
+                    assert_eq!(diag.diagnostics()[0].rule, rule);
+                    assert!(diag.errors()[0].contains(&format!("{} path '{path}'", field.label)));
+                    assert!(diag.errors()[0].contains(expected_message));
+                }
+            }
+
+            for (shape, value) in [
+                ("string", json!("components")),
+                ("array", json!(["components", "other-components"])),
+            ] {
+                let ctx = make_ctx(
+                    ManifestState::Parsed(manifest_with_component_path(field, value)),
+                    ManifestState::Missing,
+                );
+                let mut diag = DiagnosticCollector::new_all_enabled();
+                validate_component_paths(&ctx, &mut diag);
+                assert_eq!(diag.error_count(), 0, "{} clean {shape}", field.label);
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_component_path_diagnostics_are_ordered_by_field_then_index() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut manifest = json!({"name": "p", "version": "1.0.0"});
+        for field in COMPONENT_PATH_FIELDS {
+            let paths = json!(["/first", "../second"]);
+            match field.keys {
+                [key] => manifest[*key] = paths,
+                [parent, key] => manifest[*parent][*key] = paths,
+                _ => unreachable!("component path fields have one or two keys"),
+            }
+        }
+
+        let ctx = make_ctx(ManifestState::Parsed(manifest), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+
+        let expected: Vec<String> = COMPONENT_PATH_FIELDS
+            .iter()
+            .flat_map(|field| {
+                ["/first", "../second"]
+                    .into_iter()
+                    .map(move |path| format!("{} path '{path}'", field.label))
+            })
+            .collect();
+        assert_eq!(diag.error_count(), expected.len());
+        for (diagnostic, expected) in diag.errors().iter().zip(expected) {
+            assert!(diagnostic.contains(&expected), "{diagnostic}");
+        }
+    }
+
     // ── M012: component-path-nested ─────────────────────────────────
 
     #[test]
@@ -902,6 +1093,76 @@ mod tests {
         // An inline hooks object declares no path, so there is nothing to check.
         let val = json!({"name": "p", "version": "1.0.0", "hooks": {"PreToolUse": []}});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_component_path_inline_objects_are_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let val = json!({
+            "name": "p",
+            "version": "1.0.0",
+            "mcpServers": {"local": {"command": "server"}},
+            "lspServers": {"rust": {"command": "rust-analyzer"}},
+            "experimental": {
+                "themes": {"dark": {"name": "dark"}},
+                "monitors": [{"matcher": "Bash"}]
+            }
+        });
+        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_new_forbidden_component_directories_fire_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for directory in ["output-styles", "themes", "monitors"] {
+            std::fs::create_dir_all(Path::new(PLUGIN_DIR).join(directory)).unwrap();
+        }
+
+        let ctx = make_ctx(
+            ManifestState::Parsed(json!({"name": "p", "version": "1.0.0"})),
+            ManifestState::Missing,
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+
+        assert_eq!(diag.error_count(), 3);
+        for directory in ["output-styles", "themes", "monitors"] {
+            assert_eq!(
+                diag.errors()
+                    .iter()
+                    .filter(|message| message.contains(&format!("{PLUGIN_DIR}/{directory}/")))
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_m012_new_component_directories_at_plugin_root_pass() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for directory in ["output-styles", "themes", "monitors"] {
+            std::fs::create_dir_all(directory).unwrap();
+        }
+
+        let ctx = make_ctx(
+            ManifestState::Parsed(json!({"name": "p", "version": "1.0.0"})),
+            ManifestState::Missing,
+        );
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_component_paths(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
