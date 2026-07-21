@@ -98,17 +98,18 @@ fn main() {
     } else {
         CliMode::Normal
     };
-    let run_policy = RunPolicy::resolve(cli_mode, &cli.only).unwrap_or_else(|message| {
-        Cli::command()
-            .error(ErrorKind::ValueValidation, message)
-            .exit()
-    });
-
     // Resolve repo root from the target path.
     let resolved_root = match resolve_repo_root(&cli.target) {
         Ok(root) => root,
         Err(msg) => {
-            emit_usage_error(cli.format, cli_mode, &run_policy, "setup", &msg);
+            emit_usage_error(
+                cli.format,
+                cli_mode,
+                &RunPolicy::default(),
+                "setup",
+                &msg,
+                Vec::new(),
+            );
             std::process::exit(2);
         }
     };
@@ -127,12 +128,31 @@ fn main() {
         emit_usage_error(
             cli.format,
             cli_mode,
-            &run_policy,
+            &RunPolicy::default(),
             "setup",
-            &format!("cannot cd to repo root: {}", repo_root.display()),
+            &format!("cannot cd to repo root: {}", cli.target.display()),
+            notices,
         );
         std::process::exit(2);
     }
+
+    let run_policy = match RunPolicy::resolve(cli_mode, &cli.only) {
+        Ok(run_policy) => run_policy,
+        Err(message) if cli.format == OutputFormat::Json => {
+            emit_usage_error(
+                cli.format,
+                cli_mode,
+                &RunPolicy::default(),
+                "usage",
+                &message,
+                notices,
+            );
+            std::process::exit(2);
+        }
+        Err(message) => Cli::command()
+            .error(ErrorKind::ValueValidation, message)
+            .exit(),
+    };
 
     // A config file can force-enable a platform with no detected surface, so
     // it participates in deciding whether this repository has work to lint.
@@ -180,7 +200,14 @@ fn main() {
     let mut lint_config = match loaded_config {
         Ok(cfg) => cfg,
         Err(msg) => {
-            emit_usage_error(cli.format, cli_mode, &run_policy, "configuration", &msg);
+            emit_usage_error(
+                cli.format,
+                cli_mode,
+                &run_policy,
+                "configuration",
+                &msg,
+                notices,
+            );
             std::process::exit(2);
         }
     };
@@ -313,11 +340,12 @@ fn run_lint(
         diag.render_text(&mut stderr);
         diag.emit_unused_override_warnings(&mut stderr);
     } else {
-        notices.extend(
-            diag.unused_override_warnings()
-                .into_iter()
-                .map(|warning| json_output::Notice::warning("unused-override", warning)),
-        );
+        notices.extend(diag.unused_override_warnings().into_iter().map(|warning| {
+            let message = warning
+                .strip_prefix("warning[config/unused-override]: ")
+                .unwrap_or(&warning);
+            json_output::Notice::warning("unused-override", message)
+        }));
         json_output::write_report(
             Some(mode),
             strictness,
@@ -492,9 +520,10 @@ fn emit_usage_error(
     run_policy: &RunPolicy,
     kind: &'static str,
     message: &str,
+    notices: Vec<json_output::Notice>,
 ) {
     if format == OutputFormat::Json {
-        json_output::write_usage_error(strictness, run_policy, kind, message);
+        json_output::write_usage_error(strictness, run_policy, kind, message, notices);
     } else {
         eprintln!("ERROR: {message}");
     }

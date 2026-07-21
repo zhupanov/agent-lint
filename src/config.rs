@@ -54,6 +54,11 @@ impl RunPolicy {
         for value in only_values {
             for raw_identifier in value.split(',') {
                 let identifier = raw_identifier.trim();
+                if identifier.is_empty() {
+                    return Err(
+                        "empty rule identifier for --only; use a canonical code or name".into(),
+                    );
+                }
                 let rule = LintRule::from_code_or_name(identifier).ok_or_else(|| {
                     format!(
                         "invalid rule identifier '{identifier}' for --only; use a canonical code or name"
@@ -1019,7 +1024,11 @@ mod tests {
 
     #[test]
     fn focused_policy_rejects_unknown_and_empty_identifiers() {
-        for (value, invalid) in [("X999", "X999"), ("M001,,H001", "''"), ("", "''")] {
+        for (value, invalid) in [
+            ("X999", "X999"),
+            ("M001,,H001", "empty rule identifier"),
+            ("", "empty rule identifier"),
+        ] {
             let error = RunPolicy::resolve(CliMode::Normal, &[value.to_string()]).unwrap_err();
             assert!(error.contains(invalid), "unexpected error: {error}");
         }

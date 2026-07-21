@@ -48,7 +48,8 @@ const ROUTING_BOILERPLATE: &[&str] = &[
 #[derive(Debug, Clone)]
 struct DescCandidate {
     path: String,
-    tokens: BTreeSet<String>,
+    tokens: Vec<String>,
+    token_set: BTreeSet<String>,
 }
 
 /// Validate overlapping agent routing descriptions.
@@ -167,10 +168,15 @@ fn candidate_from_description(path: String, description: &str) -> Option<DescCan
         return None;
     }
     let tokens = normalize_description_tokens(description);
-    if tokens.len() < MIN_MEANINGFUL_TOKENS {
+    if tokens.is_empty() {
         return None;
     }
-    Some(DescCandidate { path, tokens })
+    let token_set = tokens.iter().cloned().collect();
+    Some(DescCandidate {
+        path,
+        tokens,
+        token_set,
+    })
 }
 
 fn report_overlaps(diag: &mut DiagnosticCollector, candidates: Vec<DescCandidate>, rule: LintRule) {
@@ -178,12 +184,21 @@ fn report_overlaps(diag: &mut DiagnosticCollector, candidates: Vec<DescCandidate
         for j in (i + 1)..candidates.len() {
             let left = &candidates[i];
             let right = &candidates[j];
-            let Some(score) = jaccard_similarity(&left.tokens, &right.tokens) else {
+            let score = if left.tokens == right.tokens {
+                1.0
+            } else if left.tokens.len() < MIN_MEANINGFUL_TOKENS
+                || right.tokens.len() < MIN_MEANINGFUL_TOKENS
+            {
                 continue;
+            } else {
+                let Some(score) = jaccard_similarity(&left.token_set, &right.token_set) else {
+                    continue;
+                };
+                if score < JACCARD_THRESHOLD {
+                    continue;
+                }
+                score
             };
-            if score < JACCARD_THRESHOLD {
-                continue;
-            }
             let message = format!(
                 "{} and {} have overlapping routing descriptions (similarity {:.2})",
                 left.path, right.path, score
@@ -199,19 +214,35 @@ fn report_overlaps(diag: &mut DiagnosticCollector, candidates: Vec<DescCandidate
 
 /// Unicode-safe lowercase tokenization with punctuation and stopword removal,
 /// plus stripping of documented routing boilerplate phrases.
-pub(crate) fn normalize_description_tokens(description: &str) -> BTreeSet<String> {
-    let mut lowered = description.to_lowercase();
-    for phrase in ROUTING_BOILERPLATE {
-        lowered = lowered.replace(phrase, " ");
-    }
-
+pub(crate) fn normalize_description_tokens(description: &str) -> Vec<String> {
     let stopwords: BTreeSet<&str> = STOPWORDS.iter().copied().collect();
-    lowered
+    let tokens: Vec<_> = description
+        .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
         .filter(|token| !token.is_empty())
-        .filter(|token| !stopwords.contains(token))
         .map(str::to_string)
-        .collect()
+        .collect();
+    let boilerplate: Vec<Vec<String>> = ROUTING_BOILERPLATE
+        .iter()
+        .map(|phrase| phrase.split_whitespace().map(str::to_string).collect())
+        .collect();
+
+    let mut normalized = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if let Some(phrase) = boilerplate
+            .iter()
+            .find(|phrase| tokens[index..].starts_with(phrase))
+        {
+            index += phrase.len();
+        } else {
+            if !stopwords.contains(tokens[index].as_str()) {
+                normalized.push(tokens[index].clone());
+            }
+            index += 1;
+        }
+    }
+    normalized
 }
 
 /// Set-based Jaccard similarity. Returns `None` when either side is empty.
@@ -238,14 +269,26 @@ mod tests {
             normalize_description_tokens("Use when reviewing pull requests for security issues!");
         assert_eq!(
             tokens,
-            BTreeSet::from([
+            vec![
                 "reviewing".to_string(),
                 "pull".to_string(),
                 "requests".to_string(),
                 "security".to_string(),
                 "issues".to_string(),
-            ])
+            ]
         );
+    }
+
+    #[test]
+    fn normalization_removes_boilerplate_only_at_token_boundaries() {
+        let without_comma = normalize_description_tokens(
+            "Detects API misuse whenever clients retry aggressively in production",
+        );
+        let with_comma = normalize_description_tokens(
+            "Detects API misuse, whenever clients retry aggressively in production",
+        );
+        assert_eq!(without_comma, with_comma);
+        assert!(without_comma.contains(&"misuse".to_string()));
     }
 
     #[test]
@@ -326,6 +369,58 @@ mod tests {
             ]
         );
         assert!(findings[0].message.contains("similarity 1.00"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn exact_duplicates_below_the_similarity_floor_still_warn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        for name in ["alpha", "beta"] {
+            std::fs::write(
+                format!(".claude/agents/{name}.md"),
+                format!(
+                    "---\nname: {name}\ndescription: Reviews cybersecurity vulnerabilities\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false);
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::AgentDescOverlap)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn boilerplate_with_no_meaningful_tokens_never_enters_overlap_pool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        for name in ["alpha", "beta"] {
+            std::fs::write(
+                format!(".claude/agents/{name}.md"),
+                format!(
+                    "---\nname: {name}\ndescription: Use when use this do not trigger\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false);
+        assert!(diag.diagnostics().is_empty());
     }
 
     #[test]
