@@ -284,8 +284,9 @@ H008--H024 codes with a `… frontmatter` path label.
 > lowercase tokenization, punctuation and stopword removal, stripping of
 > routing boilerplate (`use when` / `use this` / `use for` / `trigger when`),
 > a four-token floor, and Jaccard similarity with a checked-in 0.85 threshold.
-> Missing, invalid, or under-20-character descriptions stay owned by existing
-> short/missing rules and are skipped. Claude private and plugin trees that can
+> Missing, empty, non-string, or under-20-character descriptions, and
+> descriptions in invalid or non-mapping YAML frontmatter, stay owned by
+> existing structural/short/missing rules and are skipped. Claude private and plugin trees that can
 > load together form one runtime-union namespace (`agents/` ∪ `.claude/agents/`,
 > `skills/` ∪ `.claude/skills/` in Plugin mode). Cross-client `.agents/skills/`
 > stays separate. Agents are never compared with skills. Findings are pathless
