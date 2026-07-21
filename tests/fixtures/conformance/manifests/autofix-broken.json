@@ -10,6 +10,6 @@
   "expected_diagnostics": [],
   "allowed_additional_diagnostics": [],
   "post_fix": [
-    { "path": ".claude/skills/url-check/SKILL.md", "contents": "---\nname: url-check\ndescription: Use when checking secure transport in integration documentation\n---\n# Secure transport\n\nVisit https://service.invalid for integration details.\n" }
+    { "path": ".claude/skills/url-check/SKILL.md", "contents": "---\nname: url-check\ndescription: Use when checking secure transport in integration documentation\n---\n# Secure transport\n\nVisit https://service.corp for integration details.\n" }
   ]
 }

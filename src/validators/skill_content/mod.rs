@@ -1502,7 +1502,7 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\n---\nFetch from http://api.example.net/data\n",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nFetch from http://api.internal.corp/v1\n",
         ).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
@@ -1523,6 +1523,72 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("non-HTTPS")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s031_xml_namespace_identifier_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nOutput SVG:\n<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("non-HTTPS")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s031_reserved_name_hosts_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nSee http://www.example.com/guide and http://foo.test/x and http://demo.invalid/\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("non-HTTPS")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s031_reports_line_and_url_evidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // Frontmatter is 3 lines (---, name, description, ---): the body's first
+        // line is file line 5, the URL is on the second body line (line 6).
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\nintro line\nFetch from http://api.internal.corp/v1?token=secret\n",
+        ).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let finding = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::NonHttpsUrl)
+            .expect("S031 finding");
+        assert_eq!(finding.location.unwrap().start().line_number(), 6);
+        // Evidence is scheme+host+path only: no query string, so no secret.
+        assert_eq!(
+            finding.evidence.as_deref(),
+            Some("http://api.internal.corp/v1")
+        );
+        assert!(
+            finding.message.contains(":6:"),
+            "message: {}",
+            finding.message
+        );
+        assert!(finding.message.contains("http://api.internal.corp/v1"));
     }
 
     // ── S029: nested-ref-deep ───────────────────────────────────────

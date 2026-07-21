@@ -7,6 +7,7 @@ use crate::platforms::ValidationTargets;
 use crate::pwd_hygiene::replace_bundled_asset_prefixes;
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::validators::skill_content::security::flagged_http_offsets;
 use crate::validators::skill_content::{
     RE_BACKSLASH_PATH, contains_backslash_path, is_named_tex_escape_pair,
 };
@@ -26,7 +27,6 @@ static RE_BACKSLASH_PATH_RUN: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-static RE_HTTP_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"http://[a-zA-Z0-9]").unwrap());
 static RE_BASH_FENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
 static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
@@ -614,17 +614,9 @@ fn fix_non_https_url(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) 
             if info.body.trim().is_empty() {
                 continue;
             }
-            // Check if there are any non-excluded http:// URLs (matching validator)
-            let has_fixable = RE_HTTP_URL.find_iter(&info.body).any(|m| {
-                let start = m.start();
-                let after = &info.body[start + 7..]; // skip "http://"
-                !after.starts_with("localhost")
-                    && !after.starts_with("127.0.0.1")
-                    && !after.starts_with("0.0.0.0")
-                    && !after.starts_with("example.com")
-                    && !after.starts_with("example.org")
-            });
-            if !has_fixable {
+            // Only rewrite if the shared classifier would flag a match, so the
+            // autofix and the S031 checker agree by construction (issue #353).
+            if flagged_http_offsets(&info.body).next().is_none() {
                 continue;
             }
 
@@ -656,21 +648,16 @@ fn fix_non_https_url(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) 
 
 fn replace_http_urls(content: &str) -> String {
     let mut result = content.to_string();
-    // Process in reverse order to preserve positions
-    let matches: Vec<_> = RE_HTTP_URL.find_iter(content).collect();
-    for m in matches.into_iter().rev() {
-        let start = m.start();
-        let after = &content[start + 7..]; // skip "http://"
-        if after.starts_with("localhost")
-            || after.starts_with("127.0.0.1")
-            || after.starts_with("0.0.0.0")
-            || after.starts_with("example.com")
-            || after.starts_with("example.org")
-        {
-            continue;
-        }
-        // Replace "http://" with "https://"
-        result = format!("{}https://{}", &result[..start], &result[start + 7..]);
+    // The shared classifier decides which matches are flagged; exempt
+    // identifier/reserved-host matches are left byte-identical. Rewrite in
+    // reverse so earlier offsets stay valid as later ones grow by one byte.
+    let offsets: Vec<usize> = flagged_http_offsets(content).collect();
+    for start in offsets.into_iter().rev() {
+        result = format!(
+            "{}https://{}",
+            &result[..start],
+            &result[start + "http://".len()..]
+        );
     }
     result
 }
@@ -1233,9 +1220,9 @@ mod tests {
 
     #[test]
     fn replace_http_urls_basic() {
-        let content = "Visit http://example.net for details";
+        let content = "Visit http://api.foo.dev for details";
         let result = replace_http_urls(content);
-        assert_eq!(result, "Visit https://example.net for details");
+        assert_eq!(result, "Visit https://api.foo.dev for details");
     }
 
     #[test]
@@ -1270,6 +1257,35 @@ mod tests {
             replace_backslash_paths(r"Use \alpha\beta and \\server\share."),
             r"Use \alpha\beta and //server/share."
         );
+    }
+
+    #[test]
+    fn replace_http_urls_keeps_xml_identifier_but_rewrites_link() {
+        // Evidence 1 (issue #353): the XML namespace identifier is untouched
+        // while a genuine plain-HTTP link on another line is upgraded.
+        let content = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\">\nDownload from http://api.foo.dev/asset\n";
+        let once = replace_http_urls(content);
+        assert!(
+            once.contains("xmlns=\"http://www.w3.org/2000/svg\""),
+            "identifier changed: {once}"
+        );
+        assert!(
+            once.contains("https://api.foo.dev/asset"),
+            "link not upgraded: {once}"
+        );
+        // Idempotent: a second pass changes nothing.
+        assert_eq!(replace_http_urls(&once), once);
+    }
+
+    #[test]
+    fn replace_http_urls_excludes_reserved_name_hosts() {
+        for content in [
+            "See http://www.example.com/guide for the walkthrough",
+            "Try http://foo.test/x locally",
+            "Placeholder http://demo.invalid/ endpoint",
+        ] {
+            assert_eq!(replace_http_urls(content), content, "content: {content}");
+        }
     }
 
     #[test]

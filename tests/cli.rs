@@ -1616,7 +1616,7 @@ fn json_repository_root_notice_makes_an_otherwise_clean_run_warning_status() {
 fn json_autofix_serializes_only_the_final_validation() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
-    write_skill(tmp.path(), "fixed", "http://current.invalid");
+    write_skill(tmp.path(), "fixed", "http://current.corp");
 
     let output = run_in(tmp.path(), &["--autofix", "--format", "json", "."]);
     assert!(output.status.success());
@@ -1630,7 +1630,7 @@ fn json_autofix_serializes_only_the_final_validation() {
             .any(|diagnostic| diagnostic["code"] == "S031")
     );
     let fixed = std::fs::read_to_string(tmp.path().join(".claude/skills/fixed/SKILL.md")).unwrap();
-    assert!(fixed.contains("https://current.invalid"));
+    assert!(fixed.contains("https://current.corp"));
 }
 
 #[test]
@@ -1706,7 +1706,7 @@ reason = "stale exception"
 fn json_counts_suppressed_diagnostics_without_rendering_them() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
-    write_skill(tmp.path(), "suppressed", "http://legacy.invalid");
+    write_skill(tmp.path(), "suppressed", "http://legacy.corp");
     std::fs::write(
         tmp.path().join("agent-lint.toml"),
         r#"[lint]
@@ -1740,8 +1740,8 @@ fn multiple_paths_are_a_usage_error() {
 #[test]
 fn per_file_override_suppresses_one_file_but_not_another_and_counts_it() {
     let tmp = tempfile::tempdir().unwrap();
-    write_skill(tmp.path(), "suppressed", "http://legacy.invalid");
-    write_skill(tmp.path(), "reported", "http://current.invalid");
+    write_skill(tmp.path(), "suppressed", "http://legacy.corp");
+    write_skill(tmp.path(), "reported", "http://current.corp");
     std::fs::write(
         tmp.path().join("agent-lint.toml"),
         r#"[lint]
@@ -1796,8 +1796,8 @@ fn basic_mode_hook_autofix_is_idempotent() {
 #[test]
 fn autofix_leaves_suppressed_file_unchanged_and_fixes_unsuppressed_file() {
     let tmp = tempfile::tempdir().unwrap();
-    let suppressed_before = write_skill(tmp.path(), "suppressed", "http://legacy.invalid");
-    write_skill(tmp.path(), "fixed", "http://current.invalid");
+    let suppressed_before = write_skill(tmp.path(), "suppressed", "http://legacy.corp");
+    write_skill(tmp.path(), "fixed", "http://current.corp");
     std::fs::write(
         tmp.path().join("agent-lint.toml"),
         r#"[lint]
@@ -1816,18 +1816,15 @@ suppress = ["S031"]
         suppressed_before
     );
     let fixed = std::fs::read_to_string(tmp.path().join(".claude/skills/fixed/SKILL.md")).unwrap();
-    assert!(
-        fixed.contains("https://current.invalid"),
-        "content: {fixed}"
-    );
-    assert!(!fixed.contains("http://current.invalid"));
+    assert!(fixed.contains("https://current.corp"), "content: {fixed}");
+    assert!(!fixed.contains("http://current.corp"));
     assert!(stderr.contains("(1 suppressed)"), "stderr: {stderr}");
 }
 
 #[test]
 fn unused_override_warning_is_emitted_once_on_final_autofix_pass() {
     let tmp = tempfile::tempdir().unwrap();
-    write_skill(tmp.path(), "clean", "https://current.invalid");
+    write_skill(tmp.path(), "clean", "https://current.corp");
     std::fs::write(
         tmp.path().join("agent-lint.toml"),
         r#"[lint]
@@ -1873,7 +1870,7 @@ suppress = ["M001"]
 #[test]
 fn all_mode_ignores_per_file_suppression() {
     let tmp = tempfile::tempdir().unwrap();
-    write_skill(tmp.path(), "suppressed", "http://legacy.invalid");
+    write_skill(tmp.path(), "suppressed", "http://legacy.corp");
     std::fs::write(
         tmp.path().join("agent-lint.toml"),
         r#"[lint]
@@ -2423,7 +2420,7 @@ suppress = ["M001", "H001"]
 #[test]
 fn only_applies_and_validates_autofixes_for_selected_rules() {
     let tmp = tempfile::tempdir().unwrap();
-    let content = write_skill(tmp.path(), "focused", "http://legacy.invalid")
+    let content = write_skill(tmp.path(), "focused", "http://legacy.corp")
         .replace("name: focused", "name: wrong-name");
     let skill = tmp.path().join(".claude/skills/focused/SKILL.md");
     std::fs::write(&skill, content).unwrap();
@@ -2432,7 +2429,7 @@ fn only_applies_and_validates_autofixes_for_selected_rules() {
     let stderr = stderr(&output);
     assert!(output.status.success(), "stderr: {stderr}");
     let fixed = std::fs::read_to_string(skill).unwrap();
-    assert!(fixed.contains("https://legacy.invalid"), "content: {fixed}");
+    assert!(fixed.contains("https://legacy.corp"), "content: {fixed}");
     assert!(fixed.contains("name: wrong-name"), "content: {fixed}");
     assert!(!stderr.contains("S006/frontmatter-name-mismatch"));
 }
@@ -2622,6 +2619,31 @@ fn s007_uses_canonical_yaml_and_never_orphans_continuations() {
     assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
     assert!(stderr(&output).contains("S007/frontmatter-field-empty"));
     assert_eq!(std::fs::read_to_string(invalid).unwrap(), invalid_content);
+}
+
+#[test]
+fn s031_json_carries_line_metadata_and_url_evidence() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    // Body: line 5 `# URL handling`, line 6 blank, line 7 the URL.
+    write_skill(tmp.path(), "leaky", "http://api.corp/data");
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json_document(&output);
+    let finding = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "S031")
+        .expect("S031 diagnostic in JSON");
+    assert_eq!(finding["location"]["start"]["line"], 7);
+    assert_eq!(finding["evidence"], "http://api.corp/data");
+    assert_eq!(
+        finding["suggestion"],
+        "use https:// (or remove the reference)"
+    );
+    assert_eq!(finding["subject_path"], ".claude/skills/leaky/SKILL.md");
 }
 
 #[test]
