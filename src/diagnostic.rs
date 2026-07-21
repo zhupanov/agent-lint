@@ -172,7 +172,6 @@ impl DiagnosticMetadata {
         self
     }
 
-    #[allow(dead_code)] // reporting API for validators as they migrate
     pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
         self.suggestion = Some(suggestion.into());
         self
