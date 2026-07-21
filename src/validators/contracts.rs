@@ -1,7 +1,7 @@
 //! Prompt, reference, and shipped-script contracts shared by public and private skills.
 
 use crate::config::{ExcludeSet, PromptMetricCaps, PromptSourceBudget};
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs};
 use crate::frontmatter;
 use crate::markdown::MarkdownDocument;
@@ -10,6 +10,7 @@ use crate::prompt_budget::{
 };
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::validators::common::classify_inline_code_path;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
@@ -918,8 +919,11 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                 continue;
             }
             for capture in INLINE_CODE.captures_iter(line) {
-                let token = &capture[1];
-                if token.contains([' ', '$', '{', '}', '<', '>', '*', '?'])
+                let token_match = capture
+                    .get(1)
+                    .expect("INLINE_CODE always has a token capture");
+                let token = token_match.as_str();
+                if !classify_inline_code_path(token).is_repository_path()
                     || !prefixes.iter().any(|prefix| token.starts_with(prefix))
                 {
                     continue;
@@ -939,10 +943,16 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                     || candidate.is_symlink()
                     || !candidate.exists()
                 {
-                    diag.report_at(
+                    let start_column = line[..token_match.start()].chars().count() + 1;
+                    let end_column = start_column + token.chars().count();
+                    let metadata = DiagnosticMetadata::default()
+                        .with_location(SourceSpan::range(number, start_column, number, end_column))
+                        .with_evidence(token);
+                    diag.report_at_with(
                         LintRule::InlinePathMissing,
                         &relpath,
                         &format!("{relpath}:{number}: dead or escaping inline path `{token}`"),
+                        metadata,
                     );
                 }
             }
@@ -1812,6 +1822,35 @@ mod tests {
                 "missing {rule:?}"
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn d005_uses_shared_classification_within_its_prefix_scope() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write(
+            "AGENTS.md",
+            "Python files may match `docs/*.py`; see `docs/missing.md`.\n",
+        )
+        .unwrap();
+        let mut diag = all_enabled_with(LintConfig::default());
+
+        validate_inline_paths(&mut diag, &ExcludeSet::default());
+
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::InlinePathMissing)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].subject_path.as_deref(),
+            Some(Path::new("AGENTS.md"))
+        );
+        assert_eq!(findings[0].evidence.as_deref(), Some("docs/missing.md"));
+        assert!(findings[0].location.is_some());
     }
 
     #[test]
