@@ -89,7 +89,7 @@ checked-in schema and examples are in
 
 ## Lint Rules
 
-Agent Lint ships 293 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 294 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 
 | Category | Prefix | Rules | Description |
@@ -105,7 +105,7 @@ is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 | Hygiene | G | 11 | `$PWD` hygiene, script integrity, portability, GitHub payload safety, TODO detection |
 | Email | E | 1 | Email format validation |
 | User Config | U | 7 | `userConfig` structure, key format, and env var mapping |
-| MCP | P | 13 | MCP server configuration, transport, security, and compatibility |
+| MCP | P | 14 | MCP server configuration, transport, security, and compatibility |
 | Codex | CX | 55 | Codex configuration, instructions, plugins, and skills |
 | Shared Instruction Files | I | 5 | Shared instruction-file content, secrets, path references, and structure |
 | Cursor Rules | CU | 19 | Cursor rules, hooks, subagents, and cloud environment configuration |

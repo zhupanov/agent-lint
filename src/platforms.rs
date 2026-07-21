@@ -57,6 +57,7 @@ impl ValidationTargets {
 
 fn cursor_surface_exists(exclude: &ExcludeSet) -> bool {
     is_included_file(".cursorrules", exclude)
+        || is_included_file(".cursor/mcp.json", exclude)
         || is_included_file(".cursor/hooks.json", exclude)
         || is_included_file(".cursor/environment.json", exclude)
         || has_matching_file(".cursor/rules", exclude, |path| {
@@ -112,6 +113,7 @@ mod tests {
     fn discovers_every_supported_surface() {
         let cases = [
             (".cursorrules", true, false, false, false, false),
+            (".cursor/mcp.json", true, false, false, false, false),
             (".cursor/rules/project.md", true, false, false, false, false),
             (
                 ".cursor/rules/project.mdc",

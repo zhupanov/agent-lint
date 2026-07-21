@@ -913,6 +913,9 @@ pub enum LintRule {
     /// P026: MCP server name is reserved by Claude Code
     #[strum(props(code = "P026", name = "mcp-server-reserved"))]
     McpServerReserved,
+    /// P027: MCP document or server entry has an invalid structure
+    #[strum(props(code = "P027", name = "mcp-structure-invalid"))]
+    McpStructureInvalid,
 
     // ── Link/import integrity (L) ────────────────────────────────
     /// L001: @import target markdown file does not exist
@@ -1235,7 +1238,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            293,
+            294,
             "every enum variant must be registered"
         );
     }
@@ -1455,8 +1458,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            170,
-            "Expected 170 default-error rules, got {}",
+            171,
+            "Expected 171 default-error rules, got {}",
             errors.len()
         );
     }
