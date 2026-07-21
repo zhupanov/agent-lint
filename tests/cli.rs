@@ -3554,3 +3554,141 @@ fn unused_override_text_path_escapes_control_characters_in_reason() {
         "JSON unused-override notice must not use Rust-style escapes: {report}"
     );
 }
+
+#[test]
+fn l006_cli_flags_fenced_npm_run_with_metadata_and_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("package.json"),
+        r#"{"name":"demo","scripts":{"test":"echo hi"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "```bash\nnpm run missing-fenced\n```\n\n```json\n{\"scripts\":{\"nope\":\"x\"}}\n```\n\nDo not run npm run also-missing.\n\n`npm --workspace pkg run workspace-only`\n",
+    )
+    .unwrap();
+
+    let normal = run_in(tmp.path(), &["--format", "json", "--only", "L006", "."]);
+    assert!(normal.status.success(), "stderr: {}", stderr(&normal));
+    let report = json(&normal);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{report:#}");
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["code"], "L006");
+    assert_eq!(diagnostic["severity"], "warning");
+    assert_eq!(diagnostic["subject_path"], "CLAUDE.md");
+    assert_eq!(diagnostic["evidence"], "missing-fenced");
+    assert_eq!(
+        diagnostic["suggestion"],
+        "add this script to the root package.json or correct the command"
+    );
+    assert_eq!(diagnostic["location"]["start"]["line"], 2);
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing-fenced")
+    );
+
+    for strictness in ["--pedantic", "--all"] {
+        let output = run_in(
+            tmp.path(),
+            &["--format", "json", strictness, "--only", "L006", "."],
+        );
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        assert_eq!(json(&output)["diagnostics"][0]["severity"], "error");
+    }
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"L006\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--format", "json", "--only", "L006", "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert!(
+        json(&suppressed)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"CLAUDE.md\"]\nsuppress = [\"L006\"]\n",
+    )
+    .unwrap();
+    let per_file = run_in(tmp.path(), &["--format", "json", "--only", "L006", "."]);
+    assert!(per_file.status.success(), "stderr: {}", stderr(&per_file));
+    assert!(
+        json(&per_file)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let autofix = run_in(tmp.path(), &["--autofix", "--only", "L006", "."]);
+    assert!(autofix.status.success(), "stderr: {}", stderr(&autofix));
+    let after = std::fs::read_to_string(tmp.path().join("CLAUDE.md")).unwrap();
+    assert!(
+        after.contains("npm run missing-fenced"),
+        "L006 must remain byte-idempotent under --autofix"
+    );
+}
+
+#[test]
+fn l006_cli_runs_in_basic_and_plugin_modes() {
+    let basic = tempfile::tempdir().unwrap();
+    init_git(basic.path());
+    std::fs::write(
+        basic.path().join("package.json"),
+        r#"{"name":"demo","scripts":{"test":"echo"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        basic.path().join("CLAUDE.md"),
+        "```bash\nnpm run missing-basic\n```\n",
+    )
+    .unwrap();
+    let basic_out = run_in(basic.path(), &["--format", "json", "--only", "L006", "."]);
+    assert!(basic_out.status.success(), "stderr: {}", stderr(&basic_out));
+    assert_eq!(
+        json(&basic_out)["diagnostics"][0]["evidence"],
+        "missing-basic"
+    );
+
+    let plugin = tempfile::tempdir().unwrap();
+    init_git(plugin.path());
+    std::fs::create_dir_all(plugin.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        plugin.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"demo","version":"1.0.0","description":"fixture"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.path().join("package.json"),
+        r#"{"name":"demo","scripts":{"test":"echo"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.path().join("CLAUDE.md"),
+        "```bash\nnpm run missing-plugin\n```\n",
+    )
+    .unwrap();
+    let plugin_out = run_in(plugin.path(), &["--format", "json", "--only", "L006", "."]);
+    assert!(
+        plugin_out.status.success(),
+        "stderr: {}",
+        stderr(&plugin_out)
+    );
+    assert_eq!(
+        json(&plugin_out)["diagnostics"][0]["evidence"],
+        "missing-plugin"
+    );
+}

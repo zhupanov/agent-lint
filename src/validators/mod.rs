@@ -16,6 +16,7 @@ mod instruction_files;
 mod manifest;
 mod markdown_structure;
 mod mcp;
+mod npm_scripts;
 mod prompt_content;
 pub(crate) mod skill_content;
 pub(crate) mod skills;

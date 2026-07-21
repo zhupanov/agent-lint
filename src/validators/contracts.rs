@@ -126,13 +126,6 @@ static BASH32_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| 
 static FORWARDED_ARRAY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^[^#\n]*(?:exec\s+)?[^\n]*"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}""#).unwrap()
 });
-static NPM_RUN: LazyLock<Regex> = LazyLock::new(|| {
-    // The name class allows `:` because npm scripts are commonly
-    // colon-namespaced (e.g. `build:css`, `test:integration`); rejecting `:`
-    // would truncate `npm run build:css` to `build` and false-positive L006.
-    Regex::new(r"\bnpm\s+run(?:-script)?\s+([A-Za-z0-9][A-Za-z0-9_:-]*)").unwrap()
-});
-
 pub fn validate_contracts(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
@@ -147,7 +140,7 @@ pub fn validate_contracts(
     validate_inline_paths(diag, exclude);
     validate_import_graph(diag, exclude);
     validate_markdown_links(diag, exclude);
-    validate_npm_scripts(diag, exclude);
+    super::npm_scripts::validate_npm_scripts(diag, exclude);
 }
 
 fn scoped_skill_files(include_public: bool) -> Vec<PathBuf> {
@@ -1259,44 +1252,6 @@ fn validate_markdown_links(diag: &mut DiagnosticCollector, exclude: &ExcludeSet)
                         LintRule::BrokenMarkdownLink,
                         &relpath,
                         &format!("{relpath}:{number}: broken markdown link target: {target}"),
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// L006: `npm run <script>` referenced from a configured instruction file
-/// must exist in `package.json`'s `scripts` map. Silently skipped when there
-/// is no `package.json` or it defines no `scripts` object.
-fn validate_npm_scripts(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let Ok(pkg_text) = fs::read_to_string("package.json") else {
-        return;
-    };
-    let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&pkg_text) else {
-        return;
-    };
-    let Some(scripts) = pkg.get("scripts").and_then(|value| value.as_object()) else {
-        return;
-    };
-    for relpath in diag.config().instruction_files.clone() {
-        if exclude.is_excluded(&relpath) {
-            continue;
-        }
-        let path = Path::new(&relpath);
-        let Some(content) = read_text(path, exclude) else {
-            continue;
-        };
-        for (number, line) in lines_outside_fences_with_numbers(&content) {
-            for capture in NPM_RUN.captures_iter(line) {
-                let script = &capture[1];
-                if !scripts.contains_key(script) {
-                    diag.report_at(
-                        LintRule::NpmScriptMissing,
-                        &relpath,
-                        &format!(
-                            "{relpath}:{number}: npm run {script} is not defined in package.json scripts"
-                        ),
                     );
                 }
             }
@@ -2988,84 +2943,6 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
                 .iter()
                 .any(|item| item.rule == LintRule::BrokenMarkdownLink),
             "external, anchor, image, and fenced links must not trigger L005"
-        );
-    }
-
-    // ── L006: npm-script-missing ────────────────────────────────────
-
-    #[test]
-    #[serial_test::serial]
-    fn l006_flags_npm_run_script_missing_from_package_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        fs::write(
-            "package.json",
-            "{\"name\":\"demo\",\"scripts\":{\"test\":\"echo hi\"}}",
-        )
-        .unwrap();
-        fs::write("CLAUDE.md", "Run `npm run build` to compile.\n").unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_npm_scripts(&mut diag, &ExcludeSet::default());
-        let missing: Vec<_> = diag
-            .diagnostics()
-            .iter()
-            .filter(|item| item.rule == LintRule::NpmScriptMissing)
-            .collect();
-        assert_eq!(missing.len(), 1);
-        assert!(missing[0].message.contains("build"));
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn l006_accepts_colon_namespaced_script_names() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        fs::write(
-            "package.json",
-            "{\"name\":\"demo\",\"scripts\":{\"build:css\":\"postcss\"}}",
-        )
-        .unwrap();
-        fs::write("CLAUDE.md", "Run `npm run build:css` to compile styles.\n").unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_npm_scripts(&mut diag, &ExcludeSet::default());
-        assert!(
-            !diag
-                .diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::NpmScriptMissing),
-            "colon-namespaced npm scripts must be matched in full, not truncated at the colon"
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn l006_silent_when_no_package_json_or_no_scripts() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        fs::write("CLAUDE.md", "Run `npm run build` to compile.\n").unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_npm_scripts(&mut diag, &ExcludeSet::default());
-        assert!(
-            !diag
-                .diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::NpmScriptMissing),
-            "L006 must be silent when package.json is absent"
-        );
-
-        // package.json present but with no scripts map: still silent.
-        fs::write("package.json", "{\"name\":\"demo\"}").unwrap();
-        let mut diag2 = DiagnosticCollector::new_all_enabled();
-        validate_npm_scripts(&mut diag2, &ExcludeSet::default());
-        assert!(
-            !diag2
-                .diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::NpmScriptMissing),
-            "L006 must be silent when package.json has no scripts object"
         );
     }
 }
