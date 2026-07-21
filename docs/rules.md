@@ -305,7 +305,6 @@ H008--H024 codes with a `… frontmatter` path label.
 > `permissionMode` are owned solely by A028; private agents may use them. None
 > of A014–A028 has an autofix because selecting replacement values or runtime
 > references is not mechanically unambiguous.
-
 > **Routing-description overlap (A030 / S074).** These warnings compare
 > frontmatter `description` values with a deterministic shared helper: Unicode
 > lowercase tokenization, punctuation and stopword removal, stripping of
