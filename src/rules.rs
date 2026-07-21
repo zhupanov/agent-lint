@@ -86,13 +86,13 @@ pub enum LintRule {
     MarketplaceNameFormat,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
-    /// H001: hooks/hooks.json is missing
+    /// H001: a declared plugin hook configuration file is missing
     #[strum(props(code = "H001", name = "hooks-json-missing"))]
     HooksJsonMissing,
-    /// H002: hooks/hooks.json is not valid JSON
+    /// H002: a discovered plugin hook configuration is not valid JSON
     #[strum(props(code = "H002", name = "hooks-json-invalid"))]
     HooksJsonInvalid,
-    /// H003: hooks.json missing top-level 'hooks' key
+    /// H003: hook config missing a usable top-level 'hooks' collection
     #[strum(props(code = "H003", name = "hooks-key-missing"))]
     HooksKeyMissing,
     /// H004: hook command script missing on disk
@@ -104,7 +104,7 @@ pub enum LintRule {
     /// H006: .claude/settings.json is not valid JSON
     #[strum(props(code = "H006", name = "settings-json-invalid"))]
     SettingsJsonInvalid,
-    /// H007: hooks.json hooks collection is empty
+    /// H007: plugin hook config hooks collection is empty
     #[strum(props(code = "H007", name = "hooks-array-empty"))]
     HooksArrayEmpty,
     /// H008: hook event name is not a recognized Claude Code event

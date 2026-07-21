@@ -1,4 +1,4 @@
-use crate::context::{LintContext, ManifestState};
+use crate::context::{DeclaredHookConfig, DeclaredHookConfigKind, LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::hook_commands::extract_hook_command_paths;
 use crate::rules::LintRule;
@@ -62,18 +62,55 @@ fn check_hook_path(
     }
 }
 
-/// V3: Validate hooks/hooks.json
+/// V3: Validate every plugin hook configuration surface.
 pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    let f = "hooks/hooks.json";
-    let val = match &ctx.hooks_json {
+    // The conventional default is optional. A missing declared surface, on the
+    // other hand, is an unresolvable manifest declaration and owns H001.
+    validate_hook_config(
+        &ctx.hooks_json,
+        Path::new("hooks/hooks.json"),
+        false,
+        false,
+        diag,
+    );
+    for config in &ctx.declared_hook_configs {
+        validate_declared_hook_config(config, diag);
+    }
+}
+
+fn validate_declared_hook_config(config: &DeclaredHookConfig, diag: &mut DiagnosticCollector) {
+    validate_hook_config(
+        &config.state,
+        &config.subject_path,
+        true,
+        config.kind == DeclaredHookConfigKind::Inline,
+        diag,
+    );
+}
+
+fn validate_hook_config(
+    state: &ManifestState,
+    subject_path: &Path,
+    declared: bool,
+    inline: bool,
+    diag: &mut DiagnosticCollector,
+) {
+    let f = subject_path.display().to_string();
+    let val = match state {
         ManifestState::Missing => {
-            diag.report_at(LintRule::HooksJsonMissing, f, &format!("{f} is missing"));
+            if declared {
+                diag.report_at(
+                    LintRule::HooksJsonMissing,
+                    subject_path,
+                    &format!("{f} is missing"),
+                );
+            }
             return;
         }
         ManifestState::Invalid(e) => {
             diag.report_at_with(
                 LintRule::HooksJsonInvalid,
-                f,
+                subject_path,
                 e.message(),
                 manifest_error_metadata(e),
             );
@@ -83,9 +120,9 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     };
 
     match val.get("hooks") {
-        None => diag.report_at(
+        None if !inline => diag.report_at(
             LintRule::HooksKeyMissing,
-            f,
+            subject_path,
             &format!("{f} missing top-level 'hooks' key"),
         ),
         // Plugin hooks use an event-keyed object. Retain the legacy flat-array
@@ -96,20 +133,43 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         {
             diag.report_at(
                 LintRule::HooksArrayEmpty,
-                f,
+                subject_path,
                 &format!("{f} has empty 'hooks' collection"),
             );
         }
-        Some(_) => {}
+        Some(hooks) if !hooks.is_object() && !hooks.is_array() => {
+            diag.report_at(
+                LintRule::HooksKeyMissing,
+                subject_path,
+                &format!(
+                    "{f} hooks key missing or not an object/array (found {})",
+                    json_type(hooks)
+                ),
+            );
+        }
+        Some(_) | None => {}
     }
 
-    validate_hook_command_paths(
-        val,
-        f,
-        LintRule::HookCommandMissing,
-        LintRule::HookNotExecutable,
-        diag,
-    );
+    diag.with_subject_path(subject_path, |diag| {
+        validate_hook_command_paths(
+            val,
+            &f,
+            LintRule::HookCommandMissing,
+            LintRule::HookNotExecutable,
+            diag,
+        );
+    });
+}
+
+fn json_type(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 /// V4: Validate .claude/settings.json hook command paths
@@ -128,22 +188,33 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
         ManifestState::Parsed(v) => v,
     };
 
-    validate_hook_command_paths(
-        val,
-        ".claude/settings.json",
-        LintRule::HookCommandMissing,
-        LintRule::HookNotExecutable,
-        diag,
-    );
+    diag.with_subject_path(".claude/settings.json", |diag| {
+        validate_hook_command_paths(
+            val,
+            ".claude/settings.json",
+            LintRule::HookCommandMissing,
+            LintRule::HookNotExecutable,
+            diag,
+        );
+    });
 }
 
-/// V26: Validate the hook object schema in hooks/hooks.json (H008-H024).
+/// V26: Validate hook object schemas in every plugin hook configuration
+/// surface (H008-H024).
 pub fn validate_hooks_json_schema(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    // H001/H002 already report a missing or unparseable hooks.json.
+    // H001/H002 already report missing or unparseable configurations.
     if let ManifestState::Parsed(val) = &ctx.hooks_json {
         diag.with_subject_path("hooks/hooks.json", |diag| {
             hook_schema::validate_hook_schema(val, "hooks/hooks.json", diag);
         });
+    }
+    for config in &ctx.declared_hook_configs {
+        if let ManifestState::Parsed(val) = &config.state {
+            let label = config.subject_path.display().to_string();
+            diag.with_subject_path(&config.subject_path, |diag| {
+                hook_schema::validate_hook_schema(val, &label, diag);
+            });
+        }
     }
 }
 
@@ -169,13 +240,15 @@ pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector
             manifest_error_metadata(e),
         ),
         ManifestState::Parsed(val) => {
-            validate_hook_command_paths(
-                val,
-                ".claude/settings.local.json",
-                LintRule::HookCommandMissing,
-                LintRule::HookNotExecutable,
-                diag,
-            );
+            diag.with_subject_path(".claude/settings.local.json", |diag| {
+                validate_hook_command_paths(
+                    val,
+                    ".claude/settings.local.json",
+                    LintRule::HookCommandMissing,
+                    LintRule::HookNotExecutable,
+                    diag,
+                );
+            });
             diag.with_subject_path(".claude/settings.local.json", |diag| {
                 hook_schema::validate_hook_schema(val, ".claude/settings.local.json", diag);
             });
@@ -196,6 +269,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: hooks,
+            declared_hook_configs: vec![],
             settings_json: settings,
             settings_local_json: ManifestState::Missing,
         }
@@ -219,12 +293,11 @@ mod tests {
     }
 
     #[test]
-    fn test_v3_missing_hooks_json() {
+    fn test_v3_missing_default_hooks_json_is_optional() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("is missing"));
+        assert_eq!(diag.error_count(), 0);
     }
 
     #[test]
@@ -266,6 +339,21 @@ mod tests {
         assert_eq!(diag.error_count(), 1);
         assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksArrayEmpty);
         assert!(diag.errors()[0].contains("empty"));
+    }
+
+    #[test]
+    fn test_v3_non_collection_hooks_values_fire_h003() {
+        for value in [json!(null), json!("not-a-collection"), json!(42)] {
+            let ctx = make_ctx(
+                ManifestState::Parsed(json!({"hooks": value})),
+                ManifestState::Missing,
+            );
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_hooks_json(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 1);
+            assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksKeyMissing);
+            assert!(diag.errors()[0].contains("not an object/array"));
+        }
     }
 
     // V4: validate_settings_hooks

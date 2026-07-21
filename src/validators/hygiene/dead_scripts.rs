@@ -73,7 +73,10 @@ pub fn validate_dead_scripts(
     // via LintContext instead of reading files directly from disk.
     // Only re_ab applies here (not re_placeholder, which is directory-walk only).
     // For Invalid/Missing manifests, skip extraction -- other validators report those errors.
-    for manifest in [&ctx.settings_json, &ctx.hooks_json] {
+    for manifest in std::iter::once(&ctx.settings_json)
+        .chain(std::iter::once(&ctx.hooks_json))
+        .chain(ctx.declared_hook_configs.iter().map(|config| &config.state))
+    {
         if let ManifestState::Parsed(val) = manifest {
             for s in collect_json_strings(val) {
                 for cap in RE_DEAD_SCRIPT_AB.find_iter(&s) {
@@ -152,7 +155,10 @@ pub fn validate_dead_scripts(
 
     // Extract bare scripts/...sh references from pre-parsed settings/hooks manifests.
     // Only re_d applies here for bare script references.
-    for manifest in [&ctx.settings_json, &ctx.hooks_json] {
+    for manifest in std::iter::once(&ctx.settings_json)
+        .chain(std::iter::once(&ctx.hooks_json))
+        .chain(ctx.declared_hook_configs.iter().map(|config| &config.state))
+    {
         if let ManifestState::Parsed(val) = manifest {
             for s in collect_json_strings(val) {
                 for cap in RE_SCRIPTS_PATH.find_iter(&s) {

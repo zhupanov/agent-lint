@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Three-state manifest parse result.
@@ -7,6 +8,25 @@ pub enum ManifestState {
     Missing,
     Invalid(ManifestError),
     Parsed(Value),
+}
+
+/// A hook configuration declared by `.claude-plugin/plugin.json`.
+///
+/// File-backed configurations retain their loader result, including a missing
+/// state, so H001 can distinguish an absent optional default from a declared
+/// path that cannot be resolved. Inline configurations are wrapped in the
+/// normal top-level `{ "hooks": ... }` shape before they reach validators.
+#[derive(Debug)]
+pub struct DeclaredHookConfig {
+    pub subject_path: PathBuf,
+    pub state: ManifestState,
+    pub kind: DeclaredHookConfigKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeclaredHookConfigKind {
+    File,
+    Inline,
 }
 
 /// A manifest loading failure and, when JSON parsing reached a source point,
@@ -118,14 +138,16 @@ pub struct LintContext {
     pub plugin_json: ManifestState,
     pub marketplace_json: ManifestState,
     pub hooks_json: ManifestState,
+    pub declared_hook_configs: Vec<DeclaredHookConfig>,
     pub settings_json: ManifestState,
     pub settings_local_json: ManifestState,
 }
 
 impl LintContext {
     pub fn new(base_path: &Path, mode: LintMode) -> Self {
-        // hooks_json, settings_json, and settings_local_json are always loaded
-        // regardless of mode.
+        // The legacy default and Claude settings surfaces are always loaded
+        // regardless of mode. Plugin-declared hook surfaces are loaded only in
+        // Plugin mode after plugin.json has been parsed.
         let hooks_json = ManifestState::load(
             &base_path.join("hooks/hooks.json"),
             Path::new("hooks/hooks.json"),
@@ -156,16 +178,111 @@ impl LintContext {
             (ManifestState::Missing, ManifestState::Missing)
         };
 
+        let declared_hook_configs = if mode == LintMode::Plugin {
+            collect_declared_hook_configs(base_path, &plugin_json, &hooks_json)
+        } else {
+            Vec::new()
+        };
+
         Self {
             base_path: base_path.to_path_buf(),
             mode,
             plugin_json,
             marketplace_json,
             hooks_json,
+            declared_hook_configs,
             settings_json,
             settings_local_json,
         }
     }
+}
+
+/// Load hook configurations declared by the parsed plugin manifest. Component
+/// paths use the same lexical safety contract as M013: they must be relative
+/// and must not contain a parent-directory segment. Unsafe raw values are left
+/// to M013 and are never probed on disk here.
+fn collect_declared_hook_configs(
+    base_path: &Path,
+    plugin_json: &ManifestState,
+    default_hooks_json: &ManifestState,
+) -> Vec<DeclaredHookConfig> {
+    let ManifestState::Parsed(plugin) = plugin_json else {
+        return Vec::new();
+    };
+    let Some(hooks) = plugin.get("hooks") else {
+        return Vec::new();
+    };
+
+    let mut configs = Vec::new();
+    let mut seen = HashSet::new();
+    if !matches!(default_hooks_json, ManifestState::Missing) {
+        seen.insert(PathBuf::from("hooks/hooks.json"));
+    }
+
+    match hooks {
+        Value::String(path) => push_declared_hook_file(base_path, path, &mut seen, &mut configs),
+        Value::Array(paths) => {
+            for path in paths.iter().filter_map(Value::as_str) {
+                push_declared_hook_file(base_path, path, &mut seen, &mut configs);
+            }
+        }
+        Value::Object(inline) => configs.push(DeclaredHookConfig {
+            subject_path: PathBuf::from(".claude-plugin/plugin.json"),
+            state: ManifestState::Parsed(Value::Object(serde_json::Map::from_iter([(
+                "hooks".to_owned(),
+                Value::Object(inline.clone()),
+            )]))),
+            kind: DeclaredHookConfigKind::Inline,
+        }),
+        _ => {}
+    }
+
+    configs
+}
+
+fn push_declared_hook_file(
+    base_path: &Path,
+    raw_path: &str,
+    seen: &mut HashSet<PathBuf>,
+    configs: &mut Vec<DeclaredHookConfig>,
+) {
+    let Some(subject_path) = safe_component_path(raw_path) else {
+        return;
+    };
+    if !seen.insert(subject_path.clone()) {
+        return;
+    }
+    configs.push(DeclaredHookConfig {
+        state: ManifestState::load(&base_path.join(&subject_path), &subject_path),
+        subject_path,
+        kind: DeclaredHookConfigKind::File,
+    });
+}
+
+fn safe_component_path(raw_path: &str) -> Option<PathBuf> {
+    let is_absolute = raw_path.starts_with('/')
+        || raw_path.starts_with('\\')
+        || raw_path
+            .as_bytes()
+            .get(1)
+            .is_some_and(|separator| *separator == b':')
+            && raw_path
+                .as_bytes()
+                .get(2)
+                .is_some_and(|separator| matches!(*separator, b'/' | b'\\'));
+    if is_absolute {
+        return None;
+    }
+
+    let mut path = PathBuf::new();
+    for segment in raw_path.split(['/', '\\']) {
+        match segment {
+            "" | "." => {}
+            ".." => return None,
+            segment => path.push(segment),
+        }
+    }
+    Some(path)
 }
 
 #[cfg(test)]

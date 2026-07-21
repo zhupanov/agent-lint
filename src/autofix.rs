@@ -63,36 +63,43 @@ fn log_fix(rule: LintRule, msg: &str) {
 
 #[cfg(unix)]
 fn fix_executability_hooks(mode: LintMode, config: &LintConfig) -> bool {
-    let mut fixed = false;
-    let json_paths: &[&str] = match mode {
-        LintMode::Basic => &[".claude/settings.json", ".claude/settings.local.json"],
-        LintMode::Plugin => &[
-            "hooks/hooks.json",
-            ".claude/settings.json",
-            ".claude/settings.local.json",
-        ],
-    };
+    use crate::context::{LintContext, ManifestState};
 
-    for json_path in json_paths {
-        let content = match fs::read_to_string(json_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let val: serde_json::Value = match serde_json::from_str(&content) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        for reference in extract_hook_command_paths(&val) {
-            if is_suppressed(config, LintRule::HookNotExecutable, &reference.path) {
-                continue;
-            }
-            if make_hook_executable(&reference.path) {
-                log_fix(
-                    LintRule::HookNotExecutable,
-                    &format!("made executable: {}", reference.path.display()),
-                );
-                fixed = true;
-            }
+    let ctx = LintContext::new(Path::new("."), mode);
+    let mut fixed = false;
+
+    if mode == LintMode::Plugin
+        && let ManifestState::Parsed(value) = &ctx.hooks_json
+    {
+        fixed |= fix_hook_config_executability(value, config);
+    }
+    if let ManifestState::Parsed(value) = &ctx.settings_json {
+        fixed |= fix_hook_config_executability(value, config);
+    }
+    if let ManifestState::Parsed(value) = &ctx.settings_local_json {
+        fixed |= fix_hook_config_executability(value, config);
+    }
+    for hook_config in &ctx.declared_hook_configs {
+        if let ManifestState::Parsed(value) = &hook_config.state {
+            fixed |= fix_hook_config_executability(value, config);
+        }
+    }
+    fixed
+}
+
+#[cfg(unix)]
+fn fix_hook_config_executability(value: &serde_json::Value, config: &LintConfig) -> bool {
+    let mut fixed = false;
+    for reference in extract_hook_command_paths(value) {
+        if is_suppressed(config, LintRule::HookNotExecutable, &reference.path) {
+            continue;
+        }
+        if make_hook_executable(&reference.path) {
+            log_fix(
+                LintRule::HookNotExecutable,
+                &format!("made executable: {}", reference.path.display()),
+            );
+            fixed = true;
         }
     }
     fixed
@@ -1113,6 +1120,49 @@ mod tests {
         ));
         assert_eq!(
             std::fs::metadata(external.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn fix_executability_hooks_includes_manifest_declared_config() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude-plugin").unwrap();
+        std::fs::create_dir_all("config").unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/declared-hook.sh", "#!/usr/bin/env bash\n").unwrap();
+        std::fs::set_permissions(
+            "scripts/declared-hook.sh",
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude-plugin/plugin.json",
+            r#"{"name":"declared-hooks","hooks":"config/hooks.json"}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            "config/hooks.json",
+            r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/scripts/declared-hook.sh"}]}]}}"#,
+        )
+        .unwrap();
+
+        assert!(fix_executability_hooks(
+            LintMode::Plugin,
+            &LintConfig::default()
+        ));
+        assert_ne!(
+            std::fs::metadata("scripts/declared-hook.sh")
                 .unwrap()
                 .permissions()
                 .mode()

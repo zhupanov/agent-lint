@@ -46,7 +46,7 @@ src/
 +-- validators/
     +-- mod.rs           # run_all -> run_basic / run_plugin dispatch
     +-- manifest.rs      # M001-M021: plugin.json & marketplace.json, component paths
-    +-- hooks.rs         # H001-H007, H025: hooks.json, settings.json, settings.local.json
+    +-- hooks.rs         # H001-H007, H025: discovered plugin hooks, settings.json, settings.local.json
     +-- hook_schema.rs   # H008-H024: shared hook object schema engine
     +-- skills.rs        # S001-S008: skills layout & frontmatter
     +-- skill_content/   # S009-S057, S063-S071: name, description, body, MCP, execution fields, security

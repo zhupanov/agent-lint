@@ -1,8 +1,9 @@
 //! Hook object schema validation (H008-H024).
 //!
 //! One validation engine for a "hook object", applied to every JSON surface
-//! where hooks appear: `hooks/hooks.json`, `.claude/settings.json`, and
-//! `.claude/settings.local.json`.
+//! where hooks appear: discovered plugin hook configurations (including
+//! `hooks/hooks.json` and inline plugin manifests), `.claude/settings.json`,
+//! and `.claude/settings.local.json`.
 //!
 //! The event list and handler-type table below are the single source of truth
 //! for hook schema knowledge and are expected to churn with Claude Code

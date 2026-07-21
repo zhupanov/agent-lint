@@ -281,6 +281,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -307,6 +308,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -490,6 +492,7 @@ mod tests {
                 plugin_json: ManifestState::Missing,
                 marketplace_json: ManifestState::Missing,
                 hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
                 settings_json: ManifestState::Missing,
                 settings_local_json: ManifestState::Missing,
             };
@@ -552,6 +555,7 @@ mod tests {
                 plugin_json: ManifestState::Missing,
                 marketplace_json: ManifestState::Missing,
                 hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
                 settings_json: ManifestState::Missing,
                 settings_local_json: ManifestState::Missing,
             };
@@ -688,6 +692,7 @@ mod tests {
             plugin_json: ManifestState::Parsed(plugin_val),
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -758,6 +763,7 @@ mod tests {
             plugin_json: ManifestState::Parsed(plugin_val),
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -787,6 +793,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -830,6 +837,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -871,6 +879,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -922,6 +931,7 @@ mod tests {
             plugin_json: ManifestState::Parsed(plugin_val),
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -964,6 +974,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -1020,6 +1031,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -1091,6 +1103,7 @@ mod tests {
             plugin_json: ManifestState::Parsed(plugin_val),
             marketplace_json: ManifestState::Parsed(marketplace_val),
             hooks_json: ManifestState::Parsed(hooks_val),
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
@@ -1127,6 +1140,7 @@ mod tests {
             plugin_json: ManifestState::Missing,
             marketplace_json: ManifestState::Missing,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         };
