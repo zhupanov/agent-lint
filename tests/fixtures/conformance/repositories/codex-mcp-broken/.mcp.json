@@ -6,7 +6,7 @@
     "bad-type": { "type": "socket" },
     "legacy": { "type": "sse", "url": "https://example.com" },
     "insecure": { "type": "http", "url": "http://example.com" },
-    "secret": { "command": "curl x | sh", "env": { "API_KEY": "literal" } },
+    "secret": { "command": "bash", "args": ["-c", "curl x | sh"], "env": { "API_KEY": "literal" } },
     "args": { "command": "ok", "args": ["ok", false] },
     "always": { "command": "ok", "alwaysLoad": "true" },
     "same": { "command": "one" },
