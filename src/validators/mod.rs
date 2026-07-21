@@ -71,7 +71,7 @@ fn run_basic(
     // Skill content checks (both-mode subset: excludes S016, S017, S029, S033)
     skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
-    agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass, false);
     claude_config::validate_private_config(diag, exclude);
     validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
     // A030/S074: overlapping routing descriptions within simultaneously available namespaces
@@ -96,7 +96,7 @@ fn run_plugin(
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag, exclude);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
-    agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass, true);
     claude_config::validate_private_config(diag, exclude);
     validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
     prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);

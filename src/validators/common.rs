@@ -274,8 +274,11 @@ pub(crate) fn is_valid_model_value(value: &str) -> bool {
     if MODEL_ALIASES.contains(&value) {
         return true;
     }
-    // Full Anthropic model IDs and version pins (e.g. claude-sonnet-4-5, claude-opus-4-6).
-    value.starts_with("claude-")
+    // Full Anthropic model IDs and version pins (e.g. claude-sonnet-4-5,
+    // claude-opus-4-6). A bare family or trailing separator is not an ID.
+    value
+        .strip_prefix("claude-")
+        .is_some_and(|rest| rest.contains('-') && !rest.ends_with('-'))
 }
 
 /// Built-in Claude Code tool names (PascalCase). Shared by S040
