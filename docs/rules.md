@@ -289,6 +289,23 @@ H008--H024 codes with a `… frontmatter` path label.
 | A029 | `agent-stop-missing` | Tool-using agent has no explicit stop control or failure outcome | Always | warn |
 | A030 | `agent-desc-overlap` | Two agent routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
+> **Agent field input (A014–A028).** These rules consume the single strict,
+> canonical YAML mapping for the agent frontmatter; comments, quoted keys, flow
+> syntax, and folded scalars therefore have their YAML meaning. `model`,
+> `permissionMode`, `memory`, `effort`, and `isolation` require strings;
+> `background` requires a YAML boolean; and `maxTurns` requires a positive YAML
+> integer. `tools`, `disallowedTools`, and `skills` accept either a string or a
+> sequence of strings. Malformed list shapes produce only the owning rule and
+> do not cascade into per-entry diagnostics.
+>
+> Skill references are resolved from discovered runtime candidates, never by
+> treating the reference as a path. Basic/private agent validation uses only
+> `.claude/skills`; Plugin validation uses that namespace plus plugin-exported
+> skills. For plugin-shipped agents, `hooks`, `mcpServers`, and
+> `permissionMode` are owned solely by A028; private agents may use them. None
+> of A014–A028 has an autofix because selecting replacement values or runtime
+> references is not mechanically unambiguous.
+
 > **Routing-description overlap (A030 / S074).** These warnings compare
 > frontmatter `description` values with a deterministic shared helper: Unicode
 > lowercase tokenization, punctuation and stopword removal, stripping of

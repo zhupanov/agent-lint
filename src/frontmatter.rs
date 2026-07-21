@@ -176,38 +176,6 @@ pub fn get_strict_string_field(fm_lines: &[String], key: &str) -> Option<String>
         .map(str::to_owned)
 }
 
-/// Read a tool-like field from an already strictly parsed mapping.
-///
-/// Agent tool declarations accept either a comma-delimited scalar or a YAML
-/// sequence. Because this consumes the canonical parsed value, YAML comments,
-/// quoting, and flow syntax have already been interpreted by the parser.
-/// Non-string values are deliberately ignored: callers that validate a field's
-/// schema own any diagnostic for those shapes.
-pub fn strict_string_items(yaml: &crate::yaml::Value, key: &str) -> Vec<String> {
-    let Some(value) = yaml.as_mapping().and_then(|mapping| mapping.get(key)) else {
-        return Vec::new();
-    };
-
-    if let Some(value) = value.as_str() {
-        return value
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(str::to_owned)
-            .collect();
-    }
-
-    value
-        .as_sequence()
-        .into_iter()
-        .flatten()
-        .filter_map(crate::yaml::Value::as_str)
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
 /// Convert a YAML value to JSON for reuse by JSON-shaped validators (e.g. hooks).
 pub fn yaml_to_json(value: &crate::yaml::Value) -> Option<serde_json::Value> {
     serde_json::to_value(value).ok()
