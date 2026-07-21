@@ -87,6 +87,42 @@ fn write_public_path_hygiene_fixture(root: &std::path::Path) -> std::path::PathB
 }
 
 #[test]
+fn s022_autofix_converts_complete_runs_preserves_escapes_and_is_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/backslashes/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill,
+        "---\nname: backslashes\ndescription: Use when testing Windows-style path conversion\n---\nOpen C:\\Users\\name and C:\\Users\\name\\dir.\nRead \\dir\\file\\last or path\\to\\file.\nUse \x60\\n\\t\x60, \\d\\w, and \\alpha\\beta escapes; keep a lone \\n here.\n\x60\x60\x60text\nC:\\Users\\fenced\n\x60\x60\x60\n",
+    )
+    .unwrap();
+
+    let before = run_in(tmp.path(), &["--only", "S022", "."]);
+    assert_eq!(before.status.code(), Some(1), "stderr: {}", stderr(&before));
+
+    let first = run_in(tmp.path(), &["--autofix", "--only", "S022", "."]);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    let fixed = std::fs::read_to_string(&skill).unwrap();
+    assert!(fixed.contains("C:/Users/name and C:/Users/name/dir."));
+    assert!(fixed.contains("/dir/file/last or path/to/file."));
+    assert!(
+        fixed.contains("\x60\\n\\t\x60, \\d\\w, and \\alpha\\beta escapes; keep a lone \\n here.")
+    );
+    assert!(fixed.contains("C:\\Users\\fenced"));
+    assert!(!fixed.contains("C:/Users\\name"));
+    assert!(!fixed.contains("\\dir\\file\\last"));
+
+    let second = run_in(tmp.path(), &["--autofix", "--only", "S022", "."]);
+    assert!(second.status.success(), "stderr: {}", stderr(&second));
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), fixed);
+    assert!(!stderr(&second).contains("fixed[S022/backslash-path]"));
+
+    let clean = run_in(tmp.path(), &["--only", "S022", "."]);
+    assert!(clean.status.success(), "stderr: {}", stderr(&clean));
+}
+
+#[test]
 fn path_hygiene_preserves_rule_severity_location_and_focused_autofix_contract() {
     let tmp = tempfile::tempdir().unwrap();
     let skill = write_public_path_hygiene_fixture(tmp.path());

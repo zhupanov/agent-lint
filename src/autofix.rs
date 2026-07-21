@@ -7,6 +7,9 @@ use crate::platforms::ValidationTargets;
 use crate::pwd_hygiene::replace_bundled_asset_prefixes;
 use crate::rules::LintRule;
 use crate::traversal;
+use crate::validators::skill_content::{
+    RE_BACKSLASH_PATH, contains_backslash_path, is_named_tex_escape_pair,
+};
 use crate::validators::skills::collect_skills;
 use regex::Regex;
 use std::fs;
@@ -15,8 +18,13 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 // Reuse the same regexes validators use.
-static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
+// This replacement-scoped pattern consumes every segment in a detected path
+// run, so an autofix cannot leave mixed separators behind.
+static RE_BACKSLASH_PATH_RUN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"[A-Za-z]:(?:\\[A-Za-z0-9_.-]+)+|\\\\[A-Za-z][A-Za-z0-9_-]*(?:\\[A-Za-z][A-Za-z0-9_-]*)+|(?:\\[A-Za-z][A-Za-z0-9_-]*){2,}",
+    )
+    .unwrap()
 });
 static RE_HTTP_URL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"http://[a-zA-Z0-9]").unwrap());
 static RE_BASH_FENCE: LazyLock<Regex> =
@@ -539,8 +547,8 @@ fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig)
                 continue;
             }
             // Check outside code fences (matching validator)
-            let has_backslash = crate::fence::lines_outside_fences(&info.body)
-                .any(|line| RE_BACKSLASH_PATH.is_match(line));
+            let has_backslash =
+                crate::fence::lines_outside_fences(&info.body).any(contains_backslash_path);
             if !has_backslash {
                 continue;
             }
@@ -559,7 +567,7 @@ fn fix_backslash_path(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig)
             let mut tracker = CodeFenceTracker::new();
             for line in body.lines() {
                 let class = tracker.process_line(line);
-                if class == crate::fence::LineClass::Outside && RE_BACKSLASH_PATH.is_match(line) {
+                if class == crate::fence::LineClass::Outside && contains_backslash_path(line) {
                     // Only replace backslashes within matched path patterns, not all backslashes
                     new_body.push_str(&replace_backslash_paths(line));
                 } else {
@@ -682,7 +690,10 @@ fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet, config: &Lint
             if is_suppressed(config, LintRule::FrontmatterBackslash, &skill_path) {
                 continue;
             }
-            let has_backslash = info.fm_lines.iter().any(|l| RE_BACKSLASH_PATH.is_match(l));
+            let has_backslash = info
+                .fm_lines
+                .iter()
+                .any(|line| contains_backslash_path(line));
             if !has_backslash {
                 continue;
             }
@@ -707,7 +718,7 @@ fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet, config: &Lint
                         in_frontmatter = false;
                     }
                     new_content.push_str(line);
-                } else if in_frontmatter && RE_BACKSLASH_PATH.is_match(line) {
+                } else if in_frontmatter && contains_backslash_path(line) {
                     new_content.push_str(&replace_backslash_paths(line));
                     changed = true;
                 } else {
@@ -913,8 +924,18 @@ fn fix_pwd_in_skill(exclude: &ExcludeSet, config: &LintConfig) -> bool {
 
 /// Replace only backslash path patterns on a line, leaving other backslashes intact.
 fn replace_backslash_paths(line: &str) -> String {
-    RE_BACKSLASH_PATH
-        .replace_all(line, |caps: &regex::Captures| caps[0].replace('\\', "/"))
+    if !RE_BACKSLASH_PATH.is_match(line) || !contains_backslash_path(line) {
+        return line.to_string();
+    }
+
+    RE_BACKSLASH_PATH_RUN
+        .replace_all(line, |caps: &regex::Captures| {
+            if is_named_tex_escape_pair(&caps[0]) {
+                caps[0].to_string()
+            } else {
+                caps[0].replace('\\', "/")
+            }
+        })
         .to_string()
 }
 
@@ -1229,6 +1250,26 @@ mod tests {
         let content = "See http://example.com/docs for reference";
         let result = replace_http_urls(content);
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn s022_imports_the_validator_detection_regex() {
+        assert!(std::ptr::eq(
+            &*RE_BACKSLASH_PATH,
+            &*crate::validators::skill_content::RE_BACKSLASH_PATH,
+        ));
+    }
+
+    #[test]
+    fn replace_backslash_paths_converts_full_runs_only() {
+        assert_eq!(
+            replace_backslash_paths(r"Open C:\Users\name and \dir\file\last; keep \n."),
+            "Open C:/Users/name and /dir/file/last; keep \\n."
+        );
+        assert_eq!(
+            replace_backslash_paths(r"Use \alpha\beta and \\server\share."),
+            r"Use \alpha\beta and //server/share."
+        );
     }
 
     #[test]

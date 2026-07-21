@@ -18,10 +18,69 @@ use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
 
-// S022/S043: Backslash paths — shared between body.rs and frontmatter_extended.rs
-pub(super) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]*\\[A-Za-z]").unwrap()
+// S022/S043: Backslash paths — shared by validators and autofix.
+pub(crate) static RE_BACKSLASH_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[A-Za-z]:\\[A-Za-z]|\\[A-Za-z][A-Za-z0-9_-]+\\[A-Za-z]").unwrap()
 });
+
+// Adjacent named TeX commands are escapes, not filesystem paths. Keep this
+// deliberately narrow: broadly accepting \word\word as an escape would hide
+// ordinary relative paths such as \dir\file.
+const NAMED_TEX_ESCAPES: &[&str] = &[
+    "alpha",
+    "beta",
+    "gamma",
+    "delta",
+    "epsilon",
+    "varepsilon",
+    "zeta",
+    "eta",
+    "theta",
+    "vartheta",
+    "iota",
+    "kappa",
+    "lambda",
+    "mu",
+    "nu",
+    "xi",
+    "pi",
+    "varpi",
+    "rho",
+    "varrho",
+    "sigma",
+    "varsigma",
+    "tau",
+    "upsilon",
+    "phi",
+    "varphi",
+    "chi",
+    "psi",
+    "omega",
+];
+
+/// Whether a line contains an S022/S043 backslash path rather than a named
+/// TeX escape pair. This is the shared recognition contract for validation and
+/// autofix.
+pub(crate) fn contains_backslash_path(line: &str) -> bool {
+    RE_BACKSLASH_PATH
+        .find_iter(line)
+        .any(|matched| !is_named_tex_escape_pair(&line[matched.start()..]))
+}
+
+pub(crate) fn is_named_tex_escape_pair(value: &str) -> bool {
+    let Some(value) = value.strip_prefix('\\') else {
+        return false;
+    };
+    let mut segments = value.split('\\');
+    let (Some(first), Some(second)) = (segments.next(), segments.next()) else {
+        return false;
+    };
+    let second = second
+        .split(|character: char| !character.is_ascii_alphabetic())
+        .next()
+        .unwrap_or_default();
+    NAMED_TEX_ESCAPES.contains(&first) && NAMED_TEX_ESCAPES.contains(&second)
+}
 
 /// Canonical skill frontmatter keys (Claude Code docs + fields already linted here).
 /// Used by S070 (unknown-fm-field) and kept alongside S007's empty-optional list.
@@ -1092,6 +1151,23 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn test_s022_retains_relative_inline_and_unc_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need path validation\n---\nUse path\\to\\file, \x60C:\\Program-Files\\App\x60, and \\\\server\\share.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(diag.errors().iter().any(|e| e.contains("backslash")));
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s022_forward_slash_ok() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -1115,8 +1191,25 @@ mod tests {
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: Use when you need regex validation\n---\nUse regex like \\s and \\n to match patterns\n",
+            "---\nname: my-skill\ndescription: Use when you need regex validation\n---\nUse \x60\\n\\t\x60, \\d\\w, and \\alpha\\beta escapes.\n",
         ).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("backslash")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s022_fenced_windows_path_not_flagged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when you need path validation\n---\n\x60\x60\x60text\nC:\\Users\\admin\\file.txt\n\x60\x60\x60\n",
+        )
+        .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("backslash")));

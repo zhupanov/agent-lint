@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use super::RE_BACKSLASH_PATH;
+use super::contains_backslash_path;
 
 const MAX_BODY_LINES: usize = 500;
 const BODY_NO_REFS_THRESHOLD: usize = 300;
@@ -156,12 +156,11 @@ pub(super) fn check_body_content(
     // S021: consecutive bash code blocks
     check_consecutive_bash(info, diag);
 
-    // S022: backslash paths -- require path-like context to avoid false positives
-    // on regex escapes (\s, \n, \t), LaTeX (\frac), etc.
-    // Matches: C:\Users, \dir\file, path\to\something (letter, backslash, letter pattern)
+    // S022: backslash paths. The shared matcher excludes short escape pairs
+    // and named TeX command pairs while retaining path-like multi-segment runs.
     // Only check outside code fences to reduce false positives
     for line in crate::fence::lines_outside_fences(&info.body) {
-        if RE_BACKSLASH_PATH.is_match(line) {
+        if contains_backslash_path(line) {
             diag.report(
                 LintRule::BackslashPath,
                 &format!(

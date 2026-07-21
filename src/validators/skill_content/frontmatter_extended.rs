@@ -3,7 +3,7 @@ use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::validators::skills::SkillInfo;
 
-use super::RE_BACKSLASH_PATH;
+use super::contains_backslash_path;
 
 pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     // S035: compatibility field too long
@@ -161,7 +161,7 @@ pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut Diagnostic
 
     // S043: backslash paths in frontmatter
     for line in &info.fm_lines {
-        if RE_BACKSLASH_PATH.is_match(line) {
+        if contains_backslash_path(line) {
             diag.report(
                 LintRule::FrontmatterBackslash,
                 &format!(
