@@ -556,7 +556,12 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        let mut prompt_pass = super::super::prompt_content::PromptContentPass::default();
+        validate_agent_skill_frontmatter_with_prompt_pass(
+            &mut diag,
+            &crate::config::ExcludeSet::default(),
+            &mut prompt_pass,
+        );
         assert!(
             diag.diagnostics()
                 .iter()
@@ -579,7 +584,8 @@ mod tests {
 
         let exclude = crate::config::ExcludeSet::default();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_skill_frontmatter(&mut diag, &exclude);
+        let mut prompt_pass = super::super::prompt_content::PromptContentPass::default();
+        validate_agent_skill_frontmatter_with_prompt_pass(&mut diag, &exclude, &mut prompt_pass);
         crate::validators::skill_content::validate_agent_skills_name_contract(
             ".agents/skills",
             &mut diag,

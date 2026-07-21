@@ -603,6 +603,7 @@ mod tests {
             ValidationTargets {
                 cursor: true,
                 codex: false,
+                claude_md: false,
                 agents_md: false,
                 agent_skills: true,
             },
