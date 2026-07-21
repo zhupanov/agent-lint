@@ -76,9 +76,12 @@ pub(super) fn check_description_quality(
     plugin_mode: bool,
     diag: &mut DiagnosticCollector,
 ) {
-    let desc = match frontmatter::get_field(&info.fm_lines, "description") {
+    // Description-quality rules require the canonical YAML scalar so valid
+    // multiline forms are evaluated as one description. Invalid YAML and
+    // non-string values are owned by the frontmatter validators.
+    let desc = match frontmatter::get_strict_string_field(&info.fm_lines, "description") {
         Some(d) => d,
-        None => return, // S005 fires from existing validator
+        None => return,
     };
 
     let char_count = desc.chars().count();

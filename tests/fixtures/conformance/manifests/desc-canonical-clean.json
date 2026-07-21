@@ -1,0 +1,15 @@
+{
+  "class": "clean",
+  "repository": "desc-canonical-clean",
+  "covers": ["plugin-mode", "normal", "json", "desc-canonical"],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": ["--format", "json", "--only", "S014,S015,S016,S017,S018,S034,S050,S054", "."]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

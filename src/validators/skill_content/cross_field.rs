@@ -97,9 +97,12 @@ fn check_desc_body_alignment(info: &SkillInfo, diag: &mut DiagnosticCollector) {
         return;
     }
 
-    let desc = match frontmatter::get_field(&info.fm_lines, "description") {
+    // Alignment follows the same canonical scalar contract as the description
+    // rules. Invalid YAML and missing/non-string values are diagnosed by the
+    // frontmatter validators instead.
+    let desc = match frontmatter::get_strict_string_field(&info.fm_lines, "description") {
         Some(d) => d,
-        None => return, // S005 covers missing description
+        None => return,
     };
 
     // Strip trigger phrases before extracting keywords
