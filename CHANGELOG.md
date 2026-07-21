@@ -78,6 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   skills, with a domain/task-focused message and suggestion
 - Stopped flagging broad subject nouns (`data`, `files`, `documents`) and
   compounds that contain otherwise generic tokens under S033
+- **BREAKING**: Renamed rule G005 from `security-md-missing` to
+  `security-policy-missing`. The stable code `G005` is unchanged, but
+  `agent-lint.toml` references and `--only` selections using the old *name*
+  now fail as invalid rule identifiers; update them to
+  `security-policy-missing` or use the code `G005`. G005 now recognizes a
+  repository-local `SECURITY.md` in the repository root, `.github/`, or
+  `docs/` (previously repo root only), matching GitHub's supported
+  community-health file locations
 
 ### Deprecated
 

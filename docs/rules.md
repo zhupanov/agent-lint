@@ -578,7 +578,7 @@ They run in both Basic and Plugin modes.
 | G002 | `script-ref-missing` | Script reference missing on disk | Always | error |
 | G003 | `script-not-executable` | Directly executed script file is not executable (Unix only) | Always | error |
 | G004 | `dead-script` | Script has no executable invocation reference | Plugin | warn |
-| G005 | `security-md-missing` | `SECURITY.md` is missing from repo root | Plugin | warn |
+| G005 | `security-policy-missing` | No repository-local `SECURITY.md` in a GitHub-supported location (root, `.github/`, or `docs/`) | Plugin | warn |
 | G006 | `todo-in-skill` | `TODO`/`FIXME`/`HACK`/`XXX` marker in published skill body | Plugin | warn |
 | G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin | warn |
 | G008 | `gh-inline-body` | Shipped script passes a GitHub body or release notes inline instead of using a file-backed option | Always | warn |
@@ -587,6 +587,15 @@ They run in both Basic and Plugin modes.
 | G011 | `awk-regex-nonascii` | Dynamic awk regex contains non-ASCII text with implementation-dependent behavior | Always | error |
 
 G002 resolves `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD` forms lexically within the repository. Escaping `..` paths are unresolvable; symlink targets are intentionally not audited. G003 is Unix-only and applies only when a regular file is invoked directly; interpreter-launched and sourced files do not require an execute bit. G004 is a warning because static reachability is incomplete; use the existing reason-bearing per-file suppression for intentional inventory entries.
+
+G005 accepts an exact-case, regular, non-symlink `SECURITY.md` in the
+repository root, `.github/`, or `docs/`, following GitHub's supported
+community-health locations and documented `.github` → root → `docs`
+precedence ([supported file types](https://docs.github.com/en/communities/setting-up-your-project-for-healthy-contributions/creating-a-default-community-health-file#supported-file-types),
+retrieved 2026-07-21). A directory, a wrong-case name, or a symlink does not
+satisfy the rule. An organization default served from a public `.github`
+repository cannot be observed locally, so G005 stays a warning and normal
+suppression is the escape hatch for that inherited policy.
 
 G009-G011 use conventional script discovery unless `[lint].script-inventory`
 is configured. An explicit inventory supports `.sh`, `.inc.bash`, and `.awk`

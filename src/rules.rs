@@ -801,8 +801,9 @@ pub enum LintRule {
     /// G004: dead script with no structured invocation reference
     #[strum(props(code = "G004", name = "dead-script"))]
     DeadScript,
-    /// G005: SECURITY.md is missing from repo root
-    #[strum(props(code = "G005", name = "security-md-missing"))]
+    /// G005: no repository-local SECURITY.md security policy in a
+    /// GitHub-supported location (repository root, `.github/`, or `docs/`)
+    #[strum(props(code = "G005", name = "security-policy-missing"))]
     SecurityMdMissing,
     /// G006: TODO/FIXME/HACK/XXX marker in published skill content
     #[strum(props(code = "G006", name = "todo-in-skill"))]

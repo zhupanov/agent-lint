@@ -1082,7 +1082,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(
             tmp.path().join("agent-lint.toml"),
-            "[lint]\nsuppress = [\"plugin-json-missing\"]\nwarn = [\"security-md-missing\"]\n",
+            "[lint]\nsuppress = [\"plugin-json-missing\"]\nwarn = [\"security-policy-missing\"]\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
