@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "i002-broken",
+  "covers": ["nested-agents-md", "basic-mode", "normal", "json", "i002-instruction-secret"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "instruction-file-secret", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "I002", "name": "instruction-file-secret", "severity": "error", "subject_path": "AGENTS.md" },
+    { "code": "I002", "name": "instruction-file-secret", "severity": "error", "subject_path": "nested/AGENTS.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

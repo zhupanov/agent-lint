@@ -6,13 +6,16 @@ use crate::fence::{CodeFenceTracker, LineClass};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
-use crate::sensitive::contains_possible_secret;
+use crate::sensitive::find_instruction_secret;
 use crate::traversal;
 use crate::validators::common::{
     classify_inline_code_path, is_unsafe_inline_code_path_probe, normalize_inline_code_path_probe,
 };
 use std::ops::Range;
 use std::path::Path;
+
+const I002_SUGGESTION: &str =
+    "replace the literal with an environment-variable or secret-store reference";
 
 const CODEX_DEFAULT_MAX_BYTES: usize = 32_768;
 const CODEX_HARD_MAX_BYTES: usize = 100_000;
@@ -79,10 +82,17 @@ fn validate_shared_rules(
         );
         return;
     }
-    if contains_possible_secret(content) {
-        diag.report(
+    if let Some(finding) = find_instruction_secret(content) {
+        let mut metadata = DiagnosticMetadata::default()
+            .with_evidence(finding.evidence.as_str())
+            .with_suggestion(I002_SUGGESTION);
+        if let Some(location) = SourceSpan::from_byte_range(content, finding.location_range) {
+            metadata = metadata.with_location(location);
+        }
+        diag.report_with(
             LintRule::InstructionFileSecret,
             &format!("{display} contains a potential hardcoded secret/API key"),
+            metadata,
         );
     }
     validate_inline_paths(diag, path, display, content);
@@ -961,6 +971,75 @@ mod tests {
             .iter()
             .filter(|item| item.rule == rule)
             .count()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn i002_reports_unquoted_password_without_leaking_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let secret = "hunterhunter";
+        std::fs::write(
+            "AGENTS.md",
+            format!("# Instructions\npassword = {secret}\nAlso see docs/setup.md and run `cargo test`.\n"),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), false);
+
+        let finding = diag
+            .diagnostics()
+            .iter()
+            .find(|item| item.rule == LintRule::InstructionFileSecret)
+            .expect("I002 should fire");
+        assert_eq!(finding.evidence.as_deref(), Some("password"));
+        assert_eq!(finding.suggestion.as_deref(), Some(I002_SUGGESTION));
+        assert_eq!(
+            finding.location.map(|span| span.start().line_number()),
+            Some(2)
+        );
+        assert!(!finding.message.contains(secret));
+
+        let mut text = Vec::new();
+        diag.render_text(&mut text);
+        let text = String::from_utf8(text).unwrap();
+        assert!(!text.contains(secret));
+        assert!(!text.contains("password = "));
+
+        let serialized = serde_json::json!({
+            "message": finding.message,
+            "evidence": finding.evidence,
+            "suggestion": finding.suggestion,
+        })
+        .to_string();
+        assert!(!serialized.contains(secret));
+        assert!(!serialized.contains("password = "));
+        assert!(serialized.contains("\"evidence\":\"password\""));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn i002_emits_once_per_file_for_earliest_byte_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write(
+            "AGENTS.md",
+            "# Instructions\npassword = first-secret\napi_key = second-secret\nsk-abcdefghijklmnopqrstuvwxyz\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), false);
+        let secrets: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::InstructionFileSecret)
+            .collect();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets[0].evidence.as_deref(), Some("password"));
     }
 
     #[test]

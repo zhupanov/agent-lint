@@ -448,6 +448,34 @@ files remain exclusively I001. I004 emits once per file with a span on the
 first qualifying clause, bounded evidence, and suggestion
 `add concrete project commands, paths, or constraints`. It is not auto-fixable.
 
+I002 scans the entire Markdown source (including frontmatter, fences, and
+inline code) and emits at most one error per `AGENTS.md` for the earliest
+match in byte order. It does not autofix. Sensitive assignment keys are matched
+case-insensitively by the shared segmented vocabulary `SECRET`, `TOKEN`,
+`PASSWORD`, `PASSWD`, `PRIVATE_KEY`, `ACCESS_KEY`, `API_KEY`, and
+`CLIENT_SECRET` (underscore/hyphen-joined multiword forms included;
+substrings such as `TOKENIZER_MODEL` are not). Assignments accept `:` or `=`
+with optional whitespace and quoted or unquoted values; every non-empty
+literal value is a finding regardless of length. Exact placeholders
+`$NAME`, `${NAME}`, `{{NAME}}`, and `<NAME>` (with
+`NAME = [A-Za-z_][A-Za-z0-9_]*`) are clean, as are empty values and empty
+`${NAME:-}` defaults. Leading/trailing text and `${NAME:-nonempty-default}`
+are findings. Independently, these literal signatures are findings anywhere in
+the document: `sk-` plus at least 20 ASCII alphanumerics; `ghp_` plus exactly
+36 ASCII alphanumerics; `xoxb-`/`xoxp-` plus the Slack body grammar; `AKIA`/
+`ASIA` plus 16 uppercase ASCII alphanumerics; `glpat-` plus at least 20 ASCII
+alphanumerics/hyphens/underscores; `github_pat_` plus at least 20 ASCII
+alphanumerics/underscores; and a PEM opener matching
+`-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----`. Assignment findings expose
+only the key token as evidence; signature findings expose only a fixed category
+label (`openai-api-key-signature`, `github-token-signature`,
+`github-fine-grained-token-signature`, `slack-token-signature`,
+`aws-access-key-signature`, `gitlab-token-signature`, or `private-key-block`).
+Message, evidence, suggestion, and rendered output never include the credential
+value or surrounding source line. Suggestion:
+`replace the literal with an environment-variable or secret-store reference`.
+Read failures stay outside I002; I001 remains the exclusive empty-file rule.
+
 I003 scans paired backticks on individual prose lines; fence delimiters and
 fence interiors are ignored. It treats explicit relative paths (for example
 `docs/guide.md`, `missing.md`, `Node.js`, `api.example.com`, or `./script`) as

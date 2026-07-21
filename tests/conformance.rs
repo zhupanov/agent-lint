@@ -33,6 +33,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
 
 const REQUIRED_SMOKE_COVERAGE: &[&str] = &[
     "i001-empty",
+    "i002-instruction-secret",
     "i003-bare-extension",
     "i004-generic",
     "q002-quoted-example",

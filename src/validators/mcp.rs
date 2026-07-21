@@ -3,6 +3,7 @@ use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::platforms::ValidationTargets;
 use crate::rules::LintRule;
+use crate::sensitive::is_sensitive_key;
 use crate::traversal;
 use crate::validators::common::is_nonlocal_url_with_scheme;
 use regex::Regex;
@@ -90,13 +91,6 @@ static RE_PAYLOAD_DOWNLOAD_PIPE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 const UNIX_SHELLS: &[&str] = &["sh", "bash", "dash", "zsh", "ksh", "csh", "tcsh", "fish"];
-const SENSITIVE_SEGMENTS: &[&str] = &["SECRET", "TOKEN", "PASSWORD", "PASSWD"];
-const SENSITIVE_SEGMENT_PAIRS: &[&[&str]] = &[
-    &["PRIVATE", "KEY"],
-    &["ACCESS", "KEY"],
-    &["API", "KEY"],
-    &["CLIENT", "SECRET"],
-];
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum DangerousThreat {
@@ -616,7 +610,7 @@ fn offending_secret_keys(env: Option<&Value>, allow_claude_expansion: bool) -> V
     };
     let mut keys = Vec::new();
     for (key, value) in env {
-        if !is_sensitive_env_key(key) {
+        if !is_sensitive_key(key) {
             continue;
         }
         let Some(raw) = value.as_str() else {
@@ -631,25 +625,6 @@ fn offending_secret_keys(env: Option<&Value>, allow_claude_expansion: bool) -> V
         keys.push(key.as_str());
     }
     keys
-}
-
-fn is_sensitive_env_key(key: &str) -> bool {
-    let segments: Vec<String> = key
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|segment| !segment.is_empty())
-        .map(|segment| segment.to_ascii_uppercase())
-        .collect();
-    if segments
-        .iter()
-        .any(|segment| SENSITIVE_SEGMENTS.iter().any(|needle| segment == needle))
-    {
-        return true;
-    }
-    segments.windows(2).any(|window| {
-        SENSITIVE_SEGMENT_PAIRS
-            .iter()
-            .any(|pair| window[0] == pair[0] && window[1] == pair[1])
-    })
 }
 
 fn is_safe_claude_env_reference(value: &str) -> bool {
@@ -2178,9 +2153,9 @@ mod tests {
 
     #[test]
     fn p018_unbraced_dollar_and_passwd_private_key_are_sensitive() {
-        assert!(is_sensitive_env_key("PASSWD"));
-        assert!(is_sensitive_env_key("my-private-key"));
-        assert!(!is_sensitive_env_key("TOKENIZER_MODEL"));
+        assert!(is_sensitive_key("PASSWD"));
+        assert!(is_sensitive_key("my-private-key"));
+        assert!(!is_sensitive_key("TOKENIZER_MODEL"));
         assert!(!is_safe_claude_env_reference("$TOKEN"));
         assert!(is_safe_claude_env_reference("${TOKEN}"));
         let diagnostics = collected(
