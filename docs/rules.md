@@ -396,12 +396,16 @@ metadata, dependencies, and conventional build output.
 
 I003 treats explicit relative paths (for example `docs/guide.md`,
 `missing.md`, or `./script`) as filesystem references. Bare extension and glob
-notation such as `.py` and `*.py` is prose, not a path. Other dot-prefixed
-tokens are existence-sensitive dotfiles: an existing `.env`, `.gitignore`,
-`.cursorrules`, or `.mcp.json` is accepted and a missing one is reported. URLs,
-variables, placeholders, tokens containing whitespace, and non-path words are
-excluded. D005 uses the same lexical classification after applying its
-configured `inline-path-prefixes` scope.
+notation is prose, not a path. The conservative extension policy recognizes a
+single dot followed by one to eight lowercase ASCII letters or digits, so
+markers such as `.ts`, `.java`, `.html`, and `.tsx` do not depend on a fixed
+extension allowlist. Recognizable dotfiles take precedence and remain
+existence-sensitive: an existing `.env`, `.gitignore`, `.cursorrules`, or
+`.mcp.json` is accepted and a missing one is reported. Other dot-prefixed
+tokens, including uppercase, punctuation-bearing, and longer names, are also
+treated as dotfiles. URLs, variables, placeholders, tokens containing
+whitespace, and non-path words are excluded. D005 uses the same lexical
+classification after applying its configured `inline-path-prefixes` scope.
 
 The former CX037, CX038, CX041, CX043, and CX044 identifiers and names remain
 accepted as configuration aliases for these shared rules.
