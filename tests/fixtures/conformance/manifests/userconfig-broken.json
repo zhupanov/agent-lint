@@ -1,0 +1,24 @@
+{
+  "class": "broken",
+  "repository": "userconfig-broken",
+  "covers": ["userconfig", "plugin-mode", "normal", "json"],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": ["--format", "json", "--only", "U001,U002,U004,U005,U006,U007,U008", "."]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "U002", "name": "userconfig-desc-missing", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U004", "name": "userconfig-sensitive-type", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U005", "name": "userconfig-title-missing", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U006", "name": "userconfig-type-missing", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U006", "name": "userconfig-type-missing", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U007", "name": "userconfig-key-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U007", "name": "userconfig-key-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U008", "name": "userconfig-option-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

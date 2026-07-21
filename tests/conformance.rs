@@ -27,6 +27,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "q006",
     "agent-stop",
     "desc-overlap",
+    "userconfig",
 ];
 
 const REQUIRED_SMOKE_COVERAGE: &[&str] = &[

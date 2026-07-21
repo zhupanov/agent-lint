@@ -1,0 +1,15 @@
+{
+  "class": "clean",
+  "repository": "userconfig-clean",
+  "covers": ["userconfig", "plugin-mode", "normal", "json"],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": ["--format", "json", "--only", "U001,U002,U004,U005,U006,U007,U008", "."]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

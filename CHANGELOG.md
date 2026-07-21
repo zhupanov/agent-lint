@@ -7,8 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added U008 (`userconfig-option-invalid`) for non-object `userConfig` option
+  entries, unknown option fields, invalid optional field shapes, and type
+  semantic combinations on top-level and channel surfaces
+
 ### Changed
 
+- **BREAKING**: Removed U003 (`userconfig-env-missing`). Existing
+  `agent-lint.toml` references and `--only` selections using `U003` /
+  `userconfig-env-missing` now fail as invalid rule identifiers; remove those
+  entries. Option use is no longer inferred from `scripts/**/*.sh` text.
+- **BREAKING**: U007 (`userconfig-key-invalid`) is now a default error and
+  accepts only `^[A-Za-z_][A-Za-z0-9_]*$` (hyphen and dot keys are rejected)
+- Broadened U001/U002/U004/U005/U006 to validate every
+  `channels[].userConfig` / `channels.<name>.userConfig` with the same schema
+  as top-level `userConfig`
+- U006 now accepts exactly `string`, `number`, `boolean`, `directory`, and
+  `file`
+- U002/U005 reject empty and Unicode-whitespace-only labels (stricter than the
+  upstream schema, documented in `docs/rules.md`)
+- User-config diagnostics carry JSON-pointer evidence and actionable
+  suggestions without exposing configured default values
 - **BREAKING**: Removed unsupported skill-name rules S012
   (`name-reserved-word`) and S013 (`name-has-xml`). Existing `agent-lint.toml`
   references and `--only` selections using either retired code or name now

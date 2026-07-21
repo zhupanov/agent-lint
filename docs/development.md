@@ -56,7 +56,7 @@ src/
     +-- hygiene.rs       # G001-G007: PWD hygiene, scripts, executability, TODO detection
     +-- docs.rs          # D001-D003: docs file references, CLAUDE.md size, TODO detection
     +-- email.rs         # E001: email format
-    +-- user_config.rs   # U001-U007: userConfig validation
+    +-- user_config.rs   # U001-U002, U004-U008: userConfig validation
     +-- mcp.rs           # P001, P009-P012, P017-P019, P022-P027: MCP configuration adapters
     +-- claude_config.rs # R001-R002, O001-O006, T001-T002: .claude/ rules, output styles, settings
     +-- codex_config.rs  # CX001-CX036: .codex/config.toml validation
