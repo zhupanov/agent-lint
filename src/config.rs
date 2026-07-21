@@ -219,7 +219,7 @@ pub struct PromptSourceBudget {
 }
 
 const fn default_desc_truncated_max_chars() -> usize {
-    250
+    1_536
 }
 
 fn default_instruction_files() -> Vec<String> {
@@ -1708,6 +1708,20 @@ suppress = ["S033"]
         .unwrap();
         let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
         assert!(error.contains("must be greater than zero"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn desc_truncated_default_and_zero_value_follow_the_listing_contract() {
+        assert_eq!(LintConfig::default().desc_truncated_max_chars, 1_536);
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\ndesc-truncated-max-chars = 0\n",
+        )
+        .unwrap();
+        let error = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
+        assert!(error.contains("desc-truncated-max-chars must be greater than zero"));
     }
 
     #[test]

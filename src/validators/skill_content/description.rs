@@ -108,14 +108,24 @@ pub(super) fn check_description_quality(
         );
     }
 
-    // S015: description truncated in listings (public and private skills)
-    let truncate_len = diag.config().desc_truncated_max_chars;
-    if char_count > truncate_len {
+    // S015: Claude Code lists the canonical description and when_to_use together.
+    let when_to_use = frontmatter::get_strict_string_field(&info.fm_lines, "when_to_use");
+    let listing_len = char_count
+        + when_to_use
+            .as_ref()
+            .map_or(0, |value| value.chars().count());
+    let listing_cap = diag.config().desc_truncated_max_chars;
+    if listing_len > listing_cap {
+        let field_summary = if when_to_use.is_some() {
+            format!("combined description and when_to_use total {listing_len} characters")
+        } else {
+            format!("description totals {listing_len} characters")
+        };
         diag.report(
             LintRule::DescTruncated,
             &format!(
-                "{}: description exceeds configured listing threshold of {} characters ({}) and will be truncated in skill listing",
-                info.path, truncate_len, char_count
+                "{}: {field_summary}, exceeding the configured listing cap of {listing_cap}; Claude Code truncates each skill-listing entry at skillListingMaxDescChars (default 1,536) — put the key use case first",
+                info.path,
             ),
         );
     }

@@ -750,31 +750,27 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_s015_desc_truncated_in_plugin_mode() {
+    fn test_s015_combined_listing_cap_and_message_variants() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all("skills/my-skill").unwrap();
-        let long_desc = format!("Use when you need {}", "x".repeat(240));
+        let desc = "x".repeat(900);
+        let when_to_use = "y".repeat(636);
         std::fs::write(
             "skills/my-skill/SKILL.md",
-            format!("---\nname: my-skill\ndescription: {long_desc}\n---\nBody content\n"),
+            format!("---\nname: my-skill\ndescription: {desc}\nwhen_to_use: {when_to_use}\n---\nBody content\n"),
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(diag.errors().iter().any(|e| e.contains("truncated")));
-    }
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::DescTruncated)
+        );
 
-    #[test]
-    #[serial_test::serial]
-    fn test_s015_desc_250_chars_ok() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        // "Use when the task needs " = 24 chars + 226 x's = exactly 250 chars
-        let desc = format!("Use when the task needs {}", "x".repeat(226));
         std::fs::write(
             "skills/my-skill/SKILL.md",
             format!("---\nname: my-skill\ndescription: {desc}\n---\nBody content\n"),
@@ -782,7 +778,92 @@ mod tests {
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(!diag.errors().iter().any(|e| e.contains("truncated")));
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::DescTruncated)
+        );
+
+        let over_cap_when_to_use = "y".repeat(637);
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: {desc}\nwhen_to_use: {over_cap_when_to_use}\n---\nBody content\n"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let message = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::DescTruncated)
+            .map(|diagnostic| diagnostic.message.as_str())
+            .expect("S015 fires above the combined listing cap");
+        assert!(message.contains("combined description and when_to_use total 1537 characters"));
+        assert!(message.contains("configured listing cap of 1536"));
+        assert!(message.contains("skillListingMaxDescChars"));
+
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!(
+                "---\nname: my-skill\ndescription: {}\n---\nBody content\n",
+                "z".repeat(1537)
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let message = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::DescTruncated)
+            .map(|diagnostic| diagnostic.message.as_str())
+            .expect("S015 fires for an over-cap description");
+        assert!(message.contains("description totals 1537 characters"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s015_counts_block_when_to_use_and_honors_configured_cap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let desc = "x".repeat(900);
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: {desc}\nwhen_to_use: |\n  {}\n---\nBody content\n", "y".repeat(800)),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::DescTruncated)
+        );
+
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!(
+                "---\nname: my-skill\ndescription: {}\n---\nBody content\n",
+                "z".repeat(201)
+            ),
+        )
+        .unwrap();
+        let config = crate::config::LintConfig {
+            desc_truncated_max_chars: 200,
+            ..Default::default()
+        };
+        let mut diag = DiagnosticCollector::with_config(config);
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let message = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::DescTruncated)
+            .map(|diagnostic| diagnostic.message.as_str())
+            .expect("configured S015 cap fires at 201 characters");
+        assert!(message.contains("configured listing cap of 200"));
     }
 
     // ── S016: desc-uses-person ───────────────────────────────────────
@@ -2021,11 +2102,12 @@ suppress = ["S033"]
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all(".claude/skills/my-skill").unwrap();
-        // This description uses "you" (would trigger S016 in plugin mode) and is >250 chars
-        let long_desc = format!("Use when you need to {}", "x".repeat(250));
+        // These fields exceed S015 together; S016 still stays plugin-only.
+        let long_desc = format!("Use when you need to {}", "x".repeat(875));
+        let when_to_use = "y".repeat(700);
         std::fs::write(
             ".claude/skills/my-skill/SKILL.md",
-            format!("---\nname: my-skill\ndescription: {long_desc}\n---\nBody content\n"),
+            format!("---\nname: my-skill\ndescription: {long_desc}\nwhen_to_use: {when_to_use}\n---\nBody content\n"),
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -2037,7 +2119,11 @@ suppress = ["S033"]
                 .iter()
                 .any(|e| e.contains("first/second person"))
         );
-        assert!(diag.errors().iter().any(|e| e.contains("truncated")));
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::DescTruncated)
+        );
     }
 
     // ── Integration: mode dispatch ───────────────────────────────────

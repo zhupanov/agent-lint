@@ -170,7 +170,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S014 | `desc-too-long` | Skill description exceeds 1024 characters | Always | error |
-| S015 | `desc-truncated` | Skill description exceeds the configurable listing threshold (250 by default) | Always | warn |
+| S015 | `desc-truncated` | Combined canonical `description` and `when_to_use` exceed the configurable per-entry listing cap (1536 by default); Claude Code can also truncate below this cap when its separate global listing budget overflows, which S015 does not model | Always | warn |
 | S016 | `desc-uses-person` | Skill description uses first/second person | Plugin | error |
 | S017 | `desc-no-trigger` | Skill description lacks trigger context (e.g., "Use when...") | Plugin | error |
 | S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Always | error |
@@ -179,6 +179,10 @@ H008--H024 codes with a `… frontmatter` path label.
 | S074 | `skill-desc-overlap` | Two skill routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
 Description-content rules (S014--S018, S034, S050, and S054) use the canonical parsed YAML string scalar. Invalid or non-mapping YAML frontmatter and missing, empty, or non-string descriptions are skipped by these rules; X001 and the required-frontmatter rules retain ownership of those conditions.
+
+With a spec-valid description of 1,024 characters or fewer and no
+`when_to_use`, S015 cannot fire at its default cap: S014 owns the description
+spec limit as an error, while S015 owns the larger listing cap as a warning.
 
 ### Body Content (S019--S022, S037--S038, S041, S046--S047, S051--S053, S055--S057)
 
