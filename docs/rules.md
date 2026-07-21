@@ -319,11 +319,15 @@ H008--H024 codes with a `… frontmatter` path label.
 
 ## Prompt Content Rules (Q)
 
-These shared, source-aware checks run on `CLAUDE.md`, skill bodies, agent
-bodies, every included `AGENTS.md`, and active Cursor rule bodies
-(`.cursor/rules/**/*.{md,mdc}` and `.cursorrules`) in both Basic and Plugin
-modes. They skip frontmatter where the surface defines it, fenced and inline
-code, and identifiable quoted examples. Q004 applies only when both root
+These shared, source-aware checks run on root and nested `CLAUDE.md`, Claude
+and shared-agent skill bodies (`.claude/skills`, `skills`, and
+`.agents/skills`), Claude, Cursor, and plugin agent bodies, every included
+`AGENTS.md`, `AGENTS.override.md`, and active Cursor rule and skill bodies
+(`.cursor/rules/**/*.{md,mdc}`, `.cursorrules`, and
+`.cursor/skills/*/SKILL.md`) in both Basic and Plugin modes. They skip
+frontmatter where the surface defines it, fenced and inline code, and
+identifiable quoted examples. A missing or malformed frontmatter block does
+not exempt the remaining live prose. Q004 applies only when both root
 `CLAUDE.md` and `README.md` exist.
 
 | Code | Name | Description | Mode | Default |

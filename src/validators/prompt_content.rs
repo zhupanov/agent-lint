@@ -8,6 +8,7 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
+use crate::traversal;
 use crate::validators::common::{NEVER_INVENT_PROHIBITION, has_bound_or_fallback, sentence_ranges};
 use regex::Regex;
 use std::collections::HashSet;
@@ -298,8 +299,8 @@ fn validate_body(path: &str, body: &str, diag: &mut DiagnosticCollector) {
     PromptContentPass::default().validate(&document, diag);
 }
 
-/// Run the shared body checks for the root `CLAUDE.md`, then compare its prose
-/// with `README.md` when both files exist.
+/// Run the shared body checks for every included `CLAUDE.md`. Only the root
+/// file participates in the root-README overlap check.
 #[cfg(test)]
 pub(crate) fn validate_claude_md(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let mut prompt_pass = PromptContentPass::default();
@@ -311,28 +312,36 @@ pub(crate) fn validate_claude_md_with_prompt_pass(
     exclude: &ExcludeSet,
     prompt_pass: &mut PromptContentPass,
 ) {
-    const CLAUDE_MD: &str = "CLAUDE.md";
-    if exclude.is_excluded(CLAUDE_MD) || !Path::new(CLAUDE_MD).is_file() {
-        return;
-    }
-
-    let Ok(claude) = fs::read_to_string(CLAUDE_MD) else {
-        return;
-    };
-    let markdown = MarkdownDocument::parse_body(&claude);
-    let document = LiveInstructionDocument::new(
-        Path::new(CLAUDE_MD),
-        InstructionSurfaceKind::ClaudeProject,
-        &markdown,
-    );
-    diag.with_subject_path(CLAUDE_MD, |diag| {
-        prompt_pass.validate(&document, diag);
-
-        let Ok(readme) = fs::read_to_string("README.md") else {
-            return;
+    for entry in traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude)).entries {
+        if entry
+            .path
+            .file_name()
+            .is_none_or(|name| name != "CLAUDE.md")
+        {
+            continue;
+        }
+        let path = entry.display;
+        let Ok(claude) = fs::read_to_string(&entry.path) else {
+            continue;
         };
-        check_readme_overlap(&claude, &readme, diag);
-    });
+        let markdown = MarkdownDocument::parse_body(&claude);
+        let document = LiveInstructionDocument::new(
+            Path::new(&path),
+            InstructionSurfaceKind::ClaudeProject,
+            &markdown,
+        );
+        diag.with_subject_path(&path, |diag| {
+            prompt_pass.validate(&document, diag);
+
+            if path != "CLAUDE.md" {
+                return;
+            }
+            let Ok(readme) = fs::read_to_string("README.md") else {
+                return;
+            };
+            check_readme_overlap(&claude, &readme, diag);
+        });
+    }
 }
 
 fn check_generic_filler(
@@ -1902,6 +1911,7 @@ mod tests {
             ValidationTargets {
                 cursor: false,
                 codex: false,
+                claude_md: false,
                 agents_md: false,
                 agent_skills: false,
             },
@@ -2116,6 +2126,7 @@ mod tests {
                 ValidationTargets {
                     cursor: true,
                     codex: false,
+                    claude_md: false,
                     agents_md: true,
                     agent_skills: false,
                 },
@@ -2587,6 +2598,7 @@ mod tests {
             ValidationTargets {
                 cursor: true,
                 codex: false,
+                claude_md: false,
                 agents_md: true,
                 agent_skills: false,
             },

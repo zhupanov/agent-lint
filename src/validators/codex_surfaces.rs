@@ -3,6 +3,8 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
+use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::common::is_valid_http_url;
@@ -15,15 +17,41 @@ const MAX_DEFAULT_PROMPT_COUNT: usize = 3;
 const MAX_DEFAULT_PROMPT_LEN: usize = 128;
 const CODEX_SKILL_UNSUPPORTED_FIELDS: &[&str] = &["context", "agent", "hooks"];
 
+#[cfg(test)]
 pub fn validate(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_override_tracking(diag, exclude);
+    let mut prompt_pass = super::prompt_content::PromptContentPass::default();
+    validate_with_prompt_pass(diag, exclude, &mut prompt_pass);
+}
+
+pub(crate) fn validate_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
+    validate_override_tracking(diag, exclude, prompt_pass);
     validate_plugin_manifests(diag, exclude);
     validate_codex_skill_frontmatter(diag, exclude);
 }
 
-fn validate_override_tracking(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn validate_override_tracking(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let path = "AGENTS.override.md";
-    if exclude.is_excluded(path) || !Path::new(path).is_file() || !is_git_tracked(path) {
+    if exclude.is_excluded(path) || !Path::new(path).is_file() {
+        return;
+    }
+    if let Ok(content) = std::fs::read_to_string(path) {
+        let markdown = MarkdownDocument::parse_body(content);
+        let document = LiveInstructionDocument::new(
+            Path::new(path),
+            InstructionSurfaceKind::CodexAgentsOverride,
+            &markdown,
+        );
+        prompt_pass.validate(&document, diag);
+    }
+    if !is_git_tracked(path) {
         return;
     }
     diag.report_at(LintRule::CodexAgentsOverrideTracked, path, "AGENTS.override.md is tracked by Git; add it to .gitignore because it holds user-specific overrides");

@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
+use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
@@ -131,17 +132,29 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
 
 /// V6: Validate SKILL.md frontmatter for public skills (skills/*/SKILL.md).
 pub fn validate_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_skill_frontmatter_in_dir("skills", true, false, diag, exclude);
+    validate_skill_frontmatter_in_dir("skills", true, false, diag, exclude, None);
 }
 
 /// V6-adapted: Validate SKILL.md frontmatter for private skills (.claude/skills/*/SKILL.md).
 pub fn validate_private_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_skill_frontmatter_in_dir(".claude/skills", true, false, diag, exclude);
+    validate_skill_frontmatter_in_dir(".claude/skills", true, false, diag, exclude, None);
 }
 
-/// Validate frontmatter for cross-client skills in `.agents/skills/`.
-pub fn validate_agent_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_skill_frontmatter_in_dir(".agents/skills", true, true, diag, exclude);
+/// Validate frontmatter and prompt content for cross-client skills in
+/// `.agents/skills/`.
+pub(crate) fn validate_agent_skill_frontmatter_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
+    validate_skill_frontmatter_in_dir(
+        ".agents/skills",
+        true,
+        true,
+        diag,
+        exclude,
+        Some(prompt_pass),
+    );
 }
 
 fn validate_skill_frontmatter_in_dir(
@@ -150,6 +163,7 @@ fn validate_skill_frontmatter_in_dir(
     platform_neutral: bool,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
+    mut prompt_pass: Option<&mut super::prompt_content::PromptContentPass>,
 ) {
     let dir = Path::new(base_dir);
     if !dir.is_dir() {
@@ -162,7 +176,10 @@ fn validate_skill_frontmatter_in_dir(
             Some(n) => n.to_string(),
             None => continue,
         };
-        if dir_name == "shared" {
+        // `skills/shared` is plugin documentation rather than a runnable
+        // skill. `.agents/skills/shared`, however, is a valid shared-agent
+        // skill and must remain eligible for prompt analysis.
+        if dir_name == "shared" && !platform_neutral {
             continue;
         }
 
@@ -180,6 +197,14 @@ fn validate_skill_frontmatter_in_dir(
             Err(_) => continue,
         };
         let document = MarkdownDocument::parse(content);
+        if let Some(prompt_pass) = prompt_pass.as_deref_mut() {
+            let prompt_document = LiveInstructionDocument::new(
+                Path::new(&skill_path),
+                InstructionSurfaceKind::Skill,
+                &document,
+            );
+            prompt_pass.validate(&prompt_document, diag);
+        }
 
         let fm_lines = match document.frontmatter() {
             Some(lines) => lines,

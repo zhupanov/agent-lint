@@ -99,9 +99,9 @@ pub(crate) fn validate_with_prompt_pass(
     validate_legacy_rules(diag, exclude, prompt_pass);
     validate_project_rules(diag, exclude, prompt_pass);
     validate_hooks(diag, exclude);
-    validate_agents(diag, exclude);
+    validate_agents(diag, exclude, prompt_pass);
     validate_environment(diag, exclude);
-    validate_skills(diag, exclude);
+    validate_skills(diag, exclude, prompt_pass);
 }
 
 fn report(diag: &mut DiagnosticCollector, rule: LintRule, path: &str, message: &str) {
@@ -183,6 +183,15 @@ fn validate_rule_file(
     content: &str,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
+    let markdown = MarkdownDocument::parse(content);
+    let document = LiveInstructionDocument::new(
+        Path::new(path),
+        InstructionSurfaceKind::CursorRule,
+        &markdown,
+    );
+    // Cursor still loads a rule body when its frontmatter is absent or
+    // malformed, so structural failures must not exempt that live prose.
+    prompt_pass.validate(&document, diag);
     if content.trim().is_empty() {
         report(
             diag,
@@ -309,13 +318,6 @@ fn validate_rule_file(
             "agent-requested rule needs a non-empty 'description'",
         );
     }
-    let markdown = MarkdownDocument::parse(content);
-    let document = LiveInstructionDocument::new(
-        Path::new(path),
-        InstructionSurfaceKind::CursorRule,
-        &markdown,
-    );
-    prompt_pass.validate(&document, diag);
 }
 
 fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -462,7 +464,11 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     }
 }
 
-fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn validate_agents(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let root = Path::new(".cursor/agents");
     if !root.is_dir() {
         return;
@@ -473,12 +479,21 @@ fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         }
         let path = entry.display;
         if let Ok(content) = fs::read_to_string(&entry.path) {
-            validate_agent_file(diag, &path, &content);
+            validate_agent_file(diag, &path, &content, prompt_pass);
         }
     }
 }
 
-fn validate_agent_file(diag: &mut DiagnosticCollector, path: &str, content: &str) {
+fn validate_agent_file(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
+    let markdown = MarkdownDocument::parse(content);
+    let document =
+        LiveInstructionDocument::new(Path::new(path), InstructionSurfaceKind::Agent, &markdown);
+    prompt_pass.validate(&document, diag);
     let Some(lines) = frontmatter::extract_frontmatter(content) else {
         report(
             diag,
@@ -605,7 +620,11 @@ fn cursor_environment_property_path(error: &jsonschema::ValidationError<'_>) -> 
     }
 }
 
-fn validate_skills(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+fn validate_skills(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let root = Path::new(".cursor/skills");
     if !root.is_dir() {
         return;
@@ -622,6 +641,13 @@ fn validate_skills(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
+        let markdown = MarkdownDocument::parse(&content);
+        let document = LiveInstructionDocument::new(
+            Path::new(&display_path),
+            InstructionSurfaceKind::CursorSkill,
+            &markdown,
+        );
+        prompt_pass.validate(&document, diag);
         let Some(lines) = frontmatter::extract_frontmatter(&content) else {
             continue;
         };
