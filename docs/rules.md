@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 287 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 288 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -308,6 +308,7 @@ code, and identifiable quoted examples. Q004 applies only when both root
 | Q002 | `prompt-negative-only` | Operative style/behavior negative without `instead`/`rather`/`prefer` within three prose lines; precise safety and integrity prohibitions are exempt | Always | error |
 | Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | error |
 | Q004 | `claude-readme-duplicate` | More than 40% of normalized `CLAUDE.md` prose lines also occur in `README.md` (at least three shared lines) | Always | error |
+| Q005 | `prompt-unbounded-retry` | Operative unbounded retry or continuation instruction without an applicable bound or concrete failure outcome | Always | error |
 
 Q001 recognizes: `be helpful`, `be accurate`, `be concise`, `follow
 instructions`, `do your best`, `be professional`, `use best judgment`, and
@@ -319,6 +320,15 @@ prohibitions against secret/private-data disclosure, authorization bypass,
 destructive or irreversible actions, fabricated evidence, and explicit legal
 or security policy violations. Safety-adjacent words elsewhere in a sentence
 do not exempt an unrelated style negative.
+
+Q005 recognizes narrow, operative forms such as `continue indefinitely`, `loop
+forever`, `retry as many times as needed`, `keep trying until it succeeds`,
+`retry until success`, and `do not stop until it succeeds`. It ignores examples,
+quotations, code, frontmatter, explicit prohibitions of unbounded retry, finite
+non-retry workflows, and instructions with an applicable attempt, tool-call,
+step, timeout, token/cost budget, deadline, concrete failure outcome, or a
+validated agent `maxTurns` bound. Its diagnostic reports bounded matched
+evidence and asks for a bound or failure outcome; it has no autofix.
 
 ## Claude Configuration Rules (R/O/T)
 
@@ -558,7 +568,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 287):**
+**Auto-fixable rules (12 of 288):**
 
 | Rule | Code | Fix |
 |------|------|-----|

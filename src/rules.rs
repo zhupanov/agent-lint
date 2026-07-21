@@ -490,6 +490,9 @@ pub enum LintRule {
     /// Q004: CLAUDE.md substantially duplicates README.md
     #[strum(props(code = "Q004", name = "claude-readme-duplicate"))]
     ClaudeReadmeDuplicate,
+    /// Q005: operative retry or continuation instruction has no bound or fallback
+    #[strum(props(code = "Q005", name = "prompt-unbounded-retry"))]
+    PromptUnboundedRetry,
 
     // ── Claude configuration (R/O/T) ─────────────────────────────
     /// R001: .claude/rules frontmatter paths contains an invalid glob
@@ -1206,7 +1209,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            287,
+            288,
             "every enum variant must be registered"
         );
     }
@@ -1368,6 +1371,7 @@ mod tests {
             LintRule::PromptNegativeOnly,
             LintRule::PromptWeakCritical,
             LintRule::ClaudeReadmeDuplicate,
+            LintRule::PromptUnboundedRetry,
             LintRule::CursorPromptHookModelInvalid,
             LintRule::SkillRefNested,
         ] {
@@ -1425,8 +1429,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            172,
-            "Expected 172 default-error rules, got {}",
+            173,
+            "Expected 173 default-error rules, got {}",
             errors.len()
         );
     }

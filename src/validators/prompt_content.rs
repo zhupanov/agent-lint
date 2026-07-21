@@ -4,7 +4,7 @@
 //! examples of wording that should not be treated as live instructions.
 
 use crate::config::ExcludeSet;
-use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
@@ -31,6 +31,63 @@ const POSITIVE_ALTERNATIVES: &[&str] = &["instead", "rather", "prefer"];
 const NEGATIVE_WINDOW: usize = 3;
 const README_OVERLAP_THRESHOLD: f64 = 0.4;
 const MIN_SHARED_README_LINES: usize = 3;
+
+/// Explicit unbounded-retry forms accepted by Q005. Keep these narrow: a
+/// generic `until` expression also describes many finite, non-retry workflows.
+const UNBOUNDED_RETRY_PATTERNS: &[&str] = &[
+    r"\bcontinue\s+indefinitely\b",
+    r"\bloop\s+forever\b",
+    r"\bretry\s+as\s+many\s+times\s+as\s+(?:needed|necessary)\b",
+    r"\bkeep\s+trying\s+until\s+(?:it\s+)?succeeds\b",
+    r"\bretry\s+until\s+(?:success|it\s+succeeds)\b",
+    r"\bdo\s+not\s+stop\s+until\s+(?:it\s+)?(?:(?:the\s+)?(?:task|operation|command|tool\s+call|test\s+suite)\s+)?(?:succeeds|passes|works|is\s+(?:complete|completed|resolved))\b",
+];
+
+static UNBOUNDED_RETRY_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    UNBOUNDED_RETRY_PATTERNS
+        .iter()
+        .map(|pattern| Regex::new(pattern).expect("Q005 retry pattern is valid"))
+        .collect()
+});
+
+static APPLICABLE_RETRY_BOUNDS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    [
+        r"\b(?:at\s+most|no\s+more\s+than|up\s+to|within|after|for|(?:a\s+)?maximum\s+of)\s+\d+\s+(?:attempts?|retries|tries|tool[ -]?calls?|steps?)\b",
+        r"\b\d+\s+(?:attempts?|retries|tries|tool[ -]?calls?|steps?)\s+(?:maximum|max)\b",
+        r"\b(?:timeout|time(?:\s|-)?limit)\s*(?:of|:|is)?\s*\d+\s*(?:milliseconds?|seconds?|minutes?|hours?|ms|secs?|mins?|hrs?)\b",
+        r"\bwithin\s+\d+\s*(?:milliseconds?|seconds?|minutes?|hours?|ms|secs?|mins?|hrs?)\b",
+        r"\b(?:token|cost)\s+budget\s*(?:of|:|is)?\s*(?:\$?\d[\d,.]*|\d+[kKmM]?)\b",
+        r"\b(?:at\s+most|no\s+more\s+than|up\s+to)\s+(?:\$?\d[\d,.]*|\d+[kKmM]?)\s+(?:tokens?|dollars?|usd)\b",
+        r"\b(?:deadline\s*(?:of|:|is)?|by)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}\s*(?:am|pm)?|end\s+of\s+(?:day|week)|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b",
+        r"\b(?:if|when)\s+(?:it|the\s+(?:retry|operation|task|command|tool\s+call))\s+fails?\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b",
+        r"\b(?:on|upon)\s+failure\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b",
+        r"\botherwise\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b",
+    ]
+    .into_iter()
+    .map(|pattern| Regex::new(pattern).expect("Q005 bound pattern is valid"))
+    .collect()
+});
+
+static OPERATIVE_RETRY_SETUP_CLAUSE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:when|if|after|before)\b[^,]*,\s*(?:continue|loop|retry|keep trying|do not stop)\b",
+    )
+    .expect("Q005 setup-clause pattern is valid")
+});
+
+static OPERATIVE_RETRY_SUBJECT_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:you|agents?|assistant|model)\s+(?:must|should|shall|will)\s+(?:continue|loop|retry|keep trying|not stop)\b",
+    )
+    .expect("Q005 subject directive pattern is valid")
+});
+
+static UNBOUNDED_RETRY_PROHIBITION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:do\s+not|don't|never|avoid)\s+(?:keep\s+trying|retrying|retry|continuing|looping)\b",
+    )
+    .expect("Q005 prohibition pattern is valid")
+});
 
 static PRECISE_SAFETY_PROHIBITIONS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     [
@@ -74,7 +131,7 @@ impl PromptContentPass {
             return;
         }
 
-        // Every current Q001-Q003 rule applies to every live-instruction kind.
+        // Every current Q001-Q005 rule applies to every live-instruction kind.
         // Keeping the typed context here makes later applicability decisions
         // explicit instead of requiring path-string inference.
         let _surface_kind = document.surface_kind();
@@ -82,8 +139,137 @@ impl PromptContentPass {
             check_generic_filler(&path, document, diag);
             check_negative_only(&path, document, diag);
             check_weak_critical_language(&path, document, diag);
+            check_unbounded_retry(&path, document, diag);
         });
     }
+}
+
+fn check_unbounded_retry(
+    path: &str,
+    document: &LiveInstructionDocument<'_>,
+    diag: &mut DiagnosticCollector,
+) {
+    if document.has_outer_execution_bound() {
+        return;
+    }
+
+    let example_scopes = example_scopes(document);
+    for scope in retry_instruction_scopes(document, &example_scopes) {
+        let normalized_scope = scope
+            .iter()
+            .map(|line| line.text.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if APPLICABLE_RETRY_BOUNDS
+            .iter()
+            .any(|pattern| pattern.is_match(&normalized_scope))
+        {
+            continue;
+        }
+
+        for line in scope {
+            let mut sentence_offset = 0;
+            for sentence in line.text.split_inclusive(['.', '!', '?', ';']) {
+                let normalized_sentence = sentence.to_ascii_lowercase();
+                if !is_operative_retry_instruction(&normalized_sentence)
+                    || explicitly_prohibits_unbounded_retry(&normalized_sentence)
+                {
+                    sentence_offset += sentence.chars().count();
+                    continue;
+                }
+                let Some(matched) = UNBOUNDED_RETRY_REGEXES
+                    .iter()
+                    .find_map(|pattern| pattern.find(&normalized_sentence))
+                else {
+                    sentence_offset += sentence.chars().count();
+                    continue;
+                };
+
+                let start_column =
+                    sentence_offset + normalized_sentence[..matched.start()].chars().count() + 1;
+                let end_column =
+                    sentence_offset + normalized_sentence[..matched.end()].chars().count() + 1;
+                let evidence = sentence.trim();
+                diag.report_with(
+                    LintRule::PromptUnboundedRetry,
+                    &format!(
+                        "{path}: unbounded retry or continuation instruction; add an explicit bound or concrete failure outcome"
+                    ),
+                    DiagnosticMetadata::default()
+                        .with_location(SourceSpan::range(
+                            line.line,
+                            start_column,
+                            line.line,
+                            end_column,
+                        ))
+                        .with_evidence(evidence)
+                        .with_suggestion(
+                            "Add an explicit attempt, step, tool-call, timeout, token/cost budget, deadline, or concrete failure outcome.",
+                        ),
+                );
+                return;
+            }
+        }
+    }
+}
+
+fn retry_instruction_scopes<'a>(
+    document: &'a LiveInstructionDocument<'_>,
+    example_scopes: &[bool],
+) -> Vec<Vec<&'a crate::markdown::MarkdownProseLine>> {
+    let heading_lines: HashSet<_> = document
+        .headings()
+        .iter()
+        .map(|heading| heading.line)
+        .collect();
+    let mut scopes = Vec::new();
+    let mut scope = Vec::new();
+    let mut previous_line = None;
+
+    for (line, is_example) in document.prose_lines().iter().zip(example_scopes) {
+        let starts_list_item = line.text.trim_start().starts_with(['-', '*', '+']);
+        let boundary = line.text.trim().is_empty()
+            || *is_example
+            || heading_lines.contains(&line.line)
+            || previous_line.is_some_and(|previous| line.line > previous + 1)
+            || (starts_list_item && !scope.is_empty());
+        if boundary && !scope.is_empty() {
+            scopes.push(std::mem::take(&mut scope));
+        }
+        if !line.text.trim().is_empty() && !*is_example && !heading_lines.contains(&line.line) {
+            scope.push(line);
+        }
+        previous_line = Some(line.line);
+    }
+    if !scope.is_empty() {
+        scopes.push(scope);
+    }
+    scopes
+}
+
+fn is_operative_retry_instruction(sentence: &str) -> bool {
+    let sentence = sentence.trim().trim_start_matches(|character: char| {
+        character.is_whitespace()
+            || matches!(character, '#' | '-' | '*' | '+' | '(' | ')' | '[' | ']')
+            || character.is_ascii_digit()
+            || character == '.'
+    });
+    let directive = [
+        "continue",
+        "loop",
+        "retry",
+        "keep trying",
+        "do not stop",
+        "please continue",
+        "please retry",
+    ];
+    directive.iter().any(|prefix| sentence.starts_with(prefix))
+        || OPERATIVE_RETRY_SETUP_CLAUSE.is_match(sentence)
+        || OPERATIVE_RETRY_SUBJECT_DIRECTIVE.is_match(sentence)
+}
+
+fn explicitly_prohibits_unbounded_retry(sentence: &str) -> bool {
+    UNBOUNDED_RETRY_PROHIBITION.is_match(sentence.trim())
 }
 
 #[cfg(test)]
@@ -461,6 +647,32 @@ mod tests {
             .collect()
     }
 
+    fn q005_diagnostics(body: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        diagnostics_for(body)
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptUnboundedRetry)
+            .cloned()
+            .collect()
+    }
+
+    fn q005_diagnostics_with_frontmatter(content: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        let markdown = MarkdownDocument::parse(content);
+        let document = LiveInstructionDocument::new(
+            Path::new(".cursor/rules/example.mdc"),
+            InstructionSurfaceKind::CursorRule,
+            &markdown,
+        );
+        let mut diagnostics = DiagnosticCollector::new_all_enabled();
+        PromptContentPass::default().validate(&document, &mut diagnostics);
+        diagnostics
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptUnboundedRetry)
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn generic_filler_is_case_insensitive_and_fence_aware() {
         let diag = diagnostics_for("Be helpful when responding.\n```text\nNever do this\n```");
@@ -492,6 +704,164 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn unbounded_retry_patterns_are_operative_and_report_structured_evidence() {
+        for instruction in [
+            "Continue indefinitely.",
+            "Loop forever.",
+            "Retry as many times as needed.",
+            "Keep trying until it succeeds.",
+            "Retry until success.",
+            "Retry until it succeeds.",
+            "Do not stop until it is resolved.",
+            "Do not stop until the test suite passes.",
+            "When a tool fails, retry until success.",
+            "Agents must retry until success.",
+        ] {
+            let diagnostics = q005_diagnostics(instruction);
+            assert_eq!(diagnostics.len(), 1, "{instruction}");
+            let diagnostic = &diagnostics[0];
+            assert_eq!(
+                diagnostic.subject_path.as_deref(),
+                Some(Path::new("skills/example/SKILL.md"))
+            );
+            assert_eq!(diagnostic.location.unwrap().start().line_number(), 1);
+            assert!(diagnostic.location.unwrap().end().is_some());
+            assert_eq!(diagnostic.evidence.as_deref(), Some(instruction));
+            assert!(
+                diagnostic
+                    .suggestion
+                    .as_deref()
+                    .is_some_and(|suggestion| suggestion.contains("failure outcome"))
+            );
+        }
+
+        let after_another_sentence =
+            q005_diagnostics("First verify the input. Retry until success.");
+        assert_eq!(
+            after_another_sentence[0]
+                .location
+                .unwrap()
+                .start()
+                .column_number(),
+            Some(25)
+        );
+    }
+
+    #[test]
+    fn unbounded_retry_respects_only_applicable_bounds_and_exemptions() {
+        for exempt in [
+            "Retry until success, but stop after 3 attempts.",
+            "Retry until success. On failure, escalate.",
+            "Retry until success within 10 minutes.",
+            "Retry until success with a token budget of 5000.",
+            "Retry until success by Friday.",
+            "Retry until success. On failure, fall back to the previous result.",
+            "Do not keep trying until success.",
+            "Continue the onboarding workflow until the release date.",
+            "The legacy instruction was to retry until success.",
+            "# Examples\nRetry until success.",
+            "> Retry until success.",
+            "```text\nRetry until success.\n```",
+        ] {
+            assert!(q005_diagnostics(exempt).is_empty(), "{exempt}");
+        }
+        assert!(
+            q005_diagnostics_with_frontmatter(
+                "---\ndescription: Retry until success.\n---\nState the result.\n"
+            )
+            .is_empty()
+        );
+
+        assert_eq!(
+            q005_diagnostics("Retry until success. Keep output under the limit.").len(),
+            1
+        );
+        assert_eq!(
+            q005_diagnostics("Retry until success.\n- Use a limit in the report.").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn validated_agent_max_turns_is_an_outer_q005_bound() {
+        let markdown = MarkdownDocument::parse(
+            "---\nname: example\ndescription: Reviews changes with concrete test evidence\nmaxTurns: 3\n---\nRetry until success.\n",
+        );
+        let document = LiveInstructionDocument::new(
+            Path::new("agents/example.md"),
+            InstructionSurfaceKind::Agent,
+            &markdown,
+        )
+        .with_outer_max_turns(std::num::NonZeroU64::new(3));
+        let mut diagnostics = DiagnosticCollector::new_all_enabled();
+        PromptContentPass::default().validate(&document, &mut diagnostics);
+        assert!(
+            diagnostics
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.rule != LintRule::PromptUnboundedRetry)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agent_validator_only_uses_valid_max_turns_as_a_q005_bound() {
+        let temporary = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(temporary.path()).unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            ".claude/agents/bounded.md",
+            "---\nname: bounded\ndescription: Reviews changes with concrete test evidence\nmaxTurns: 3\n---\nRetry until success.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/unbounded.md",
+            "---\nname: unbounded\ndescription: Reviews changes with concrete test evidence\nmaxTurns: zero\n---\nRetry until success.\n",
+        )
+        .unwrap();
+
+        let mut diagnostics = DiagnosticCollector::new_all_enabled();
+        super::super::run_all_with_targets(
+            &context(temporary.path(), LintMode::Basic),
+            &mut diagnostics,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: false,
+                codex: false,
+                agents_md: false,
+                agent_skills: false,
+            },
+        );
+        let q005_paths: Vec<_> = diagnostics
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::PromptUnboundedRetry)
+            .map(|diagnostic| diagnostic.subject_path.as_deref().unwrap().to_path_buf())
+            .collect();
+        assert_eq!(q005_paths, vec![Path::new(".claude/agents/unbounded.md")]);
+    }
+
+    #[test]
+    fn q005_is_an_error_in_normal_pedantic_and_all_modes() {
+        for mode in [
+            crate::config::CliMode::Normal,
+            crate::config::CliMode::Pedantic,
+            crate::config::CliMode::All,
+        ] {
+            let mut config = LintConfig::default();
+            config.apply_cli_mode(mode);
+            let mut diagnostics = DiagnosticCollector::with_config(config);
+            validate_body(
+                "skills/example/SKILL.md",
+                "Retry until success.",
+                &mut diagnostics,
+            );
+            assert_eq!(diagnostics.error_count(), 1, "{mode:?}");
+        }
     }
 
     #[test]
@@ -794,12 +1164,12 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all("nested").unwrap();
         std::fs::create_dir_all("excluded").unwrap();
-        std::fs::write("AGENTS.md", "Never apologize.\n").unwrap();
-        std::fs::write("nested/AGENTS.md", "Never apologize.\n").unwrap();
-        std::fs::write("excluded/AGENTS.md", "Never apologize.\n").unwrap();
+        std::fs::write("AGENTS.md", "Retry until success.\n").unwrap();
+        std::fs::write("nested/AGENTS.md", "Retry until success.\n").unwrap();
+        std::fs::write("excluded/AGENTS.md", "Retry until success.\n").unwrap();
         std::fs::write(
             "agent-lint.toml",
-            "[[lint.overrides]]\nfiles = [\"nested/AGENTS.md\"]\nsuppress = [\"Q002\"]\nreason = \"legacy nested instructions\"\n",
+            "[[lint.overrides]]\nfiles = [\"nested/AGENTS.md\"]\nsuppress = [\"Q005\"]\nreason = \"legacy nested instructions\"\n",
         )
         .unwrap();
         let config = LintConfig::load(tmp.path()).unwrap();
@@ -816,14 +1186,14 @@ mod tests {
             },
         );
 
-        let q002: Vec<_> = diag
+        let q005: Vec<_> = diag
             .diagnostics()
             .iter()
-            .filter(|item| item.rule == LintRule::PromptNegativeOnly)
+            .filter(|item| item.rule == LintRule::PromptUnboundedRetry)
             .collect();
-        assert_eq!(q002.len(), 1);
+        assert_eq!(q005.len(), 1);
         assert_eq!(
-            q002[0].subject_path.as_deref(),
+            q005[0].subject_path.as_deref(),
             Some(Path::new("AGENTS.md"))
         );
     }
