@@ -397,6 +397,7 @@ const KNOWN_AGENT_FIELDS: &[&str] = &[
     "permissionMode",
     "maxTurns",
     "isolation",
+    "color",
     "background",
     "skills",
     "memory",
@@ -516,6 +517,8 @@ fn dedupe_in_declaration_order(items: Vec<String>) -> Vec<String> {
 fn yaml_type(value: &crate::yaml::Value) -> &'static str {
     if value.is_null() {
         "null"
+    } else if value.as_str().is_some() {
+        "string"
     } else if value.as_bool().is_some() {
         "boolean"
     } else if value.as_i64().is_some() || value.as_u64().is_some() || value.as_f64().is_some() {
@@ -791,11 +794,16 @@ fn check_agent_field_values(
         }
     }
 
-    // A024: isolation must be worktree (CC-AG-015).
+    // A024: isolation must be worktree or remote (CC-AG-015).
     if let Some(value) = frontmatter.value("isolation") {
         if let Some(isolation) = value.as_str() {
-            if isolation != "worktree" {
-                diag.report(LintRule::AgentIsolationInvalid, &format!("{agent_path}: isolation '{isolation}' is not 'worktree' (the only supported value)"));
+            if !["worktree", "remote"].contains(&isolation) {
+                diag.report(
+                    LintRule::AgentIsolationInvalid,
+                    &format!(
+                        "{agent_path}: isolation '{isolation}' is not one of [worktree, remote]"
+                    ),
+                );
             }
         } else {
             diag.report(
@@ -811,11 +819,17 @@ fn check_agent_field_values(
     // A025: background must be a boolean (CC-AG-016).
     if let Some(value) = frontmatter.value("background") {
         if value.as_bool().is_none() {
+            let actual_type = yaml_type(value);
+            let detail = if actual_type == "string" {
+                "string; use unquoted true or false — YAML 1.2 does not read yes/no as booleans"
+            } else {
+                actual_type
+            };
             diag.report(
                 LintRule::AgentBackgroundInvalid,
                 &format!(
                     "{agent_path}: background must be a boolean (got {})",
-                    yaml_type(value)
+                    detail
                 ),
             );
         }
@@ -2169,27 +2183,54 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_aPH24PH_invalid_isolation_fires() {
-        let content = format!(
-            "---\nname: general\ndescription: {GOOD_DESC}\nisolation: container\n---\nBody\n"
-        );
-        run_agent(&content, |diag| {
-            assert!(
-                diag.errors()
-                    .iter()
-                    .any(|e| e.contains("isolation 'container'"))
+        for (isolation, expected) in [
+            ("container", "container"),
+            ("Remote", "Remote"),
+            ("worktre", "worktre"),
+            ("\"\"", ""),
+        ] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nisolation: {isolation}\n---\nBody\n"
             );
-        });
+            run_agent(&content, |diag| {
+                assert!(
+                    diag.errors().iter().any(|e| e.contains(&format!(
+                        "isolation '{expected}' is not one of [worktree, remote]"
+                    ))),
+                    "expected invalid isolation {isolation:?} to fire"
+                );
+            });
+        }
+
+        for isolation in ["true", "1", "[worktree]", "{mode: worktree}"] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nisolation: {isolation}\n---\nBody\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(
+                    diag.errors()
+                        .iter()
+                        .any(|e| e.contains("isolation must be a string (got ")),
+                    "expected non-string isolation {isolation:?} to fire"
+                );
+            });
+        }
     }
 
     #[test]
     #[serial_test::serial]
     fn test_aPH24PH_valid_isolation_no_fire() {
-        let content = format!(
-            "---\nname: general\ndescription: {GOOD_DESC}\nisolation: worktree\n---\nBody\n"
-        );
-        run_agent(&content, |diag| {
-            assert!(!diag.errors().iter().any(|e| e.contains("isolation")));
-        });
+        for isolation in ["worktree", "remote"] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nisolation: {isolation}\n---\nBody\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(
+                    !diag.errors().iter().any(|e| e.contains("isolation")),
+                    "expected valid isolation {isolation:?} not to fire"
+                );
+            });
+        }
     }
 
     // ── A025: agent-background-invalid (warn) ────────────────────────
@@ -2197,15 +2238,32 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_aPH25PH_invalid_background_fires() {
-        let content =
-            format!("---\nname: general\ndescription: {GOOD_DESC}\nbackground: yes\n---\nBody\n");
-        run_agent(&content, |diag| {
-            assert!(
-                diag.errors()
-                    .iter()
-                    .any(|e| e.contains("background must be a boolean"))
+        for background in ["yes", "no", "\"true\""] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nbackground: {background}\n---\nBody\n"
             );
-        });
+            run_agent(&content, |diag| {
+                assert!(diag.errors().iter().any(|e| e.contains(
+                    "background must be a boolean (got string; use unquoted true or false — YAML 1.2 does not read yes/no as booleans)"
+                )));
+            });
+        }
+
+        for (background, actual_type) in [
+            ("null", "null"),
+            ("1", "number"),
+            ("[true]", "sequence"),
+            ("{enabled: true}", "mapping"),
+        ] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nbackground: {background}\n---\nBody\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(diag.errors().iter().any(|e| {
+                    e.contains(&format!("background must be a boolean (got {actual_type})"))
+                }));
+            });
+        }
     }
 
     #[test]
@@ -2268,7 +2326,7 @@ mod tests {
     #[serial_test::serial]
     fn test_aPH27PH_known_fields_no_fire() {
         let content = format!(
-            "---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonnet\neffort: high\n---\nBody\n"
+            "---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonnet\neffort: high\ncolor: cyan\n---\nBody\n"
         );
         run_agent(&content, |diag| {
             assert!(
@@ -2278,6 +2336,29 @@ mod tests {
                     .any(|e| e.contains("unrecognized frontmatter field"))
             );
         });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH27PH_color_typos_still_fire() {
+        for key in ["colour", "Color"] {
+            let content =
+                format!("---\nname: general\ndescription: {GOOD_DESC}\n{key}: cyan\n---\nBody\n");
+            run_agent(&content, |diag| {
+                assert!(
+                    diag.errors()
+                        .iter()
+                        .any(|e| e.contains(&format!("unrecognized frontmatter field '{key}'")))
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn test_yaml_type_reports_string_values() {
+        let value = crate::yaml::parse("value: yes\n").unwrap();
+        let value = value.as_mapping().unwrap().get("value").unwrap();
+        assert_eq!(yaml_type(value), "string");
     }
 
     #[test]
