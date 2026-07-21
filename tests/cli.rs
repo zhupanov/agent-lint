@@ -1040,6 +1040,60 @@ suppress = ["M001"]
 }
 
 #[test]
+fn focused_skill_name_contract_preserves_policy_and_json_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".cursor/skills/Invalid/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: Invalid\ndescription: A valid skill description here\n---\nBody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = [".cursor/skills/Invalid/SKILL.md"]
+suppress = ["S010"]
+"#,
+    )
+    .unwrap();
+
+    for args in [
+        vec!["--format", "json", "--only", "S010", "."],
+        vec!["--format", "json", "--pedantic", "--only", "S010", "."],
+    ] {
+        let output = run_in(tmp.path(), &args);
+        assert!(output.status.success(), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        assert_eq!(report["counts"]["suppressed"], 1);
+        assert!(report["diagnostics"].as_array().unwrap().is_empty());
+    }
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", "S010", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["code"], "S010");
+    assert_eq!(
+        diagnostic["subject_path"],
+        ".cursor/skills/Invalid/SKILL.md"
+    );
+    assert_eq!(diagnostic["location"]["start"]["line"], 2);
+    assert_eq!(diagnostic["evidence"], "Invalid");
+    assert_eq!(
+        diagnostic["suggestion"],
+        "use only lowercase ASCII letters, digits, and single hyphens"
+    );
+}
+
+#[test]
 fn agent_stop_missing_respects_strictness_only_and_per_file_suppression() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

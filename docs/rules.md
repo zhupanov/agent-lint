@@ -26,6 +26,7 @@ policy.
 
 - **Plugin** -- runs only when `.claude-plugin/` is present
 - **Always** -- runs in both Basic (any detected supported configuration) and Plugin modes
+- **All skill surfaces** -- runs for `skills/`, `.claude/skills/`, `.agents/skills/`, and `.cursor/skills/` when each surface is active
 
 ## Platform Rule Namespaces
 
@@ -138,7 +139,7 @@ H008--H024 codes with a `… frontmatter` path label.
 | S002 | `skill-md-missing` | `skills/{name}/` missing `SKILL.md` | Plugin | error |
 | S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin | error |
 | S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Always | error |
-| S005 | `frontmatter-field-missing` | `SKILL.md` missing required field (`name` or `description`) | Always | error |
+| S005 | `frontmatter-field-missing` | `SKILL.md` required `name` or `description` is missing or not a non-empty string | Always | error |
 | S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Always | error |
 | S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Always | error |
 | S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin | error |
@@ -147,9 +148,9 @@ H008--H024 codes with a `… frontmatter` path label.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| S009 | `name-too-long` | Skill name exceeds 64 characters | Always | error |
-| S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | Always | error |
-| S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | Always | error |
+| S009 | `name-too-long` | Skill name exceeds 64 characters | All skill surfaces | error |
+| S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | All skill surfaces | error |
+| S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | All skill surfaces | error |
 | S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin | warn |
 | S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin | suppressed |
 

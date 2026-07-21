@@ -223,7 +223,7 @@ fn validate_skill_frontmatter_in_dir(
         };
 
         // X001: strict YAML parse; CC-SK-010: hooks schema when present.
-        match frontmatter::parse_yaml_strict(fm_lines) {
+        let parsed_frontmatter = match frontmatter::parse_yaml_strict(fm_lines) {
             Ok(yaml) => {
                 if !platform_neutral && let Some(hooks) = yaml.get("hooks") {
                     diag.with_subject_path(&skill_path, |diag| {
@@ -234,6 +234,7 @@ fn validate_skill_frontmatter_in_dir(
                         );
                     });
                 }
+                Some(yaml)
             }
             Err((line, msg)) => {
                 diag.report_at_with(
@@ -242,8 +243,9 @@ fn validate_skill_frontmatter_in_dir(
                     &format!("{skill_path}:{line}: frontmatter is not valid YAML: {msg}"),
                     DiagnosticMetadata::at_line(line),
                 );
+                None
             }
-        }
+        };
 
         // X002–X005: fence / XML structure on the full file.
         super::markdown_structure::check_markdown_document(&skill_path, &document, diag);
@@ -256,27 +258,52 @@ fn validate_skill_frontmatter_in_dir(
             check_skill_ref_depth(&skill_path, &document, diag);
         }
 
-        let name = frontmatter::get_field(fm_lines, "name");
-        let desc = frontmatter::get_field(fm_lines, "description");
+        let raw_name = frontmatter::get_field(fm_lines, "name");
+        let raw_desc = frontmatter::get_field(fm_lines, "description");
+        let canonical_name = parsed_frontmatter
+            .as_ref()
+            .and_then(crate::yaml::Value::as_mapping)
+            .and_then(|mapping| mapping.get("name"))
+            .and_then(crate::yaml::Value::as_str)
+            .filter(|name| !name.is_empty());
+        let canonical_desc = parsed_frontmatter
+            .as_ref()
+            .and_then(crate::yaml::Value::as_mapping)
+            .and_then(|mapping| mapping.get("description"))
+            .and_then(crate::yaml::Value::as_str)
+            .filter(|description| !description.is_empty());
+        // Invalid YAML is already reported by X001. For a valid document,
+        // require canonical non-empty string scalars rather than treating YAML
+        // syntax as a field value.
+        let name_is_valid = parsed_frontmatter
+            .as_ref()
+            .map_or_else(|| raw_name.is_some(), |_| canonical_name.is_some());
+        let desc_is_valid = parsed_frontmatter
+            .as_ref()
+            .map_or_else(|| raw_desc.is_some(), |_| canonical_desc.is_some());
 
-        if name.is_none() {
+        if !name_is_valid {
             diag.report_at(
                 LintRule::FrontmatterFieldMissing,
                 &skill_path,
-                &format!("{skill_path}: missing required frontmatter field 'name'"),
+                &format!(
+                    "{skill_path}: required frontmatter field 'name' is missing or not a non-empty string"
+                ),
             );
         }
-        if desc.is_none() {
+        if !desc_is_valid {
             diag.report_at(
                 LintRule::FrontmatterFieldMissing,
                 &skill_path,
-                &format!("{skill_path}: missing required frontmatter field 'description'"),
+                &format!(
+                    "{skill_path}: required frontmatter field 'description' is missing or not a non-empty string"
+                ),
             );
         }
 
         if check_name_match {
-            if let Some(ref n) = name {
-                if n != &dir_name {
+            if let Some(n) = canonical_name {
+                if n != dir_name {
                     diag.report_at(
                         LintRule::FrontmatterNameMismatch,
                         &skill_path,
@@ -513,6 +540,64 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn name_directory_match_uses_the_canonical_yaml_scalar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".agents/skills/valid-name").unwrap();
+        std::fs::write(
+            ".agents/skills/valid-name/SKILL.md",
+            "---\nname: valid-name # comment\ndescription: A skill\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| item.rule != LintRule::FrontmatterNameMismatch)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn non_string_name_is_owned_by_frontmatter_without_name_format_findings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".agents/skills/example").unwrap();
+        std::fs::write(
+            ".agents/skills/example/SKILL.md",
+            "---\nname: [not-a-scalar]\ndescription: A skill\n---\nBody\n",
+        )
+        .unwrap();
+
+        let exclude = crate::config::ExcludeSet::default();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_skill_frontmatter(&mut diag, &exclude);
+        crate::validators::skill_content::validate_agent_skills_name_contract(
+            ".agents/skills",
+            &mut diag,
+            &exclude,
+        );
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::FrontmatterFieldMissing)
+                .count(),
+            1
+        );
+        assert!(diag.diagnostics().iter().all(|item| {
+            !matches!(
+                item.rule,
+                LintRule::NameTooLong | LintRule::NameInvalidChars | LintRule::NameBadHyphens
+            )
+        }));
     }
 
     #[test]
