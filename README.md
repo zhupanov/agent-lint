@@ -89,7 +89,7 @@ checked-in schema and examples are in
 
 ## Lint Rules
 
-Agent Lint ships 294 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 295 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 
 | Category | Prefix | Rules | Description |
@@ -102,7 +102,7 @@ is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 | Claude Rules | R | 2 | `.claude/rules/` frontmatter `paths` globs and fields |
 | Output Styles | O | 6 | `.claude/output-styles/` frontmatter, body, and naming |
 | Settings | T | 2 | `.claude/settings.json` / `settings.local.json` field values |
-| Hygiene | G | 11 | `$PWD` hygiene, script integrity, portability, GitHub payload safety, TODO detection |
+| Hygiene | G | 12 | Plugin path-root hygiene, script integrity, portability, GitHub payload safety, TODO detection |
 | Email | E | 2 | Email metadata type and format validation |
 | User Config | U | 7 | `userConfig` structure, key format, and env var mapping |
 | MCP | P | 14 | MCP server configuration, transport, security, and compatibility |

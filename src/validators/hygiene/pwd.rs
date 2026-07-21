@@ -1,17 +1,12 @@
 use crate::config::ExcludeSet;
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
+use crate::pwd_hygiene::{PathIssueKind, find_path_issues};
 use crate::rules::LintRule;
 use crate::traversal;
-use regex::Regex;
 use std::fs;
 use std::path::Path;
-use std::sync::LazyLock;
 
-static RE_PWD_HYGIENE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"[$]PWD/|[$]\{PWD\}/|/Users/|/home/|/opt/").unwrap());
-
-/// V8: ${CLAUDE_PLUGIN_ROOT} hygiene -- public skills/*/SKILL.md must not use
-/// $PWD/, ${PWD}/, or hardcoded paths (/Users/, /home/, /opt/).
+/// Validate public skill paths without guessing their owning runtime root.
 pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
@@ -43,14 +38,34 @@ pub fn validate_pwd_hygiene(diag: &mut DiagnosticCollector, exclude: &ExcludeSet
             Err(_) => continue,
         };
 
-        if RE_PWD_HYGIENE.is_match(&content) {
-            diag.report_at(
-                LintRule::PwdInSkill,
-                &skill_path,
-                &format!(
-                    "skills/{name}/SKILL.md uses $PWD/ or hardcoded path; use ${{CLAUDE_PLUGIN_ROOT}}/ instead"
+        for issue in find_path_issues(&content) {
+            let reference = &content[issue.range.clone()];
+            let (rule, message, suggestion) = match issue.kind {
+                PathIssueKind::BundledAsset => (
+                    LintRule::PwdInSkill,
+                    format!(
+                        "skills/{name}/SKILL.md uses {reference} for a bundled plugin asset; use ${{CLAUDE_PLUGIN_ROOT}}/ instead"
+                    ),
+                    "Replace the $PWD prefix with ${CLAUDE_PLUGIN_ROOT} for this bundled asset.",
                 ),
+                PathIssueKind::HardcodedMachinePath => (
+                    LintRule::HardcodedMachinePath,
+                    format!(
+                        "skills/{name}/SKILL.md uses machine-specific or ambiguous path {reference}"
+                    ),
+                    "Choose ${CLAUDE_PLUGIN_ROOT} for a bundled asset, ${CLAUDE_PROJECT_DIR} for a project file, or ${CLAUDE_PLUGIN_DATA} for persistent state.",
+                ),
+            };
+            let metadata = SourceSpan::from_byte_range(&content, issue.range).map_or_else(
+                DiagnosticMetadata::default,
+                |location| {
+                    DiagnosticMetadata::default()
+                        .with_location(location)
+                        .with_evidence(reference)
+                        .with_suggestion(suggestion)
+                },
             );
+            diag.report_at_with(rule, &skill_path, &message, metadata);
         }
     }
 }

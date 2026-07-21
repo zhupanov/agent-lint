@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 294 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 295 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -574,7 +574,7 @@ They run in both Basic and Plugin modes.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| G001 | `pwd-in-skill` | `SKILL.md` uses `$PWD/` or hardcoded path instead of `${CLAUDE_PLUGIN_ROOT}/` | Plugin | error |
+| G001 | `pwd-in-skill` | Existing bundled plugin asset uses `$PWD/` or `${PWD}/` instead of `${CLAUDE_PLUGIN_ROOT}/` | Plugin | error |
 | G002 | `script-ref-missing` | Script reference missing on disk | Always | error |
 | G003 | `script-not-executable` | Directly executed script file is not executable (Unix only) | Always | error |
 | G004 | `dead-script` | Script has no executable invocation reference | Plugin | warn |
@@ -585,6 +585,7 @@ They run in both Basic and Plugin modes.
 | G009 | `bash-replacement-unsafe` | Bash global substitution uses a variable replacement that can reinterpret `&` | Always | error |
 | G010 | `bash32-incompatible` | Shipped shell uses syntax unavailable in macOS Bash 3.2 | Always | error |
 | G011 | `awk-regex-nonascii` | Dynamic awk regex contains non-ASCII text with implementation-dependent behavior | Always | error |
+| G012 | `hardcoded-machine-path` | `SKILL.md` uses a machine-specific or ambiguous runtime path | Plugin | warn |
 
 G002 resolves `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD` forms lexically within the repository. Escaping `..` paths are unresolvable; symlink targets are intentionally not audited. G003 is Unix-only and applies only when a regular file is invoked directly; interpreter-launched and sourced files do not require an execute bit. G004 is a warning because static reachability is incomplete; use the existing reason-bearing per-file suppression for intentional inventory entries.
 
@@ -603,6 +604,14 @@ files, remains authoritative when global exclusions match an entry, and is
 scanned in deterministic order on every run. G010 and G011 are hard errors by
 default; listing `error = ["G010", "G011"]` explicitly is also supported when a
 repository wants its portability policy visible in configuration.
+
+G001 applies only when a `$PWD/` or `${PWD}/` reference resolves to an existing
+bundled plugin component (`scripts`, `skills`, `agents`, `commands`, `hooks`,
+`output-styles`, `themes`, `monitors`, or `.claude-plugin`), and its conservative
+autofix replaces only that prefix. G012 reports every other `$PWD` reference and
+machine-specific POSIX or Windows path without autofixing it; select
+`${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, or `${CLAUDE_PLUGIN_DATA}`
+according to whether the referenced path is bundled, project-local, or persistent.
 
 ## Email Rules (E)
 
@@ -738,7 +747,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 294):**
+**Auto-fixable rules (11 of 295):**
 
 | Rule | Code | Fix |
 |------|------|-----|
@@ -752,7 +761,7 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 | non-https-url | S031 | `http://` → `https://` (Claude surfaces only: `skills/` and `.claude/skills/`; `.agents/skills/` and `.cursor/skills/` report diagnostics without rewriting) |
 | frontmatter-backslash | S043 | Replace `\` with `/` in frontmatter |
 | tools-list-syntax | S045 | YAML list → comma-separated scalar |
-| pwd-in-skill | G001 | `$PWD/` → `${CLAUDE_PLUGIN_ROOT}/` |
+| pwd-in-skill | G001 | Existing bundled asset `$PWD/` or `${PWD}/` → `${CLAUDE_PLUGIN_ROOT}/` |
 
 Each fix is logged to stderr. H005 enforcement and its `chmod +x` autofix are
 Unix-only because executable-bit permissions are not available on every
