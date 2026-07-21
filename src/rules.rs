@@ -387,6 +387,9 @@ pub enum LintRule {
     /// S073: skill file reference nested deeper than one level
     #[strum(props(code = "S073", name = "skill-ref-nested"))]
     SkillRefNested,
+    /// S074: skill routing descriptions overlap within a shared namespace
+    #[strum(props(code = "S074", name = "skill-desc-overlap"))]
+    SkillDescOverlap,
 
     // ── Agents (A) ────────────────────────────────────────────────
     /// A001: agents/ directory is missing
@@ -476,6 +479,9 @@ pub enum LintRule {
     /// A029: tool-using agent has no explicit stop control or failure outcome
     #[strum(props(code = "A029", name = "agent-stop-missing"))]
     AgentStopMissing,
+    /// A030: agent routing descriptions overlap within a shared namespace
+    #[strum(props(code = "A030", name = "agent-desc-overlap"))]
+    AgentDescOverlap,
 
     // ── Prompt content (Q) ───────────────────────────────────────
     /// Q001: generic filler instruction that provides no actionable guidance
@@ -1031,6 +1037,10 @@ impl LintRule {
             Self::AgentBypassPermissions | Self::AgentSkillKebab |
             Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
             Self::AgentFieldUnsupported | Self::AgentStopMissing |
+            Self::AgentDescOverlap |
+
+            // ── Default-warning: skill routing overlap ───────────────
+            Self::SkillDescOverlap |
 
             // ── Default-warning: Claude configuration (advisory) ──
             Self::RulesFieldUnknown | Self::OutputStyleDescriptionMissing |
@@ -1213,7 +1223,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            289,
+            291,
             "every enum variant must be registered"
         );
     }
@@ -1358,8 +1368,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            113,
-            "Expected 113 default-warning rules, got {}",
+            115,
+            "Expected 115 default-warning rules, got {}",
             warnings.len()
         );
     }

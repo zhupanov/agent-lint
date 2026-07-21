@@ -87,6 +87,12 @@
         "name": { "type": "string", "minLength": 1 },
         "severity": { "type": "string", "enum": ["error", "warning"] },
         "subject_path": { "type": "string", "minLength": 1, "pattern": "^[^/]" },
+        "related_subjects": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "pattern": "^[^/]" },
+          "minItems": 1,
+          "uniqueItems": true
+        },
         "location": { "$ref": "#/$defs/location" },
         "message": { "type": "string", "minLength": 1 },
         "evidence": { "type": "string" },

@@ -72,6 +72,8 @@ struct DiagnosticIdentity {
     name: String,
     severity: String,
     subject_path: Option<String>,
+    #[serde(default)]
+    related_subjects: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,6 +111,8 @@ struct OutputDiagnostic {
     name: String,
     severity: String,
     subject_path: Option<String>,
+    #[serde(default)]
+    related_subjects: Vec<String>,
 }
 
 impl From<&OutputDiagnostic> for DiagnosticIdentity {
@@ -118,6 +122,7 @@ impl From<&OutputDiagnostic> for DiagnosticIdentity {
             name: diagnostic.name.clone(),
             severity: diagnostic.severity.clone(),
             subject_path: diagnostic.subject_path.clone(),
+            related_subjects: diagnostic.related_subjects.clone(),
         }
     }
 }
@@ -236,13 +241,19 @@ fn assert_fixture_convention(corpus: &Path, cases: &[LoadedCase]) {
             case.name
         );
         for diagnostic in &case.manifest.expected_diagnostics {
-            let path = diagnostic.subject_path.as_deref().unwrap_or_else(|| {
-                panic!(
-                    "{} must give every expected diagnostic a repository-relative subject path",
-                    case.name
-                )
-            });
-            assert_safe_relative_path(&case.name, path);
+            match diagnostic.subject_path.as_deref() {
+                Some(path) => assert_safe_relative_path(&case.name, path),
+                None => {
+                    assert!(
+                        !diagnostic.related_subjects.is_empty(),
+                        "{} pathless expected diagnostics must include related_subjects",
+                        case.name
+                    );
+                    for path in &diagnostic.related_subjects {
+                        assert_safe_relative_path(&case.name, path);
+                    }
+                }
+            }
         }
         for allowed in &case.manifest.allowed_additional_diagnostics {
             assert!(
@@ -250,17 +261,19 @@ fn assert_fixture_convention(corpus: &Path, cases: &[LoadedCase]) {
                 "{} has an allowed diagnostic without a justification",
                 case.name
             );
-            let path = allowed
-                .diagnostic
-                .subject_path
-                .as_deref()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{} must give every allowed diagnostic a repository-relative subject path",
+            match allowed.diagnostic.subject_path.as_deref() {
+                Some(path) => assert_safe_relative_path(&case.name, path),
+                None => {
+                    assert!(
+                        !allowed.diagnostic.related_subjects.is_empty(),
+                        "{} pathless allowed diagnostics must include related_subjects",
                         case.name
-                    )
-                });
-            assert_safe_relative_path(&case.name, path);
+                    );
+                    for path in &allowed.diagnostic.related_subjects {
+                        assert_safe_relative_path(&case.name, path);
+                    }
+                }
+            }
             assert!(
                 !case
                     .manifest

@@ -6,6 +6,7 @@ mod codex_surfaces;
 mod common;
 mod contracts;
 mod cursor;
+mod desc_overlap;
 mod docs;
 mod email;
 mod hook_schema;
@@ -74,6 +75,9 @@ fn run_basic(
     agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
     claude_config::validate_private_config(diag, exclude);
     validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
+    // A030/S074: overlapping routing descriptions within simultaneously available namespaces
+    desc_overlap::validate_agent_desc_overlap(diag, exclude, false);
+    desc_overlap::validate_skill_desc_overlap(diag, exclude, false, targets.agent_skills);
     prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // X002–X005: CLAUDE.md structure (when present)
     docs::validate_claudemd_structure(diag, exclude);
@@ -201,6 +205,9 @@ fn run_plugin(
     skill_content::validate_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // Private skill content checks (both-mode subset)
     skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    // A030/S074: overlapping routing descriptions (Claude private∪plugin runtime union)
+    desc_overlap::validate_agent_desc_overlap(diag, exclude, true);
+    desc_overlap::validate_skill_desc_overlap(diag, exclude, true, targets.agent_skills);
     // D002: CLAUDE.md size
     docs::validate_claudemd_size(diag, exclude);
     // D003: TODO/FIXME in CLAUDE.md

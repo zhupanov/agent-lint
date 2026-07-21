@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "desc-overlap-suppress",
+  "covers": ["basic-mode", "global-suppression", "normal", "json", "desc-overlap"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A030", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 1,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

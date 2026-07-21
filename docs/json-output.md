@@ -105,7 +105,25 @@ path-only finding has no fabricated line number.
 ### Repository-Wide Finding
 
 A finding that belongs to several prompt sources has neither `subject_path`
-nor `location`:
+nor `location`. Multi-source routing-description overlaps additionally emit
+`related_subjects` naming every participating repository-relative path:
+
+```json
+{
+  "code": "A030",
+  "name": "agent-desc-overlap",
+  "severity": "warning",
+  "related_subjects": [
+    ".claude/agents/alpha.md",
+    ".claude/agents/beta.md"
+  ],
+  "message": ".claude/agents/alpha.md and .claude/agents/beta.md have overlapping routing descriptions (similarity 1.00)"
+}
+```
+
+`related_subjects` is structured identity only. Per-file overrides still key
+off `subject_path`, so pathless multi-source findings can be suppressed only
+with global `suppress`.
 
 ```json
 {
