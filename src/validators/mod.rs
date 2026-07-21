@@ -631,9 +631,7 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let skill_body = |name: &str, body: &str| {
-            format!(
-                "---\nname: {name}\ndescription: A valid skill description here\n---\n{body}\n"
-            )
+            format!("---\nname: {name}\ndescription: A valid skill description here\n---\n{body}\n")
         };
         std::fs::create_dir_all("skills/leaky").unwrap();
         std::fs::write(
@@ -685,10 +683,7 @@ mod tests {
         secret_subjects.sort();
         assert_eq!(
             secret_subjects,
-            vec![
-                ".agents/skills/leaky/SKILL.md",
-                "skills/leaky/SKILL.md",
-            ]
+            vec![".agents/skills/leaky/SKILL.md", "skills/leaky/SKILL.md",]
         );
 
         let mut http_subjects = diag
@@ -719,34 +714,25 @@ mod tests {
                 matches!(
                     item.rule,
                     crate::rules::LintRule::HardcodedSecret | crate::rules::LintRule::NonHttpsUrl
-                ) && item
-                    .subject_path
-                    .as_ref()
-                    .is_some_and(|path| {
-                        let path = path.to_string_lossy();
-                        path.starts_with(".agents/") || path.starts_with(".cursor/")
-                    })
+                ) && item.subject_path.as_ref().is_some_and(|path| {
+                    let path = path.to_string_lossy();
+                    path.starts_with(".agents/") || path.starts_with(".cursor/")
+                })
             }),
             "platform-gated security checks must respect resolved activation"
         );
-        assert!(
-            gated_off
-                .diagnostics()
-                .iter()
-                .any(|item| item.rule == crate::rules::LintRule::HardcodedSecret
-                    && item.subject_path.as_ref().is_some_and(|path| {
-                        path.to_string_lossy() == "skills/leaky/SKILL.md"
-                    }))
-        );
-        assert!(
-            gated_off
-                .diagnostics()
-                .iter()
-                .any(|item| item.rule == crate::rules::LintRule::NonHttpsUrl
-                    && item.subject_path.as_ref().is_some_and(|path| {
-                        path.to_string_lossy() == ".claude/skills/leaky/SKILL.md"
-                    }))
-        );
+        assert!(gated_off.diagnostics().iter().any(|item| {
+            item.rule == crate::rules::LintRule::HardcodedSecret
+                && item
+                    .subject_path
+                    .as_ref()
+                    .is_some_and(|path| path.to_string_lossy() == "skills/leaky/SKILL.md")
+        }));
+        assert!(gated_off.diagnostics().iter().any(|item| item.rule
+            == crate::rules::LintRule::NonHttpsUrl
+            && item.subject_path.as_ref().is_some_and(|path| {
+                path.to_string_lossy() == ".claude/skills/leaky/SKILL.md"
+            })));
     }
 
     // Integration test: Plugin mode dispatches all validators
