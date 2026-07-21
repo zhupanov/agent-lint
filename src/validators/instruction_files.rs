@@ -2,6 +2,8 @@
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
+use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::sensitive::contains_possible_secret;
 use crate::traversal;
@@ -13,10 +15,21 @@ const CODEX_DEFAULT_MAX_BYTES: usize = 32_768;
 const CODEX_HARD_MAX_BYTES: usize = 100_000;
 
 /// Validate every included `AGENTS.md`, applying Codex policy only when Codex is active.
+#[cfg(test)]
 pub fn validate_agents_files(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     codex_active: bool,
+) {
+    let mut prompt_pass = super::prompt_content::PromptContentPass::default();
+    validate_agents_files_with_prompt_pass(diag, exclude, codex_active, &mut prompt_pass);
+}
+
+pub(crate) fn validate_agents_files_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    codex_active: bool,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
     let codex_max_bytes = codex_active.then(|| project_doc_max_bytes(exclude));
     for entry in traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude)).entries {
@@ -32,9 +45,16 @@ pub fn validate_agents_files(
         let Ok(content) = std::fs::read_to_string(path) else {
             continue;
         };
+        let markdown = MarkdownDocument::parse_body(&content);
+        let prompt_document = LiveInstructionDocument::new(
+            Path::new(&display),
+            InstructionSurfaceKind::AgentsMd,
+            &markdown,
+        );
 
         diag.with_subject_path(&display, |diag| {
             validate_shared_rules(diag, path, &display, &content);
+            prompt_pass.validate(&prompt_document, diag);
             if let Some(max_bytes) = codex_max_bytes {
                 validate_codex_rules(diag, exclude, &display, &content, max_bytes);
             }

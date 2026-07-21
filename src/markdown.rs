@@ -26,6 +26,13 @@ pub struct MarkdownLink {
     pub line: usize,
 }
 
+/// One live prose line with its original one-based source line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownProseLine {
+    pub line: usize,
+    pub text: String,
+}
+
 /// An owned view of a Markdown document and the syntax facts validators share.
 #[derive(Debug, Clone)]
 pub struct MarkdownDocument {
@@ -37,6 +44,7 @@ pub struct MarkdownDocument {
     unclosed_fence_line: Option<usize>,
     headings: Vec<MarkdownHeading>,
     links: Vec<MarkdownLink>,
+    body_prose: Vec<MarkdownProseLine>,
 }
 
 impl MarkdownDocument {
@@ -68,18 +76,21 @@ impl MarkdownDocument {
         let root = parse_document(&arena, &content, &options);
         let mut headings = Vec::new();
         let mut links = Vec::new();
+        let mut excluded_lines = std::collections::HashSet::new();
+        let mut inline_code = Vec::new();
         for node in root.descendants() {
             let data = node.data.borrow();
             match &data.value {
                 NodeValue::Heading(heading) => {
                     let line = data.sourcepos.start.line;
-                    let text = content
-                        .lines()
-                        .nth(line.saturating_sub(1))
-                        .unwrap_or("")
-                        .trim_start_matches('#')
-                        .trim()
-                        .to_string();
+                    let text = node
+                        .descendants()
+                        .filter_map(|child| match &child.data.borrow().value {
+                            NodeValue::Text(text) => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("");
                     headings.push(MarkdownHeading {
                         level: heading.level,
                         line,
@@ -90,9 +101,75 @@ impl MarkdownDocument {
                     destination: link.url.clone(),
                     line: data.sourcepos.start.line,
                 }),
+                NodeValue::BlockQuote
+                | NodeValue::MultilineBlockQuote(_)
+                | NodeValue::Alert(_)
+                | NodeValue::CodeBlock(_) => {
+                    excluded_lines.extend(data.sourcepos.start.line..=data.sourcepos.end.line);
+                }
+                NodeValue::Code(_) => inline_code.push((
+                    data.sourcepos.start.line,
+                    data.sourcepos.start.column,
+                    data.sourcepos.end.line,
+                    data.sourcepos.end.column,
+                )),
                 _ => {}
             }
         }
+
+        let body_start_line = if parse_frontmatter {
+            body_start
+                .map(|start| content[..start].lines().count() + 1)
+                .unwrap_or(1)
+        } else {
+            1
+        };
+        let mut tracker = CodeFenceTracker::new();
+        let body_prose = content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let line_number = index + 1;
+                if line_number < body_start_line
+                    || tracker.process_line(line) != LineClass::Outside
+                    || excluded_lines.contains(&line_number)
+                {
+                    return None;
+                }
+
+                let mut text = line.to_string();
+                for &(start_line, start_column, end_line, end_column) in &inline_code {
+                    if line_number < start_line || line_number > end_line {
+                        continue;
+                    }
+                    let first = if line_number == start_line {
+                        start_column
+                    } else {
+                        1
+                    };
+                    let last = if line_number == end_line {
+                        end_column
+                    } else {
+                        text.chars().count()
+                    };
+                    text = text
+                        .chars()
+                        .enumerate()
+                        .map(|(column, ch)| {
+                            if (first..=last).contains(&(column + 1)) {
+                                ' '
+                            } else {
+                                ch
+                            }
+                        })
+                        .collect();
+                }
+                Some(MarkdownProseLine {
+                    line: line_number,
+                    text,
+                })
+            })
+            .collect();
 
         Self {
             content,
@@ -103,6 +180,7 @@ impl MarkdownDocument {
             unclosed_fence_line,
             headings,
             links,
+            body_prose,
         }
     }
 
@@ -149,22 +227,8 @@ impl MarkdownDocument {
         &self.links
     }
 
-    /// Prose lines after complete frontmatter. An incomplete frontmatter block
-    /// is not hidden, matching the historical validator behavior.
-    pub fn body_prose_lines(&self) -> impl Iterator<Item = &str> {
-        self.body_prose_lines_with_numbers().map(|(_, line)| line)
-    }
-
-    pub fn body_prose_lines_with_numbers(&self) -> impl Iterator<Item = (usize, &str)> {
-        let body_start = self.body_start_line();
-        let mut tracker = CodeFenceTracker::new();
-        self.content
-            .lines()
-            .enumerate()
-            .filter_map(move |(index, line)| {
-                (index + 1 >= body_start && tracker.process_line(line) == LineClass::Outside)
-                    .then_some((index + 1, line))
-            })
+    pub fn body_prose(&self) -> &[MarkdownProseLine] {
+        &self.body_prose
     }
 }
 

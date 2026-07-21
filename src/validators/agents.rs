@@ -1,6 +1,8 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
+use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
 use std::collections::HashSet;
@@ -75,7 +77,17 @@ fn is_desc_redundant(name: &str, desc: &str) -> bool {
 }
 
 /// V7: Validate agents/*.md frontmatter.
+#[cfg(test)]
 pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let mut prompt_pass = super::prompt_content::PromptContentPass::default();
+    validate_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
+}
+
+pub(crate) fn validate_agents_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let agents_dir = Path::new("agents");
     if !agents_dir.is_dir() {
         diag.report_at(
@@ -108,7 +120,7 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         };
 
         diag.with_subject_path(&agent_path, |diag| {
-            validate_agent_file(diag, &agent_path, &content);
+            validate_agent_file(diag, &agent_path, &content, prompt_pass);
             check_unsupported_plugin_fields(diag, &agent_path, &content);
         });
     }
@@ -151,7 +163,17 @@ fn check_unsupported_plugin_fields(
 /// (A002/A003, A008-A011, A014-A027). Does not report A001/A004 (the
 /// `.claude/agents/` directory is optional) nor the larch-specific
 /// template rules A005-A007.
+#[cfg(test)]
 pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let mut prompt_pass = super::prompt_content::PromptContentPass::default();
+    validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
+}
+
+pub(crate) fn validate_private_agents_with_prompt_pass(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
     let agents_dir = Path::new(".claude/agents");
     if !agents_dir.is_dir() {
         return;
@@ -174,7 +196,7 @@ pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
         };
 
         diag.with_subject_path(&agent_path, |diag| {
-            validate_agent_file(diag, &agent_path, &content);
+            validate_agent_file(diag, &agent_path, &content, prompt_pass);
         });
     }
 }
@@ -182,8 +204,14 @@ pub fn validate_private_agents(diag: &mut DiagnosticCollector, exclude: &Exclude
 /// Run all per-file agent frontmatter checks (used for both `agents/` and
 /// `.claude/agents/`). Covers A002, A003, A008-A011, and the field-value
 /// rules A014-A027.
-fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content: &str) {
-    let fm_lines = match frontmatter::extract_frontmatter(content) {
+fn validate_agent_file(
+    diag: &mut DiagnosticCollector,
+    agent_path: &str,
+    content: &str,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
+    let markdown = MarkdownDocument::parse(content);
+    let fm_lines = match markdown.frontmatter() {
         Some(lines) => lines,
         None => {
             diag.report(
@@ -193,13 +221,13 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
                 ),
             );
             // X002–X005 still apply when frontmatter is broken.
-            super::markdown_structure::check_markdown_structure(agent_path, content, diag);
+            super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
             return;
         }
     };
 
     // X001: strict YAML; CC-AG-011: hooks schema when present.
-    match frontmatter::parse_yaml_strict(&fm_lines) {
+    match frontmatter::parse_yaml_strict(fm_lines) {
         Ok(yaml) => {
             if let Some(hooks) = yaml.get("hooks") {
                 super::hook_schema::validate_frontmatter_hooks(
@@ -219,10 +247,10 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
     }
 
     // X002–X005 on the full agent markdown file.
-    super::markdown_structure::check_markdown_structure(agent_path, content, diag);
+    super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
 
-    let fm_name = frontmatter::get_field(&fm_lines, "name");
-    let fm_desc = frontmatter::get_field(&fm_lines, "description");
+    let fm_name = frontmatter::get_field(fm_lines, "name");
+    let fm_desc = frontmatter::get_field(fm_lines, "description");
 
     if fm_name.is_none() {
         diag.report(
@@ -280,8 +308,13 @@ fn validate_agent_file(diag: &mut DiagnosticCollector, agent_path: &str, content
         }
     }
 
-    check_agent_field_values(diag, agent_path, &fm_lines);
-    super::prompt_content::validate_body(agent_path, frontmatter::extract_body(content), diag);
+    check_agent_field_values(diag, agent_path, fm_lines);
+    let prompt_document = LiveInstructionDocument::new(
+        Path::new(agent_path),
+        InstructionSurfaceKind::Agent,
+        &markdown,
+    );
+    prompt_pass.validate(&prompt_document, diag);
 }
 
 /// Recognized agent frontmatter fields. Any other top-level key triggers A027
