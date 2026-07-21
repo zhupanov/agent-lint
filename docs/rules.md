@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 294 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 295 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -559,7 +559,17 @@ repository wants its portability policy visible in configuration.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| E001 | `invalid-email-format` | Email address is not a valid format | Plugin | error |
+| E001 | `invalid-email-format` | Present `author.email` or `owner.email` string does not meet the conservative ASCII contact-metadata convention | Plugin | warn |
+| E002 | `email-type-invalid` | Present `author.email` or `owner.email` value is not a string | Plugin | error |
+
+E001 is an agent-lint quality convention, not a Claude Code load requirement,
+deliverability check, or full RFC email implementation. It accepts 3–254-byte
+ASCII addresses with one `@`, a 1–64-byte dot-atom local part, and a dotted
+hostname domain whose final label is at least two ASCII letters or a valid
+`xn--` punycode label. Quoted local parts, domain literals, Unicode, controls,
+whitespace, repeated dots, and out-of-range labels are rejected. Missing-email
+policy remains owned by M010/M011. E001 and E002 report only the field name and
+redacted evidence; neither exposes contact values.
 
 ## User Config Rules (U)
 
@@ -685,7 +695,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 294):**
+**Auto-fixable rules (11 of 295):**
 
 | Rule | Code | Fix |
 |------|------|-----|

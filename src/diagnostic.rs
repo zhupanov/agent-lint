@@ -172,6 +172,13 @@ impl DiagnosticMetadata {
         self
     }
 
+    /// Attach the stable evidence redaction marker without consulting source
+    /// content. Use this when the very fact being diagnosed is sensitive.
+    pub fn with_redacted_evidence(mut self) -> Self {
+        self.evidence = Some(REDACTED_EVIDENCE.to_string());
+        self
+    }
+
     pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
         self.suggestion = Some(suggestion.into());
         self

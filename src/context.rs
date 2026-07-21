@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::collections::HashSet;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 /// Three-state manifest parse result.
@@ -7,7 +8,31 @@ use std::path::{Path, PathBuf};
 pub enum ManifestState {
     Missing,
     Invalid(ManifestError),
-    Parsed(Value),
+    Parsed(ParsedManifest),
+}
+
+/// A JSON manifest together with the exact source used to parse it.
+///
+/// Validators consume the parsed value through `Deref`; validators that need
+/// a precise source span can use `source` without re-reading the manifest.
+#[derive(Debug)]
+pub struct ParsedManifest {
+    value: Value,
+    source: Option<String>,
+}
+
+impl ParsedManifest {
+    pub fn source(&self) -> Option<&str> {
+        self.source.as_deref()
+    }
+}
+
+impl Deref for ParsedManifest {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
 }
 
 /// A hook configuration declared by `.claude-plugin/plugin.json`.
@@ -65,6 +90,16 @@ impl ManifestErrorLocation {
 }
 
 impl ManifestState {
+    /// Construct a parsed manifest for tests and callers that only have a
+    /// semantic JSON value. Source locations are unavailable in this form.
+    #[cfg(test)]
+    pub fn parsed(value: Value) -> Self {
+        Self::Parsed(ParsedManifest {
+            value,
+            source: None,
+        })
+    }
+
     /// Construct a synthetic invalid state for unit tests that do not exercise
     /// the filesystem loader.
     #[cfg(test)]
@@ -85,7 +120,10 @@ impl ManifestState {
                 location: None,
             }),
             Ok(content) => match serde_json::from_str::<Value>(&content) {
-                Ok(val) => ManifestState::Parsed(val),
+                Ok(value) => ManifestState::Parsed(ParsedManifest {
+                    value,
+                    source: Some(content),
+                }),
                 Err(e) => ManifestState::Invalid(ManifestError {
                     message: format!("{} is not valid JSON: {e}", subject_path.display()),
                     location: Some(ManifestErrorLocation {

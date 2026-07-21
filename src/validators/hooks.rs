@@ -286,7 +286,7 @@ mod tests {
                 }]
             }
         });
-        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn test_v3_missing_hooks_key() {
         let val = json!({"other": "stuff"});
-        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
@@ -322,7 +322,7 @@ mod tests {
     #[test]
     fn test_v3_empty_hooks_array() {
         let val = json!({"hooks": []});
-        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn test_v3_empty_event_keyed_hooks_object() {
         let val = json!({"hooks": {}});
-        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
@@ -380,7 +380,7 @@ mod tests {
     #[test]
     fn test_v4_valid_settings_no_hooks() {
         let val = json!({"permissions": {}});
-        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_hooks(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
@@ -562,7 +562,7 @@ mod tests {
     #[test]
     fn test_v26_hooks_json_schema_surface() {
         let ctx = make_ctx(
-            ManifestState::Parsed(schema_violation()),
+            ManifestState::parsed(schema_violation()),
             ManifestState::Missing,
         );
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -576,7 +576,7 @@ mod tests {
     fn test_v26_legacy_array_hooks_json_skipped() {
         // The shape H001-H007 model: no event context, so the engine skips it.
         let val = json!({"hooks": [{"command": "echo test"}]});
-        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_hooks_json_schema(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
@@ -595,7 +595,7 @@ mod tests {
     fn test_v27_settings_json_schema_surface() {
         let ctx = make_ctx(
             ManifestState::Missing,
-            ManifestState::Parsed(schema_violation()),
+            ManifestState::parsed(schema_violation()),
         );
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_schema(&ctx, &mut diag);
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn test_v27_settings_json_without_hooks_passes() {
         let val = json!({"permissions": {"allow": []}});
-        let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_schema(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
@@ -615,7 +615,7 @@ mod tests {
     #[test]
     fn test_v28_settings_local_schema_surface() {
         let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        ctx.settings_local_json = ManifestState::Parsed(schema_violation());
+        ctx.settings_local_json = ManifestState::parsed(schema_violation());
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_local(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
@@ -630,7 +630,7 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        ctx.settings_local_json = ManifestState::Parsed(json!({
+        ctx.settings_local_json = ManifestState::parsed(json!({
             "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/nonexistent.sh"}]
         }));
         let mut diag = DiagnosticCollector::new_all_enabled();

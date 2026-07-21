@@ -475,7 +475,7 @@ mod tests {
     }
 
     fn run(val: Value) -> DiagnosticCollector {
-        let ctx = make_ctx(ManifestState::Parsed(val));
+        let ctx = make_ctx(ManifestState::parsed(val));
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_user_config(&ctx, &mut diag);
         diag
