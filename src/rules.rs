@@ -1086,7 +1086,7 @@ impl LintRule {
             Self::CursorRuleFrontmatterMissing | Self::CursorRuleFieldUnknown |
             Self::CursorLegacyRules | Self::CursorAlwaysApplyGlobs |
             Self::CursorRuleDescriptionMissing | Self::CursorHookEventUnknown |
-            Self::CursorHookFieldTypeInvalid | Self::CursorPromptHookPromptMissing |
+            Self::CursorHookFieldTypeInvalid |
             Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
             Self::CursorRuleExtension |
 
@@ -1408,8 +1408,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            127,
-            "Expected 127 default-warning rules, got {}",
+            126,
+            "Expected 126 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1427,6 +1427,7 @@ mod tests {
             LintRule::PromptWeakCritical,
             LintRule::PromptUnboundedRetry,
             LintRule::CursorPromptHookModelInvalid,
+            LintRule::CursorPromptHookPromptMissing,
             LintRule::SkillRefNested,
         ] {
             assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
@@ -1523,9 +1524,27 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            166,
-            "Expected 166 default-error rules, got {}",
+            167,
+            "Expected 167 default-error rules, got {}",
             errors.len()
         );
+    }
+
+    #[test]
+    fn cursor_hook_rules_are_not_autofixable() {
+        for rule in [
+            LintRule::CursorHooksSchemaInvalid,
+            LintRule::CursorHookEventUnknown,
+            LintRule::CursorHookCommandMissing,
+            LintRule::CursorHookTypeInvalid,
+            LintRule::CursorHookFieldTypeInvalid,
+            LintRule::CursorPromptHookPromptMissing,
+            LintRule::CursorPromptHookModelInvalid,
+        ] {
+            assert!(
+                !rule.is_autofixable(),
+                "{rule:?} must remain diagnostic-only"
+            );
+        }
     }
 }

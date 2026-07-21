@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "hooks": {
+    "beforeShellExecution": [
+      { "type": "prompt", "prompt": null },
+      { "type": "prompt", "prompt": "Continue?", "model": " " },
+      { "type": "command", "command": "" },
+      { "type": "agent" },
+      { "timeout": "fast", "loop_limit": false, "failClosed": "yes", "matcher": 3 }
+    ],
+    "unknown": [{ "command": "echo unknown" }]
+  }
+}

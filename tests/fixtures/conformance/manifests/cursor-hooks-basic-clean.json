@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "cursor-hooks-basic-clean",
+  "covers": ["cursor-hooks-basic", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CU010,CU011,CU012,CU013,CU017,CU018,CU019", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}
