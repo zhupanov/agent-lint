@@ -9,6 +9,7 @@ use crate::prompt_budget::{
     INLINE_CODE, MARKDOWN_LINK, normalize_repo_relative, resolve_repo_reference,
 };
 use crate::rules::LintRule;
+use crate::script_paths::{ScriptReference, ScriptReferenceBase, extract_script_token_references};
 use crate::traversal;
 use crate::validators::common::{
     NEVER_INVENT_PROHIBITION, classify_inline_code_path, is_unsafe_inline_code_path_probe,
@@ -425,25 +426,6 @@ fn logical_commands(lines: &[(usize, String)]) -> Vec<(usize, String)> {
     result
 }
 
-fn script_path_from_command(command: &str) -> Option<PathBuf> {
-    for raw in command.split_whitespace() {
-        let token = raw.trim_matches(|ch: char| "'\"();\\".contains(ch));
-        if !token.contains("/scripts/") || !(token.ends_with(".sh") || token.ends_with(".py")) {
-            continue;
-        }
-        for prefix in ["${CLAUDE_PLUGIN_ROOT}/", "$CLAUDE_PLUGIN_ROOT/", "$PWD/"] {
-            if let Some(relative) = token.strip_prefix(prefix) {
-                return Some(PathBuf::from(relative));
-            }
-        }
-        if Path::new(token).is_absolute() {
-            return Some(PathBuf::from(token));
-        }
-        return Some(PathBuf::from(token.trim_start_matches("./")));
-    }
-    None
-}
-
 fn validate_flag_signature(
     skill: &Path,
     line: usize,
@@ -453,53 +435,121 @@ fn validate_flag_signature(
     if !command.contains("--") || has_reasoned_marker(command, "lint-skill-md-flag-signature: ok") {
         return;
     }
-    let Some(script) = script_path_from_command(command) else {
-        return;
-    };
-    let Ok(source) = fs::read_to_string(&script) else {
-        return;
-    };
-    if [
-        "\"$@\"",
-        "${@}",
-        "sys.argv[1:]",
-        "parse_known_args",
-        "argparse.REMAINDER",
-    ]
-    .iter()
-    .any(|marker| source.contains(marker))
-        || forwards_collected_args(&source)
-    {
-        return;
-    }
-    for capture in FLAG.captures_iter(command) {
-        let flag = &capture[1];
-        if !script_declares_flag(&script, &source, flag) {
-            diag.report_at(
-                LintRule::SkillFlagMismatch,
-                skill,
-                &format!(
-                    "{}:{line}: invocation uses --{flag}, but {} does not accept it",
-                    skill.display(),
-                    script.display()
-                ),
-            );
+    for (script, arguments) in script_invocations(skill, command) {
+        let Ok(source) = fs::read_to_string(&script) else {
+            continue;
+        };
+        let source = executable_script_source(&script, &source);
+        if forwards_all_args(&script, &source) {
+            continue;
+        }
+        for flag in invocation_flags(&arguments) {
+            if !script_declares_flag(&script, &source, &flag) {
+                diag.report_at_with(
+                    LintRule::SkillFlagMismatch,
+                    skill,
+                    &format!(
+                        "{}:{line}: invocation uses --{flag}, but {} does not accept it",
+                        skill.display(),
+                        script.display()
+                    ),
+                    DiagnosticMetadata::default()
+                        .with_location(SourceSpan::line(line))
+                        .with_suggestion(
+                            "remove the unsupported flag or add it to the shipped script's parser",
+                        ),
+                );
+            }
         }
     }
+}
+
+/// Each command token gets the shared script-reference parser. A candidate's
+/// arguments end at the next control operator, so adjacent command clauses
+/// cannot donate flags to one another.
+fn script_invocations(skill: &Path, command: &str) -> Vec<(PathBuf, Vec<String>)> {
+    let tokens = shell_lex(command);
+    let mut invocations = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if is_control_operator(token) {
+            continue;
+        }
+        let span_end = tokens[index + 1..]
+            .iter()
+            .position(|next| is_control_operator(next))
+            .map_or(tokens.len(), |offset| index + 1 + offset);
+        for reference in extract_script_token_references(token, 0) {
+            if let Some(script) = resolve_signature_script(skill, &reference) {
+                invocations.push((script, tokens[index + 1..span_end].to_vec()));
+            }
+        }
+    }
+    invocations
+}
+
+fn is_control_operator(token: &str) -> bool {
+    matches!(token, "|" | "|&" | "||" | "&&" | ";" | "&")
+}
+
+fn resolve_signature_script(skill: &Path, reference: &ScriptReference) -> Option<PathBuf> {
+    let candidates: Vec<PathBuf> = match reference.base {
+        ScriptReferenceBase::RepositoryRoot | ScriptReferenceBase::Absolute => {
+            vec![reference.path.clone()]
+        }
+        ScriptReferenceBase::Relative => skill
+            .parent()
+            .map(|parent| parent.join(&reference.path))
+            .into_iter()
+            .chain(std::iter::once(reference.path.clone()))
+            .collect(),
+    };
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn invocation_flags(arguments: &[String]) -> Vec<String> {
+    let mut flags = Vec::new();
+    for argument in arguments {
+        if argument == "--" {
+            break;
+        }
+        for capture in FLAG.captures_iter(argument) {
+            flags.push(capture[1].to_string());
+        }
+    }
+    flags
 }
 
 fn script_declares_flag(script: &Path, source: &str, flag: &str) -> bool {
     let escaped = regex::escape(flag);
     match script.extension().and_then(|value| value.to_str()) {
-        Some("sh") => Regex::new(&format!(r#"(?:^|[\s|])["']?--{escaped}["']?(?:[|)])"#))
-            .is_ok_and(|pattern| pattern.is_match(source)),
-        Some("py") => [
-            format!(r#"add_argument\s*\([^\n)]*["']--{escaped}["']"#),
-            format!(r#"(?:click\.)?option\s*\([^)]*["']--{escaped}["']"#),
-            format!(r#"typer\.Option\s*\([^)]*["']--{escaped}["']"#),
+        Some("sh") => [
+            format!(r#"(?:^|[\s|])["']?--{escaped}["']?(?:[|)=*])"#),
+            format!(
+                r#"(?:(?:==|!=|=)\s*["']--{escaped}["']|["']--{escaped}["']\s*(?:\]|==|!=|=))"#
+            ),
         ]
         .iter()
         .any(|raw| Regex::new(raw).is_ok_and(|pattern| pattern.is_match(source))),
+        Some("py") => [
+            format!(r#"add_argument\s*\([^)]*["']--{escaped}["']"#),
+            format!(r#"(?:click\.)?option\s*\([^)]*["']--{escaped}["']"#),
+            format!(r#"typer\.Option\s*\([^)]*["']--{escaped}["']"#),
+            format!(r#"["']--{escaped}["']\s+in\s+sys\.argv"#),
+        ]
+        .iter()
+        .any(|raw| Regex::new(raw).is_ok_and(|pattern| pattern.is_match(source))),
+        _ => false,
+    }
+}
+
+fn forwards_all_args(script: &Path, source: &str) -> bool {
+    match script.extension().and_then(|value| value.to_str()) {
+        Some("sh") => {
+            source.contains("\"$@\"") || source.contains("${@}") || forwards_collected_args(source)
+        }
+        Some("py") => ["sys.argv[1:]", "parse_known_args", "argparse.REMAINDER"]
+            .iter()
+            .any(|marker| source.contains(marker)),
         _ => false,
     }
 }
@@ -510,6 +560,95 @@ fn forwards_collected_args(source: &str) -> bool {
         source.contains(&format!(r#"{name}+=("$1""#))
             || source.contains(&format!(r#"{name}+=("${{1}}""#))
     })
+}
+
+/// Remove comments before checking declarations or forwarding behavior. This
+/// intentionally stays lexical: S059 needs only the same quote/escape boundary
+/// as command parsing, not a shell or Python executor.
+fn executable_script_source(script: &Path, source: &str) -> String {
+    match script.extension().and_then(|value| value.to_str()) {
+        Some("sh") => strip_shell_comments(source),
+        Some("py") => strip_python_comments(source),
+        _ => source.to_string(),
+    }
+}
+
+fn strip_shell_comments(source: &str) -> String {
+    let mut result = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    let mut comment = false;
+    for character in source.chars() {
+        if comment {
+            if character == '\n' {
+                result.push(character);
+                comment = false;
+            }
+        } else if escaped {
+            result.push(character);
+            escaped = false;
+        } else if character == '\\' && quote != Some('\'') {
+            result.push(character);
+            escaped = true;
+        } else if let Some(active) = quote {
+            result.push(character);
+            if character == active {
+                quote = None;
+            }
+        } else if matches!(character, '\'' | '"') {
+            result.push(character);
+            quote = Some(character);
+        } else if character == '#' {
+            comment = true;
+        } else {
+            result.push(character);
+        }
+    }
+    result
+}
+
+fn strip_python_comments(source: &str) -> String {
+    let mut result = String::new();
+    let mut quote: Option<(char, bool)> = None;
+    let mut escaped = false;
+    let mut characters = source.chars().peekable();
+    while let Some(character) = characters.next() {
+        if let Some((active, triple)) = quote {
+            result.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if triple && character == active {
+                if characters.peek() == Some(&active) {
+                    let mut probe = characters.clone();
+                    probe.next();
+                    if probe.peek() == Some(&active) {
+                        result.push(characters.next().unwrap_or_default());
+                        result.push(characters.next().unwrap_or_default());
+                        quote = None;
+                    }
+                }
+            } else if !triple && character == active {
+                quote = None;
+            }
+        } else if character == '#' {
+            while characters.next().is_some_and(|next| next != '\n') {}
+            result.push('\n');
+        } else if matches!(character, '\'' | '"') {
+            let mut probe = characters.clone();
+            let triple = probe.next() == Some(character) && probe.next() == Some(character);
+            result.push(character);
+            if triple {
+                result.push(characters.next().unwrap_or_default());
+                result.push(characters.next().unwrap_or_default());
+            }
+            quote = Some((character, triple));
+        } else {
+            result.push(character);
+        }
+    }
+    result
 }
 
 fn shell_lex(command: &str) -> Vec<String> {
@@ -2069,6 +2208,195 @@ mod tests {
                 .iter()
                 .any(|item| item.rule == LintRule::SkillFlagMismatch)
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_scopes_each_script_and_preserves_structured_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts").unwrap();
+        fs::write(
+            "skills/demo/scripts/first.sh",
+            "case \"$1\" in --first) ;; esac\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/second.sh",
+            "case \"$1\" in --second) ;; esac\n",
+        )
+        .unwrap();
+        fs::write("skills/demo/scripts/forward.sh", "exec other \"$@\"\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            17,
+            "scripts/first.sh --first && scripts/second.sh --missing",
+            &mut diag,
+        );
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert!(
+            findings[0]
+                .message
+                .contains("skills/demo/scripts/second.sh")
+        );
+        assert_eq!(findings[0].location, Some(SourceSpan::line(17)));
+        assert_eq!(
+            findings[0].suggestion.as_deref(),
+            Some("remove the unsupported flag or add it to the shipped script's parser")
+        );
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            1,
+            "scripts/first.sh --wrong && scripts/second.sh --missing",
+            &mut diag,
+        );
+        let messages: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+            .map(|item| item.message.as_str())
+            .collect();
+        assert_eq!(messages.len(), 2);
+        assert!(messages[0].contains("--wrong") && messages[0].contains("first.sh"));
+        assert!(messages[1].contains("--missing") && messages[1].contains("second.sh"));
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            1,
+            "scripts/forward.sh --delegated && scripts/second.sh --missing",
+            &mut diag,
+        );
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_recognizes_executable_forms_and_ignores_comments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts").unwrap();
+        fs::write(
+            "skills/demo/scripts/forms.sh",
+            "case \"$1\" in --out=*) ;; esac\nif [ \"$1\" = \"--json\" ]; then :; fi\nif [ \"--reverse\" = \"$1\" ]; then :; fi\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/forms.py",
+            "parser.add_argument(\n    \"--verbose\",\n    action=\"store_true\",\n)\nif \"--json\" in sys.argv:\n    pass\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/comment-forward.sh",
+            "# Do not forward \"$@\"; this command accepts only --known.\ncase \"$1\" in --known) ;; esac # \"$@\"\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/comment-declare.py",
+            "# parser.add_argument(\"--phantom\") is obsolete documentation.\nparser.add_argument(\"--known\") # sys.argv[1:]\n",
+        )
+        .unwrap();
+
+        let mut accepted = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "scripts/forms.sh --out=result.txt --json --reverse",
+            "scripts/forms.py --verbose --json",
+        ] {
+            validate_flag_signature(Path::new("skills/demo/SKILL.md"), 1, command, &mut accepted);
+        }
+        assert!(accepted.diagnostics().is_empty());
+
+        let mut comments = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            1,
+            "scripts/comment-forward.sh --missing && scripts/comment-declare.py --phantom",
+            &mut comments,
+        );
+        assert_eq!(
+            comments
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+                .count(),
+            2
+        );
+        assert_eq!(
+            strip_shell_comments("echo \"# remains quoted\n# and remains quoted\"\n# removed\n"),
+            "echo \"# remains quoted\n# and remains quoted\"\n\n"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_resolves_documented_roots_and_skill_relative_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts").unwrap();
+        fs::create_dir_all("scripts").unwrap();
+        fs::write(
+            "skills/demo/scripts/run.sh",
+            "case \"$1\" in --known) ;; esac\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/other.sh",
+            "case \"$1\" in --real) ;; esac\n",
+        )
+        .unwrap();
+        fs::write("scripts/other.sh", "case \"$1\" in --root) ;; esac\n").unwrap();
+
+        let skill = Path::new("skills/demo/SKILL.md");
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "\"${CLAUDE_PLUGIN_ROOT}\"/skills/demo/scripts/run.sh --quoted",
+            "${CLAUDE_PROJECT_DIR}/skills/demo/scripts/run.sh --project",
+            "scripts/run.sh --bare",
+        ] {
+            validate_flag_signature(skill, 1, command, &mut diag);
+        }
+        validate_flag_signature(skill, 1, "./scripts/other.sh --real", &mut diag);
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+                .count(),
+            3
+        );
+
+        let mut waiver = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            skill,
+            1,
+            "scripts/run.sh --missing # lint-skill-md-flag-signature: ok reviewed",
+            &mut waiver,
+        );
+        assert!(waiver.diagnostics().is_empty());
+        validate_flag_signature(
+            skill,
+            1,
+            "scripts/run.sh --missing # lint-skill-md-flag-signature: ok",
+            &mut waiver,
+        );
+        assert_eq!(waiver.diagnostics().len(), 1);
     }
 
     #[test]
