@@ -995,10 +995,7 @@ mod tests {
             .find(|item| item.rule == LintRule::InstructionFileSecret)
             .expect("I002 should fire");
         assert_eq!(finding.evidence.as_deref(), Some("password"));
-        assert_eq!(
-            finding.suggestion.as_deref(),
-            Some(I002_SUGGESTION)
-        );
+        assert_eq!(finding.suggestion.as_deref(), Some(I002_SUGGESTION));
         assert_eq!(
             finding.location.map(|span| span.start().line_number()),
             Some(2)

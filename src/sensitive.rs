@@ -78,8 +78,7 @@ static SIGNATURE_PATTERNS: LazyLock<Vec<SignaturePattern>> = LazyLock::new(|| {
             reject_if_next: None,
         },
         SignaturePattern {
-            regex: Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}")
-                .expect("valid slack signature"),
+            regex: Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}").expect("valid slack signature"),
             evidence: "slack-token-signature",
             reject_if_next: None,
         },
@@ -89,8 +88,7 @@ static SIGNATURE_PATTERNS: LazyLock<Vec<SignaturePattern>> = LazyLock::new(|| {
             reject_if_next: Some(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit()),
         },
         SignaturePattern {
-            regex: Regex::new(r"glpat-[a-zA-Z0-9_\-]{20,}")
-                .expect("valid glpat- signature"),
+            regex: Regex::new(r"glpat-[a-zA-Z0-9_\-]{20,}").expect("valid glpat- signature"),
             evidence: "gitlab-token-signature",
             reject_if_next: None,
         },
@@ -159,20 +157,18 @@ pub(crate) struct InstructionSecretFinding {
 /// Scan Markdown/instruction source for the first credential fact in byte order.
 pub(crate) fn find_instruction_secret(content: &str) -> Option<InstructionSecretFinding> {
     let mut best: Option<InstructionSecretFinding> = None;
-    let mut consider = |candidate: InstructionSecretFinding| {
-        match &best {
-            None => best = Some(candidate),
-            Some(current) if candidate.location_range.start < current.location_range.start => {
-                best = Some(candidate);
-            }
-            Some(current)
-                if candidate.location_range.start == current.location_range.start
-                    && candidate.evidence < current.evidence =>
-            {
-                best = Some(candidate);
-            }
-            _ => {}
+    let mut consider = |candidate: InstructionSecretFinding| match &best {
+        None => best = Some(candidate),
+        Some(current) if candidate.location_range.start < current.location_range.start => {
+            best = Some(candidate);
         }
+        Some(current)
+            if candidate.location_range.start == current.location_range.start
+                && candidate.evidence < current.evidence =>
+        {
+            best = Some(candidate);
+        }
+        _ => {}
     };
 
     for captures in RE_ASSIGNMENT.captures_iter(content) {
@@ -361,33 +357,19 @@ mod tests {
             ("slack xoxb-1abcdefghij", "slack-token-signature"),
             ("slack xoxp-1abcdefghij", "slack-token-signature"),
             ("aws AKIAIOSFODNN7EXAMPLE", "aws-access-key-signature"),
-            (
-                "aws ASIATESTKEY12EXAMPLE",
-                "aws-access-key-signature",
-            ),
+            ("aws ASIATESTKEY12EXAMPLE", "aws-access-key-signature"),
             (
                 "gl glpat-abcdefghijklmnopqrstuvwxyz",
                 "gitlab-token-signature",
             ),
-            (
-                "-----BEGIN RSA PRIVATE KEY-----",
-                "private-key-block",
-            ),
-            (
-                "-----BEGIN EC PRIVATE KEY-----",
-                "private-key-block",
-            ),
-            (
-                "-----BEGIN OPENSSH PRIVATE KEY-----",
-                "private-key-block",
-            ),
-            (
-                "-----BEGIN PRIVATE KEY-----",
-                "private-key-block",
-            ),
+            ("-----BEGIN RSA PRIVATE KEY-----", "private-key-block"),
+            ("-----BEGIN EC PRIVATE KEY-----", "private-key-block"),
+            ("-----BEGIN OPENSSH PRIVATE KEY-----", "private-key-block"),
+            ("-----BEGIN PRIVATE KEY-----", "private-key-block"),
         ];
         for (content, evidence) in cases {
-            let finding = find_instruction_secret(content).unwrap_or_else(|| panic!("no finding for {content}"));
+            let finding = find_instruction_secret(content)
+                .unwrap_or_else(|| panic!("no finding for {content}"));
             assert_eq!(finding.evidence, evidence, "{content}");
             assert_eq!(
                 finding.location_range.start, finding.location_range.end,
@@ -403,12 +385,16 @@ mod tests {
         let finding = find_instruction_secret(&content).unwrap();
         let mut text = format!(
             "evidence={} suggestion={}",
-            finding.evidence, "replace the literal with an environment-variable or secret-store reference"
+            finding.evidence,
+            "replace the literal with an environment-variable or secret-store reference"
         );
-        text.push_str(&serde_json::json!({
-            "evidence": finding.evidence,
-            "message": "AGENTS.md contains a potential hardcoded secret/API key",
-        }).to_string());
+        text.push_str(
+            &serde_json::json!({
+                "evidence": finding.evidence,
+                "message": "AGENTS.md contains a potential hardcoded secret/API key",
+            })
+            .to_string(),
+        );
         assert!(!text.contains(secret));
         assert!(!finding.evidence.contains("sk-"));
     }
@@ -416,11 +402,11 @@ mod tests {
     #[test]
     fn instruction_scanner_signature_near_misses_are_clean() {
         for content in [
-            "sk-abcdefghijklmnopqrs",                 // 19
-            "ghp_abcdefghijklmnopqrstuvwxyz123456789", // 35
+            "sk-abcdefghijklmnopqrs",                    // 19
+            "ghp_abcdefghijklmnopqrstuvwxyz123456789",   // 35
             "ghp_abcdefghijklmnopqrstuvwxyz12345678901", // 37
-            "AKIAIOSFODNN7EXAMPL",                     // 15
-            "glpat-abcdefghijklmnopq",                 // 19
+            "AKIAIOSFODNN7EXAMPL",                       // 15
+            "glpat-abcdefghijklmnopq",                   // 19
             "-----BEGIN PUBLIC KEY-----",
             "xoxb-short",
         ] {
@@ -442,7 +428,6 @@ mod tests {
         assert_eq!(finding.evidence, "openai-api-key-signature");
     }
 
-
     #[test]
     fn instruction_scanner_empty_assignment_does_not_consume_following_line() {
         let content = "private_key =\n\nRun cargo test\n";
@@ -452,10 +437,7 @@ mod tests {
     #[test]
     fn instruction_scanner_handles_crlf_unicode_fences_and_frontmatter() {
         let crlf = "intro\r\npassword = hunterhunter\r\n";
-        assert_eq!(
-            find_instruction_secret(crlf).unwrap().evidence,
-            "password"
-        );
+        assert_eq!(find_instruction_secret(crlf).unwrap().evidence, "password");
 
         let unicode = "café\nPASSWORD: literal-ü\n";
         assert_eq!(
