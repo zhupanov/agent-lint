@@ -3007,3 +3007,107 @@ fn userconfig_rules_cover_modes_focus_suppression_and_exclude_boundary() {
         .collect();
     assert_eq!(malformed_codes, vec!["M002"]);
 }
+
+#[test]
+fn human_readable_output_escapes_control_characters_from_skill_names() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".agents/skills/ansi-test/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    // YAML double-quoted escapes: \e = ESC, \a = BEL (decoded into the name).
+    std::fs::write(
+        &skill,
+        "---\nname: \"evil\\e[31mred\\abell\"\ndescription: Use when testing control character echoing in output\n---\nBody\n",
+    )
+    .unwrap();
+
+    let text = run_in(tmp.path(), &["--only", "S006,S010", "."]);
+    assert_eq!(text.status.code(), Some(1), "stderr: {}", stderr(&text));
+    let stderr_bytes = text.stderr.clone();
+    let stderr_text = stderr(&text);
+    assert!(
+        stderr_text.contains(r"\u{1b}"),
+        "expected ESC escape in stderr: {stderr_text}"
+    );
+    assert!(
+        stderr_text.contains(r"\u{7}"),
+        "expected BEL escape in stderr: {stderr_text}"
+    );
+    assert!(
+        !stderr_bytes.contains(&0x1b),
+        "raw ESC must not appear in human-readable stderr"
+    );
+    assert!(
+        !stderr_bytes.contains(&0x07),
+        "raw BEL must not appear in human-readable stderr"
+    );
+
+    let text_again = run_in(tmp.path(), &["--only", "S006,S010", "."]);
+    assert_eq!(text.stderr, text_again.stderr);
+
+    let json_output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "S006,S010", "."],
+    );
+    assert_eq!(
+        json_output.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&json_output)
+    );
+    let report = json(&json_output);
+    let messages: Vec<&str> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["message"].as_str().unwrap())
+        .collect();
+    assert!(
+        messages.iter().any(|message| message.contains('\u{1b}')),
+        "JSON must retain the original ESC byte in message text: {report}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains('\u{7}')),
+        "JSON must retain the original BEL byte in message text: {report}"
+    );
+}
+
+#[test]
+fn unused_override_text_path_escapes_control_characters_in_reason() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"missing.md\"]\nsuppress = [\"M001\"]\nreason = \"stale\\u001bexception\"\n",
+    )
+    .unwrap();
+
+    let text = run_in(tmp.path(), &["."]);
+    assert!(text.status.success(), "stderr: {}", stderr(&text));
+    let stderr_text = stderr(&text);
+    assert!(
+        stderr_text.contains("config/unused-override"),
+        "stderr: {stderr_text}"
+    );
+    assert!(
+        stderr_text.contains(r"\u{1b}"),
+        "expected ESC escape in unused-override stderr: {stderr_text}"
+    );
+    assert!(
+        !text.stderr.contains(&0x1b),
+        "raw ESC must not appear in unused-override stderr"
+    );
+
+    let json_output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert!(json_output.status.success());
+    let report = json(&json_output);
+    let notice = report["notices"][0]["message"].as_str().unwrap();
+    assert!(
+        notice.contains('\u{1b}'),
+        "JSON unused-override notice must retain the original control character: {report}"
+    );
+    assert!(
+        !notice.contains(r"\u{1b}"),
+        "JSON unused-override notice must not use Rust-style escapes: {report}"
+    );
+}

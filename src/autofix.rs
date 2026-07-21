@@ -52,6 +52,7 @@ fn is_suppressed(config: &LintConfig, rule: LintRule, path: impl AsRef<Path>) ->
 }
 
 fn log_fix(rule: LintRule, msg: &str) {
+    let msg = crate::diagnostic::sanitize_for_terminal(msg);
     let _ = writeln!(
         std::io::stderr(),
         "fixed[{}/{}]: {msg}",

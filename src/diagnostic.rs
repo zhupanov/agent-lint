@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::Write;
 use std::ops::Range;
@@ -5,6 +6,24 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{LintConfig, RunPolicy};
 use crate::rules::{DefaultSeverity, LintRule};
+
+/// Replace every Unicode control character with a Rust-style `\u{…}` escape so
+/// human-readable terminal output cannot interpret ESC/BEL/C1 sequences from
+/// repository-controlled diagnostic text. Non-control input is returned borrowed.
+pub(crate) fn sanitize_for_terminal(text: &str) -> Cow<'_, str> {
+    if !text.chars().any(char::is_control) {
+        return Cow::Borrowed(text);
+    }
+    let mut sanitized = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_control() {
+            sanitized.extend(ch.escape_unicode());
+        } else {
+            sanitized.push(ch);
+        }
+    }
+    Cow::Owned(sanitized)
+}
 
 /// Diagnostic severity after config resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -461,27 +480,32 @@ impl DiagnosticCollector {
     /// Render collected diagnostics in the stable human-readable format.
     /// Structured metadata is deliberately not appended, preserving the
     /// existing text contract while other renderers consume `diagnostics()`.
+    /// Control characters in messages are escaped for terminal safety; stored
+    /// diagnostics and JSON output keep the original strings.
     pub fn render_text(&self, writer: &mut impl Write) {
         for diagnostic in &self.diagnostics {
             let label = match diagnostic.severity {
                 Severity::Error => "error",
                 Severity::Warning => "warning",
             };
+            let message = sanitize_for_terminal(&diagnostic.message);
             let _ = writeln!(
                 writer,
-                "{label}[{}/{}]: {}",
+                "{label}[{}/{}]: {message}",
                 diagnostic.rule.code(),
                 diagnostic.rule.name(),
-                diagnostic.message
             );
         }
     }
 
     /// Emit one non-failing warning for each configured `(override, rule)`
     /// pair that suppressed no diagnostic in this visible lint pass.
+    /// Escapes control characters at the text choke point only; callers that
+    /// need the raw warning strings (JSON notices) use
+    /// [`Self::unused_override_warnings`].
     pub fn emit_unused_override_warnings(&self, writer: &mut impl Write) {
         for warning in self.unused_override_warnings() {
-            let _ = writeln!(writer, "{warning}");
+            let _ = writeln!(writer, "{}", sanitize_for_terminal(&warning));
         }
     }
 
@@ -1022,5 +1046,80 @@ suppress = ["M001", "H001"]
             String::from_utf8(rendered).unwrap(),
             "error[M001/plugin-json-missing]: canonical message\n"
         );
+    }
+
+    #[test]
+    fn sanitize_for_terminal_borrows_clean_text_and_escapes_controls() {
+        assert!(matches!(
+            sanitize_for_terminal("plain message"),
+            std::borrow::Cow::Borrowed("plain message")
+        ));
+        assert_eq!(
+            sanitize_for_terminal("a\u{1b}b\u{7}c\u{9b}d\u{7f}e"),
+            r"a\u{1b}b\u{7}c\u{9b}d\u{7f}e"
+        );
+    }
+
+    #[test]
+    fn render_text_escapes_control_characters_without_mutating_stored_diagnostics() {
+        let message = "evil\u{1b}[31mred\u{7}bell\u{9b}csi";
+        let mut diag = DiagnosticCollector::new();
+        diag.report(LintRule::PluginJsonMissing, message);
+
+        assert_eq!(diag.diagnostics()[0].message, message);
+
+        let mut rendered = Vec::new();
+        diag.render_text(&mut rendered);
+        let text = String::from_utf8(rendered.clone()).unwrap();
+        assert!(text.contains(r"\u{1b}"));
+        assert!(text.contains(r"\u{7}"));
+        assert!(text.contains(r"\u{9b}"));
+        assert_no_raw_controls_except_line_terminators(&rendered);
+
+        let json = serde_json::to_string(&diag.diagnostics()[0].message).unwrap();
+        let roundtrip: String = serde_json::from_str(&json).unwrap();
+        assert_eq!(roundtrip, message);
+
+        let mut rendered_again = Vec::new();
+        diag.render_text(&mut rendered_again);
+        assert_eq!(rendered, rendered_again);
+    }
+
+    #[test]
+    fn unused_override_emit_escapes_control_characters_in_reason() {
+        let config = config_with_overrides(
+            "[lint]\n[[lint.overrides]]\nfiles = [\"missing.md\"]\nsuppress = [\"M001\"]\nreason = \"legacy\\u001breason\"\n",
+        );
+        let diag = DiagnosticCollector::with_config(config);
+
+        let warnings = diag.unused_override_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains('\u{1b}'));
+        assert!(!warnings[0].contains(r"\u{1b}"));
+
+        let mut rendered = Vec::new();
+        diag.emit_unused_override_warnings(&mut rendered);
+        let text = String::from_utf8(rendered.clone()).unwrap();
+        assert!(text.contains(r"\u{1b}"));
+        assert!(!text.contains('\u{1b}'));
+        assert_no_raw_controls_except_line_terminators(&rendered);
+
+        let mut rendered_again = Vec::new();
+        diag.emit_unused_override_warnings(&mut rendered_again);
+        assert_eq!(rendered, rendered_again);
+    }
+
+    fn assert_no_raw_controls_except_line_terminators(bytes: &[u8]) {
+        let text = std::str::from_utf8(bytes).unwrap();
+        for ch in text.chars() {
+            if ch == '\n' {
+                continue;
+            }
+            assert!(
+                !ch.is_control(),
+                "unexpected raw control U+{:04X} in {text:?}",
+                ch as u32
+            );
+        }
     }
 }
