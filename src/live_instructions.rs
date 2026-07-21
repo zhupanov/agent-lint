@@ -76,9 +76,61 @@ impl<'a> LiveInstructionDocument<'a> {
         self.markdown.headings()
     }
 
+    /// Whether each prose line belongs to an identifiable example scope.
+    ///
+    /// An Examples heading applies through the next heading of the same or
+    /// higher level. Explicitly marked example lines are also excluded even
+    /// outside such a section. Consumers use this shared source-aware fact
+    /// when deciding whether prose is a live instruction.
+    pub fn example_scopes(&self) -> Vec<bool> {
+        let mut active_heading_level = None;
+        self.prose_lines()
+            .iter()
+            .map(|line| {
+                if let Some(heading) = self
+                    .headings()
+                    .iter()
+                    .find(|heading| heading.line == line.line)
+                {
+                    if active_heading_level.is_some_and(|level| heading.level <= level) {
+                        active_heading_level = None;
+                    }
+                    if is_example_heading(&heading.text) {
+                        active_heading_level = Some(heading.level);
+                        return true;
+                    }
+                }
+
+                active_heading_level.is_some() || is_explicit_example_line(&line.text)
+            })
+            .collect()
+    }
+
     pub fn has_outer_execution_bound(&self) -> bool {
         self.outer_max_turns.is_some()
     }
+}
+
+fn is_example_heading(text: &str) -> bool {
+    text.split(|character: char| !character.is_alphanumeric())
+        .any(|word| matches!(word.to_ascii_lowercase().as_str(), "example" | "examples"))
+}
+
+fn is_explicit_example_line(line: &str) -> bool {
+    let line = line.trim().trim_start_matches(|character: char| {
+        character.is_whitespace() || matches!(character, '-' | '*' | '+' | '>')
+    });
+    let lower = line.to_ascii_lowercase();
+    [
+        "example:",
+        "example ",
+        "for example,",
+        "for example:",
+        "e.g.,",
+        "e.g.:",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
 }
 
 #[cfg(test)]
@@ -104,5 +156,22 @@ mod tests {
         assert!(document.body().starts_with("# Important"));
         assert_eq!(document.prose_lines()[0].line, 4);
         assert!(!document.prose_lines()[1].text.contains("do not"));
+    }
+
+    #[test]
+    fn identifies_heading_and_explicit_example_scopes() {
+        let markdown = MarkdownDocument::parse(
+            "# Examples\nUse a timeout of 10 minutes.\n## More examples\nExample: stop after failure.\n# Task\nUse a timeout of 5 minutes.\n",
+        );
+        let document = LiveInstructionDocument::new(
+            Path::new("agents/example.md"),
+            InstructionSurfaceKind::Agent,
+            &markdown,
+        );
+
+        assert_eq!(
+            document.example_scopes(),
+            vec![true, true, true, true, false, false]
+        );
     }
 }

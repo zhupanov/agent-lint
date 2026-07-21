@@ -154,7 +154,7 @@ fn check_unbounded_retry(
         return;
     }
 
-    let example_scopes = example_scopes(document);
+    let example_scopes = document.example_scopes();
     for scope in retry_instruction_scopes(document, &example_scopes) {
         let normalized_scope = scope
             .iter()
@@ -347,7 +347,7 @@ fn check_negative_only(
     diag: &mut DiagnosticCollector,
 ) {
     let lines = document.prose_lines();
-    let example_scopes = example_scopes(document);
+    let example_scopes = document.example_scopes();
     for (index, line) in lines.iter().enumerate() {
         if example_scopes[index] {
             continue;
@@ -439,48 +439,6 @@ fn setup_clause(prefix: &str) -> bool {
     ["when ", "before ", "after ", "if ", "unless ", "while "]
         .iter()
         .any(|opening| clause.starts_with(opening))
-}
-
-fn example_scopes(document: &LiveInstructionDocument<'_>) -> Vec<bool> {
-    let mut active_heading_level = None;
-    document
-        .prose_lines()
-        .iter()
-        .map(|line| {
-            if let Some(heading) = document
-                .headings()
-                .iter()
-                .find(|heading| heading.line == line.line)
-            {
-                if active_heading_level.is_some_and(|level| heading.level <= level) {
-                    active_heading_level = None;
-                }
-                if contains_phrase(&heading.text.to_ascii_lowercase(), &["example", "examples"]) {
-                    active_heading_level = Some(heading.level);
-                    return true;
-                }
-            }
-
-            active_heading_level.is_some()
-                || is_explicit_example_line(&line.text.to_ascii_lowercase())
-        })
-        .collect()
-}
-
-fn is_explicit_example_line(line: &str) -> bool {
-    let line = line.trim().trim_start_matches(|character: char| {
-        character.is_whitespace() || matches!(character, '-' | '*' | '+' | '>')
-    });
-    [
-        "example:",
-        "example ",
-        "for example,",
-        "for example:",
-        "e.g.,",
-        "e.g.:",
-    ]
-    .iter()
-    .any(|prefix| line.starts_with(prefix))
 }
 
 fn check_weak_critical_language(
@@ -829,7 +787,7 @@ fn check_output_conflict(
     diag: &mut DiagnosticCollector,
 ) {
     let lines = document.prose_lines();
-    let example = example_scopes(document);
+    let example = document.example_scopes();
     let mut requirements: Vec<DetectedRequirement> = Vec::new();
 
     for (index, line) in lines.iter().enumerate() {

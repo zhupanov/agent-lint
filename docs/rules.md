@@ -307,7 +307,10 @@ H008--H024 codes with a `… frontmatter` path label.
 > tools do not activate the rule. A positive `maxTurns`, an explicit numeric
 > attempt/tool-call/step bound, an explicit time/token/cost budget, or a
 > stop/report/escalation fallback after failure or no progress satisfies it.
-> Frontmatter other than `maxTurns`, code, and quoted examples are ignored.
+> A body control must be an operative instruction for the current agent;
+> example scopes and historical or descriptive mentions do not satisfy the
+> rule. Frontmatter other than `maxTurns`, code, and quoted examples are
+> ignored.
 
 ## Prompt Content Rules (Q)
 

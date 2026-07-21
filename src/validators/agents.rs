@@ -63,6 +63,27 @@ static FAILURE_FALLBACK: LazyLock<Regex> = LazyLock::new(|| {
     .expect("A029 failure-fallback regex is valid")
 });
 
+/// A029 controls must be addressed to the current agent, not merely describe
+/// a historical agent or an example. Keep this intentionally narrow: these
+/// forms cover the documented direct imperative, subject directive, and
+/// conditional instruction styles without guessing at descriptive prose.
+static OPERATIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?ix)^\s*(?:[-*+]\s*)?(?:
+            (?:you|the\s+agent|this\s+agent|agents?|assistant|model)\s+
+                (?:must|should|shall|will|need\s+to|are\s+to)\b |
+            (?:if|when|after|before|unless|for|during|on)\b[^.!?;,:]*[,;:]\s*
+                (?:(?:you|the\s+agent|this\s+agent|agents?|assistant|model)\s+
+                    (?:must|should|shall|will|need\s+to|are\s+to)\s+)?
+                (?:make|use|set|limit|cap|stop|report|escalate|ask|handoff|return)\b |
+            (?:make|use|set|limit|cap|stop|report|escalate|ask|handoff|return)\b |
+            (?:at\s+most|no\s+more\s+than|up\s+to|maximum(?:\s+of)?|max|limit|cap)\b |
+            (?:timeout|deadline|time[-\s]?(?:limit|budget)|token[-\s]?budget|cost[-\s]?budget|budget)\b
+        )",
+    )
+    .expect("A029 operative-control prefix regex is valid")
+});
+
 /// Check whether an agent description is too similar to the agent name.
 ///
 /// Returns `true` when the description adds no meaningful information beyond
@@ -359,7 +380,7 @@ fn validate_agent_file(
     )
     .with_outer_max_turns(max_turns);
     if frontmatter_is_valid {
-        check_agent_stop_control(diag, agent_path, fm_lines, &markdown);
+        check_agent_stop_control(diag, agent_path, fm_lines, &prompt_document);
     }
     prompt_pass.validate(&prompt_document, diag);
 }
@@ -525,15 +546,14 @@ fn is_execution_tool(tool: &str) -> bool {
 
 /// A029: tool-using agents need one concrete stop control or failure outcome.
 ///
-/// This intentionally examines only Markdown prose already isolated by the
-/// shared parser. Frontmatter is considered solely for a valid `maxTurns`;
-/// fences, inline code, block quotes, and quoted examples cannot satisfy a
-/// body control.
+/// This intentionally examines only live, operative Markdown prose. Frontmatter
+/// is considered solely for a valid `maxTurns`; examples, fences, inline code,
+/// block quotes, and quoted text cannot satisfy a body control.
 fn check_agent_stop_control(
     diag: &mut DiagnosticCollector,
     agent_path: &str,
     fm_lines: &[String],
-    markdown: &MarkdownDocument,
+    document: &LiveInstructionDocument<'_>,
 ) {
     let execution_tools: Vec<_> = get_field_items(fm_lines, "tools")
         .into_iter()
@@ -543,16 +563,7 @@ fn check_agent_stop_control(
         return;
     }
 
-    let prose = markdown
-        .body_prose()
-        .iter()
-        .map(|line| line.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let has_body_control = ATTEMPT_BOUND.is_match(&prose)
-        || EXPLICIT_BUDGET.is_match(&prose)
-        || FAILURE_FALLBACK.is_match(&prose);
-    if has_body_control {
+    if has_operative_body_control(document) {
         return;
     }
 
@@ -563,6 +574,47 @@ fn check_agent_stop_control(
             execution_tools.join(", "),
         ),
     );
+}
+
+fn has_operative_body_control(document: &LiveInstructionDocument<'_>) -> bool {
+    let example_scopes = document.example_scopes();
+    let heading_lines: HashSet<_> = document
+        .headings()
+        .iter()
+        .map(|heading| heading.line)
+        .collect();
+    let mut scopes = Vec::new();
+    let mut scope = Vec::new();
+    let mut previous_line = None;
+
+    for (line, is_example) in document.prose_lines().iter().zip(example_scopes) {
+        let boundary = is_example
+            || line.text.trim().is_empty()
+            || heading_lines.contains(&line.line)
+            || previous_line.is_some_and(|previous| line.line > previous + 1);
+        if boundary && !scope.is_empty() {
+            scopes.push(std::mem::take(&mut scope));
+        }
+        if !boundary {
+            scope.push(line.text.as_str());
+        }
+        previous_line = Some(line.line);
+    }
+    if !scope.is_empty() {
+        scopes.push(scope);
+    }
+
+    scopes.into_iter().any(|scope| {
+        scope
+            .join(" ")
+            .split_inclusive(['.', '!', '?', ';'])
+            .any(|sentence| {
+                OPERATIVE_CONTROL_PREFIX.is_match(sentence)
+                    && (ATTEMPT_BOUND.is_match(sentence)
+                        || EXPLICIT_BUDGET.is_match(sentence)
+                        || FAILURE_FALLBACK.is_match(sentence))
+            })
+    })
 }
 
 /// Collect top-level (non-indented, non-list) frontmatter keys.
@@ -1479,6 +1531,7 @@ mod tests {
     fn test_a029_recognizes_documented_body_controls() {
         for body in [
             "Make at most 3 tool calls before returning the result.",
+            "Use a timeout of\n15 minutes for the investigation.",
             "Make a maximum 3 attempts before returning the result.",
             "Use a timeout of 15 minutes for the investigation.",
             "Use a cost budget of $5 for the investigation.",
@@ -1526,6 +1579,27 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn test_a029_rejects_example_and_descriptive_body_controls() {
+        for body in [
+            "# Examples\nUse a timeout of 10 minutes.\n\n# Task\nInvestigate the failure.\n",
+            "The legacy runner used a timeout of 10 minutes for each investigation.\n",
+            "# Example workflow\nIf there is no progress, stop and report the blocker.\n\n# Task\nInvestigate the failure and implement the repair.\n",
+        ] {
+            let content =
+                format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\n{body}");
+            run_agent(&content, |diag| {
+                assert!(
+                    diag.diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing),
+                    "A029 must reject example or descriptive control text: {body}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_a029_skips_non_execution_tools_and_invalid_frontmatter() {
         for content in [
             format!(
@@ -1560,7 +1634,7 @@ mod tests {
         std::fs::write(
             ".claude/agents/general.md",
             format!(
-                "---\nname: general\ndescription: {GOOD_DESC}\ntools: mcp__search__query\n---\nInvestigate the failure.\n"
+                "---\nname: general\ndescription: {GOOD_DESC}\ntools: mcp__search__query\n---\n# Examples\nUse a timeout of 10 minutes.\n\n# Task\nInvestigate the failure.\n"
             ),
         )
         .unwrap();
