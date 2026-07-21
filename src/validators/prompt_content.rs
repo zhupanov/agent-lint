@@ -495,7 +495,7 @@ fn check_weak_critical_language(
 // separately headed response modes are excluded before comparison.
 
 /// A response output format recognized by the exclusive-format conflict class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum OutputFormat {
     Json,
     Markdown,
@@ -518,10 +518,22 @@ impl OutputFormat {
             Self::PlainText => "plain text",
         }
     }
+
+    fn sort_rank(self) -> u8 {
+        match self {
+            Self::Json => 0,
+            Self::Markdown => 1,
+            Self::Xml => 2,
+            Self::Yaml => 3,
+            Self::Html => 4,
+            Self::Csv => 5,
+            Self::PlainText => 6,
+        }
+    }
 }
 
 /// A response unit recognized by the size/shape conflict class.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum ShapeUnit {
     Character,
     Word,
@@ -553,10 +565,20 @@ impl ShapeUnit {
             Self::Line => None,
         }
     }
+
+    fn sort_rank(self) -> u8 {
+        match self {
+            Self::Character => 0,
+            Self::Word => 1,
+            Self::Sentence => 2,
+            Self::Paragraph => 3,
+            Self::Line => 4,
+        }
+    }
 }
 
 /// A response size/shape bound.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum ShapeBound {
     Exactly(u32),
     AtLeast(u32),
@@ -589,20 +611,52 @@ impl ShapeBound {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct FormatConstraint {
     format: OutputFormat,
     exclusive: bool,
 }
 
 /// One typed operative output requirement located in the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum OutputRequirement {
     Format(FormatConstraint),
     Shape { unit: ShapeUnit, bound: ShapeBound },
 }
 
+impl OutputRequirement {
+    /// A stable typed key used only to break source-position ties. Keeping it
+    /// independent of display labels prevents wording changes from reordering
+    /// machine-observable diagnostics.
+    fn stable_identity(self) -> (u8, u8, u8, u32) {
+        match self {
+            Self::Format(FormatConstraint { format, exclusive }) => {
+                (0, format.sort_rank(), u8::from(exclusive), 0)
+            }
+            Self::Shape { unit, bound } => match bound {
+                ShapeBound::Exactly(count) => (1, unit.sort_rank(), 0, count),
+                ShapeBound::AtLeast(count) => (1, unit.sort_rank(), 1, count),
+                ShapeBound::AtMost(count) => (1, unit.sort_rank(), 2, count),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClauseClassification {
+    /// An imperative or explicit constraint on the agent's own response.
+    OperativeOutput,
+    /// A terse, otherwise-subjectless shape instruction such as "Exactly one
+    /// sentence." It is accepted only when the whole clause is the mandate.
+    StandaloneShapeMandate,
+    /// Descriptions of inputs, requests, source data, examples, or third
+    /// parties, which never contribute Q006 constraints.
+    NonOutput,
+}
+
 struct DetectedRequirement {
     line: usize,
+    column: usize,
     scope: Option<usize>,
     requirement: OutputRequirement,
 }
@@ -630,6 +684,10 @@ const OUTPUT_DIRECTIVE_VERBS: &[&str] = &[
     "respond", "reply", "answer", "return", "output", "produce", "emit", "print", "render",
     "format", "write", "provide", "give",
 ];
+
+/// Additional imperative verbs that unambiguously constrain a response's
+/// shape, but do not imply a format requirement on their own.
+const SHAPE_DIRECTIVE_VERBS: &[&str] = &["include", "use"];
 
 /// Directive phrases that frame the whole response as one format and therefore
 /// make the requirement exclusive on their own.
@@ -726,6 +784,27 @@ const AGENT_OUTPUT_SUBJECTS: &[&str] = &[
     "the response should",
     "the output must",
     "the output should",
+    "response:",
+    "output:",
+    "answer:",
+    "reply:",
+];
+
+/// Markers that turn an otherwise agent-output-looking clause into a
+/// description of a past response rather than a live instruction.
+const HISTORICAL_OUTPUT_REFERENCES: &[&str] = &[
+    "previous response",
+    "prior response",
+    "historical response",
+    "earlier response",
+    "last response",
+    "previous output",
+    "prior output",
+    "historical output",
+    "earlier output",
+    "last output",
+    "response from the previous",
+    "output from the previous",
 ];
 
 const SENTENCE_DELIMITERS: &[char] = &['.', '!', '?', ';'];
@@ -781,6 +860,14 @@ static SHAPE_PATTERNS: LazyLock<Vec<(Regex, ShapeBoundKind)>> = LazyLock::new(||
     ]
 });
 
+#[derive(Debug, Clone, Copy)]
+struct RecognizedShapeConstraint {
+    start: usize,
+    end: usize,
+    unit: ShapeUnit,
+    bound: ShapeBound,
+}
+
 fn check_output_conflict(
     path: &str,
     document: &LiveInstructionDocument<'_>,
@@ -804,19 +891,23 @@ fn check_output_conflict(
             continue;
         }
         let scope = scope_of(document, line.line);
-        for sentence in split_on(&line.text, SENTENCE_DELIMITERS) {
+        for (sentence_offset, sentence) in split_on(&line.text, SENTENCE_DELIMITERS) {
             // Conditionality is judged on the whole sentence first so a leading
             // "For X, ..." condition still guards the directive that follows it.
             if sentence_is_conditional(sentence) {
                 continue;
             }
-            for clause in split_on(sentence, CLAUSE_DELIMITERS) {
+            for (clause_offset, clause) in split_on(sentence, CLAUSE_DELIMITERS) {
                 if sentence_is_conditional(clause) {
                     continue;
                 }
-                for requirement in detect_requirements(clause) {
+                for (requirement_offset, requirement) in detect_requirements(clause) {
                     requirements.push(DetectedRequirement {
                         line: line.line,
+                        column: line.text[..sentence_offset + clause_offset + requirement_offset]
+                            .chars()
+                            .count()
+                            + 1,
                         scope,
                         requirement,
                     });
@@ -828,14 +919,53 @@ fn check_output_conflict(
     report_output_conflicts(path, &requirements, diag);
 }
 
-fn detect_requirements(clause: &str) -> Vec<OutputRequirement> {
-    if let Some(format) = format_constraint(clause) {
-        return vec![OutputRequirement::Format(format)];
+fn detect_requirements(clause: &str) -> Vec<(usize, OutputRequirement)> {
+    let shapes = shape_constraints(clause);
+    match classify_clause(clause, &shapes) {
+        ClauseClassification::NonOutput => Vec::new(),
+        ClauseClassification::OperativeOutput => {
+            let mut requirements = Vec::new();
+            if let Some(format) = format_constraint(clause) {
+                requirements.push((0, OutputRequirement::Format(format)));
+            }
+            requirements.extend(shapes.into_iter().map(|shape| {
+                (
+                    shape.start,
+                    OutputRequirement::Shape {
+                        unit: shape.unit,
+                        bound: shape.bound,
+                    },
+                )
+            }));
+            requirements
+        }
+        ClauseClassification::StandaloneShapeMandate => shapes
+            .into_iter()
+            .map(|shape| {
+                (
+                    shape.start,
+                    OutputRequirement::Shape {
+                        unit: shape.unit,
+                        bound: shape.bound,
+                    },
+                )
+            })
+            .collect(),
     }
-    shape_constraints(clause)
-        .into_iter()
-        .map(|(unit, bound)| OutputRequirement::Shape { unit, bound })
-        .collect()
+}
+
+/// Classify the semantic subject of a clause before turning any numeric shape
+/// phrase into a constraint. This is deliberately separate from bound parsing:
+/// the same phrase can describe a request or input rather than the response.
+fn classify_clause(clause: &str, shapes: &[RecognizedShapeConstraint]) -> ClauseClassification {
+    let lower = clause.to_ascii_lowercase();
+    if clause_states_output_directive(&lower) || clause_states_shape_directive(&lower) {
+        return ClauseClassification::OperativeOutput;
+    }
+    if shapes.len() == 1 && standalone_shape_mandate(clause, shapes[0]) {
+        return ClauseClassification::StandaloneShapeMandate;
+    }
+    ClauseClassification::NonOutput
 }
 
 fn format_constraint(clause: &str) -> Option<FormatConstraint> {
@@ -871,6 +1001,16 @@ fn format_constraint(clause: &str) -> Option<FormatConstraint> {
 /// adverbs and an optional `you [modal]` subject) or it explicitly constrains
 /// the agent's own response.
 fn clause_states_output_directive(lower: &str) -> bool {
+    clause_starts_with_directive(lower, OUTPUT_DIRECTIVE_VERBS)
+        || clause_explicitly_constrains_agent_output(lower)
+}
+
+fn clause_states_shape_directive(lower: &str) -> bool {
+    clause_starts_with_directive(lower, SHAPE_DIRECTIVE_VERBS)
+        || clause_explicitly_constrains_agent_output(lower)
+}
+
+fn clause_starts_with_directive(lower: &str, directive_verbs: &[&str]) -> bool {
     let lead = lower.trim_start_matches(|character: char| {
         character.is_whitespace()
             || matches!(character, '#' | '-' | '*' | '+' | '>' | ')')
@@ -886,19 +1026,26 @@ fn clause_states_output_directive(lower: &str) -> bool {
     }
     if words
         .peek()
-        .is_some_and(|word| OUTPUT_DIRECTIVE_VERBS.contains(word))
+        .is_some_and(|word| directive_verbs.contains(word))
     {
         return true;
     }
-    AGENT_OUTPUT_SUBJECTS
+    false
+}
+
+fn clause_explicitly_constrains_agent_output(lower: &str) -> bool {
+    !HISTORICAL_OUTPUT_REFERENCES
         .iter()
-        .any(|subject| lower.contains(subject))
+        .any(|reference| lower.contains(reference))
+        && AGENT_OUTPUT_SUBJECTS
+            .iter()
+            .any(|subject| lower.contains(subject))
 }
 
 /// Every recognized size/shape bound in a clause, kept left to right and
 /// non-overlapping so one clause can carry more than one requirement (e.g.
 /// "exactly one sentence but at least three paragraphs").
-fn shape_constraints(clause: &str) -> Vec<(ShapeUnit, ShapeBound)> {
+fn shape_constraints(clause: &str) -> Vec<RecognizedShapeConstraint> {
     let mut matches: Vec<(usize, usize, ShapeUnit, ShapeBound)> = Vec::new();
     for (regex, kind) in SHAPE_PATTERNS.iter() {
         for captures in regex.captures_iter(clause) {
@@ -930,16 +1077,29 @@ fn shape_constraints(clause: &str) -> Vec<(ShapeUnit, ShapeBound)> {
     // Earliest start first, longer match first on ties, so selection is
     // deterministic regardless of pattern order.
     matches.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
-    let mut selected: Vec<(ShapeUnit, ShapeBound)> = Vec::new();
+    let mut selected = Vec::new();
     let mut consumed_end = 0usize;
     for (start, end, unit, bound) in matches {
         if start < consumed_end {
             continue;
         }
         consumed_end = end;
-        selected.push((unit, bound));
+        selected.push(RecognizedShapeConstraint {
+            start,
+            end,
+            unit,
+            bound,
+        });
     }
     selected
+}
+
+fn standalone_shape_mandate(clause: &str, shape: RecognizedShapeConstraint) -> bool {
+    let prefix = clause[..shape.start].trim();
+    let suffix = clause[shape.end..].trim_matches(|character: char| {
+        character.is_whitespace() || matches!(character, ':' | '.' | '!' | '?')
+    });
+    prefix.is_empty() && suffix.is_empty()
 }
 
 fn unit_of(raw: &str) -> Option<ShapeUnit> {
@@ -978,10 +1138,30 @@ fn scope_of(document: &LiveInstructionDocument<'_>, line_number: usize) -> Optio
         .max()
 }
 
-fn split_on<'a>(text: &'a str, delimiters: &'static [char]) -> impl Iterator<Item = &'a str> {
-    text.split(|character| delimiters.contains(&character))
-        .map(str::trim)
-        .filter(|piece| !piece.is_empty())
+fn split_on<'a>(text: &'a str, delimiters: &'static [char]) -> Vec<(usize, &'a str)> {
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        if delimiters.contains(&character) {
+            push_trimmed_piece(text, start, index, &mut pieces);
+            start = index + character.len_utf8();
+        }
+    }
+    push_trimmed_piece(text, start, text.len(), &mut pieces);
+    pieces
+}
+
+fn push_trimmed_piece<'a>(
+    text: &'a str,
+    start: usize,
+    end: usize,
+    pieces: &mut Vec<(usize, &'a str)>,
+) {
+    let raw = &text[start..end];
+    let trimmed = raw.trim();
+    if !trimmed.is_empty() {
+        pieces.push((start + raw.len() - raw.trim_start().len(), trimmed));
+    }
 }
 
 fn sentence_is_conditional(clause: &str) -> bool {
@@ -1016,10 +1196,29 @@ fn report_output_conflicts(
     requirements: &[DetectedRequirement],
     diag: &mut DiagnosticCollector,
 ) {
-    // At most one finding per (scope, category): the earliest minimal pair in
-    // source order. This keeps output deterministic and bounded even when a
-    // section stacks several incompatible requirements.
-    let mut reported: HashSet<(Option<usize>, ConflictCategory)> = HashSet::new();
+    // Recognition can overlap through synonymous syntax, but a source
+    // constraint is unique by its source position, response scope, and typed
+    // identity. Deduplicate those before forming pairs; different pairs which
+    // share a scope or category must remain distinct findings.
+    let mut unique = HashSet::new();
+    let mut requirements = requirements
+        .iter()
+        .filter(|requirement| {
+            unique.insert((
+                requirement.line,
+                requirement.column,
+                requirement.scope,
+                requirement.requirement,
+            ))
+        })
+        .collect::<Vec<_>>();
+    requirements.sort_by_key(|requirement| {
+        (
+            requirement.line,
+            requirement.column,
+            requirement.requirement.stable_identity(),
+        )
+    });
 
     for (index, first) in requirements.iter().enumerate() {
         for second in &requirements[index + 1..] {
@@ -1029,9 +1228,7 @@ fn report_output_conflicts(
             let Some(category) = conflict_between(&first.requirement, &second.requirement) else {
                 continue;
             };
-            if reported.insert((first.scope, category)) {
-                emit_output_conflict(path, first, second, category, diag);
-            }
+            emit_output_conflict(path, first, second, category, diag);
         }
     }
 }
@@ -1111,7 +1308,7 @@ fn emit_output_conflict(
     diag.report_with(
         LintRule::PromptOutputConflict,
         &message,
-        DiagnosticMetadata::at_line(line_a)
+        DiagnosticMetadata::at_point(line_a, first.column)
             .with_evidence(evidence)
             .with_suggestion(
                 "Clarify which single output requirement applies, or separate the instructions by explicit condition or response mode; this rule does not choose between them.",
@@ -1952,11 +2149,43 @@ mod tests {
             // Label-routed response modes (delineation without a marker word).
             "- Data requests: respond only in JSON.\n- Explanations: respond only in Markdown.",
             "Data mode: respond only in JSON. Prose mode: respond only in Markdown.",
+            // Shape phrases only constrain output when their clause is
+            // classified as operative. These all describe another subject.
+            "The input contains exactly one sentence.\nThe input contains at least three paragraphs.",
+            "The request requires exactly one sentence.\nThe request requires at least three paragraphs.",
+            "The source document has exactly one sentence.\nThe source document has at least three paragraphs.",
+            "The previous assistant response contained exactly one sentence.\nThe historical report contained at least three paragraphs.",
+            "Your response from the previous turn contained exactly one sentence.\nThe historical response contained at least three paragraphs.",
         ] {
             assert!(
                 q006_diagnostics(clean).is_empty(),
                 "expected no Q006 for {clean:?}"
             );
+        }
+    }
+
+    #[test]
+    fn q006_classifies_output_shape_clauses_before_comparing_bounds() {
+        for (operative, descriptive) in [
+            (
+                "Answer in exactly one sentence.\nInclude at least three paragraphs.",
+                "The input contains exactly one sentence.\nThe input contains at least three paragraphs.",
+            ),
+            (
+                "Use at most two sentences.\nWrite at least five sentences.",
+                "The request contains at most two sentences.\nThe request contains at least five sentences.",
+            ),
+            (
+                "Exactly one sentence.\nAt least three paragraphs.",
+                "The source text is exactly one sentence.\nThe source text has at least three paragraphs.",
+            ),
+            (
+                "Response: exactly one sentence.\nOutput: at least three paragraphs.",
+                "The prior response: exactly one sentence.\nThe historical output: at least three paragraphs.",
+            ),
+        ] {
+            assert_eq!(q006_diagnostics(operative).len(), 1, "{operative:?}");
+            assert!(q006_diagnostics(descriptive).is_empty(), "{descriptive:?}");
         }
     }
 
@@ -2060,18 +2289,41 @@ mod tests {
     }
 
     #[test]
-    fn q006_reports_one_deterministic_pair_per_scope() {
-        // Three mutually exclusive formats in one scope collapse to a single
-        // finding anchored at the earliest constraint — bounded, not three.
+    fn q006_reports_every_deterministic_format_conflict_pair_per_scope() {
         let diagnostics =
             q006_diagnostics("Output only JSON.\nReturn only XML.\nRespond only in YAML.\n");
-        assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 1);
-        let evidence = diagnostics[0].evidence.as_deref().unwrap();
-        assert!(
-            evidence.starts_with("line 1:") && evidence.contains("line 2:"),
-            "{evidence}"
+        assert_eq!(diagnostics.len(), 3);
+        let pairs = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.evidence.as_deref().unwrap())
+            .collect::<Vec<_>>();
+        assert!(pairs[0].starts_with("line 1:") && pairs[0].contains("line 2:"));
+        assert!(pairs[1].starts_with("line 1:") && pairs[1].contains("line 3:"));
+        assert!(pairs[2].starts_with("line 2:") && pairs[2].contains("line 3:"));
+    }
+
+    #[test]
+    fn q006_reports_every_deterministic_shape_conflict_pair_per_scope() {
+        let diagnostics = q006_diagnostics(
+            "Answer in exactly one sentence.\nInclude exactly two sentences.\nUse exactly three sentences.\n",
         );
+        assert_eq!(diagnostics.len(), 3);
+        let pairs = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.evidence.as_deref().unwrap())
+            .collect::<Vec<_>>();
+        assert!(pairs[0].starts_with("line 1:") && pairs[0].contains("line 2:"));
+        assert!(pairs[1].starts_with("line 1:") && pairs[1].contains("line 3:"));
+        assert!(pairs[2].starts_with("line 2:") && pairs[2].contains("line 3:"));
+    }
+
+    #[test]
+    fn q006_deduplicates_overlapping_shape_recognition() {
+        // "exactly one" matches both the general exact pattern and the
+        // specialized one-count pattern, but represents one source constraint.
+        let diagnostics =
+            q006_diagnostics("Use exactly one sentence.\nInclude at least three sentences.\n");
+        assert_eq!(diagnostics.len(), 1);
     }
 
     fn q006_count_on_surface(kind: InstructionSurfaceKind, content: &str) -> usize {
@@ -2109,6 +2361,35 @@ mod tests {
                 ),
                 0,
                 "{kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn q006_shape_classification_holds_across_surfaces() {
+        for kind in [
+            InstructionSurfaceKind::ClaudeProject,
+            InstructionSurfaceKind::Skill,
+            InstructionSurfaceKind::Agent,
+            InstructionSurfaceKind::AgentsMd,
+            InstructionSurfaceKind::CursorRule,
+            InstructionSurfaceKind::CursorLegacyRule,
+        ] {
+            assert_eq!(
+                q006_count_on_surface(
+                    kind,
+                    "Answer in exactly one sentence.\nInclude at least three paragraphs.\n",
+                ),
+                1,
+                "{kind:?} operative shape",
+            );
+            assert_eq!(
+                q006_count_on_surface(
+                    kind,
+                    "The input contains exactly one sentence.\nThe input contains at least three paragraphs.\n",
+                ),
+                0,
+                "{kind:?} input description",
             );
         }
     }
