@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 288 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 289 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -309,6 +309,7 @@ code, and identifiable quoted examples. Q004 applies only when both root
 | Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | error |
 | Q004 | `claude-readme-duplicate` | More than 40% of normalized `CLAUDE.md` prose lines also occur in `README.md` (at least three shared lines) | Always | error |
 | Q005 | `prompt-unbounded-retry` | Operative unbounded retry or continuation instruction without an applicable bound or concrete failure outcome | Always | error |
+| Q006 | `prompt-output-conflict` | Two mechanically incompatible operative output instructions (exclusive formats, or contradictory size/shape bounds) in one response scope | Always | warn |
 
 Q001 recognizes: `be helpful`, `be accurate`, `be concise`, `follow
 instructions`, `do your best`, `be professional`, `use best judgment`, and
@@ -329,6 +330,16 @@ non-retry workflows, and instructions with an applicable attempt, tool-call,
 step, timeout, token/cost budget, deadline, concrete failure outcome, or a
 validated agent `maxTurns` bound. Its diagnostic reports bounded matched
 evidence and asks for a bound or failure outcome; it has no autofix.
+
+Q006 models each operative output directive as a typed constraint (an exclusive
+format requirement, or a size/shape bound) and reports only the pairs that
+cannot both hold within one heading-delimited response scope. It never counts
+raw format keywords: mere multi-format mention, conditional routing, either/or
+alternatives, input-format mentions, examples, and separately headed response
+modes stay clean. The diagnostic exposes both conflicting constraints as
+structured evidence and suggests clarification without choosing between them; it
+has no autofix. Typed frontmatter output-contract conflicts are intentionally
+out of scope for the first version.
 
 ## Claude Configuration Rules (R/O/T)
 
@@ -568,7 +579,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (12 of 288):**
+**Auto-fixable rules (12 of 289):**
 
 | Rule | Code | Fix |
 |------|------|-----|

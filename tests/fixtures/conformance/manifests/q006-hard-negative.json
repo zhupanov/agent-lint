@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "q006-hard-negative",
+  "covers": ["nested-agents-md", "normal", "json", "q006-multi-format-clean"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "Q006", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

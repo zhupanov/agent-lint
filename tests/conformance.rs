@@ -29,6 +29,8 @@ const REQUIRED_SMOKE_COVERAGE: &[&str] = &[
     "i003-bare-extension",
     "q002-quoted-example",
     "q002-safety-negative",
+    "q006-multi-format-clean",
+    "q006-output-conflict",
 ];
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
