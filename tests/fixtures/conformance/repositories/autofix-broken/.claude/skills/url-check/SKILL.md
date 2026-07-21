@@ -4,4 +4,4 @@ description: Use when checking secure transport in integration documentation
 ---
 # Secure transport
 
-Visit http://service.invalid for integration details.
+Visit http://service.corp for integration details.
