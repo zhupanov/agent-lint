@@ -539,8 +539,8 @@ pub enum LintRule {
     /// T001: settings prUrlTemplate is not a usable template string
     #[strum(props(code = "T001", name = "pr-template-invalid"))]
     SettingsPrUrlTemplateInvalid,
-    /// T002: settings channelsEnabled is not a boolean
-    #[strum(props(code = "T002", name = "channels-enabled-invalid"))]
+    /// T002: repository settings channelsEnabled is ignored by Claude Code
+    #[strum(props(code = "T002", name = "channels-enabled-unsupported"))]
     SettingsChannelsEnabledInvalid,
 
     // ── Shared instruction files (I) ──────────────────────────────
@@ -970,6 +970,7 @@ impl LintRule {
     /// (e.g. `"plugin-json-missing"`).
     pub fn from_code_or_name(s: &str) -> Option<Self> {
         let migrated = match s {
+            "channels-enabled-invalid" => Some(Self::SettingsChannelsEnabledInvalid),
             "CX037" | "codex-agents-empty" => Some(Self::InstructionFileEmpty),
             "CX038" | "codex-agents-secret" => Some(Self::InstructionFileSecret),
             "CX041" | "codex-agents-path" => Some(Self::InstructionFilePathMissing),
@@ -1301,6 +1302,10 @@ mod tests {
         assert_eq!(LintRule::from_code_or_name("nonexistent"), None);
         assert_eq!(LintRule::from_code_or_name("CX010"), None);
         assert_eq!(LintRule::from_code_or_name("codex-access-ack"), None);
+        assert_eq!(
+            LintRule::from_code_or_name("channels-enabled-invalid"),
+            Some(LintRule::SettingsChannelsEnabledInvalid)
+        );
     }
 
     #[test]

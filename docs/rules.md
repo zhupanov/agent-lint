@@ -439,8 +439,16 @@ not exist.
 | O004 | `style-body-empty` | Output style has no non-whitespace body after frontmatter | Always | warn |
 | O005 | `style-name-long` | Output-style `name` exceeds 64 characters | Always | warn |
 | O006 | `style-frontmatter-invalid` | Output-style frontmatter is missing or invalid YAML | Always | error |
-| T001 | `pr-template-invalid` | `prUrlTemplate` is not a non-empty string with a documented placeholder | Always | warn |
-| T002 | `channels-enabled-invalid` | `channelsEnabled` is not a boolean | Always | warn |
+| T001 | `pr-template-invalid` | `prUrlTemplate` must be a trimmed non-empty string, use a documented placeholder only, and render to an absolute HTTP(S) URL with a host | Always | warn |
+| T002 | `channels-enabled-unsupported` | Repository `channelsEnabled` is ignored; configure this managed-policy-only field through organization policy instead | Always | warn |
+
+T001 accepts the documented `{host}`, `{owner}`, `{repo}`, `{number}`, and
+`{url}` placeholders (including repetitions). It first checks type,
+blank/surrounding whitespace, placeholder presence, unknown placeholders, then
+the rendered HTTP(S) URL in that order. T002 applies to either fixed settings
+path even when `[lint].exclude` names it; global and per-file rule policy still
+applies. Neither rule has an autofix because removing configuration or choosing
+a replacement URL/policy is not an unambiguous edit.
 
 ## Shared Instruction File Rules (I)
 

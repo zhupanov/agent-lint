@@ -74,7 +74,7 @@ fn run_basic(
     skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass, false);
-    claude_config::validate_private_config(diag, exclude);
+    claude_config::validate_private_config(ctx, diag, exclude);
     validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
     // A030/S074: overlapping routing descriptions within simultaneously available namespaces
     desc_overlap::validate_agent_desc_overlap(diag, exclude, false);
@@ -101,7 +101,7 @@ fn run_plugin(
     skills::validate_private_skill_frontmatter(diag, exclude);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass, true);
-    claude_config::validate_private_config(diag, exclude);
+    claude_config::validate_private_config(ctx, diag, exclude);
     validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
     prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
 

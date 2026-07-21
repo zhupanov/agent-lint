@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Added full T001 (`pr-template-invalid`) URL-template validation and T002
+  (`channels-enabled-unsupported`) repository-scope validation. T002 retains
+  `channels-enabled-invalid` as a compatibility selector alias; both rules
+  report JSON locations, category-only evidence, and safe fixed suggestions.
 - Extended S031 (`non-https-url`) and S032 (`hardcoded-secret`) to
   platform-gated `.agents/skills/` and `.cursor/skills/` surfaces when those
   targets are active. Autofix for S031 remains scoped to `skills/` and
