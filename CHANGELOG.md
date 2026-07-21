@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING**: S055 (`script-errhand-missing`) recursively inspects
+  shell/Python scripts under each public skill's `scripts/` tree (including
+  `.bash` and extensionless shebang files), requires both statement-level
+  `try:` and `except` for Python, and attributes each finding to the offending
+  script path instead of `SKILL.md`. Per-file overrides that suppressed S055
+  via `SKILL.md` paths must retarget `scripts/` globs or individual script
+  paths; skill-level `suppress = ["S055"]` is unchanged.
 - **BREAKING**: Removed I005 (`instruction-file-structure`) and its legacy
   CX044 / `codex-agents-structure` aliases. Syntax and byte-length heuristics
   cannot soundly decide whether inherited instruction files are

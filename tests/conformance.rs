@@ -40,6 +40,7 @@ const REQUIRED_SMOKE_COVERAGE: &[&str] = &[
     "q006-multi-format-clean",
     "q006-output-conflict",
     "skill-structural",
+    "s055-script-errhand",
 ];
 
 #[derive(Debug, Clone, Copy, Deserialize, Eq, Ord, PartialEq, PartialOrd)]

@@ -196,7 +196,7 @@ Description-content rules (S014--S018, S034, S050, and S054) use the canonical p
 | S051 | `script-deps-missing` | Script-backed skill lacks dependency/package documentation | Plugin | warn |
 | S052 | `script-verify-missing` | Script-backed skill lacks verification/validation steps | Plugin | warn |
 | S053 | `terminology-inconsistent` | Uses 3+ variants from the same synonym group | Plugin | warn |
-| S055 | `script-errhand-missing` | Script file lacks error handling patterns (`set -e`/`trap` for shell, `try`/`except` for Python) | Plugin | warn |
+| S055 | `script-errhand-missing` | Script under `scripts/` (recursive; `.sh`/`.bash`/`.py` or shebang) lacks error handling (`set -e`/`trap` for shell, `try`/`except` for Python); subject is the script path | Plugin | warn |
 | S056 | `body-no-default` | Body lists alternatives without stating a default recommendation | Plugin | warn |
 | S057 | `magic-number-undoc` | Undocumented magic number in code block (no justification comment) | Plugin | warn |
 
