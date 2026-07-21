@@ -303,7 +303,11 @@ impl MarkdownDocument {
     }
 }
 
-fn mask_html_comments(text: &str, in_comment: &mut bool) -> String {
+/// Replace HTML comments with spaces while retaining source columns.
+///
+/// The state is intentionally caller-owned so scanners can carry a comment
+/// through successive lines of one Markdown document.
+pub(crate) fn mask_html_comments(text: &str, in_comment: &mut bool) -> String {
     let mut chars: Vec<char> = text.chars().collect();
     let mut index = 0;
     while index < chars.len() {

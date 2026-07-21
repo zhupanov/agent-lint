@@ -47,7 +47,7 @@ pub fn markdown_fences(content: &str) -> Vec<MarkdownFence> {
         };
         let count = trimmed.chars().take_while(|ch| *ch == marker).count();
         let opener_indent = lines[index].len() - trimmed.len();
-        if count < 3 || opener_indent > 3 {
+        if count < 3 || !has_valid_opener_indent(lines[index]) {
             index += 1;
             continue;
         }
@@ -302,7 +302,9 @@ impl CodeFenceTracker {
             LineClass::Inside
         } else {
             // Not inside a fence — check for opening
-            if let Some((ch, count)) = fence_start(trimmed) {
+            if has_valid_opener_indent(line)
+                && let Some((ch, count)) = fence_start(trimmed)
+            {
                 self.fence_char = Some(ch);
                 self.fence_len = count;
                 return LineClass::Delimiter;
@@ -310,6 +312,28 @@ impl CodeFenceTracker {
             LineClass::Outside
         }
     }
+}
+
+/// Whether `line` has CommonMark-compatible indentation for a fence opener.
+///
+/// Fenced blocks may be indented by at most three spaces. Tabs count as four
+/// columns here, so a tab-indented fence-lookalike is an indented code block,
+/// not a fence opener. Non-ASCII leading whitespace is likewise not a
+/// CommonMark fence indentation prefix.
+fn has_valid_opener_indent(line: &str) -> bool {
+    let mut columns = 0;
+    for ch in line.chars() {
+        match ch {
+            ' ' => columns += 1,
+            '\t' => columns += 4,
+            ch if ch.is_whitespace() => return false,
+            _ => return columns <= 3,
+        }
+        if columns > 3 {
+            return false;
+        }
+    }
+    false
 }
 
 /// Returns an iterator over lines that are outside code fences.
@@ -431,6 +455,27 @@ mod tests {
         let text = "before\n   ```\n  code\n   ```\nafter";
         let outside: Vec<&str> = lines_outside_fences(text).collect();
         assert_eq!(outside, vec!["before", "after"]);
+    }
+
+    #[test]
+    fn over_indented_or_tab_indented_openers_remain_outside() {
+        for opener in ["    ```bash", "\t```bash"] {
+            let text = format!("before\n{opener}\necho hi\nafter");
+            let outside: Vec<&str> = lines_outside_fences(&text).collect();
+            assert_eq!(outside, vec!["before", opener, "echo hi", "after"]);
+            assert_eq!(find_unclosed_fence_line(&text), None);
+            assert!(markdown_fences(&text).is_empty());
+        }
+    }
+
+    #[test]
+    fn three_space_opener_remains_a_fence() {
+        let text = "before\n   ```bash\necho hi\n";
+        assert_eq!(find_unclosed_fence_line(text), Some(2));
+        assert_eq!(
+            lines_outside_fences(text).collect::<Vec<_>>(),
+            vec!["before"]
+        );
     }
 
     #[test]

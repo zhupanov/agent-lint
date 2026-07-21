@@ -1263,6 +1263,37 @@ fn json_preserves_structured_locations_without_fabricating_them() {
 }
 
 #[test]
+fn json_xml_structure_diagnostics_preserve_structured_locations() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/example/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: example\ndescription: Use when checking XML structure locations\n---\n<a>\n</b>\n</c>\n<div>\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "X003,X004,X005", "."],
+    );
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    for (code, line) in [("X003", 8), ("X004", 6), ("X005", 7)] {
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic["code"] == code)
+            .unwrap_or_else(|| panic!("{code} diagnostic is present"));
+        assert_eq!(
+            diagnostic["subject_path"],
+            ".claude/skills/example/SKILL.md"
+        );
+        assert_eq!(diagnostic["location"]["start"]["line"], line);
+        assert!(diagnostic["location"]["start"].get("column").is_none());
+    }
+}
+
+#[test]
 fn s059_json_reports_the_fence_line_and_actionable_suggestion() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
