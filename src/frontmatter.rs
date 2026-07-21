@@ -144,12 +144,25 @@ pub fn get_field(fm_lines: &[String], key: &str) -> Option<String> {
     }
 }
 
+/// Strict YAML parse failure for frontmatter (AS-016 / X001).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YamlStrictError {
+    /// 1-based line within the **file** (opening `---` is line 1).
+    pub file_line: usize,
+    /// 1-based column within the YAML line when the parser supplies one.
+    pub column: Option<usize>,
+    /// Human explanation without untranslated parser coordinates.
+    pub message: String,
+}
+
 /// Strict YAML parse of frontmatter lines (AS-016 / X001).
 ///
-/// On success returns the parsed document. On failure returns a 1-based line
-/// number within the **file** (accounting for the opening `---` on line 1) and
-/// a short error message.
-pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, (usize, String)> {
+/// On success returns the parsed document. On failure returns a file-relative
+/// location and a message that does not embed the parser's YAML-relative
+/// `at line N, column M` coordinates.
+pub fn parse_yaml_strict(
+    fm_lines: &[String],
+) -> Result<crate::yaml::Value, YamlStrictError> {
     let text = fm_lines.join("\n");
     match crate::yaml::parse(&text) {
         Ok(value) => Ok(value),
@@ -157,9 +170,49 @@ pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, (usi
             // YAML text starts on file line 2 (after the opening ---).
             let yaml_line = crate::yaml::error_line(&err).unwrap_or(1);
             let file_line = yaml_line.saturating_add(1);
-            Err((file_line, err.to_string()))
+            let column = crate::yaml::error_column(&err);
+            Err(YamlStrictError {
+                file_line,
+                column,
+                message: strip_parser_location_prefix(&err.to_string()),
+            })
         }
     }
+}
+
+/// Strip parser location (and the redundant `YAML parse error` wrapper) so X001
+/// keeps a single file-relative line authority in the rendered diagnostic.
+fn strip_parser_location_prefix(message: &str) -> String {
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"^(?:YAML parse error|deserialization error)(?: at line \d+, column \d+)?:\s*",
+        )
+        .expect("location strip regex")
+    });
+    let stripped = RE.replace(message, "");
+    if stripped.as_ref() == message {
+        // Fall back: remove an embedded ` at line N, column M:` if the prefix
+        // shape differs from the common parse-error forms.
+        static EMBEDDED: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r" at line \d+, column \d+:").expect("embedded location strip")
+        });
+        EMBEDDED.replace(message, ":").into_owned()
+    } else {
+        stripped.into_owned()
+    }
+}
+
+/// One-based file line of an unindented simple top-level mapping key
+/// (`name:`, `description:`, …), or `None` when the helper cannot map the key
+/// exactly (quoted/explicit/merged/indented forms).
+pub fn simple_top_level_key_line(fm_lines: &[String], key: &str) -> Option<usize> {
+    simple_top_level_key_index(fm_lines, key).map(|index| index + 2)
+}
+
+/// Zero-based frontmatter index of an unindented simple top-level mapping key.
+pub fn simple_top_level_key_index(fm_lines: &[String], key: &str) -> Option<usize> {
+    let prefix = format!("{key}:");
+    fm_lines.iter().position(|line| line.starts_with(&prefix))
 }
 
 /// Read a non-empty string field from strictly parsed mapping frontmatter.
@@ -425,8 +478,19 @@ mod tests {
     #[test]
     fn test_parse_yaml_strict_reports_file_line() {
         let fm = extract_frontmatter("---\nname: foo\n\tbad: tab\n---\n").unwrap();
-        let (line, _msg) = parse_yaml_strict(&fm).unwrap_err();
-        assert_eq!(line, 3, "file line should account for opening ---");
+        let err = parse_yaml_strict(&fm).unwrap_err();
+        assert_eq!(err.file_line, 3, "file line should account for opening ---");
+        assert!(
+            !err.message.contains("at line"),
+            "parser coordinates must not remain in the message: {}",
+            err.message
+        );
+        assert!(
+            !err.message.contains("YAML parse error"),
+            "redundant parser wrapper must be stripped: {}",
+            err.message
+        );
+        assert!(err.column.is_some());
     }
 
     #[test]

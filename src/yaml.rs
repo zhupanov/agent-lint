@@ -24,6 +24,11 @@ pub(crate) fn error_line(error: &Error) -> Option<usize> {
     error.location().map(|location| location.line())
 }
 
+/// Return the parser-reported 1-based source column when it is available.
+pub(crate) fn error_column(error: &Error) -> Option<usize> {
+    error.location().map(|location| location.column())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

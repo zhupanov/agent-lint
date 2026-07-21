@@ -18,6 +18,7 @@ mod markdown_structure;
 mod mcp;
 mod npm_scripts;
 mod prompt_content;
+pub(crate) mod shared_md_refs;
 pub(crate) mod skill_content;
 pub(crate) mod skills;
 mod user_config;

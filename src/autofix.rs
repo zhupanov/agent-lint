@@ -351,8 +351,7 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &Li
 /// Return a top-level frontmatter field line only when no indented YAML lines
 /// belong to that field before the next top-level entry.
 fn single_line_frontmatter_field_index(fm_lines: &[String], field: &str) -> Option<usize> {
-    let prefix = format!("{field}:");
-    let index = fm_lines.iter().position(|line| line.starts_with(&prefix))?;
+    let index = frontmatter::simple_top_level_key_index(fm_lines, field)?;
     let has_continuation = fm_lines[index + 1..]
         .iter()
         .take_while(|line| line.is_empty() || line.starts_with(' ') || line.starts_with('\t'))
