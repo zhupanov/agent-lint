@@ -5106,6 +5106,365 @@ warn = ["name-not-gerund"]
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_nested_script_subject_and_ordering() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/lib").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/z").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/lib/bad.sh",
+            "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/z/also-bad.sh",
+            "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/lib/good.sh",
+            "#!/bin/bash\nset -euo pipefail\necho step1\necho step2\necho step3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::ScriptErrhandMissing)
+            .collect();
+        assert_eq!(
+            findings.len(),
+            2,
+            "expected two nested bad scripts: {findings:?}"
+        );
+        let subjects: Vec<_> = findings
+            .iter()
+            .map(|d| {
+                d.subject_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(
+            subjects,
+            vec![
+                "skills/my-skill/scripts/lib/bad.sh".to_string(),
+                "skills/my-skill/scripts/z/also-bad.sh".to_string(),
+            ],
+            "nested subjects must be full paths in deterministic order"
+        );
+        assert!(
+            findings[0]
+                .message
+                .starts_with("skills/my-skill/scripts/lib/bad.sh:"),
+            "message must begin with the script path, got: {}",
+            findings[0].message
+        );
+        assert!(
+            !findings.iter().any(|d| d
+                .subject_path
+                .as_ref()
+                .is_some_and(|p| p.ends_with("SKILL.md"))),
+            "S055 must not attribute findings to SKILL.md"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_extension_cases_case_insensitive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        let bad = "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n";
+        let bad_py = "import sys\nimport os\ndef main():\n    print('hello')\nmain()\n";
+        for (name, body) in [
+            ("a.sh", bad),
+            ("b.SH", bad),
+            ("c.bash", bad),
+            ("d.BASH", bad),
+            ("e.py", bad_py),
+            ("f.PY", bad_py),
+        ] {
+            std::fs::write(format!("skills/my-skill/scripts/{name}"), body).unwrap();
+        }
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::ScriptErrhandMissing)
+            .filter_map(|d| {
+                d.subject_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
+            .collect();
+        assert_eq!(
+            subjects,
+            vec![
+                "skills/my-skill/scripts/a.sh".to_string(),
+                "skills/my-skill/scripts/b.SH".to_string(),
+                "skills/my-skill/scripts/c.bash".to_string(),
+                "skills/my-skill/scripts/d.BASH".to_string(),
+                "skills/my-skill/scripts/e.py".to_string(),
+                "skills/my-skill/scripts/f.PY".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_shebang_extensionless_and_env_forms() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        let bad_sh = "echo hello\necho world\necho foo\necho bar\necho done\n";
+        let bad_py = "import sys\nimport os\ndef main():\n    print('hello')\nmain()\n";
+        std::fs::write(
+            "skills/my-skill/scripts/direct-sh",
+            format!("#!/bin/sh\n{bad_sh}"),
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/env-bash",
+            format!("#!/usr/bin/env bash\n{bad_sh}"),
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/env-s-zsh",
+            format!("#!/usr/bin/env -S zsh\n{bad_sh}"),
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/env-python",
+            format!("#!/usr/bin/env python3\n{bad_py}"),
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/env-s-python",
+            format!("#!/usr/bin/env -S python\n{bad_py}"),
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/node-helper",
+            format!("#!/usr/bin/env node\n{bad_sh}"),
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/plain-data",
+            "line1\nline2\nline3\nline4\nline5\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::ScriptErrhandMissing)
+            .filter_map(|d| {
+                d.subject_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
+            .collect();
+        assert_eq!(
+            subjects,
+            vec![
+                "skills/my-skill/scripts/direct-sh".to_string(),
+                "skills/my-skill/scripts/env-bash".to_string(),
+                "skills/my-skill/scripts/env-python".to_string(),
+                "skills/my-skill/scripts/env-s-python".to_string(),
+                "skills/my-skill/scripts/env-s-zsh".to_string(),
+            ],
+            "node shebang and extensionless non-scripts must stay ignored; got {subjects:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_python_requires_both_try_and_except() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/try_finally.py",
+            "import sys\ntry:\n    do_something()\nfinally:\n    cleanup()\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/except_only.py",
+            "import sys\ndef main():\n    print('x')\nexcept Exception:\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/both.py",
+            "import sys\ntry:\n    do_something()\nexcept Exception as e:\n    print(e)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts to verify.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::ScriptErrhandMissing)
+            .filter_map(|d| {
+                d.subject_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
+            .collect();
+        assert_eq!(
+            subjects,
+            vec![
+                "skills/my-skill/scripts/except_only.py".to_string(),
+                "skills/my-skill/scripts/try_finally.py".to_string(),
+            ],
+            "try/finally and except-without-try must fire; try/except must pass"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_per_file_suppress_and_exclude() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/lib").unwrap();
+        let bad = "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n";
+        std::fs::write("skills/my-skill/scripts/keep-bad.sh", bad).unwrap();
+        std::fs::write("skills/my-skill/scripts/suppress-me.sh", bad).unwrap();
+        std::fs::write("skills/my-skill/scripts/lib/excluded.sh", bad).unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts to verify.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "agent-lint.toml",
+            r#"
+[lint]
+exclude = ["skills/my-skill/scripts/lib/excluded.sh"]
+
+[[lint.overrides]]
+files = ["skills/my-skill/scripts/suppress-me.sh"]
+suppress = ["S055"]
+"#,
+        )
+        .unwrap();
+        let config = crate::config::LintConfig::load(tmp.path()).unwrap();
+        let exclude = config.build_exclude_set();
+        let mut diag = DiagnosticCollector::with_config(config);
+        validate_skill_content(&mut diag, &exclude);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::ScriptErrhandMissing)
+            .collect();
+        assert_eq!(findings.len(), 1, "expected only keep-bad.sh: {findings:?}");
+        assert_eq!(
+            findings[0]
+                .subject_path
+                .as_ref()
+                .map(|p| p.to_string_lossy()),
+            Some(std::borrow::Cow::Borrowed(
+                "skills/my-skill/scripts/keep-bad.sh"
+            ))
+        );
+        assert_eq!(diag.suppressed_count(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s055_only_and_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/bad.sh",
+            "#!/bin/bash\necho hello\necho world\necho foo\necho bar\necho done\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n## Dependencies\n\npip install foo\n\n## Verify\n\nRun scripts/bad.sh to verify.\n",
+        )
+        .unwrap();
+
+        let only = crate::config::RunPolicy::resolve(
+            crate::config::CliMode::Normal,
+            &["S055".to_string()],
+        )
+        .unwrap();
+        let mut focused =
+            DiagnosticCollector::with_run_policy(crate::config::LintConfig::default(), only);
+        validate_skill_content(&mut focused, &crate::config::ExcludeSet::default());
+        assert!(
+            focused
+                .diagnostics()
+                .iter()
+                .all(|d| d.rule == LintRule::ScriptErrhandMissing)
+        );
+        assert_eq!(
+            focused
+                .diagnostics()
+                .iter()
+                .filter(|d| d.rule == LintRule::ScriptErrhandMissing)
+                .count(),
+            1
+        );
+
+        let mut pedantic_config = crate::config::LintConfig::default();
+        pedantic_config.apply_cli_mode(crate::config::CliMode::Pedantic);
+        let mut pedantic = DiagnosticCollector::with_config(pedantic_config);
+        validate_skill_content(&mut pedantic, &crate::config::ExcludeSet::default());
+        assert!(
+            pedantic
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::ScriptErrhandMissing)
+        );
+
+        let mut all_config = crate::config::LintConfig::default();
+        all_config.apply_cli_mode(crate::config::CliMode::All);
+        let mut all = DiagnosticCollector::with_config(all_config);
+        validate_skill_content(&mut all, &crate::config::ExcludeSet::default());
+        assert!(
+            all.diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::ScriptErrhandMissing
+                    && d.severity == crate::diagnostic::Severity::Error)
+        );
+    }
+
     // ── S056: body-no-default ───────────────────────────────────────
 
     #[test]

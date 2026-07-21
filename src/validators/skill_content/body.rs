@@ -79,9 +79,9 @@ const SYNONYM_GROUPS: &[(&str, &[&str])] = &[
     ("component/module/package",       &["component", "module", "package"]),
 ];
 
-// S055: Python error handling patterns (statement-level try/except)
-static RE_PY_ERROR_HANDLING: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)^\s*(try\s*:|except\b)").unwrap());
+// S055: Python statement-level `try:` and `except` (both required)
+static RE_PY_TRY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\s*try\s*:").unwrap());
+static RE_PY_EXCEPT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^\s*except\b").unwrap());
 
 // S055: Shell error handling patterns (set -e, set -o errexit, trap, || exit/return,
 // compound `|| { ...; exit|return; }`, and `if ! cmd` negated-command guards)
@@ -93,6 +93,12 @@ static RE_SH_ERROR_HANDLING: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 const SCRIPT_MIN_LINES: usize = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScriptKind {
+    Shell,
+    Python,
+}
 
 // S056: Or-chain detection — 3+ alternatives via comma-list-with-or or 2+ bare "or" occurrences
 static RE_OR_CHAIN: LazyLock<Regex> = LazyLock::new(|| {
@@ -371,9 +377,9 @@ fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     }
 }
 
-/// S055: Check .py and .sh files in the skill's scripts/ directory for error
-/// handling patterns. Reports per-file diagnostics for scripts lacking any
-/// recognized error handling.
+/// S055: Recursively check shell/Python scripts under the skill's `scripts/`
+/// directory for error handling patterns. Each finding is owned by the script
+/// path (`report_at`), not `SKILL.md`.
 fn check_script_error_handling(
     info: &SkillInfo,
     diag: &mut DiagnosticCollector,
@@ -384,22 +390,26 @@ fn check_script_error_handling(
         _ => return,
     };
 
-    for entry in traversal::shallow_files(&scripts_dir, Path::new("."), None).entries {
-        let path = entry.path;
-
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext != "py" && ext != "sh" {
+    for entry in traversal::recursive_files(&scripts_dir, Path::new("."), Some(exclude)).entries {
+        // Extension-based classification needs no I/O; shebang classification
+        // reads the file. Defer the read until we know the candidate is in scope
+        // or is extensionless.
+        let extension_kind = classify_by_extension(&entry.path);
+        if entry.path.extension().is_some() && extension_kind.is_none() {
             continue;
         }
 
-        let path_str = path.to_string_lossy();
-        if exclude.is_excluded(&path_str) {
-            continue;
-        }
-
-        let content = match fs::read_to_string(&path) {
+        let content = match fs::read_to_string(&entry.path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(_) => continue, // best-effort: unreadable scripts are skipped
+        };
+
+        let kind = match extension_kind {
+            Some(kind) => kind,
+            None => match classify_shebang(content.lines().next().unwrap_or("")) {
+                Some(kind) => kind,
+                None => continue,
+            },
         };
 
         // Skip trivially small scripts (< 5 non-empty lines)
@@ -408,22 +418,62 @@ fn check_script_error_handling(
             continue;
         }
 
-        let has_handling = match ext {
-            "py" => RE_PY_ERROR_HANDLING.is_match(&content),
-            "sh" => RE_SH_ERROR_HANDLING.is_match(&content),
-            _ => true,
+        let has_handling = match kind {
+            ScriptKind::Python => has_python_error_handling(&content),
+            ScriptKind::Shell => RE_SH_ERROR_HANDLING.is_match(&content),
         };
 
         if !has_handling {
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-            diag.report(
+            diag.report_at(
                 LintRule::ScriptErrhandMissing,
+                &entry.display,
                 &format!(
-                    "{}: script {} lacks error handling (try/except for .py, set -e/trap/|| exit for .sh)",
-                    info.path, file_name
+                    "{}: lacks error handling (try/except for Python, set -e/trap/|| exit for shell)",
+                    entry.display
                 ),
             );
         }
+    }
+}
+
+fn has_python_error_handling(content: &str) -> bool {
+    RE_PY_TRY.is_match(content) && RE_PY_EXCEPT.is_match(content)
+}
+
+/// Case-insensitive extension classification (`.sh`/`.bash` → shell, `.py` →
+/// Python). Returns `None` when the path has a non-matching extension or no
+/// extension (callers then consult the shebang).
+fn classify_by_extension(path: &Path) -> Option<ScriptKind> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "sh" | "bash" => Some(ScriptKind::Shell),
+        "py" => Some(ScriptKind::Python),
+        _ => None,
+    }
+}
+
+fn classify_shebang(first_line: &str) -> Option<ScriptKind> {
+    let interpreter = shebang_interpreter(first_line)?;
+    match interpreter {
+        "sh" | "bash" | "dash" | "ksh" | "zsh" => Some(ScriptKind::Shell),
+        "python" | "python2" | "python3" => Some(ScriptKind::Python),
+        _ => None,
+    }
+}
+
+fn shebang_interpreter(first_line: &str) -> Option<&str> {
+    let rest = first_line.strip_prefix("#!")?.trim();
+    let mut parts = rest.split_whitespace();
+    let first = parts.next()?;
+    let basename = Path::new(first).file_name()?.to_str()?;
+    if basename == "env" {
+        let mut next = parts.next()?;
+        if next == "-S" {
+            next = parts.next()?;
+        }
+        Path::new(next).file_name()?.to_str()
+    } else {
+        Some(basename)
     }
 }
 

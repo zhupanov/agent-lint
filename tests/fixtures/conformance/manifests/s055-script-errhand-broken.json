@@ -1,0 +1,22 @@
+{
+  "class": "broken",
+  "repository": "s055-script-errhand-broken",
+  "covers": ["plugin-mode", "normal", "json", "s055-script-errhand"],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": ["--format", "json", "--only", "S055", "."]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "S055",
+      "name": "script-errhand-missing",
+      "severity": "warning",
+      "subject_path": "skills/demo/scripts/lib/bad.sh"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}
