@@ -5,7 +5,9 @@
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
-use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
+use crate::live_instructions::{
+    InstructionSurfaceKind, LiveInstructionDocument, is_example_heading,
+};
 use crate::markdown::{MarkdownDocument, MarkdownHeading};
 use crate::rules::LintRule;
 use crate::traversal;
@@ -134,6 +136,249 @@ impl PromptContentPass {
     }
 }
 
+// ── Q001-Q003: shared operative live-directive classifier ────────────────
+//
+// Q001-Q003 all separate an operative instruction from descriptive,
+// historical, or interrogative prose (and from example scopes). Within its
+// sentence a directive phrase is operative only when it (A) opens the
+// instruction after list markers and an optional `always`/`please` softener,
+// (B) is introduced by a current-agent subject and a modal, or (C) follows an
+// `if`/`when`/`before`/`after`/`unless`/`while` setup clause closed by a comma.
+// Every `example_scopes()` line is inert regardless of wording.
+
+/// Current-agent subjects recognized by condition B, longest first so
+/// `the agent`/`this agent` win over a bare `agent`.
+const AGENT_SUBJECTS: &[&str] = &[
+    "the agent",
+    "this agent",
+    "agents",
+    "agent",
+    "you",
+    "assistant",
+    "model",
+];
+
+/// Modals that, after an agent subject, introduce an operative directive.
+const DIRECTIVE_MODALS: &[&str] = &["must", "shall", "should", "will", "need to"];
+
+/// Openers of a setup clause that, closed by a comma, guard a directive.
+const SETUP_CLAUSE_OPENERS: &[&str] = &["if", "when", "before", "after", "unless", "while"];
+
+/// Softeners skipped before conditions A and B are evaluated.
+const DIRECTIVE_SOFTENERS: &[&str] = &["always", "please"];
+
+/// Q003 hedges other than `should`, which is handled separately because it is
+/// simultaneously a hedge word and a classifier modal.
+const WEAK_CRITICAL_HEDGES: &[&str] = &["try to", "consider", "maybe"];
+
+/// Tokens that, immediately before `should`, make it an operative agent
+/// directive rather than a sentence-leading conditional inversion.
+const SHOULD_SUBJECT_TOKENS: &[&str] = &["you", "agent", "agents", "assistant", "model"];
+
+/// The one-based Unicode column of a byte offset within `text`.
+fn char_column(text: &str, byte_offset: usize) -> usize {
+    text[..byte_offset].chars().count() + 1
+}
+
+/// Strip leading Markdown list/quote markers, enumeration, and surrounding
+/// punctuation from a directive prefix. The caller has already lowercased.
+fn stripped_directive_prefix(prefix: &str) -> &str {
+    prefix
+        .trim()
+        .trim_start_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '#' | '-' | '*' | '+' | '>' | '(' | ')' | '[' | ']'
+                )
+                || character.is_ascii_digit()
+                || character == '.'
+        })
+        .trim()
+}
+
+/// Strip `phrase` from the front of `text` only when a word boundary follows.
+fn strip_leading_word<'a>(text: &'a str, phrase: &str) -> Option<&'a str> {
+    let rest = text.strip_prefix(phrase)?;
+    rest.chars()
+        .next()
+        .is_none_or(|character| !character.is_alphanumeric() && character != '_')
+        .then_some(rest)
+}
+
+/// Remove one or more leading `always`/`please` softeners.
+fn without_softeners(mut core: &str) -> &str {
+    while let Some(rest) = DIRECTIVE_SOFTENERS
+        .iter()
+        .find_map(|softener| strip_leading_word(core, softener))
+    {
+        core = rest.trim_start();
+    }
+    core
+}
+
+/// Condition B: a current-agent subject followed by a modal.
+fn subject_modal_prefix(core: &str) -> bool {
+    AGENT_SUBJECTS.iter().any(|subject| {
+        strip_leading_word(core, subject)
+            .map(str::trim_start)
+            .is_some_and(|rest| {
+                DIRECTIVE_MODALS
+                    .iter()
+                    .any(|modal| strip_leading_word(rest, modal).is_some())
+            })
+    })
+}
+
+/// Condition C: a setup clause closed by a comma. A leading softener may leave a
+/// comma before the opener (`please, when ready,`), so leading commas are
+/// tolerated alongside whitespace.
+fn setup_clause_prefix(core: &str) -> bool {
+    core.strip_suffix(',').is_some_and(|clause| {
+        let clause = clause
+            .trim_start_matches(|character: char| character.is_whitespace() || character == ',');
+        SETUP_CLAUSE_OPENERS
+            .iter()
+            .any(|opener| strip_leading_word(clause, opener).is_some())
+    })
+}
+
+/// The shared operative test (conditions A, B, C) used by Q001, Q003, and the
+/// Q002 positive alternative. The `always`/`please` softener is skipped before
+/// all three conditions.
+fn directive_prefix_is_operative(prefix: &str) -> bool {
+    let softened = without_softeners(stripped_directive_prefix(prefix));
+    softened.is_empty() || subject_modal_prefix(softened) || setup_clause_prefix(softened)
+}
+
+/// Q002 extends the shared classifier: a coordinating conjunction after a prior
+/// negative keeps a conjoined negative operative, so a safety-exempt first
+/// predicate does not mask a following style negative. The prior-negative guard
+/// applies to both the comma and no-comma forms, so a plain descriptive list
+/// (`red, blue, and never white`) does not become operative.
+fn negative_prefix_is_operative(prefix: &str) -> bool {
+    if directive_prefix_is_operative(prefix) {
+        return true;
+    }
+    let core = stripped_directive_prefix(prefix);
+    contains_phrase(core, NEGATIVE_INSTRUCTIONS)
+        && (core
+            .rsplit_once(',')
+            .is_some_and(|(_, conjunction)| matches!(conjunction.trim(), "and" | "or" | "but"))
+            || [" and", " or", " but"]
+                .iter()
+                .any(|conjunction| core.ends_with(conjunction)))
+}
+
+/// Whether a negative predicate is one of Q002's precise safety/integrity
+/// exemptions and therefore never requires a positive alternative.
+fn negative_predicate_is_exempt(predicate: &str) -> bool {
+    NEVER_INVENT_PROHIBITION
+        .find(predicate)
+        .is_some_and(|matched| matched.start() == 0)
+        || PRECISE_SAFETY_PROHIBITIONS
+            .iter()
+            .any(|pattern| pattern.is_match(predicate))
+}
+
+/// Whether `should` at `start` is an operative agent directive. Sentence-leading
+/// `should` is a conditional inversion (inert); a mid-sentence `should` reports
+/// only when a current-agent subject uses it.
+fn should_is_operative(sentence: &str, start: usize) -> bool {
+    stripped_directive_prefix(&sentence[..start])
+        .rsplit(char::is_whitespace)
+        .next()
+        .is_some_and(|token| SHOULD_SUBJECT_TOKENS.contains(&token))
+}
+
+/// The leftmost operative occurrence of any `phrases` entry in `line`,
+/// evaluated per sentence so a leading clause cannot leak across a sentence
+/// boundary. Byte offsets index the original `line`.
+fn first_operative_phrase(
+    line: &str,
+    phrases: &[&str],
+    operative: impl Fn(&str, usize) -> bool,
+) -> Option<std::ops::Range<usize>> {
+    let lowered = line.to_ascii_lowercase();
+    for sentence_range in sentence_ranges(&lowered) {
+        let sentence = &lowered[sentence_range.clone()];
+        for (start, end) in phrase_ranges(sentence, phrases) {
+            if operative(sentence, start) {
+                return Some(sentence_range.start + start..sentence_range.start + end);
+            }
+        }
+    }
+    None
+}
+
+/// The leftmost operative Q003 hedge in `line`, combining the general hedges
+/// with the subject-gated `should` rule.
+fn first_operative_weak_word(line: &str) -> Option<std::ops::Range<usize>> {
+    let lowered = line.to_ascii_lowercase();
+    for sentence_range in sentence_ranges(&lowered) {
+        let sentence = &lowered[sentence_range.clone()];
+        let hedges = phrase_ranges(sentence, WEAK_CRITICAL_HEDGES)
+            .into_iter()
+            .filter(|&(start, _)| directive_prefix_is_operative(&sentence[..start]));
+        let should = phrase_ranges(sentence, &["should"])
+            .into_iter()
+            .filter(|&(start, _)| should_is_operative(sentence, start));
+        if let Some((start, end)) = hedges.chain(should).min_by_key(|&(start, _)| start) {
+            return Some(sentence_range.start + start..sentence_range.start + end);
+        }
+    }
+    None
+}
+
+/// Sentence openers that are unambiguously not imperative verbs (articles and
+/// personal pronouns), used only to reject a would-be Q002 alternative whose
+/// clause opens with a descriptive subject. The set is deliberately conservative
+/// so a genuine imperative alternative is never rejected: ambiguous openers
+/// (demonstratives, `one`, `there`) stay operative, and `you` is omitted so
+/// second-person agent instructions remain directives.
+const NON_DIRECTIVE_OPENERS: &[&str] = &[
+    "the", "a", "an", "it", "its", "they", "them", "their", "theirs", "we", "our", "ours", "us",
+    "i", "he", "she", "him", "his", "her", "hers",
+];
+
+/// Whether `line` carries an operative positive alternative: a sentence that is
+/// itself an operative directive (an imperative opener or an agent subject plus
+/// modal) and contains `instead`, `rather`, or `prefer` at a word boundary. The
+/// keyword may trail the verb (`Give the answer directly instead.`), so
+/// operativity is judged from the sentence opening, not the keyword position.
+fn line_has_operative_alternative(line: &str) -> bool {
+    let lowered = line.to_ascii_lowercase();
+    sentence_ranges(&lowered).into_iter().any(|range| {
+        let sentence = &lowered[range];
+        !phrase_ranges(sentence, POSITIVE_ALTERNATIVES).is_empty()
+            && sentence_opens_as_directive(sentence)
+    })
+}
+
+/// Whether a lowercased sentence opens as an operative directive: an agent
+/// subject and modal, or a bare imperative that does not open with a descriptive
+/// subject or a question.
+fn sentence_opens_as_directive(sentence: &str) -> bool {
+    if sentence.trim_end().ends_with('?') {
+        return false;
+    }
+    let core = without_softeners(stripped_directive_prefix(sentence));
+    if subject_modal_prefix(core) {
+        return true;
+    }
+    core.split(|character: char| character.is_whitespace() || character == ',')
+        .find(|word| !word.is_empty())
+        .is_some_and(|first| !NON_DIRECTIVE_OPENERS.contains(&first))
+}
+
+/// The leftmost operative, non-exempt negative in `line`.
+fn first_unaddressed_negative(line: &str) -> Option<std::ops::Range<usize>> {
+    first_operative_phrase(line, NEGATIVE_INSTRUCTIONS, |sentence, start| {
+        negative_prefix_is_operative(&sentence[..start])
+            && !negative_predicate_is_exempt(&sentence[start..])
+    })
+}
+
 fn check_unbounded_retry(
     path: &str,
     document: &LiveInstructionDocument<'_>,
@@ -144,7 +389,7 @@ fn check_unbounded_retry(
     }
 
     let example_scopes = document.example_scopes();
-    for scope in retry_instruction_scopes(document, &example_scopes) {
+    for scope in instruction_scopes(document, &example_scopes) {
         let joined_scope = JoinedProseScope::new(&scope);
         if has_bound_or_fallback(&normalize_emphasis_for_gates(&joined_scope.text)) {
             continue;
@@ -227,7 +472,11 @@ impl<'a> JoinedProseScope<'a> {
     }
 }
 
-fn retry_instruction_scopes<'a>(
+/// Contiguous Markdown instruction scopes: runs of non-empty, non-example,
+/// non-heading prose lines split at blank/example/heading/fence gaps and at each
+/// new list item. Shared by Q002 (alternative association) and Q005 (retry
+/// bound association).
+fn instruction_scopes<'a>(
     document: &'a LiveInstructionDocument<'_>,
     example_scopes: &[bool],
 ) -> Vec<Vec<&'a crate::markdown::MarkdownProseLine>> {
@@ -350,21 +599,39 @@ fn check_generic_filler(
     document: &LiveInstructionDocument<'_>,
     diag: &mut DiagnosticCollector,
 ) {
-    for line in document.prose_lines() {
-        let normalized = line.text.to_ascii_lowercase();
-        if let Some(phrase) = GENERIC_FILLER_PHRASES
-            .iter()
-            .find(|phrase| normalized.contains(**phrase))
-        {
-            diag.report_with(
-                LintRule::PromptGenericFiller,
-                &format!(
-                    "{path}: generic filler instruction '{phrase}' adds no actionable guidance"
-                ),
-                DiagnosticMetadata::at_line(line.line),
-            );
-            return;
+    let example_scopes = document.example_scopes();
+    let heading_lines: HashSet<usize> = document
+        .headings()
+        .iter()
+        .map(|heading| heading.line)
+        .collect();
+    for (index, line) in document.prose_lines().iter().enumerate() {
+        if example_scopes[index] || heading_lines.contains(&line.line) {
+            continue;
         }
+        let Some(range) =
+            first_operative_phrase(&line.text, GENERIC_FILLER_PHRASES, |sentence, start| {
+                directive_prefix_is_operative(&sentence[..start])
+            })
+        else {
+            continue;
+        };
+        let phrase = line.text[range.clone()].to_ascii_lowercase();
+        diag.report_with(
+            LintRule::PromptGenericFiller,
+            &format!("{path}: generic filler instruction '{phrase}' adds no actionable guidance"),
+            DiagnosticMetadata::default()
+                .with_location(SourceSpan::range(
+                    line.line,
+                    char_column(&line.text, range.start),
+                    line.line,
+                    char_column(&line.text, range.end),
+                ))
+                .with_evidence(line.text.trim())
+                .with_suggestion(
+                    "Replace this generic instruction with a concrete, project-specific requirement, or remove it.",
+                ),
+        );
     }
 }
 
@@ -373,99 +640,42 @@ fn check_negative_only(
     document: &LiveInstructionDocument<'_>,
     diag: &mut DiagnosticCollector,
 ) {
-    let lines = document.prose_lines();
     let example_scopes = document.example_scopes();
-    for (index, line) in lines.iter().enumerate() {
-        if example_scopes[index] {
-            continue;
-        }
-
-        let has_unaddressed_negative = line
-            .text
-            .split(['.', '!', '?', ';'])
-            .any(sentence_has_unaddressed_negative);
-        if !has_unaddressed_negative {
-            continue;
-        }
-
-        let start = index.saturating_sub(NEGATIVE_WINDOW);
-        let end = (index + NEGATIVE_WINDOW + 1).min(lines.len());
-        let has_alternative = lines[start..end]
+    for scope in instruction_scopes(document, &example_scopes) {
+        let alternative_lines: Vec<usize> = scope
             .iter()
-            .zip(&example_scopes[start..end])
-            .any(|(nearby, is_example)| {
-                !is_example
-                    && contains_phrase(&nearby.text.to_ascii_lowercase(), POSITIVE_ALTERNATIVES)
-            });
-        if !has_alternative {
+            .filter(|line| line_has_operative_alternative(&line.text))
+            .map(|line| line.line)
+            .collect();
+        for line in &scope {
+            let Some(range) = first_unaddressed_negative(&line.text) else {
+                continue;
+            };
+            let repaired = alternative_lines
+                .iter()
+                .any(|alternative| alternative.abs_diff(line.line) <= NEGATIVE_WINDOW);
+            if repaired {
+                continue;
+            }
             diag.report_with(
                 LintRule::PromptNegativeOnly,
                 &format!(
-                    "{path}: negative instruction lacks a positive alternative (add instead, rather, or prefer within {NEGATIVE_WINDOW} lines)"
+                    "{path}: operative negative instruction lacks a positive alternative in the same instruction scope (add instead, rather, or prefer within {NEGATIVE_WINDOW} source lines)"
                 ),
-                DiagnosticMetadata::at_line(line.line),
+                DiagnosticMetadata::default()
+                    .with_location(SourceSpan::range(
+                        line.line,
+                        char_column(&line.text, range.start),
+                        line.line,
+                        char_column(&line.text, range.end),
+                    ))
+                    .with_evidence(line.text.trim())
+                    .with_suggestion(
+                        "State the preferred behavior with instead, rather, or prefer in the same paragraph or list item, or convert the prohibition into a concrete requirement.",
+                    ),
             );
-            return;
         }
     }
-}
-
-fn sentence_has_unaddressed_negative(sentence: &str) -> bool {
-    let normalized = sentence.to_ascii_lowercase();
-    phrase_ranges(&normalized, NEGATIVE_INSTRUCTIONS)
-        .into_iter()
-        .any(|(start, _)| {
-            let predicate = &normalized[start..];
-            is_operative_negative(&normalized, start)
-                && NEVER_INVENT_PROHIBITION
-                    .find(predicate)
-                    .is_none_or(|matched| matched.start() != 0)
-                && !PRECISE_SAFETY_PROHIBITIONS
-                    .iter()
-                    .any(|pattern| pattern.is_match(predicate))
-        })
-}
-
-fn is_operative_negative(sentence: &str, marker_start: usize) -> bool {
-    let prefix = sentence[..marker_start]
-        .trim()
-        .trim_start_matches(|character: char| {
-            character.is_whitespace()
-                || matches!(
-                    character,
-                    '#' | '-' | '*' | '+' | '>' | '(' | ')' | '[' | ']'
-                )
-                || character.is_ascii_digit()
-                || character == '.'
-        })
-        .trim();
-
-    prefix.is_empty()
-        || prefix == "please"
-        || prefix.ends_with(':')
-        || prefix
-            .rsplit_once(',')
-            .is_some_and(|(_, conjunction)| matches!(conjunction.trim(), "and" | "or" | "but"))
-        || ([" and", " or", " but"]
-            .iter()
-            .any(|conjunction| prefix.ends_with(conjunction))
-            && contains_phrase(prefix, NEGATIVE_INSTRUCTIONS))
-        || setup_clause(prefix)
-        || (contains_phrase(prefix, &["must", "should", "shall"])
-            && contains_phrase(
-                prefix,
-                &["you", "agent", "agents", "assistant", "model", "tool"],
-            ))
-}
-
-fn setup_clause(prefix: &str) -> bool {
-    let Some(clause) = prefix.strip_suffix(',') else {
-        return false;
-    };
-    let clause = clause.trim_start();
-    ["when ", "before ", "after ", "if ", "unless ", "while "]
-        .iter()
-        .any(|opening| clause.starts_with(opening))
 }
 
 fn check_weak_critical_language(
@@ -473,42 +683,52 @@ fn check_weak_critical_language(
     document: &LiveInstructionDocument<'_>,
     diag: &mut DiagnosticCollector,
 ) {
-    let mut section_level: Option<usize> = None;
+    let example_scopes = document.example_scopes();
+    let mut section_level: Option<u8> = None;
 
-    for prose_line in document.prose_lines() {
-        let line_number = prose_line.line;
+    for (index, prose_line) in document.prose_lines().iter().enumerate() {
         if let Some(heading) = document
             .headings()
             .iter()
-            .find(|heading| heading.line == line_number)
+            .find(|heading| heading.line == prose_line.line)
         {
-            let level = heading.level as usize;
-            if section_level.is_some_and(|active| level <= active) {
+            if section_level.is_some_and(|active| heading.level <= active) {
                 section_level = None;
             }
-            if contains_word(&heading.text.to_ascii_lowercase(), "critical")
-                || contains_word(&heading.text.to_ascii_lowercase(), "important")
+            // A heading naming an example is an example boundary even when it
+            // also says critical/important; it never activates a live section.
+            let lower = heading.text.to_ascii_lowercase();
+            if !is_example_heading(&heading.text)
+                && (contains_word(&lower, "critical") || contains_word(&lower, "important"))
             {
-                section_level = Some(level);
+                section_level = Some(heading.level);
             }
             continue;
         }
 
-        if section_level.is_some_and(|_| {
-            contains_phrase(
-                &prose_line.text.to_ascii_lowercase(),
-                &["should", "try to", "consider", "maybe"],
-            )
-        }) {
-            diag.report_with(
-                LintRule::PromptWeakCritical,
-                &format!(
-                    "{path}: weak language in a critical/important section; use a concrete requirement instead"
-                ),
-                DiagnosticMetadata::at_line(line_number),
-            );
-            return;
+        if section_level.is_none() || example_scopes[index] {
+            continue;
         }
+        let Some(range) = first_operative_weak_word(&prose_line.text) else {
+            continue;
+        };
+        diag.report_with(
+            LintRule::PromptWeakCritical,
+            &format!(
+                "{path}: weak language in a critical/important section; use a concrete requirement instead"
+            ),
+            DiagnosticMetadata::default()
+                .with_location(SourceSpan::range(
+                    prose_line.line,
+                    char_column(&prose_line.text, range.start),
+                    prose_line.line,
+                    char_column(&prose_line.text, range.end),
+                ))
+                .with_evidence(prose_line.text.trim())
+                .with_suggestion(
+                    "Replace the hedge (should/try to/consider/maybe) with a concrete, testable requirement.",
+                ),
+        );
     }
 }
 
@@ -3335,5 +3555,328 @@ mod tests {
                 "{kind:?} input description",
             );
         }
+    }
+
+    fn q001_diagnostics(body: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        diagnostics_for(body)
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptGenericFiller)
+            .cloned()
+            .collect()
+    }
+
+    fn q003_diagnostics(body: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        diagnostics_for(body)
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptWeakCritical)
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn q001_flags_operative_filler_and_ignores_descriptive_and_example_prose() {
+        for phrase in GENERIC_FILLER_PHRASES {
+            // Operative: the phrase opens an imperative directive.
+            let operative = format!("{phrase} in every reply.");
+            assert_eq!(q001_diagnostics(&operative).len(), 1, "operative: {phrase}");
+            // Operative: a current-agent subject and modal introduce it.
+            let subject = format!("You should {phrase} in every reply.");
+            assert_eq!(q001_diagnostics(&subject).len(), 1, "subject: {phrase}");
+            // Descriptive/history prose that merely mentions the phrase is inert.
+            let descriptive = format!("The guide explains how to {phrase} when unsure.");
+            assert!(
+                q001_diagnostics(&descriptive).is_empty(),
+                "descriptive: {phrase}"
+            );
+            // Every example scope is inert.
+            let example = format!("# Examples\n{phrase} in every reply.");
+            assert!(q001_diagnostics(&example).is_empty(), "example: {phrase}");
+        }
+        // The issue's exact false positive is now clean.
+        assert!(q001_diagnostics("# Examples\nBe helpful when replying.").is_empty());
+    }
+
+    #[test]
+    fn q001_reports_every_line_once_with_structured_masked_metadata() {
+        let diagnostics = q001_diagnostics("Be helpful in replies.\nBe concise in replies.");
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 1);
+        assert_eq!(diagnostics[1].location.unwrap().start().line_number(), 2);
+        let first = &diagnostics[0];
+        assert_eq!(first.location.unwrap().start().column_number(), Some(1));
+        assert!(first.location.unwrap().end().is_some());
+        assert_eq!(first.evidence.as_deref(), Some("Be helpful in replies."));
+        assert!(first.suggestion.as_deref().unwrap().contains("concrete"));
+
+        // At most one finding per line even with several filler phrases.
+        assert_eq!(q001_diagnostics("Be helpful and be concise.").len(), 1);
+
+        // Inline code is masked out of the evidence (no leakage).
+        let masked = q001_diagnostics("Be helpful; run `launch --secret`.");
+        assert_eq!(masked.len(), 1);
+        assert!(!masked[0].evidence.as_deref().unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn q003_flags_operative_hedges_under_live_critical_headings_only() {
+        for body in [
+            "## Important\nYou should verify the result.",
+            "## Critical\nConsider the edge cases.",
+            "## Important\nTry to cover every error path.",
+            "## Important\nMaybe return early on failure.",
+            "## Important\nWhen unsure, consider the trade-offs.",
+        ] {
+            assert_eq!(q003_diagnostics(body).len(), 1, "operative: {body}");
+        }
+        // Descriptive/history hedges are inert even under a critical heading. A
+        // subjectless `should` does not report (agent-subject rule).
+        for body in [
+            "## Important\nThe report should stay concise.",
+            "## Important\nThe team will consider options later.",
+            "## Important\nUsers try to break the parser.",
+            "## Important\nThe outcome is maybe uncertain.",
+        ] {
+            assert!(q003_diagnostics(body).is_empty(), "descriptive: {body}");
+        }
+        // A non-critical section never activates.
+        assert!(q003_diagnostics("## Notes\nYou should verify the result.").is_empty());
+    }
+
+    #[test]
+    fn q003_treats_sentence_leading_should_as_conditional_inversion() {
+        // Binding comment extension (leaf #258 independent second review):
+        // sentence-leading `Should` conditional inversion is not weak language.
+        assert!(
+            q003_diagnostics(
+                "## Important\nRun the full test suite before merging. Should any test fail, stop and report it."
+            )
+            .is_empty()
+        );
+        // The pinned positive still reports.
+        assert_eq!(
+            q003_diagnostics("## Important\nYou should verify the result.").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn q003_example_heading_is_a_boundary_even_when_it_says_important() {
+        // The issue's exact false positive: an "Important examples" heading is an
+        // example boundary, so its hedges are inert.
+        assert!(
+            q003_diagnostics(
+                "# Important examples\nYou should consider maybe returning a short report."
+            )
+            .is_empty()
+        );
+        // A plain example section is likewise inert.
+        assert!(q003_diagnostics("# Examples\nYou should verify the result.").is_empty());
+    }
+
+    #[test]
+    fn q003_reports_every_line_in_order_with_structured_metadata() {
+        let diagnostics = q003_diagnostics(
+            "## Important\nYou should verify the inputs.\nConsider the edge cases.\nMaybe cache it.",
+        );
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 2);
+        assert_eq!(diagnostics[1].location.unwrap().start().line_number(), 3);
+        assert_eq!(diagnostics[2].location.unwrap().start().line_number(), 4);
+        // The `should` range points at the hedge, after the subject.
+        assert_eq!(
+            diagnostics[0].location.unwrap().start().column_number(),
+            Some(5)
+        );
+        assert!(diagnostics[0].location.unwrap().end().is_some());
+        assert_eq!(
+            diagnostics[0].evidence.as_deref(),
+            Some("You should verify the inputs.")
+        );
+        assert!(
+            diagnostics[0]
+                .suggestion
+                .as_deref()
+                .unwrap()
+                .contains("concrete")
+        );
+    }
+
+    #[test]
+    fn q002_alternative_repairs_only_within_the_same_scope() {
+        // A positive alternative before or after the negative, in the same
+        // paragraph and within three source lines, repairs it.
+        assert!(q002_diagnostics("Never apologize.\nInstead, state the correction.").is_empty());
+        assert!(q002_diagnostics("Instead, state the correction.\nNever apologize.").is_empty());
+
+        // Identical wording separated by a scope boundary still reports.
+        for split in [
+            // Heading boundary (the issue's cross-section example).
+            "# One\nNever apologize.\n# Two\nInstead, state the correction.",
+            // Blank-line / paragraph boundary.
+            "Never apologize.\n\nInstead, state the correction.",
+            // List-item boundary.
+            "- Never apologize.\n- Instead, state the correction.",
+            // Example boundary.
+            "Never apologize.\n# Examples\nInstead, state the correction.",
+            // Fenced-code gap (removed by parsing).
+            "Never apologize.\n```\ncode\n```\nInstead, state the correction.",
+            // Beyond three source lines within one paragraph.
+            "Never apologize.\nOne.\nTwo.\nThree.\nInstead, state the correction.",
+        ] {
+            assert_eq!(q002_diagnostics(split).len(), 1, "{split}");
+        }
+
+        // A non-operative alternative does not repair a real negative.
+        assert_eq!(
+            q002_diagnostics("Never apologize.\nThe user instead wanted an apology.").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn q002_recognizes_trailing_and_imperative_alternatives_but_not_descriptive_ones() {
+        // An imperative clause with a trailing keyword repairs the negative in
+        // the same scope, even though the keyword does not open the clause.
+        for repaired in [
+            "Avoid long preambles. Give the answer directly instead.",
+            "Do not hedge; state the fact directly instead.",
+            "Avoid preambles.\nWrite the answer rather than a preamble.",
+            "Never apologize.\nCorrect the mistake, and prefer a concrete fix.",
+            "Never apologize.\nYou should state the correction instead.",
+        ] {
+            assert!(
+                q002_diagnostics(repaired).is_empty(),
+                "repaired: {repaired}"
+            );
+        }
+        // A clause that opens with a descriptive subject only mentions the
+        // keyword; it does not repair a real negative.
+        for reported in [
+            "Never apologize.\nThe user instead wanted an apology.",
+            "Never apologize.\nThe team would prefer a softer tone.",
+        ] {
+            assert_eq!(q002_diagnostics(reported).len(), 1, "reported: {reported}");
+        }
+    }
+
+    #[test]
+    fn q002_conjunction_operativity_requires_a_prior_negative() {
+        // A coordinating conjunction inside a descriptive list is not an
+        // operative negative when no prior negative established the context.
+        assert!(q002_diagnostics("The palette included red, blue, and never white.").is_empty());
+        // A genuine conjoined negative after a prior (safety-exempt) negative
+        // still reports the following style negative.
+        assert_eq!(
+            q002_diagnostics("Never expose credentials, and never apologize.").len(),
+            1
+        );
+        // A leading softener before a setup clause still yields condition C.
+        assert_eq!(
+            q002_diagnostics("Always, when unsure, avoid hedging.").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn q002_reports_every_unrepaired_negative_once_per_line_with_metadata() {
+        let diagnostics = q002_diagnostics("Never apologize.\nAvoid preambles.");
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].location.unwrap().start().line_number(), 1);
+        assert_eq!(diagnostics[1].location.unwrap().start().line_number(), 2);
+
+        // One finding per line even with several negatives on the line.
+        assert_eq!(
+            q002_diagnostics("Never apologize and never hedge.").len(),
+            1
+        );
+
+        let diagnostic = &q002_diagnostics("Never apologize.")[0];
+        assert_eq!(
+            diagnostic.subject_path.as_deref(),
+            Some(Path::new("skills/example/SKILL.md"))
+        );
+        assert_eq!(
+            diagnostic.location.unwrap().start().column_number(),
+            Some(1)
+        );
+        assert!(diagnostic.location.unwrap().end().is_some());
+        assert_eq!(diagnostic.evidence.as_deref(), Some("Never apologize."));
+        assert!(
+            diagnostic
+                .suggestion
+                .as_deref()
+                .unwrap()
+                .contains("instead")
+        );
+    }
+
+    #[test]
+    fn q001_and_q003_ignore_code_quote_comment_and_example_prose() {
+        for body in [
+            "```text\nBe helpful.\n```",
+            "The token `be helpful` is a bad example.",
+            "> Be helpful.",
+            "The guide says \"Be helpful.\"",
+            "<!-- Be helpful. -->",
+            "Example: be helpful.",
+            "# Examples\nBe helpful.",
+        ] {
+            assert!(q001_diagnostics(body).is_empty(), "Q001 leak: {body}");
+        }
+        for body in [
+            "## Important\n```text\nYou should verify.\n```",
+            "## Important\nThe token `you should verify` is a bad example.",
+            "## Important\n> You should verify.",
+            "## Important\nThe guide says \"You should verify.\"",
+            "## Important\n<!-- You should verify. -->",
+            "## Important\nExample: you should verify.",
+            "## Important\n# Examples\nYou should verify.",
+        ] {
+            assert!(q003_diagnostics(body).is_empty(), "Q003 leak: {body}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn q002_respects_exclusions_and_structured_per_file_suppression() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("nested").unwrap();
+        std::fs::create_dir_all("excluded").unwrap();
+        std::fs::write("AGENTS.md", "Never apologize.\n").unwrap();
+        std::fs::write("nested/AGENTS.md", "Never apologize.\n").unwrap();
+        std::fs::write("excluded/AGENTS.md", "Never apologize.\n").unwrap();
+        std::fs::write(
+            "agent-lint.toml",
+            "[[lint.overrides]]\nfiles = [\"nested/AGENTS.md\"]\nsuppress = [\"Q002\"]\nreason = \"legacy nested instructions\"\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(tmp.path()).unwrap();
+        let exclude = ExcludeSet::new(&["excluded/**".into()]).unwrap();
+        let mut diag = DiagnosticCollector::with_config(config);
+
+        super::super::run_all_with_targets(
+            &context(tmp.path(), LintMode::Basic),
+            &mut diag,
+            &exclude,
+            ValidationTargets {
+                agents_md: true,
+                ..ValidationTargets::default()
+            },
+        );
+
+        let q002: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::PromptNegativeOnly)
+            .collect();
+        assert_eq!(q002.len(), 1);
+        assert_eq!(
+            q002[0].subject_path.as_deref(),
+            Some(Path::new("AGENTS.md"))
+        );
     }
 }

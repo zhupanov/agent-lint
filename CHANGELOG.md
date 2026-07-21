@@ -48,6 +48,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   script path instead of `SKILL.md`. Per-file overrides that suppressed S055
   via `SKILL.md` paths must retarget `scripts/` globs or individual script
   paths; skill-level `suppress = ["S055"]` is unchanged.
+- Q001 (`prompt-generic-filler`), Q002 (`prompt-negative-only`), and Q003
+  (`prompt-weak-critical`) now share one operative live-directive classifier: a
+  phrase counts only when, within its sentence, it opens the instruction, an
+  agent subject (`you`/`the agent`/`agents`/`assistant`/`model`) uses a modal
+  before it, or it follows an `if`/`when`/`before`/`after`/`unless`/`while`
+  setup clause and comma. Descriptive, historical, and interrogative prose and
+  every example scope (including `# Important examples`) are inert. Q002 now
+  associates a positive `instead`/`rather`/`prefer` alternative only within the
+  same Markdown instruction scope (same paragraph or list item, within three
+  source lines) instead of a global prose-line window, and Q003 treats a
+  sentence-leading `Should` conditional inversion as non-weak. All three report
+  every violating line in source order with the matched range, bounded masked
+  evidence, and a suggestion; existing safety/integrity exemptions and
+  severities are unchanged
 - **BREAKING**: Removed I005 (`instruction-file-structure`) and its legacy
   CX044 / `codex-agents-structure` aliases. Syntax and byte-length heuristics
   cannot soundly decide whether inherited instruction files are
