@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::ops::Range;
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 use url::{Host, Url};
@@ -20,6 +21,77 @@ pub(crate) static RE_TODO_MARKER: LazyLock<Regex> =
 pub(crate) static NEVER_INVENT_PROHIBITION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:never|do\s+not|don't)\s+(?:invent|fabricate|guess)\b").unwrap()
 });
+
+/// Shared recognition vocabulary for concrete retry bounds and stop controls.
+///
+/// Q005 and A029 deliberately have different applicability and operativity
+/// gates, but a phrase must never count as a bound for one while being absent
+/// from the other's recognition vocabulary. Keep every numeric count anchored
+/// to a control noun so unrelated numbers do not satisfy either rule.
+static BOUND_OR_FALLBACK_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    const NUMBER: &str = r"(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)";
+    const COUNT_UNIT: &str =
+        r"(?:attempts?|retries|tries|times|iterations?|tool[ -]?calls?|steps?)";
+    const TIME_UNIT: &str = r"(?:milliseconds?|seconds?|minutes?|hours?|ms|secs?|mins?|hrs?)";
+    [
+        format!(r"(?i)\b(?:at\s+most|no\s+more\s+than|up\s+to|within|after|for|(?:a\s+)?maximum(?:\s+of)?|max)\s+{NUMBER}\s+{COUNT_UNIT}\b"),
+        format!(r"(?i)\b(?:limit|cap)\s+(?:of\s+)?{NUMBER}\s+{COUNT_UNIT}\b"),
+        format!(r"(?i)\b{NUMBER}\s+{COUNT_UNIT}\s+(?:maximum|max)\b"),
+        format!(r"(?i)\b(?:or|after|within|for)\s+{NUMBER}\s+{COUNT_UNIT}\b"),
+        format!(r"(?i)\b(?:stop|abort|give\s+up|halt)\b.{{0,80}}\b(?:after|within|for)\s+{NUMBER}\s+(?:{COUNT_UNIT}|{TIME_UNIT})\b"),
+        format!(r"(?i)\b(?:timeout|time(?:\s|-)?limit|deadline|time(?:\s|-)?budget|token(?:\s|-)?budget|cost(?:\s|-)?budget|budget)\s*(?:of|:|is)?\s*{NUMBER}\s*(?:{TIME_UNIT}|tokens?|%|usd|dollars?)\b"),
+        format!(r"(?i)\b(?:within|for\s+no\s+more\s+than|at\s+most)\s+{NUMBER}\s*{TIME_UNIT}\b"),
+        r"(?i)\b(?:token|cost)\s+budget\s*(?:of|:|is)?\s*(?:\$?\d[\d,.]*|\d+[kKmM]?)\b".to_string(),
+        r"(?i)\b(?:at\s+most|no\s+more\s+than|up\s+to)\s+(?:\$?\d[\d,.]*|\d+[kKmM]?)\s+(?:tokens?|dollars?|usd)\b".to_string(),
+        r"(?i)\b(?:deadline\s*(?:of|:|is)?|by)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}\s*(?:am|pm)?|end\s+of\s+(?:day|week)|(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b".to_string(),
+        r"(?i)\b(?:if|when|after|on|upon)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no\s+progress|cannot\s+make\s+progress|unable\s+to\s+(?:make\s+progress|continue))\b.{0,120}\b(?:stop|abort|return|report|escalat(?:e|ion)|ask\s+(?:for\s+)?help|handoff|surface|give\s+up|fall\s+back)\b".to_string(),
+        r"(?i)\b(?:stop\s+and\s+report|report\s+and\s+stop|escalat(?:e|ion)|ask\s+(?:for\s+)?help|handoff|return)\b.{0,100}\b(?:if|when|after|on|upon)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no\s+progress|cannot\s+make\s+progress|unable\s+to\s+(?:make\s+progress|continue))\b".to_string(),
+        r"(?i)\botherwise\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b".to_string(),
+    ]
+    .into_iter()
+    .map(|pattern| Regex::new(&pattern).expect("shared bound-control regex is valid"))
+    .collect()
+});
+
+/// Whether `text` contains a concrete bound or failure fallback recognized by
+/// both Q005 and A029. Callers remain responsible for their own scope and
+/// operativity rules.
+pub(crate) fn has_bound_or_fallback(text: &str) -> bool {
+    BOUND_OR_FALLBACK_PATTERNS
+        .iter()
+        .any(|pattern| pattern.is_match(text))
+}
+
+/// Split prose into sentence ranges without treating the decimal point in a
+/// numeric value (for example `1.5 hours`) as a sentence boundary.
+pub(crate) fn sentence_ranges(text: &str) -> Vec<Range<usize>> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        if !matches!(character, '.' | '!' | '?' | ';') {
+            continue;
+        }
+        let is_decimal_point = character == '.'
+            && text[..index]
+                .chars()
+                .next_back()
+                .is_some_and(|previous| previous.is_ascii_digit())
+            && text[index + character.len_utf8()..]
+                .chars()
+                .next()
+                .is_some_and(|next| next.is_ascii_digit());
+        if is_decimal_point {
+            continue;
+        }
+        let end = index + character.len_utf8();
+        ranges.push(start..end);
+        start = end;
+    }
+    if start < text.len() {
+        ranges.push(start..text.len());
+    }
+    ranges
+}
 
 /// Shared enum: accepted values for a `shell` field.
 /// Used by skill_content frontmatter validation (S026) and hook schema

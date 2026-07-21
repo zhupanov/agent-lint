@@ -883,6 +883,48 @@ suppress = ["agent-stop-missing"]
 }
 
 #[test]
+fn q005_and_a029_share_bound_recognition_through_the_real_binary() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude/agents")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews changes and makes targeted repairs when needed\ntools: Bash\n---\nRetry until success, but stop after 3 attempts.\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "A029,Q005", "."],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn q005_reports_wrapped_instructions_in_source_order_through_the_real_binary() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude")).unwrap();
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "Retry until\nsuccess.\n\n- Keep trying until it\n  succeeds.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "Q005", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0]["code"], "Q005");
+    assert_eq!(diagnostics[0]["location"]["start"]["line"], 1);
+    assert_eq!(diagnostics[1]["code"], "Q005");
+    assert_eq!(diagnostics[1]["location"]["start"]["line"], 4);
+}
+
+#[test]
 fn only_excludes_unselected_rules_from_suppressed_and_unused_counts() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
