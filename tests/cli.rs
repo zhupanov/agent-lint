@@ -2460,6 +2460,135 @@ fn s031_autofix_rewrites_claude_surfaces_only() {
 }
 
 #[test]
+fn s006_autofix_matches_the_validation_mode_and_active_agent_skill_target() {
+    let basic = tempfile::tempdir().unwrap();
+    init_git(basic.path());
+    for (relative, name) in [
+        (".claude/skills/private/SKILL.md", "wrong-private"),
+        ("skills/public/SKILL.md", "wrong-public"),
+    ] {
+        let path = basic.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!("---\nname: {name}\ndescription: A valid skill description\n---\nBody\n"),
+        )
+        .unwrap();
+    }
+    let private = basic.path().join(".claude/skills/private/SKILL.md");
+    let public = basic.path().join("skills/public/SKILL.md");
+    let first = run_in(basic.path(), &["--autofix", "--only", "S006", "."]);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    assert!(
+        std::fs::read_to_string(&private)
+            .unwrap()
+            .contains("name: private")
+    );
+    assert!(
+        std::fs::read_to_string(&public)
+            .unwrap()
+            .contains("name: wrong-public")
+    );
+    let second = run_in(basic.path(), &["--autofix", "--only", "S006", "."]);
+    assert!(second.status.success(), "stderr: {}", stderr(&second));
+    assert!(!stderr(&second).contains("fixed[S006/"));
+
+    let plugin = tempfile::tempdir().unwrap();
+    init_git(plugin.path());
+    std::fs::create_dir_all(plugin.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        plugin.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"s006-fixture"}"#,
+    )
+    .unwrap();
+    for relative in ["skills/public/SKILL.md", ".claude/skills/private/SKILL.md"] {
+        let path = plugin.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "---\nname: wrong\ndescription: A valid skill description\n---\nBody\n",
+        )
+        .unwrap();
+    }
+    let output = run_in(plugin.path(), &["--autofix", "--only", "S006", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    for relative in ["skills/public/SKILL.md", ".claude/skills/private/SKILL.md"] {
+        let content = std::fs::read_to_string(plugin.path().join(relative)).unwrap();
+        let expected = if relative.starts_with("skills/") {
+            "name: public"
+        } else {
+            "name: private"
+        };
+        assert!(content.contains(expected), "content: {content}");
+    }
+
+    let agent_target = tempfile::tempdir().unwrap();
+    init_git(agent_target.path());
+    for relative in [
+        ".claude/skills/private/SKILL.md",
+        ".agents/skills/portable/SKILL.md",
+    ] {
+        let path = agent_target.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "---\nname: wrong\ndescription: A valid skill description\n---\nBody\n",
+        )
+        .unwrap();
+    }
+    let output = run_in(agent_target.path(), &["--autofix", "--only", "S006", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    for (relative, expected) in [
+        (".claude/skills/private/SKILL.md", "private"),
+        (".agents/skills/portable/SKILL.md", "portable"),
+    ] {
+        assert!(
+            std::fs::read_to_string(agent_target.path().join(relative))
+                .unwrap()
+                .contains(&format!("name: {expected}"))
+        );
+    }
+}
+
+#[test]
+fn s007_uses_canonical_yaml_and_never_orphans_continuations() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let hinted = tmp.path().join(".claude/skills/hinted/SKILL.md");
+    let empty = tmp.path().join(".claude/skills/empty/SKILL.md");
+    std::fs::create_dir_all(hinted.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(empty.parent().unwrap()).unwrap();
+    let hinted_content = "---\nname: hinted\ndescription: Use when testing argument hint continuation lines\nargument-hint:\n  \"[issue-number]\"\n---\nBody\n";
+    std::fs::write(&hinted, hinted_content).unwrap();
+    std::fs::write(
+        &empty,
+        "---\nname: empty\ndescription: Use when testing empty optional fields\nargument-hint:\n---\nBody\n",
+    )
+    .unwrap();
+
+    let first = run_in(tmp.path(), &["--autofix", "--only", "S007", "."]);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+    assert_eq!(std::fs::read_to_string(&hinted).unwrap(), hinted_content);
+    assert!(
+        !std::fs::read_to_string(&empty)
+            .unwrap()
+            .contains("argument-hint:")
+    );
+    let second = run_in(tmp.path(), &["--autofix", "--only", "S007", "."]);
+    assert!(second.status.success(), "stderr: {}", stderr(&second));
+    assert!(!stderr(&second).contains("fixed[S007/"));
+
+    let invalid = tmp.path().join(".claude/skills/invalid/SKILL.md");
+    let invalid_content = "---\nname: invalid\ndescription: A valid description\nargument-hint:\n\tinvalid: yaml\n---\nBody\n";
+    std::fs::create_dir_all(invalid.parent().unwrap()).unwrap();
+    std::fs::write(&invalid, invalid_content).unwrap();
+    let output = run_in(tmp.path(), &["--autofix", "--only", "S007", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    assert!(stderr(&output).contains("S007/frontmatter-field-empty"));
+    assert_eq!(std::fs::read_to_string(invalid).unwrap(), invalid_content);
+}
+
+#[test]
 fn only_filters_basic_plugin_codex_and_cursor_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();

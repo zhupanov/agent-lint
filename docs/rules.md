@@ -795,8 +795,8 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 |------|------|-----|
 | hook-not-executable | H005 | `chmod +x` on script |
 | script-not-executable | G003 | `chmod +x` on script |
-| frontmatter-name-mismatch | S006 | Set `name:` to match directory |
-| frontmatter-field-empty | S007 | Remove empty optional field |
+| frontmatter-name-mismatch | S006 | Set a single-line canonical `name:` scalar to match the directory, only on surfaces selected for the run |
+| frontmatter-field-empty | S007 | Remove a bare empty optional field only when it has no YAML continuation or child lines |
 | desc-has-xml | S018 | Strip XML tags from description |
 | consecutive-bash | S021 | Merge adjacent bash blocks |
 | backslash-path | S022 | Replace `\` with `/` in body |

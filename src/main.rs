@@ -429,7 +429,7 @@ fn run_autofix(
 
         let mut made_progress = false;
         for rule in fixable_rules {
-            if autofix::apply_fix(rule, mode, exclude, &lint_config) {
+            if autofix::apply_fix(rule, mode, targets, exclude, &lint_config) {
                 made_progress = true;
                 break; // Re-validate after each fix
             }

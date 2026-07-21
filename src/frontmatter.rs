@@ -169,11 +169,59 @@ pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, (usi
 /// non-string values, and empty strings do not yield a value.
 pub fn get_strict_string_field(fm_lines: &[String], key: &str) -> Option<String> {
     let yaml = parse_yaml_strict(fm_lines).ok()?;
+    canonical_nonempty_string_field(&yaml, key).map(str::to_owned)
+}
+
+/// Read a non-empty string field from an already strictly parsed frontmatter
+/// document. This is the shared canonical-YAML contract for validators and
+/// autofixers that need a scalar value.
+pub fn canonical_nonempty_string_field<'a>(
+    yaml: &'a crate::yaml::Value,
+    key: &str,
+) -> Option<&'a str> {
     yaml.as_mapping()?
         .get(key)?
         .as_str()
         .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+}
+
+/// Whether a top-level field in an already strictly parsed frontmatter mapping
+/// is present but canonically empty. YAML null and the empty string are empty;
+/// every other YAML value, including sequences, is not.
+pub fn canonical_field_is_empty(yaml: &crate::yaml::Value, key: &str) -> bool {
+    yaml.as_mapping()
+        .and_then(|mapping| mapping.get(key))
+        .is_some_and(|value| value.is_null() || value.as_str().is_some_and(str::is_empty))
+}
+
+/// Determine whether an optional field is empty using the same policy as S007.
+/// Strictly parsed frontmatter uses canonical YAML values; invalid YAML retains
+/// the rule's established line-oriented fallback.
+pub fn optional_field_is_empty(
+    fm_lines: &[String],
+    parsed_frontmatter: Option<&crate::yaml::Value>,
+    key: &str,
+) -> bool {
+    parsed_frontmatter.map_or_else(
+        || get_field(fm_lines, key).is_none(),
+        |yaml| canonical_field_is_empty(yaml, key),
+    )
+}
+
+/// Determine whether an optional field is present using the same parsed-YAML
+/// versus invalid-YAML fallback boundary as S007.
+pub fn optional_field_is_present(
+    fm_lines: &[String],
+    parsed_frontmatter: Option<&crate::yaml::Value>,
+    key: &str,
+) -> bool {
+    parsed_frontmatter.map_or_else(
+        || field_exists(fm_lines, key),
+        |yaml| {
+            yaml.as_mapping()
+                .is_some_and(|mapping| mapping.get(key).is_some())
+        },
+    )
 }
 
 /// Convert a YAML value to JSON for reuse by JSON-shaped validators (e.g. hooks).
@@ -251,6 +299,28 @@ mod tests {
         let fm = extract_frontmatter(content).unwrap();
         assert_eq!(get_field(&fm, "name"), None);
         assert_eq!(get_field_state(&fm, "name"), FieldState::Empty);
+    }
+
+    #[test]
+    fn canonical_field_helpers_use_parsed_yaml_values() {
+        let yaml = crate::yaml::parse(
+            "name: >-\n  continued-name\nargument-hint:\n  '[issue-number]'\nempty: \"\"\nnull: null\ntools: [Read]\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            canonical_nonempty_string_field(&yaml, "name"),
+            Some("continued-name")
+        );
+        assert!(!canonical_field_is_empty(&yaml, "argument-hint"));
+        assert!(canonical_field_is_empty(&yaml, "empty"));
+        assert!(canonical_field_is_empty(&yaml, "null"));
+        assert!(!canonical_field_is_empty(&yaml, "tools"));
+        assert!(optional_field_is_present(&[], Some(&yaml), "argument-hint"));
+
+        let invalid = vec!["argument-hint:".to_string(), "\tinvalid: yaml".to_string()];
+        assert!(optional_field_is_empty(&invalid, None, "argument-hint"));
+        assert!(optional_field_is_present(&invalid, None, "argument-hint"));
     }
 
     #[test]
