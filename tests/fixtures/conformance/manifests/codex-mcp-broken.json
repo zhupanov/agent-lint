@@ -1,15 +1,26 @@
 {
   "class": "broken",
   "repository": "codex-mcp-broken",
-  "covers": ["codex", "mcp", "all", "json"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--all", "--only", "CX001,P001", "."] },
+  "covers": ["codex", "mcp", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "P001,P009,P010,P011,P012,P017,P018,P019,P022,P023,P024,P025,P026", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",
   "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
-    { "code": "CX001", "name": "codex-toml-invalid", "severity": "error", "subject_path": ".codex/config.toml" },
-    { "code": "P001", "name": "mcp-json-invalid", "severity": "error", "subject_path": ".mcp.json" }
+    { "code": "P001", "name": "mcp-json-invalid", "severity": "error", "subject_path": "nested/.mcp.json" },
+    { "code": "P009", "name": "mcp-stdio-command", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P010", "name": "mcp-http-url", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P011", "name": "mcp-type-invalid", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P012", "name": "mcp-sse-deprecated", "severity": "warning", "subject_path": ".mcp.json" },
+    { "code": "P017", "name": "mcp-insecure-url", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P018", "name": "mcp-env-secret", "severity": "warning", "subject_path": ".mcp.json" },
+    { "code": "P019", "name": "mcp-command-dangerous", "severity": "warning", "subject_path": ".mcp.json" },
+    { "code": "P022", "name": "mcp-args-invalid", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P023", "name": "mcp-duplicate-server", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P024", "name": "mcp-server-empty", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P025", "name": "mcp-alwaysload-invalid", "severity": "warning", "subject_path": ".mcp.json" },
+    { "code": "P026", "name": "mcp-server-reserved", "severity": "error", "subject_path": ".mcp.json" }
   ],
   "allowed_additional_diagnostics": []
 }
