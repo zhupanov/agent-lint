@@ -1,5 +1,6 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::skills::SkillInfo;
@@ -112,11 +113,10 @@ pub(super) fn validate_orphaned_skill_files(
             continue;
         }
 
-        let skill_md = path.join("SKILL.md");
-        let skill_content = match fs::read_to_string(&skill_md) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
+        let docs = read_skill_markdown_docs(&path);
+        if docs.is_empty() {
+            continue;
+        }
 
         // Check each file in scripts/
         for script_entry in traversal::shallow_files(&scripts_dir, Path::new("."), None).entries {
@@ -131,13 +131,17 @@ pub(super) fn validate_orphaned_skill_files(
                 continue;
             }
 
-            // Check if the script file name is referenced anywhere in SKILL.md
-            if !skill_content.contains(&script_name) {
+            // Referenced when the file name appears in any skill-local .md with
+            // a leading character boundary (avoids dry-run.sh shadowing run.sh).
+            if !docs
+                .iter()
+                .any(|doc| name_referenced_with_boundary(doc, &script_name))
+            {
                 diag.report_at(
                     LintRule::OrphanedSkillFiles,
                     &display_path,
                     &format!(
-                        "{}: not referenced from {base_dir}/{dir_name}/SKILL.md",
+                        "{}: not referenced from any .md under {base_dir}/{dir_name}",
                         display_path
                     ),
                 );
@@ -146,12 +150,52 @@ pub(super) fn validate_orphaned_skill_files(
     }
 }
 
+/// Read every `*.md` under a skill directory in deterministic sorted order.
+fn read_skill_markdown_docs(skill_dir: &Path) -> Vec<String> {
+    traversal::recursive_files(skill_dir, Path::new("."), None)
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            entry
+                .path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+        })
+        .filter_map(|entry| fs::read_to_string(&entry.path).ok())
+        .collect()
+}
+
+/// True when `name` appears in `content` and the preceding character (if any)
+/// is not `[A-Za-z0-9_.-]`.
+fn name_referenced_with_boundary(content: &str, name: &str) -> bool {
+    let mut start = 0;
+    while let Some(offset) = content[start..].find(name) {
+        let abs = start + offset;
+        let boundary_ok = abs == 0
+            || content[..abs]
+                .chars()
+                .next_back()
+                .is_some_and(|prev| !is_name_boundary_char(prev));
+        if boundary_ok {
+            return true;
+        }
+        start = abs + name.len().max(1);
+    }
+    false
+}
+
+fn is_name_boundary_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')
+}
+
 /// S036: Check that referenced shared .md files > 100 lines have headings (TOC).
 /// Only runs in plugin mode (called from validate_skill_content).
 pub(super) fn validate_ref_no_toc(
     base_dir: &str,
     skills: &[SkillInfo],
     diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
 ) {
     let shared_dir = Path::new(base_dir).join("shared");
     if !shared_dir.is_dir() {
@@ -171,6 +215,10 @@ pub(super) fn validate_ref_no_toc(
                 continue;
             }
 
+            if exclude.is_excluded(&rel) {
+                continue;
+            }
+
             let rel_path = Path::new(&rel);
             if !rel_path.is_file() {
                 continue;
@@ -179,13 +227,14 @@ pub(super) fn validate_ref_no_toc(
             if let Ok(content) = fs::read_to_string(rel_path) {
                 let line_count = content.lines().count();
                 if line_count > REF_NO_TOC_THRESHOLD {
-                    let has_headings = content.lines().any(|l| l.starts_with("## "));
+                    let document = MarkdownDocument::parse(&content);
+                    let has_headings = !document.headings().is_empty();
                     if !has_headings {
                         diag.report_at(
                             LintRule::RefNoToc,
                             &rel,
                             &format!(
-                                "{}: references {} ({} lines) which has no ## headings for navigation",
+                                "{}: references {} ({} lines) which has no headings for navigation",
                                 info.path, reference, line_count
                             ),
                         );

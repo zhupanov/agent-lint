@@ -1,0 +1,40 @@
+{
+  "class": "broken",
+  "repository": "skill-structural-broken",
+  "covers": ["plugin-mode", "normal", "json", "skill-structural"],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": ["--format", "json", "--only", "S030,S036,S072,S073", "."]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "S030",
+      "name": "orphaned-skill-files",
+      "severity": "error",
+      "subject_path": "skills/demo/scripts/orphan.sh"
+    },
+    {
+      "code": "S036",
+      "name": "ref-no-toc",
+      "severity": "warning",
+      "subject_path": "skills/shared/plain.md"
+    },
+    {
+      "code": "S072",
+      "name": "skill-dir-oversized",
+      "severity": "warning",
+      "subject_path": "skills/demo/SKILL.md"
+    },
+    {
+      "code": "S073",
+      "name": "skill-ref-nested",
+      "severity": "error",
+      "subject_path": "skills/demo/SKILL.md"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

@@ -68,7 +68,7 @@ pub(crate) fn validate_skill_content_with_prompt_pass(
     // Cross-skill checks (plugin-only: S029, S036; both-mode: S030, S048)
     cross_skill::validate_nested_references("skills", &skills, diag);
     cross_skill::validate_orphaned_skill_files("skills", diag, exclude);
-    cross_skill::validate_ref_no_toc("skills", &skills, diag);
+    cross_skill::validate_ref_no_toc("skills", &skills, diag, exclude);
     cross_skill::validate_generic_ref_names("skills", diag, exclude);
 }
 
@@ -1281,7 +1281,7 @@ mod tests {
         let errors = diag.errors();
         let toc_count = errors
             .iter()
-            .filter(|e| e.contains("no ## headings"))
+            .filter(|e| e.contains("no headings for navigation"))
             .count();
         assert_eq!(toc_count, 1);
     }
@@ -1317,6 +1317,86 @@ mod tests {
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nRun helper.sh\n",
         ).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.errors().iter().any(|e| e.contains("not referenced")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_transitive_reference_in_nested_md_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/transitive/scripts").unwrap();
+        std::fs::create_dir_all("skills/transitive/references").unwrap();
+        std::fs::write("skills/transitive/scripts/rollup.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/transitive/references/usage.md",
+            "# Usage\n\nRun `rollup.sh` after packaging.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/transitive/SKILL.md",
+            "---\nname: transitive\ndescription: Use when testing transitive script references\n---\nSee [usage](references/usage.md)\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("rollup.sh") && e.contains("not referenced")),
+            "transitive docs should count: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_near_name_shadowing_still_orphans() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write("skills/my-skill/scripts/run.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write("skills/my-skill/scripts/dry-run.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing near-name script shadowing\n---\nPrefer dry-run.sh before applying changes.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("scripts/run.sh") && e.contains("not referenced")),
+            "run.sh must not be shadowed by dry-run.sh: {:?}",
+            diag.errors()
+        );
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("dry-run.sh") && e.contains("not referenced"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_fenced_mention_still_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write("skills/my-skill/scripts/helper.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing fenced script mentions\n---\n```bash\n./helper.sh\n```\n",
+        )
+        .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("not referenced")));
@@ -1785,7 +1865,7 @@ suppress = ["S033"]
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all("skills/shared").unwrap();
         std::fs::create_dir_all("skills/my-skill").unwrap();
-        // Create a shared .md > 100 lines with no ## headings
+        // Create a shared .md > 100 lines with no headings
         let long_content = "line\n".repeat(101);
         std::fs::write("skills/shared/big-ref.md", &long_content).unwrap();
         std::fs::write(
@@ -1794,7 +1874,11 @@ suppress = ["S033"]
         ).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(diag.errors().iter().any(|e| e.contains("no ## headings")));
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("no headings for navigation"))
+        );
     }
 
     #[test]
@@ -1816,7 +1900,95 @@ suppress = ["S033"]
         ).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(!diag.errors().iter().any(|e| e.contains("no ## headings")));
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("no headings for navigation"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s036_hash_and_h3_only_headings_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut content = String::from("# Guide\n");
+        for i in 0..60 {
+            content.push_str(&format!("### Section {i}\nline\n"));
+        }
+        assert!(content.lines().count() > 100);
+        std::fs::write("skills/shared/guide.md", &content).unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing non-## heading navigation\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/guide.md\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("no headings for navigation"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s036_heading_only_inside_fence_warns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut content = String::from("```md\n## Example heading\n```\n");
+        for _ in 0..100 {
+            content.push_str("line\n");
+        }
+        std::fs::write("skills/shared/fenced.md", &content).unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing fenced false headings\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/fenced.md\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("no headings for navigation"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s036_excluded_shared_file_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let long_content = "line\n".repeat(101);
+        std::fs::write("skills/shared/excluded.md", &long_content).unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing excluded shared refs\n---\nSee ${CLAUDE_PLUGIN_ROOT}/skills/shared/excluded.md\n",
+        )
+        .unwrap();
+        let exclude =
+            crate::config::ExcludeSet::new(&["skills/shared/excluded.md".to_string()]).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &exclude);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("no headings for navigation"))
+        );
     }
 
     // ── S037: body-no-refs ───────────────────────────────────────────

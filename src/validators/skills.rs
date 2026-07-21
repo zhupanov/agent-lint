@@ -358,12 +358,7 @@ fn validate_skill_frontmatter_in_dir(
 }
 
 fn check_skill_dir_size(dir: &Path, skill_path: &str, diag: &mut DiagnosticCollector) {
-    let mut total = 0u64;
-    for entry in traversal::recursive_files(dir, Path::new("."), None).entries {
-        if let Ok(meta) = entry.path.metadata() {
-            total = total.saturating_add(meta.len());
-        }
-    }
+    let total = traversal::directory_byte_size(dir);
     if total > SKILL_DIR_SIZE_LIMIT {
         diag.report_at(
             LintRule::SkillDirOversized,
@@ -381,12 +376,15 @@ fn check_skill_ref_depth(
     diag: &mut DiagnosticCollector,
 ) {
     for link in document.links() {
-        let target = link.destination.as_str();
-        if target.starts_with("http://")
-            || target.starts_with("https://")
-            || target.starts_with('/')
-            || target.contains("${CLAUDE_PLUGIN_ROOT}")
-        {
+        let raw_target = link.destination.as_str();
+        if raw_target.starts_with('/') || raw_target.contains("${CLAUDE_PLUGIN_ROOT}") {
+            continue;
+        }
+        let target = strip_link_fragment_or_query(raw_target);
+        if has_uri_scheme(target) {
+            continue;
+        }
+        if !target.to_ascii_lowercase().ends_with(".md") {
             continue;
         }
         let depth = target
@@ -394,15 +392,40 @@ fn check_skill_ref_depth(
             .filter(|p| !p.is_empty() && *p != ".")
             .count();
         // One nesting level = dir/file.md (2 components). Deeper is flagged.
+        // `..` components count toward depth (a parent hop leaves the skill root).
         if depth > 2 {
-            diag.report_at(
+            diag.report_at_with(
                 LintRule::SkillRefNested,
                 skill_path,
                 &format!(
-                    "{skill_path}: skill file reference '{target}' is nested deeper than one level"
+                    "{skill_path}: skill-relative .md link '{raw_target}' is nested deeper than one level"
                 ),
+                DiagnosticMetadata::at_line(link.line),
             );
         }
+    }
+}
+
+/// Strip a trailing `#fragment` or `?query` (whichever appears first).
+fn strip_link_fragment_or_query(target: &str) -> &str {
+    match target.find(['#', '?']) {
+        Some(idx) => &target[..idx],
+        None => target,
+    }
+}
+
+/// True when `target` begins with a URI scheme (`^[A-Za-z][A-Za-z0-9+.-]*:`).
+fn has_uri_scheme(target: &str) -> bool {
+    let Some(colon) = target.find(':') else {
+        return false;
+    };
+    let scheme = &target[..colon];
+    let mut chars = scheme.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {
+            chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+        }
+        _ => false,
     }
 }
 
@@ -900,11 +923,189 @@ mod tests {
 
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::SkillRefNested)
+            .expect("expected S073");
+        assert_eq!(
+            diagnostic.location.map(|location| location.start()),
+            Some(crate::diagnostic::SourcePosition::line(5))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s073_skips_uri_schemes_and_non_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill for scheme and non-md depth skips\n---\n\
+             See [hosts](file:///etc/hosts/extra)\n\
+             Mail [x](mailto:x@y)\n\
+             Data [csv](data/2024/q1/report.csv)\n\
+             Anchor [ok](dir/file.md#anchor)\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::SkillRefNested),
+            "unexpected S073: {:?}",
+            diag.diagnostics()
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s073_parent_hop_and_case_insensitive_md() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill for parent-hop depth testing\n---\n\
+             See [parent](../other/file.md)\n\
+             And [upper](refs/deep/FILE.MD)\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        let nested: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::SkillRefNested)
+            .collect();
+        assert_eq!(nested.len(), 2, "expected both deep links: {nested:?}");
+        assert!(nested.iter().all(|d| d.location.is_some()));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s072_counts_dist_and_plain_subdir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/heavy/dist").unwrap();
+        std::fs::write(
+            "skills/heavy/SKILL.md",
+            "---\nname: heavy\ndescription: A skill for oversized directory testing\n---\nBody\n",
+        )
+        .unwrap();
+        // 9MB under dist/ — previously skipped by IGNORED_DIRECTORY_NAMES.
+        std::fs::write("skills/heavy/dist/blob.bin", vec![0u8; 9 * 1024 * 1024]).unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::SkillDirOversized)
+            .expect("expected S072 for dist/");
+        assert!(diagnostic.message.contains("9437184") || diagnostic.message.contains("bytes"));
+
+        // Regression: plain subdir still counted.
+        let tmp2 = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp2.path()).unwrap();
+        std::fs::create_dir_all("skills/heavy/assets").unwrap();
+        std::fs::write(
+            "skills/heavy/SKILL.md",
+            "---\nname: heavy\ndescription: A skill for oversized directory testing\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write("skills/heavy/assets/blob.bin", vec![0u8; 9 * 1024 * 1024]).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             diag.diagnostics()
                 .iter()
-                .any(|d| d.rule == LintRule::SkillRefNested)
+                .any(|d| d.rule == LintRule::SkillDirOversized)
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s072_skips_git_and_handles_symlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/linky/.git/objects").unwrap();
+        std::fs::write(
+            "skills/linky/SKILL.md",
+            "---\nname: linky\ndescription: A skill for symlink size accounting\n---\nBody\n",
+        )
+        .unwrap();
+        // Large payload only under .git must not trip S072.
+        std::fs::write(
+            "skills/linky/.git/objects/pack.bin",
+            vec![0u8; 9 * 1024 * 1024],
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::SkillDirOversized),
+            ".git contents must not count"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = tmp.path().join("outside-large.bin");
+            std::fs::write(&outside, vec![0u8; 9 * 1024 * 1024]).unwrap();
+            symlink(&outside, "skills/linky/via-file-link.bin").unwrap();
+
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::SkillDirOversized),
+                "file symlink target size must count"
+            );
+
+            // Directory symlink must not be followed (and must not double-count).
+            let tmp3 = tempfile::tempdir().unwrap();
+            std::env::set_current_dir(tmp3.path()).unwrap();
+            std::fs::create_dir_all("skills/linky").unwrap();
+            std::fs::create_dir_all("external-dist").unwrap();
+            std::fs::write(
+                "skills/linky/SKILL.md",
+                "---\nname: linky\ndescription: A skill for dir-symlink size accounting\n---\nBody\n",
+            )
+            .unwrap();
+            std::fs::write("external-dist/blob.bin", vec![0u8; 9 * 1024 * 1024]).unwrap();
+            symlink(tmp3.path().join("external-dist"), "skills/linky/dist").unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::SkillDirOversized),
+                "directory symlink must not be followed"
+            );
+        }
     }
 
     #[test]

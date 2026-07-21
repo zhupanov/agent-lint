@@ -23,6 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `slack-fallback-mismatch` now fail as invalid rule identifiers; remove those
   entries. Downstream repositories that need the three-variable invariant must
   enforce it in their own tests or lint configuration.
+- S030 (`orphaned-skill-files`) treats a scripts file as referenced when its
+  name appears in any skill-local `.md` (not only `SKILL.md`), with a leading
+  character-boundary check so `dry-run.sh` no longer shadows `run.sh`
+- S036 (`ref-no-toc`) uses `MarkdownDocument` headings (levels 1–6 outside
+  fences) and honors `ExcludeSet` for the shared-file subject
+- S072 (`skill-dir-oversized`) counts files under conventional build/dependency
+  directories (`dist`, `node_modules`, …), still skipping `.git` and directory
+  symlinks
+- S073 (`skill-ref-nested`) flags only skill-relative `.md` links, skips URI
+  schemes, strips `#fragment`/`?query` before depth checks, counts `..`
+  components, and attaches link line metadata
 - **BREAKING**: Removed U003 (`userconfig-env-missing`). Existing
   `agent-lint.toml` references and `--only` selections using `U003` /
   `userconfig-env-missing` now fail as invalid rule identifiers; remove those

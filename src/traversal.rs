@@ -116,6 +116,37 @@ pub fn recursive_files(base: &Path, root: &Path, exclude: Option<&ExcludeSet>) -
     entries(base, root, WalkDepth::Recursive, EntryKind::Files, exclude)
 }
 
+/// Sum byte sizes of regular files under `dir` for upload-limit accounting.
+///
+/// Unlike [`recursive_files`], this descends into conventional build and
+/// dependency directories (`node_modules`, `vendor`, `target`, `dist`, `build`)
+/// because those trees count toward platform upload size. It still never
+/// enters `.git` and never follows directory symlinks. File symlinks contribute
+/// the size of their target via followed metadata.
+pub fn directory_byte_size(dir: &Path) -> u64 {
+    if !dir.is_dir() {
+        return 0;
+    }
+
+    let mut total = 0u64;
+    let walker = WalkDir::new(dir).follow_links(false).min_depth(1);
+    for entry in walker
+        .into_iter()
+        .filter_entry(|entry| entry.file_name().to_string_lossy().as_ref() != ".git")
+    {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        match entry.path().metadata() {
+            Ok(meta) if meta.is_file() => {
+                total = total.saturating_add(meta.len());
+            }
+            _ => {}
+        }
+    }
+    total
+}
+
 fn includes(entry: &DirEntry, kind: EntryKind) -> bool {
     match kind {
         EntryKind::Files => entry.file_type().is_file(),
@@ -200,6 +231,34 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["real/AGENTS.md"]
         );
+    }
+
+    #[test]
+    fn directory_byte_size_counts_dist_skips_git_and_dir_symlinks() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("dist")).unwrap();
+        fs::create_dir_all(tmp.path().join(".git/objects")).unwrap();
+        fs::create_dir_all(tmp.path().join("plain")).unwrap();
+        fs::write(tmp.path().join("dist/a.bin"), vec![1u8; 100]).unwrap();
+        fs::write(tmp.path().join("plain/b.bin"), vec![1u8; 50]).unwrap();
+        fs::write(tmp.path().join(".git/objects/c.bin"), vec![1u8; 1000]).unwrap();
+
+        assert_eq!(directory_byte_size(tmp.path()), 150);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let outside = tempfile::tempdir().unwrap();
+            fs::write(outside.path().join("big.bin"), vec![1u8; 500]).unwrap();
+            symlink(outside.path(), tmp.path().join("linked-dist")).unwrap();
+            // Directory symlink contents are not followed.
+            assert_eq!(directory_byte_size(tmp.path()), 150);
+
+            fs::write(tmp.path().join("target.bin"), vec![1u8; 25]).unwrap();
+            symlink(tmp.path().join("target.bin"), tmp.path().join("alias.bin")).unwrap();
+            // File symlink contributes target size (25) in addition to target.bin (25).
+            assert_eq!(directory_byte_size(tmp.path()), 200);
+        }
     }
 
     #[cfg(unix)]
