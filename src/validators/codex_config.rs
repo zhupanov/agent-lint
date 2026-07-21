@@ -3,10 +3,13 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::rules::LintRule;
-use crate::sensitive::contains_possible_secret;
+use crate::sensitive::{
+    contains_codex_mcp_token_signature, is_safe_env_placeholder, is_sensitive_key,
+};
 use crate::validators::codex_constants::*;
 use toml::Value;
 use toml::value::Table;
+use toml_edit::{ImDocument, Item, TableLike};
 
 const CONFIG_PATH: &str = ".codex/config.toml";
 
@@ -70,7 +73,7 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     validate_project_docs(diag, root);
     validate_scalar_enums(diag, root);
     validate_types(diag, root);
-    validate_nested(diag, root);
+    validate_nested(diag, root, &content);
 }
 
 fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table) {
@@ -219,7 +222,7 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table) {
     }
 }
 
-fn validate_nested(diag: &mut DiagnosticCollector, root: &Table) {
+fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, content: &str) {
     validate_container_types(diag, root);
     if let Some(table) = root.get("features").and_then(Value::as_table) {
         validate_unknown_keys(
@@ -309,7 +312,7 @@ fn validate_nested(diag: &mut DiagnosticCollector, root: &Table) {
             }
         }
     }
-    validate_mcp_servers(diag, root.get("mcp_servers"));
+    validate_mcp_servers(diag, root.get("mcp_servers"), content);
     validate_apps(diag, root.get("apps"));
     validate_approval_policy(diag, root.get("approval_policy"));
     validate_agent_thread_limit(diag, root);
@@ -350,7 +353,7 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table) {
     }
 }
 
-fn validate_mcp_servers(diag: &mut DiagnosticCollector, value: Option<&Value>) {
+fn validate_mcp_servers(diag: &mut DiagnosticCollector, value: Option<&Value>, content: &str) {
     let Some(servers) = value.and_then(Value::as_table) else {
         return;
     };
@@ -393,14 +396,8 @@ fn validate_mcp_servers(diag: &mut DiagnosticCollector, value: Option<&Value>) {
                 &format!("{label}.bearer_token is forbidden; use bearer_token_env_var"),
             );
         }
-        if table_contains_secret(server) {
-            report_config(
-                diag,
-                LintRule::CodexHardcodedSecret,
-                &format!("{label} contains a potential hardcoded secret"),
-            );
-        }
     }
+    validate_mcp_secret_literals(diag, content);
 }
 
 #[derive(Clone, Copy)]
@@ -603,19 +600,143 @@ fn validate_suppressed_windows(diag: &mut DiagnosticCollector, value: Option<&Va
     }
 }
 
-fn table_contains_secret(table: &Table) -> bool {
-    table.iter().any(|(key, value)| {
-        contains_possible_secret(&format!("{key} = {value}")) || value_contains_secret(value)
+const ENV_NAME_FIELDS: &[&str] = &["env_vars", "bearer_token_env_var", "env_http_headers"];
+const SENSITIVE_HTTP_HEADERS: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+];
+
+/// CX013 owns only literal credential facts in known Codex MCP locations. It
+/// intentionally parses the original TOML again so locations and ordering come
+/// from source, rather than from a semantic table that may reorder keys.
+fn validate_mcp_secret_literals(diag: &mut DiagnosticCollector, content: &str) {
+    let Ok(document) = ImDocument::parse(content) else {
+        return; // `toml::Value` already owns the parse diagnostic.
+    };
+    let Some(servers) = document
+        .as_table()
+        .get("mcp_servers")
+        .and_then(Item::as_table_like)
+    else {
+        return;
+    };
+    for (_, server) in servers.iter() {
+        let Some(server) = server.as_table_like() else {
+            continue;
+        };
+        validate_server_secret_literals(diag, content, server);
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SecretMapKind {
+    Environment,
+    HttpHeaders,
+}
+
+fn validate_server_secret_literals(
+    diag: &mut DiagnosticCollector,
+    content: &str,
+    server: &dyn TableLike,
+) {
+    for (field, value) in server.iter() {
+        match field {
+            "env" => validate_typed_secret_map(diag, content, value, SecretMapKind::Environment),
+            "http_headers" => {
+                validate_typed_secret_map(diag, content, value, SecretMapKind::HttpHeaders)
+            }
+            "bearer_token" => {} // CX028 exclusively owns this field.
+            _ if ENV_NAME_FIELDS.contains(&field) => {}
+            _ if item_contains_codex_token_signature(value) => report_cx013(
+                diag,
+                content,
+                server,
+                field,
+                "move the credential to an environment variable instead of storing a literal",
+            ),
+            _ => {}
+        }
+    }
+}
+
+fn validate_typed_secret_map(
+    diag: &mut DiagnosticCollector,
+    content: &str,
+    value: &Item,
+    kind: SecretMapKind,
+) {
+    let Some(values) = value.as_table_like() else {
+        return;
+    };
+    for (key, value) in values.iter() {
+        let Some(value) = value.as_str() else {
+            continue;
+        };
+        let literal = !value.trim().is_empty() && !is_safe_env_placeholder(value, true);
+        let sensitive_key = match kind {
+            SecretMapKind::Environment => is_sensitive_key(key),
+            SecretMapKind::HttpHeaders => {
+                SENSITIVE_HTTP_HEADERS
+                    .iter()
+                    .any(|name| key.eq_ignore_ascii_case(name))
+                    || is_sensitive_key(key)
+            }
+        };
+        if !(contains_codex_mcp_token_signature(value) || (sensitive_key && literal)) {
+            continue;
+        }
+        let suggestion = match kind {
+            SecretMapKind::Environment => {
+                "move the variable name to env_vars instead of storing a credential literal"
+            }
+            SecretMapKind::HttpHeaders => {
+                "move the variable name to env_http_headers or bearer_token_env_var instead of storing a credential literal"
+            }
+        };
+        report_cx013(diag, content, values, key, suggestion);
+    }
+}
+
+fn item_contains_codex_token_signature(item: &Item) -> bool {
+    if item
+        .as_str()
+        .is_some_and(contains_codex_mcp_token_signature)
+    {
+        return true;
+    }
+    item.as_array().is_some_and(|items| {
+        items
+            .iter()
+            .filter_map(toml_edit::Value::as_str)
+            .any(contains_codex_mcp_token_signature)
     })
 }
 
-fn value_contains_secret(value: &Value) -> bool {
-    match value {
-        Value::String(value) => contains_possible_secret(value),
-        Value::Array(values) => values.iter().any(value_contains_secret),
-        Value::Table(values) => table_contains_secret(values),
-        _ => false,
+fn report_cx013(
+    diag: &mut DiagnosticCollector,
+    content: &str,
+    table: &dyn TableLike,
+    key: &str,
+    suggestion: &str,
+) {
+    let location = table
+        .get_key_value(key)
+        .and_then(|(key, _)| key.span())
+        .and_then(|range| SourceSpan::from_byte_range(content, range));
+    let mut metadata = DiagnosticMetadata::default()
+        .with_evidence(key)
+        .with_suggestion(suggestion);
+    if let Some(location) = location {
+        metadata = metadata.with_location(location);
     }
+    diag.report_at_with(
+        LintRule::CodexHardcodedSecret,
+        CONFIG_PATH,
+        ".codex/config.toml contains a literal MCP credential",
+        metadata,
+    );
 }
 
 #[cfg(test)]
@@ -789,6 +910,107 @@ mod tests {
             )),
             vec![LintRule::CodexHardcodedSecret]
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cx013_walks_only_typed_mcp_credential_locations_without_leaking_values() {
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz";
+        let github = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+        let slack = "xoxb-1abcdefghij";
+        let config = format!(
+            "[mcp_servers.sk-abcdefghijklmnopqrstuv]\ncommand = 'server'\nenv = {{ SECRET = 'one', TOKEN = '${{TOKEN}}', PASSWORD = '${{PASSWORD:-}}', PASSWD = '${{PASSWD:-default}}', PRIVATE_KEY = 'five', ACCESS_KEY = 'six', API_KEY = 'seven', CLIENT_SECRET = 'eight', TOKENIZER_MODEL = 'clean', ORDINARY = '{secret}' }}\n[mcp_servers.http]\nurl = 'https://example.com/mcp'\nhttp_headers = {{ Authorization = 'Bearer header-literal-value', Proxy-Authorization = '${{PROXY}}', Cookie = '', Set-Cookie = '${{COOKIE:-default}}', X-API-Key = 'custom', Accept = '{slack}' }}\nbearer_token = '{secret}'\nbearer_token_env_var = 'GITHUB_TOKEN'\nenv_http_headers = {{ Authorization = 'GITHUB_TOKEN' }}\noauth_resource = '{github}'\n"
+        );
+        let diagnostics = with_config(&config);
+        let secrets: Vec<_> = diagnostics
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::CodexHardcodedSecret)
+            .collect();
+        let evidence: Vec<_> = secrets
+            .iter()
+            .map(|diagnostic| diagnostic.evidence.as_deref())
+            .collect();
+        assert_eq!(
+            evidence,
+            [
+                Some("SECRET"),
+                Some("PASSWD"),
+                Some("PRIVATE_KEY"),
+                Some("ACCESS_KEY"),
+                Some("API_KEY"),
+                Some("CLIENT_SECRET"),
+                Some("ORDINARY"),
+                Some("Authorization"),
+                Some("Set-Cookie"),
+                Some("X-API-Key"),
+                Some("Accept"),
+                Some("oauth_resource"),
+            ]
+        );
+        for diagnostic in &secrets {
+            assert_eq!(
+                diagnostic.subject_path.as_deref(),
+                Some(std::path::Path::new(CONFIG_PATH))
+            );
+            assert_eq!(diagnostic.severity, crate::diagnostic::Severity::Error);
+            assert!(diagnostic.location.is_some(), "{diagnostic:?}");
+            assert!(diagnostic.message.contains("literal MCP credential"));
+            for forbidden in [
+                secret,
+                github,
+                slack,
+                "sk-abcdefghijklmnopqrstuv",
+                "header-literal-value",
+            ] {
+                assert!(
+                    !diagnostic.message.contains(forbidden)
+                        && !diagnostic
+                            .evidence
+                            .as_deref()
+                            .is_some_and(|value| value.contains(forbidden))
+                        && !diagnostic
+                            .suggestion
+                            .as_deref()
+                            .is_some_and(|value| value.contains(forbidden)),
+                    "leaked {forbidden} in {diagnostic:?}"
+                );
+            }
+        }
+        assert_eq!(
+            rules(&diagnostics)
+                .iter()
+                .filter(|rule| **rule == LintRule::CodexInlineBearerToken)
+                .count(),
+            1
+        );
+        assert!(
+            secrets
+                .iter()
+                .all(|diagnostic| diagnostic.evidence.as_deref() != Some("bearer_token"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cx013_placeholder_boundaries_and_empty_values_are_clean() {
+        let clean = "[mcp_servers.stdio]\ncommand = 'token = literal-but-not-an-explicit-signature'\nenv = { SECRET = '$NAME', TOKEN = '${NAME}', PASSWORD = '${NAME:-}', PASSWD = '', TOKENIZER_MODEL = 'value' }\nenv_vars = ['sk-abcdefghijklmnopqrstuvwxyz']\n[mcp_servers.http]\nurl = 'https://example.com/mcp'\nhttp_headers = { Authorization = '$NAME', Cookie = '${NAME}', Set-Cookie = '${NAME:-}', X-API-Key = '' }\nbearer_token_env_var = 'sk-abcdefghijklmnopqrstuvwxyz'\nenv_http_headers = { Authorization = 'sk-abcdefghijklmnopqrstuvwxyz' }\n";
+        assert!(
+            with_config(clean)
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.rule != LintRule::CodexHardcodedSecret)
+        );
+        for literal in ["prefix$NAME", "${NAME}suffix", "${NAME:-default}"] {
+            let config = format!(
+                "[mcp_servers.server]\ncommand = 'server'\nenv = {{ TOKEN = '{literal}' }}\n"
+            );
+            assert_eq!(
+                rules(&with_config(&config)),
+                vec![LintRule::CodexHardcodedSecret],
+                "{literal}"
+            );
+        }
     }
 
     #[test]

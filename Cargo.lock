@@ -19,6 +19,7 @@ dependencies = [
  "strum_macros 0.27.2",
  "tempfile",
  "toml",
+ "toml_edit",
  "url",
  "walkdir",
 ]
