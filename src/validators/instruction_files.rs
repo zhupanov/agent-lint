@@ -336,7 +336,9 @@ mod tests {
 
         for reference in [
             "missing.md",
+            "missing.ts",
             "docs/missing.md",
+            "docs/missing.ts",
             "./missing",
             "nested/path/missing.json",
         ] {

@@ -45,13 +45,43 @@ impl InlineCodePathKind {
     }
 }
 
-/// Bare extension markers that are common in prose and are not dotfile paths.
+/// Established dotfile names that remain filesystem references even when they
+/// overlap the lexical shape of a bare extension marker.
 ///
-/// Other single-segment dot-prefixed tokens are classified as dotfiles and
-/// resolved against the filesystem. This deliberately makes `.env`,
-/// `.gitignore`, `.cursorrules`, and `.mcp.json` existence-sensitive while
-/// keeping language/file-format markers such as `.py` as hard negatives.
-const BARE_EXTENSION_MARKERS: &[&str] = &[".py", ".md", ".json", ".toml", ".yaml", ".yml", ".rs"];
+/// This is intentionally a dotfile policy, not an extension allowlist: the
+/// extension classifier below accepts any conservative lexical extension form.
+const WELL_KNOWN_DOTFILES: &[&str] = &[
+    ".env",
+    ".gitignore",
+    ".cursorrules",
+    ".mcp.json",
+    ".editorconfig",
+    ".dockerignore",
+    ".npmrc",
+    ".nvmrc",
+    ".prettierrc",
+    ".eslintrc",
+    ".babelrc",
+    ".stylelintrc",
+    ".tool-versions",
+];
+
+/// Whether `token` is conservative bare-extension prose rather than a path.
+///
+/// The token must be a single leading dot followed by one to eight lowercase
+/// ASCII alphanumeric characters. That covers conventional source and format
+/// extensions (including `.c`, `.cpp`, `.html`, and `.tsx`) without treating
+/// punctuation-bearing, uppercase, or long dot-prefixed names as extensions.
+/// Known dotfiles take precedence in [`classify_inline_code_path`].
+fn is_bare_extension_marker(token: &str) -> bool {
+    let Some(extension) = token.strip_prefix('.') else {
+        return false;
+    };
+    (1..=8).contains(&extension.len())
+        && extension
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+}
 
 pub(crate) fn classify_inline_code_path(token: &str) -> InlineCodePathKind {
     if token.is_empty() || token.contains(char::is_whitespace) {
@@ -64,13 +94,19 @@ pub(crate) fn classify_inline_code_path(token: &str) -> InlineCodePathKind {
     {
         return InlineCodePathKind::UrlVariableOrPlaceholder;
     }
-    if token.contains(['*', '?']) || BARE_EXTENSION_MARKERS.contains(&token) {
+    if token.contains(['*', '?']) {
         return InlineCodePathKind::ExtensionOrGlob;
     }
     if token.starts_with("./") || token.contains('/') {
         return InlineCodePathKind::ConcreteRelativePath;
     }
     if token.starts_with('.') && token.len() > 1 {
+        if WELL_KNOWN_DOTFILES.contains(&token) {
+            return InlineCodePathKind::Dotfile;
+        }
+        if is_bare_extension_marker(token) {
+            return InlineCodePathKind::ExtensionOrGlob;
+        }
         return InlineCodePathKind::Dotfile;
     }
     if token.rsplit_once('.').is_some() {
@@ -319,7 +355,9 @@ mod inline_code_path_tests {
     fn classifies_concrete_relative_paths() {
         for token in [
             "missing.md",
+            "missing.ts",
             "docs/missing.md",
+            "docs/missing.ts",
             "./missing",
             "nested/path/missing.json",
         ] {
@@ -332,7 +370,7 @@ mod inline_code_path_tests {
     }
 
     #[test]
-    fn classifies_dotfiles_separately_from_bare_extensions() {
+    fn classifies_well_known_dotfiles_separately_from_bare_extensions() {
         for token in [".env", ".gitignore", ".cursorrules", ".mcp.json"] {
             assert_eq!(
                 classify_inline_code_path(token),
@@ -341,12 +379,24 @@ mod inline_code_path_tests {
             );
         }
         for token in [
-            ".py", "*.py", ".md", ".json", ".toml", ".yaml", ".yml", ".rs",
+            ".c", ".cpp", ".css", ".go", ".html", ".java", ".js", ".json", ".md", ".py", ".rs",
+            ".sh", ".toml", ".ts", ".tsx", ".yaml", ".yml", "*.py",
         ] {
             assert_eq!(
                 classify_inline_code_path(token),
                 InlineCodePathKind::ExtensionOrGlob,
                 "expected {token} to be extension/glob notation"
+            );
+        }
+    }
+
+    #[test]
+    fn keeps_ambiguous_non_extension_dot_tokens_as_dotfiles() {
+        for token in [".UPPER", ".longextension", ".tool-versions", ".config_file"] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::Dotfile,
+                "expected {token} to remain a dotfile"
             );
         }
     }
