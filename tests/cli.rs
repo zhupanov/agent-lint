@@ -2074,7 +2074,6 @@ fn hooks_json_non_collection_values_are_h003_not_h007() {
     }
 }
 
-
 #[test]
 fn userconfig_rules_cover_modes_focus_suppression_and_exclude_boundary() {
     let tmp = tempfile::tempdir().unwrap();
