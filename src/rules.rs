@@ -261,7 +261,7 @@ pub enum LintRule {
     /// S032: potential hardcoded API key/token/secret
     #[strum(props(code = "S032", name = "hardcoded-secret"))]
     HardcodedSecret,
-    /// S033: skill name uses vague/generic terms
+    /// S033: published plugin skill name is an exact domainless label
     #[strum(props(code = "S033", name = "name-vague"))]
     NameVague,
     /// S034: skill description under 20 characters
@@ -309,7 +309,8 @@ pub enum LintRule {
     /// S048: non-descriptive reference file name in skill directory
     #[strum(props(code = "S048", name = "ref-name-generic"))]
     RefNameGeneric,
-    /// S049: skill name not in gerund form
+    /// S049: skill name not in gerund form (deprecated — no longer fires;
+    /// retained so existing config identifiers keep parsing)
     #[strum(props(code = "S049", name = "name-not-gerund"))]
     NameNotGerund,
     /// S050: skill description content is too vague/generic

@@ -73,7 +73,8 @@ pub(crate) fn validate_skill_content_with_prompt_pass(
 }
 
 /// Validate skill content for private skills (.claude/skills/).
-/// Runs only "both-mode" rules (excludes S016, S017, S029, S033, S036, S037, S038, S046, S047, S049, S050, S051, S052, S053, S054, S055, S056, S057).
+/// Runs only "both-mode" rules (excludes S016, S017, S029, S033, S036, S037, S038, S046, S047, S050, S051, S052, S053, S054, S055, S056, S057).
+/// Retired S049 never emits from either path; its registry entry is config-only.
 #[cfg(test)]
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let mut prompt_pass = super::prompt_content::PromptContentPass::default();
@@ -1373,20 +1374,34 @@ mod tests {
 
     // ── S033: name-vague ─────────────────────────────────────────────
 
+    fn write_plugin_skill(name: &str) {
+        std::fs::create_dir_all(format!("skills/{name}")).unwrap();
+        std::fs::write(
+            format!("skills/{name}/SKILL.md"),
+            format!(
+                "---\nname: {name}\ndescription: Use when exercising skill name validation thoroughly\n---\n# Skill name validation\n\nExercise skill name validation thoroughly for published plugin skills.\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn name_vague_count(diag: &DiagnosticCollector) -> usize {
+        diag.diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::NameVague)
+            .count()
+    }
+
     #[test]
     #[serial_test::serial]
     fn test_s033_vague_name_helper() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/helper").unwrap();
-        std::fs::write(
-            "skills/helper/SKILL.md",
-            "---\nname: helper\ndescription: Use when you need help with various tasks\n---\nBody content\n",
-        ).unwrap();
+        write_plugin_skill("helper");
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(diag.errors().iter().any(|e| e.contains("vague")));
+        assert!(diag.errors().iter().any(|e| e.contains("domainless")));
     }
 
     #[test]
@@ -1395,14 +1410,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/code-review").unwrap();
-        std::fs::write(
-            "skills/code-review/SKILL.md",
-            "---\nname: code-review\ndescription: Use when code changes need thorough review\n---\nBody content\n",
-        ).unwrap();
+        write_plugin_skill("code-review");
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(!diag.errors().iter().any(|e| e.contains("vague")));
+        assert_eq!(name_vague_count(&diag), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s033_subject_nouns_and_compounds_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for name in ["data", "files", "documents", "pdf-helper", "lint-utils"] {
+            write_plugin_skill(name);
+        }
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(name_vague_count(&diag), 0);
     }
 
     #[test]
@@ -1420,7 +1445,121 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         // S033 is plugin-only, should not fire in private mode
-        assert!(!diag.errors().iter().any(|e| e.contains("vague")));
+        assert_eq!(name_vague_count(&diag), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s033_default_warning_pedantic_and_all() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        write_plugin_skill("utils");
+
+        let mut normal = DiagnosticCollector::new();
+        validate_skill_content(&mut normal, &crate::config::ExcludeSet::default());
+        assert_eq!(name_vague_count(&normal), 1);
+        assert!(normal.warnings().iter().any(|e| e.contains("domainless")));
+        assert!(!normal.errors().iter().any(|e| e.contains("domainless")));
+
+        let mut pedantic_config = crate::config::LintConfig::default();
+        pedantic_config.apply_cli_mode(crate::config::CliMode::Pedantic);
+        let mut pedantic = DiagnosticCollector::with_config(pedantic_config);
+        validate_skill_content(&mut pedantic, &crate::config::ExcludeSet::default());
+        assert_eq!(name_vague_count(&pedantic), 1);
+        assert!(pedantic.errors().iter().any(|e| e.contains("domainless")));
+
+        let mut all_config = crate::config::LintConfig::default();
+        all_config.apply_cli_mode(crate::config::CliMode::All);
+        let mut all = DiagnosticCollector::with_config(all_config);
+        validate_skill_content(&mut all, &crate::config::ExcludeSet::default());
+        assert_eq!(name_vague_count(&all), 1);
+        assert!(all.errors().iter().any(|e| e.contains("domainless")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s033_only_focus_exclusion_and_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        write_plugin_skill("tools");
+        write_plugin_skill("helper");
+
+        let only = crate::config::RunPolicy::resolve(
+            crate::config::CliMode::Normal,
+            &["S033".to_string()],
+        )
+        .unwrap();
+        let mut focused =
+            DiagnosticCollector::with_run_policy(crate::config::LintConfig::default(), only);
+        validate_skill_content(&mut focused, &crate::config::ExcludeSet::default());
+        assert_eq!(name_vague_count(&focused), 2);
+        assert!(
+            focused
+                .diagnostics()
+                .iter()
+                .all(|d| d.rule == LintRule::NameVague)
+        );
+
+        let excluded = crate::config::ExcludeSet::new(&["skills/helper/**".to_string()])
+            .expect("exclude compiles");
+        let mut with_exclude = DiagnosticCollector::new();
+        validate_skill_content(&mut with_exclude, &excluded);
+        assert_eq!(name_vague_count(&with_exclude), 1);
+        assert!(
+            with_exclude
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::NameVague
+                    && d.message.contains("skills/tools/SKILL.md"))
+        );
+
+        std::fs::write(
+            "agent-lint.toml",
+            r#"
+[lint]
+[[lint.overrides]]
+files = ["skills/tools/**"]
+suppress = ["S033"]
+"#,
+        )
+        .unwrap();
+        let config = crate::config::LintConfig::load(tmp.path()).unwrap();
+        let mut overridden = DiagnosticCollector::with_config(config);
+        validate_skill_content(&mut overridden, &crate::config::ExcludeSet::default());
+        assert_eq!(name_vague_count(&overridden), 1);
+        assert!(
+            overridden
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::NameVague
+                    && d.message.contains("skills/helper/SKILL.md"))
+        );
+        assert_eq!(overridden.suppressed_count(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s033_message_and_suggestion_are_actionable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        write_plugin_skill("utility");
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let finding = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::NameVague)
+            .expect("S033 diagnostic");
+        assert!(finding.message.contains("domainless"));
+        assert_eq!(
+            finding.suggestion.as_deref(),
+            Some(
+                "Add the missing domain or task to the exact skill name (for example 'pdf-helper' or 'lint-utils'), rather than renaming for morphology alone."
+            )
+        );
     }
 
     // ── S034: desc-too-short ─────────────────────────────────────────
@@ -3650,64 +3789,90 @@ mod tests {
         );
     }
 
-    // ── S049: name-not-gerund ───────────────────────────────────────
+    // ── S049: name-not-gerund (retired; config alias retained) ───────
 
     #[test]
     #[serial_test::serial]
-    fn test_s049_no_gerund_fires() {
+    fn test_s049_never_emits_under_all_for_non_gerund_names() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/code-review").unwrap();
-        std::fs::write(
-            "skills/code-review/SKILL.md",
-            "---\nname: code-review\ndescription: Use when code changes need thorough review\n---\nBody\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
+        write_plugin_skill("code-review");
+        write_plugin_skill("string-utils");
+        write_plugin_skill("pdf");
+
+        let mut all_config = crate::config::LintConfig::default();
+        all_config.apply_cli_mode(crate::config::CliMode::All);
+        assert!(
+            all_config.error.contains(&LintRule::NameNotGerund),
+            "retired S049 remains selectable under --all for config compatibility"
+        );
+        let mut diag = DiagnosticCollector::with_config(all_config);
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(diag.errors().iter().any(|e| e.contains("gerund")));
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::NameNotGerund),
+            "retired S049 must stay inert even under --all"
+        );
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_s049_gerund_name_ok() {
+    fn test_s049_config_aliases_still_parse() {
         let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/processing-pdfs").unwrap();
         std::fs::write(
-            "skills/processing-pdfs/SKILL.md",
-            "---\nname: processing-pdfs\ndescription: Use when you need to process PDF documents\n---\nBody\n",
+            tmp.path().join("agent-lint.toml"),
+            r#"
+[lint]
+suppress = ["S049", "name-not-gerund"]
+error = ["S049"]
+warn = ["name-not-gerund"]
+"#,
         )
         .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(!diag.errors().iter().any(|e| e.contains("gerund")));
+        let config = crate::config::LintConfig::load(tmp.path()).unwrap();
+        assert!(config.suppress.contains(&LintRule::NameNotGerund));
+        // suppress wins over error/warn during load.
+        assert!(!config.error.contains(&LintRule::NameNotGerund));
+        assert!(!config.warn.contains(&LintRule::NameNotGerund));
+        assert_eq!(
+            LintRule::from_code_or_name("S049"),
+            Some(LintRule::NameNotGerund)
+        );
+        assert_eq!(
+            LintRule::from_code_or_name("name-not-gerund"),
+            Some(LintRule::NameNotGerund)
+        );
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_s049_exception_string_still_fires() {
+    fn test_s049_promoted_via_config_still_inert() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/string-utils").unwrap();
-        std::fs::write(
-            "skills/string-utils/SKILL.md",
-            "---\nname: string-utils\ndescription: Use when you need string manipulation utilities\n---\nBody\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
+        write_plugin_skill("code-review");
+        let config = crate::config::LintConfig {
+            error: std::collections::HashSet::from([LintRule::NameNotGerund]),
+            ..crate::config::LintConfig::default()
+        };
+        assert!(config.error.contains(&LintRule::NameNotGerund));
+        let mut diag = DiagnosticCollector::with_config(config);
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        // "string" ends in "ing" but is in the exception list — S049 should fire
-        // because there are no actual gerund words, only a non-gerund exception
-        assert!(diag.errors().iter().any(|e| e.contains("gerund")));
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::NameNotGerund),
+            "promoting retired S049 via config must not resurrect emissions"
+        );
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_s049_private_mode_skips() {
+    fn test_s049_private_mode_also_inert() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -3719,8 +3884,12 @@ mod tests {
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        // S049 is plugin-only, should not fire in private mode
-        assert!(!diag.errors().iter().any(|e| e.contains("gerund")));
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::NameNotGerund)
+        );
     }
 
     // ── S050: desc-vague-content ────────────────────────────────────

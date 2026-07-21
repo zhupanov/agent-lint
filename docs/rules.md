@@ -154,8 +154,8 @@ H008--H024 codes with a `… frontmatter` path label.
 | S009 | `name-too-long` | Skill name exceeds 64 characters | All skill surfaces | error |
 | S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | All skill surfaces | error |
 | S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | All skill surfaces | error |
-| S033 | `name-vague` | Skill name is too vague/generic (`helper`, `utils`, `tools`, etc.) | Plugin | warn |
-| S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form | Plugin | suppressed |
+| S033 | `name-vague` | Exact published skill name is a domainless implementation label (`helper`, `helpers`, `utils`, `utility`, `tools`); add a domain or task. Broad subject nouns such as `data`/`files`/`documents` and compounds are allowed | Plugin | warn |
+| S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form (deprecated — no longer fires; config alias retained) | Plugin | suppressed |
 
 ### Description Validation (S014--S018, S034, S050, S074)
 

@@ -6,6 +6,20 @@ use crate::validators::skills::SkillInfo;
 
 pub(super) const MAX_SKILL_NAME_LEN: usize = 64;
 
+/// Exact skill names that are domainless implementation labels for published
+/// plugin skills (S033). Broad subject nouns such as `data`, `files`, and
+/// `documents` are intentionally omitted — they can be concise, accurate
+/// names (comparable to accepted platform examples like `pdf` / `docx`).
+/// Matching remains exact-name only; compounds such as `pdf-helper` are not
+/// flagged.
+pub(super) const VAGUE_SKILL_NAMES: &[&str] = &[
+    "helper",  // pure role label with no domain or task
+    "helpers", // plural of the same domainless role label
+    "utils",   // implementation bucket, not a skill subject
+    "utility", // singular form of the same implementation bucket
+    "tools",   // domainless toolkit label
+];
+
 pub(super) fn check_name_format(
     info: &SkillInfo,
     plugin_mode: bool,
@@ -20,47 +34,19 @@ pub(super) fn check_name_format(
 
     check_agent_skills_name_contract(info, &name, diag);
 
-    // S033: vague name (plugin-only)
-    if plugin_mode {
-        let vague_names = [
-            "helper",
-            "helpers",
-            "utils",
-            "utility",
-            "tools",
-            "data",
-            "files",
-            "documents",
-        ];
-        if vague_names.contains(&name.as_str()) {
-            diag.report(
-                LintRule::NameVague,
-                &format!(
-                    "{}: name '{}' is too vague/generic for a published skill",
-                    info.path, name
-                ),
-            );
-        }
-    }
-
-    // S049: name not in gerund form (plugin-only)
-    if plugin_mode {
-        const NON_GERUND_ING: &[&str] = &[
-            "string", "ring", "spring", "king", "thing", "bling", "sing", "wing", "ping", "sting",
-            "swing", "bring", "cling", "fling", "sling", "wring",
-        ];
-        let has_gerund = name
-            .split('-')
-            .any(|word| word.ends_with("ing") && !NON_GERUND_ING.contains(&word));
-        if !has_gerund {
-            diag.report(
-                LintRule::NameNotGerund,
-                &format!(
-                    "{}: name '{}' does not use gerund form (consider e.g. 'processing-pdfs', 'reviewing-code')",
-                    info.path, name
-                ),
-            );
-        }
+    // S033: vague name (plugin-only). S049 (`name-not-gerund`) is retired and
+    // never emits; the registry entry remains only for config compatibility.
+    if plugin_mode && VAGUE_SKILL_NAMES.contains(&name.as_str()) {
+        diag.report_with(
+            LintRule::NameVague,
+            &format!(
+                "{}: name '{}' is domainless; add the missing domain or task (e.g. 'pdf-helper' or 'lint-utils', not 'helper')",
+                info.path, name
+            ),
+            DiagnosticMetadata::default().with_suggestion(
+                "Add the missing domain or task to the exact skill name (for example 'pdf-helper' or 'lint-utils'), rather than renaming for morphology alone.",
+            ),
+        );
     }
 }
 
@@ -138,4 +124,126 @@ fn name_field_location(fm_lines: &[String]) -> Option<SourceSpan> {
         .iter()
         .position(|line| line.starts_with("name:"))
         .map(|index| SourceSpan::line(index + 2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic::DiagnosticCollector;
+    use crate::markdown::MarkdownDocument;
+    use crate::validators::skills::SkillInfo;
+
+    fn skill_with_name(name: &str) -> SkillInfo {
+        let content = format!(
+            "---\nname: {name}\ndescription: Use when testing skill name validation thoroughly\n---\nBody\n"
+        );
+        let document = MarkdownDocument::parse(content);
+        let fm_lines = document
+            .frontmatter()
+            .expect("fixture frontmatter")
+            .to_vec();
+        SkillInfo {
+            path: format!("skills/{name}/SKILL.md"),
+            dir_name: name.to_string(),
+            fm_lines,
+            body: document.body().to_string(),
+            document,
+            has_scripts_dir: false,
+        }
+    }
+
+    fn name_vague_diagnostics(name: &str, plugin_mode: bool) -> Vec<crate::diagnostic::Diagnostic> {
+        let info = skill_with_name(name);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_name_format(&info, plugin_mode, &mut diag);
+        diag.diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::NameVague)
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn s033_flags_every_retained_denylist_entry() {
+        for name in VAGUE_SKILL_NAMES {
+            let found = name_vague_diagnostics(name, true);
+            assert_eq!(
+                found.len(),
+                1,
+                "expected exactly one S033 for retained denylist entry '{name}'"
+            );
+            assert!(
+                found[0].message.contains("domainless"),
+                "S033 message should describe domainlessness, got: {}",
+                found[0].message
+            );
+            assert!(
+                found[0]
+                    .suggestion
+                    .as_deref()
+                    .is_some_and(|s| s.contains("domain or task")),
+                "S033 suggestion should ask for domain/task, got: {:?}",
+                found[0].suggestion
+            );
+        }
+    }
+
+    #[test]
+    fn s033_hard_negatives_for_subject_nouns_and_compounds() {
+        for name in [
+            "data",
+            "files",
+            "documents",
+            "pdf",
+            "docx",
+            "xlsx",
+            "api-conventions",
+            "deploy",
+            "code-review",
+            "pdf-helper",
+            "lint-utils",
+            "data-tools",
+            "helper-scripts",
+            "document-tools",
+        ] {
+            assert!(
+                name_vague_diagnostics(name, true).is_empty(),
+                "S033 must not flag '{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn s033_private_mode_skips_vague_names() {
+        for name in VAGUE_SKILL_NAMES {
+            assert!(
+                name_vague_diagnostics(name, false).is_empty(),
+                "S033 is plugin-only; private mode must not flag '{name}'"
+            );
+        }
+    }
+
+    #[test]
+    fn s049_never_emits_for_non_gerund_names() {
+        for name in [
+            "code-review",
+            "pdf",
+            "docx",
+            "api-conventions",
+            "deploy",
+            "string-utils",
+            "helper",
+        ] {
+            let info = skill_with_name(name);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            check_name_format(&info, true, &mut diag);
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::NameNotGerund),
+                "retired S049 must stay inert for '{name}', including under all-enabled"
+            );
+        }
+    }
 }
