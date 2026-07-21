@@ -336,6 +336,15 @@ metadata, dependencies, and conventional build output.
 | I004 | `instruction-file-generic` | `AGENTS.md` is generic-only | Always | error |
 | I005 | `instruction-file-structure` | `AGENTS.md` lacks project-specific structure | Always | error |
 
+I003 treats explicit relative paths (for example `docs/guide.md`,
+`missing.md`, or `./script`) as filesystem references. Bare extension and glob
+notation such as `.py` and `*.py` is prose, not a path. Other dot-prefixed
+tokens are existence-sensitive dotfiles: an existing `.env`, `.gitignore`,
+`.cursorrules`, or `.mcp.json` is accepted and a missing one is reported. URLs,
+variables, placeholders, tokens containing whitespace, and non-path words are
+excluded. D005 uses the same lexical classification after applying its
+configured `inline-path-prefixes` scope.
+
 The former CX037, CX038, CX041, CX043, and CX044 identifiers and names remain
 accepted as configuration aliases for these shared rules.
 

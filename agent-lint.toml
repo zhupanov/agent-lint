@@ -1,4 +1,8 @@
 [lint]
+# Checked-in regression fixtures include deliberately broken repositories and
+# are exercised explicitly by tests rather than by repository self-linting.
+exclude = ["tests/fixtures/**"]
+
 # Define the repository's public guidance and architectural contracts as
 # inputs to the shared documentation-reference checks.
 instruction-files = [

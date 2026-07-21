@@ -18,6 +18,60 @@ pub(crate) static RE_TODO_MARKER: LazyLock<Regex> =
 /// validation (H022), which must stay in agreement.
 pub(crate) const VALID_SHELLS: &[&str] = &["bash", "powershell"];
 
+/// Lexical category for one whitespace-free inline-code token.
+///
+/// I003 and D005 intentionally share this classifier. Their validation scopes
+/// differ (D005 additionally requires a configured repository-path prefix),
+/// but equivalent tokens must not drift between path and non-path treatment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InlineCodePathKind {
+    ConcreteRelativePath,
+    Dotfile,
+    ExtensionOrGlob,
+    UrlVariableOrPlaceholder,
+    NonPath,
+}
+
+impl InlineCodePathKind {
+    pub(crate) fn is_repository_path(self) -> bool {
+        matches!(self, Self::ConcreteRelativePath | Self::Dotfile)
+    }
+}
+
+/// Bare extension markers that are common in prose and are not dotfile paths.
+///
+/// Other single-segment dot-prefixed tokens are classified as dotfiles and
+/// resolved against the filesystem. This deliberately makes `.env`,
+/// `.gitignore`, `.cursorrules`, and `.mcp.json` existence-sensitive while
+/// keeping language/file-format markers such as `.py` as hard negatives.
+const BARE_EXTENSION_MARKERS: &[&str] = &[".py", ".md", ".json", ".toml", ".yaml", ".yml", ".rs"];
+
+pub(crate) fn classify_inline_code_path(token: &str) -> InlineCodePathKind {
+    if token.is_empty() || token.contains(char::is_whitespace) {
+        return InlineCodePathKind::NonPath;
+    }
+    if token.contains("://")
+        || token.starts_with("mailto:")
+        || token.starts_with("//")
+        || token.contains(['$', '{', '}', '<', '>'])
+    {
+        return InlineCodePathKind::UrlVariableOrPlaceholder;
+    }
+    if token.contains(['*', '?']) || BARE_EXTENSION_MARKERS.contains(&token) {
+        return InlineCodePathKind::ExtensionOrGlob;
+    }
+    if token.starts_with("./") || token.contains('/') {
+        return InlineCodePathKind::ConcreteRelativePath;
+    }
+    if token.starts_with('.') && token.len() > 1 {
+        return InlineCodePathKind::Dotfile;
+    }
+    if token.rsplit_once('.').is_some() {
+        return InlineCodePathKind::ConcreteRelativePath;
+    }
+    InlineCodePathKind::NonPath
+}
+
 /// Model aliases accepted by Claude Code `/model` plus skill-only `inherit`.
 /// Full Anthropic model IDs (`claude-…`) are also accepted.
 /// Shared by skill frontmatter (S063) and future agent frontmatter validation.
@@ -245,6 +299,70 @@ mod url_tests {
             assert!(
                 !is_nonlocal_http_url(value),
                 "expected {value} to be local or invalid"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod inline_code_path_tests {
+    use super::{InlineCodePathKind, classify_inline_code_path};
+
+    #[test]
+    fn classifies_concrete_relative_paths() {
+        for token in [
+            "missing.md",
+            "docs/missing.md",
+            "./missing",
+            "nested/path/missing.json",
+        ] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::ConcreteRelativePath,
+                "expected {token} to be a concrete path"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_dotfiles_separately_from_bare_extensions() {
+        for token in [".env", ".gitignore", ".cursorrules", ".mcp.json"] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::Dotfile,
+                "expected {token} to be a dotfile"
+            );
+        }
+        for token in [
+            ".py", "*.py", ".md", ".json", ".toml", ".yaml", ".yml", ".rs",
+        ] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::ExtensionOrGlob,
+                "expected {token} to be extension/glob notation"
+            );
+        }
+    }
+
+    #[test]
+    fn preserves_url_variable_placeholder_and_whitespace_exclusions() {
+        for token in [
+            "https://example.com/file.md",
+            "$FILE",
+            "${ROOT}/file.md",
+            "<path/to/file.md>",
+        ] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::UrlVariableOrPlaceholder,
+                "expected {token} to be excluded syntax"
+            );
+        }
+        for token in ["", "two words.md", "README"] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::NonPath,
+                "expected {token:?} to be a non-path"
             );
         }
     }
