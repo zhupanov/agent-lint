@@ -867,7 +867,7 @@ pub enum LintRule {
     /// P009: stdio MCP server is missing its command
     #[strum(props(code = "P009", name = "mcp-stdio-command"))]
     McpStdioCommandMissing,
-    /// P010: HTTP/SSE MCP server is missing its URL
+    /// P010: remote MCP server URL is missing or invalid for its transport
     #[strum(props(code = "P010", name = "mcp-http-url"))]
     McpHttpUrlMissing,
     /// P011: MCP server type is not supported
@@ -876,7 +876,7 @@ pub enum LintRule {
     /// P012: SSE transport is deprecated
     #[strum(props(code = "P012", name = "mcp-sse-deprecated"))]
     McpSseDeprecated,
-    /// P017: non-local HTTP MCP URL is not HTTPS
+    /// P017: non-local HTTP or WebSocket MCP URL is insecure
     #[strum(props(code = "P017", name = "mcp-insecure-url"))]
     McpUrlNotHttps,
     /// P018: MCP environment contains a literal secret

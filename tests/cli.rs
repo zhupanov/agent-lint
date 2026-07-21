@@ -66,6 +66,72 @@ fn init_git(path: &std::path::Path) {
 }
 
 #[test]
+fn mcp_remote_transport_contract_has_exact_json_diagnostics_in_normal_and_all_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join(".mcp.json"),
+        r#"{"mcpServers":{"streamable":{"type":"streamable-http","url":"https://example.com/mcp"},"socket":{"type":"ws","url":"wss://example.com/socket"},"stdio":{"command":"ok","url":"ws://example.com/ignored"},"invalid-url":{"type":"http","url":"not a URL"},"invalid-type":{"type":"socket","url":"wss://example.com/socket"},"legacy":{"type":"sse","url":"https://example.com/mcp"},"insecure-http":{"type":"http","url":"http://example.com/mcp"},"insecure-ws":{"type":"ws","url":"ws://example.com/socket"}}}"#,
+    )
+    .unwrap();
+
+    for (args, expected_severity) in [
+        (
+            vec!["--format", "json", "--only", "P010,P011,P012,P017", "."],
+            "warning",
+        ),
+        (
+            vec![
+                "--format",
+                "json",
+                "--all",
+                "--only",
+                "P010,P011,P012,P017",
+                ".",
+            ],
+            "error",
+        ),
+    ] {
+        let output = run_in(tmp.path(), &args);
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        let identities = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic["code"].as_str().unwrap(),
+                    diagnostic["name"].as_str().unwrap(),
+                    diagnostic["severity"].as_str().unwrap(),
+                    diagnostic["subject_path"].as_str().unwrap(),
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            identities,
+            [
+                ("P010", "mcp-http-url", "error", ".mcp.json"),
+                ("P011", "mcp-type-invalid", "error", ".mcp.json"),
+                ("P012", "mcp-sse-deprecated", expected_severity, ".mcp.json"),
+                ("P017", "mcp-insecure-url", "error", ".mcp.json"),
+            ]
+            .into_iter()
+            .collect(),
+            "{report:#}"
+        );
+        assert_eq!(diagnostics.len(), 5, "{report:#}");
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic["code"] == "P017")
+                .count(),
+            2,
+            "{report:#}"
+        );
+    }
+}
+
+#[test]
 fn help_succeeds_and_lists_supported_options() {
     let output = run(&["--help"]);
     assert!(output.status.success());

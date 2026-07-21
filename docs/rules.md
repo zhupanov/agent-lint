@@ -566,16 +566,21 @@ repository wants its portability policy visible in configuration.
 
 MCP configuration is validated in root and nested `*.mcp.json` files and in
 `.claude/settings.json` / `.claude/settings.local.json` when those files are
-present. These rules run in both Basic and Plugin modes.
+present. These rules run in both Basic and Plugin modes. The accepted transport
+matrix follows Claude Code's [remote HTTP](https://code.claude.com/docs/en/mcp#option-1-add-a-remote-http-server),
+[WebSocket](https://code.claude.com/docs/en/mcp#option-4-add-a-remote-websocket-server),
+and [legacy SSE](https://code.claude.com/docs/en/mcp#option-2-add-a-remote-sse-server)
+documentation: `streamable-http` is the HTTP alias, `ws` uses WebSocket URLs,
+and legacy `sse` remains supported but deprecated.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | P001 | `mcp-json-invalid` | MCP configuration is not valid JSON | Always | error |
 | P009 | `mcp-stdio-command` | `stdio` server (including omitted type) has no non-empty `command` | Always | error |
-| P010 | `mcp-http-url` | `http` or `sse` server has no non-empty `url` | Always | error |
-| P011 | `mcp-type-invalid` | Server `type` is not `stdio`, `http`, or `sse` | Always | error |
+| P010 | `mcp-http-url` | Remote server has no syntactically valid URL for its selected transport (`http`/`streamable-http`/`sse`: `http(s)`; `ws`: `ws(s)`) | Always | error |
+| P011 | `mcp-type-invalid` | Server `type` is not `stdio`, `http`, `streamable-http`, `sse`, or `ws` | Always | error |
 | P012 | `mcp-sse-deprecated` | `sse` transport is deprecated; use Streamable HTTP | Always | warn |
-| P017 | `mcp-insecure-url` | Non-local `http://` server URL is not HTTPS | Always | error |
+| P017 | `mcp-insecure-url` | Non-local `http://` or `ws://` server URL is insecure (use `https://` or `wss://`) | Always | error |
 | P018 | `mcp-env-secret` | Secret-like environment variable contains a literal plaintext value | Always | warn |
 | P019 | `mcp-command-dangerous` | Server command contains a dangerous shell pattern | Always | warn |
 | P022 | `mcp-args-invalid` | `args` is not an array of strings | Always | error |

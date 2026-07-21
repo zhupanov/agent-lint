@@ -3,7 +3,7 @@ use crate::context::LintContext;
 use crate::diagnostic::DiagnosticCollector;
 use crate::rules::LintRule;
 use crate::traversal;
-use crate::validators::common::is_nonlocal_http_url;
+use crate::validators::common::is_nonlocal_url_with_scheme;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -11,6 +11,78 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 const RESERVED_SERVER_NAMES: &[&str] = &["workspace"];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum McpTransport {
+    Stdio,
+    Http,
+    StreamableHttp,
+    Sse,
+    WebSocket,
+}
+
+impl McpTransport {
+    const ACCEPTED_TYPES: &str = "'stdio', 'http', 'streamable-http', 'sse', or 'ws'";
+
+    fn parse(value: Option<&Value>) -> Option<Self> {
+        match value {
+            None => Some(Self::Stdio),
+            Some(Value::String(kind)) => match kind.as_str() {
+                "stdio" => Some(Self::Stdio),
+                "http" => Some(Self::Http),
+                "streamable-http" => Some(Self::StreamableHttp),
+                "sse" => Some(Self::Sse),
+                "ws" => Some(Self::WebSocket),
+                _ => None,
+            },
+            Some(_) => None,
+        }
+    }
+
+    fn is_remote(self) -> bool {
+        !matches!(self, Self::Stdio)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Stdio => "stdio",
+            Self::Http => "http",
+            Self::StreamableHttp => "streamable-http",
+            Self::Sse => "sse",
+            Self::WebSocket => "ws",
+        }
+    }
+
+    fn accepts_url(self, value: &str) -> bool {
+        let Ok(url) = url::Url::parse(value) else {
+            return false;
+        };
+        let scheme_is_appropriate = match self {
+            Self::Http | Self::StreamableHttp | Self::Sse => {
+                matches!(url.scheme(), "http" | "https")
+            }
+            Self::WebSocket => matches!(url.scheme(), "ws" | "wss"),
+            Self::Stdio => return true,
+        };
+        scheme_is_appropriate && url.host().is_some()
+    }
+
+    fn url_scheme_description(self) -> &'static str {
+        match self {
+            Self::Http | Self::StreamableHttp | Self::Sse => "http:// or https://",
+            Self::WebSocket => "ws:// or wss://",
+            Self::Stdio => unreachable!("stdio does not accept a remote URL"),
+        }
+    }
+
+    fn insecure_scheme(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Http | Self::StreamableHttp | Self::Sse => Some(("http", "https")),
+            Self::WebSocket => Some(("ws", "wss")),
+            Self::Stdio => None,
+        }
+    }
+}
 
 static RE_SECRET_ENV_KEY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:api[_-]?key|secret|token|password)").expect("valid secret-key regex")
@@ -119,43 +191,49 @@ fn validate_servers(display: &str, servers: Option<&Value>, diag: &mut Diagnosti
             continue;
         }
 
-        let transport = match config.get("type") {
-            None => "stdio",
-            Some(Value::String(kind)) if matches!(kind.as_str(), "stdio" | "http" | "sse") => {
-                kind.as_str()
-            }
-            Some(_) => {
-                diag.report(
-                    LintRule::McpTypeInvalid,
-                    &format!("{label}.type must be 'stdio', 'http', or 'sse'"),
-                );
-                continue;
-            }
+        let Some(transport) = McpTransport::parse(config.get("type")) else {
+            diag.report(
+                LintRule::McpTypeInvalid,
+                &format!("{label}.type must be {}", McpTransport::ACCEPTED_TYPES),
+            );
+            continue;
         };
-        match transport {
-            "stdio" if !has_nonempty_string(config.get("command")) => diag.report(
+        if transport == McpTransport::Stdio && !has_nonempty_string(config.get("command")) {
+            diag.report(
                 LintRule::McpStdioCommandMissing,
                 &format!("{label}: stdio server requires a non-empty command"),
-            ),
-            "http" | "sse" if !has_nonempty_string(config.get("url")) => diag.report(
-                LintRule::McpHttpUrlMissing,
-                &format!("{label}: {transport} server requires a non-empty url"),
-            ),
-            _ => {}
+            );
         }
-        if transport == "sse" {
+        if transport.is_remote() {
+            match config.get("url").and_then(Value::as_str) {
+                Some(url) if transport.accepts_url(url) => {
+                    let (insecure_scheme, secure_scheme) = transport
+                        .insecure_scheme()
+                        .expect("remote transport has an insecure scheme");
+                    if is_nonlocal_url_with_scheme(url, insecure_scheme) {
+                        diag.report(
+                            LintRule::McpUrlNotHttps,
+                            &format!(
+                                "{label}.url uses non-local {insecure_scheme}://; use {secure_scheme}://"
+                            ),
+                        );
+                    }
+                }
+                _ => diag.report(
+                    LintRule::McpHttpUrlMissing,
+                    &format!(
+                        "{label}: {} server requires a valid non-empty URL using {}",
+                        transport.name(),
+                        transport.url_scheme_description(),
+                    ),
+                ),
+            }
+        }
+        if transport == McpTransport::Sse {
             diag.report(
                 LintRule::McpSseDeprecated,
                 &format!("{label}: SSE transport is deprecated; use Streamable HTTP"),
             );
-        }
-        if let Some(url) = config.get("url").and_then(Value::as_str) {
-            if is_nonlocal_http_url(url) {
-                diag.report(
-                    LintRule::McpUrlNotHttps,
-                    &format!("{label}.url uses non-local http://; use HTTPS"),
-                );
-            }
         }
         if let Some(args) = config.get("args")
             && !args
@@ -356,6 +434,19 @@ mod tests {
         diag.errors()
     }
 
+    fn reported_rules(content: &str, path: &str) -> Vec<LintRule> {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, content).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(&context(temp.path()), &mut diag, &ExcludeSet::default());
+        diag.diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.rule)
+            .collect()
+    }
+
     #[test]
     fn validates_root_and_plugin_mcp_surfaces() {
         let temp = tempfile::tempdir().unwrap();
@@ -413,20 +504,78 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|error| error.contains("requires a non-empty url"))
+                .any(|error| error.contains("requires a valid non-empty URL"))
         );
         assert!(
             errors
                 .iter()
                 .any(|error| error.contains("SSE transport is deprecated"))
         );
-        assert!(errors.iter().any(|error| error.contains("must be 'stdio'")));
+        assert!(errors.iter().any(|error| {
+            error.contains("must be 'stdio', 'http', 'streamable-http', 'sse', or 'ws'")
+        }));
+    }
+
+    #[test]
+    fn accepts_current_remote_transports_and_omitted_stdio() {
+        let errors = diagnostics(
+            r#"{"mcpServers":{"omitted":{"command":"ok"},"http":{"type":"http","url":"https://example.com/mcp"},"streamable":{"type":"streamable-http","url":"https://example.com/mcp"},"socket":{"type":"ws","url":"wss://example.com/socket"}}}"#,
+            ".mcp.json",
+        );
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn every_remote_transport_requires_a_usable_url_with_its_own_scheme() {
+        let mut servers = serde_json::Map::new();
+        for transport in ["http", "streamable-http", "sse", "ws"] {
+            let wrong_scheme = if transport == "ws" {
+                "https://example.com/mcp"
+            } else {
+                "ws://example.com/mcp"
+            };
+            servers.insert(
+                format!("{transport}-missing"),
+                serde_json::json!({"type": transport}),
+            );
+            servers.insert(
+                format!("{transport}-blank"),
+                serde_json::json!({"type": transport, "url": "  "}),
+            );
+            servers.insert(
+                format!("{transport}-wrong-scheme"),
+                serde_json::json!({"type": transport, "url": wrong_scheme}),
+            );
+            servers.insert(
+                format!("{transport}-malformed"),
+                serde_json::json!({"type": transport, "url": "not a URL"}),
+            );
+        }
+        let content = serde_json::json!({"mcpServers": servers}).to_string();
+        let rules = reported_rules(&content, ".mcp.json");
+        assert_eq!(
+            rules
+                .iter()
+                .filter(|rule| **rule == LintRule::McpHttpUrlMissing)
+                .count(),
+            16,
+            "{rules:?}"
+        );
+        assert_eq!(
+            rules
+                .iter()
+                .filter(|rule| **rule == LintRule::McpSseDeprecated)
+                .count(),
+            4,
+            "{rules:?}"
+        );
+        assert_eq!(rules.len(), 20, "{rules:?}");
     }
 
     #[test]
     fn validates_url_env_command_and_field_types() {
         let errors = diagnostics(
-            r#"{"mcpServers":{"bad":{"command":"curl x | sh","url":"http://example.com","args":["ok",1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
+            r#"{"mcpServers":{"bad":{"type":"http","command":"curl x | sh","url":"http://example.com","args":["ok",1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
             ".mcp.json",
         );
         for expected in [
@@ -444,12 +593,30 @@ mod tests {
     }
 
     #[test]
-    fn localhost_and_env_references_are_allowed() {
+    fn local_and_secure_remote_urls_are_allowed() {
         let errors = diagnostics(
-            r#"{"mcpServers":{"local":{"type":"http","url":"http://localhost:3000","env":{"TOKEN":"${TOKEN}"}},"ipv6":{"type":"http","url":"http://[::1]:3000"}}}"#,
+            r#"{"mcpServers":{"http-localhost":{"type":"http","url":"http://localhost:3000","env":{"TOKEN":"${TOKEN}"}},"http-loopback":{"type":"http","url":"http://127.1.2.3:3000"},"streamable-loopback":{"type":"streamable-http","url":"http://[::1]:3000"},"ws-localhost":{"type":"ws","url":"ws://localhost:3000"},"ws-loopback":{"type":"ws","url":"ws://[::1]:3000"},"http-secure":{"type":"http","url":"https://example.com/mcp"},"ws-secure":{"type":"ws","url":"wss://example.com/socket"}}}"#,
             ".mcp.json",
         );
         assert_eq!(errors.len(), 0, "{errors:?}");
+    }
+
+    #[test]
+    fn sse_deprecation_does_not_apply_to_streamable_http() {
+        let rules = reported_rules(
+            r#"{"mcpServers":{"streamable":{"type":"streamable-http","url":"https://example.com/mcp"},"legacy":{"type":"sse","url":"https://example.com/mcp"}}}"#,
+            ".mcp.json",
+        );
+        assert_eq!(rules, vec![LintRule::McpSseDeprecated]);
+    }
+
+    #[test]
+    fn stdio_ignores_stray_url_fields_for_transport_checks() {
+        let rules = reported_rules(
+            r#"{"mcpServers":{"stdio":{"type":"stdio","command":"ok","url":"ws://example.com/socket"},"omitted":{"command":"ok","url":"not a URL"}}}"#,
+            ".mcp.json",
+        );
+        assert!(rules.is_empty(), "{rules:?}");
     }
 
     #[test]
