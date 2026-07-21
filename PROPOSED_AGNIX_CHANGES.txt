@@ -83,7 +83,7 @@
   - G002 → CC-PH-002 script referenced from SKILL.md missing on disk (skill-script scope; distinct from CC-HK-008 hook-script scope) — error.
   - G003 → CC-PH-003 script file not executable (Unix-only) — error.
   - G004 → CC-PH-004 dead script in top-level scripts/ directory (not referenced from any SKILL.md, hooks.json, settings.json, .github/workflows) — warn.
-  - G005 → CC-PH-005 SECURITY.md missing at repo root — warn. Note: agnix's file_types/detection.rs:31-48 currently excludes SECURITY.md from markdown validation but
+  - G005 → CC-PH-005 SECURITY.md missing from all GitHub-supported locations (repo root, .github/, or docs/) — warn. Note: agnix's file_types/detection.rs:31-48 currently excludes SECURITY.md from markdown validation but
    does not require its presence — this rule adds the presence requirement.
   - G006 → CC-PH-006 TODO/FIXME/HACK/XXX marker in skill body outside fences — warn.
   - G007 → CC-PH-007 TODO/FIXME/HACK/XXX marker in agent .md body — warn.

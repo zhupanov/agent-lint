@@ -1800,7 +1800,7 @@ fn only_preserves_normal_pedantic_and_all_severity() {
     let normal_stderr = stderr(&normal);
     assert!(normal.status.success(), "stderr: {normal_stderr}");
     assert!(
-        normal_stderr.contains("warning[G005/security-md-missing]"),
+        normal_stderr.contains("warning[G005/security-policy-missing]"),
         "stderr: {normal_stderr}"
     );
 
@@ -1808,7 +1808,7 @@ fn only_preserves_normal_pedantic_and_all_severity() {
     let pedantic_stderr = stderr(&pedantic);
     assert_eq!(pedantic.status.code(), Some(1), "stderr: {pedantic_stderr}");
     assert!(
-        pedantic_stderr.contains("error[G005/security-md-missing]"),
+        pedantic_stderr.contains("error[G005/security-policy-missing]"),
         "stderr: {pedantic_stderr}"
     );
 
@@ -1816,10 +1816,103 @@ fn only_preserves_normal_pedantic_and_all_severity() {
     let all_stderr = stderr(&all);
     assert_eq!(all.status.code(), Some(1), "stderr: {all_stderr}");
     assert!(
-        all_stderr.contains("error[G005/security-md-missing]"),
+        all_stderr.contains("error[G005/security-policy-missing]"),
         "stderr: {all_stderr}"
     );
     assert!(!all_stderr.contains("M001/plugin-json-missing"));
+}
+
+#[test]
+fn g005_accepts_security_policy_in_github_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::create_dir(tmp.path().join(".github")).unwrap();
+    std::fs::write(
+        tmp.path().join(".github/SECURITY.md"),
+        "# Security Policy\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "G005", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    assert_eq!(report["status"], "clean");
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn g005_missing_policy_reports_actionable_suggestion() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "G005", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostic = &report["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "G005");
+    assert_eq!(diagnostic["name"], "security-policy-missing");
+    assert_eq!(diagnostic["severity"], "warning");
+    assert_eq!(diagnostic["subject_path"], "SECURITY.md");
+    let suggestion = diagnostic["suggestion"]
+        .as_str()
+        .expect("G005 emits a suggestion");
+    assert!(suggestion.contains(".github/"), "suggestion: {suggestion}");
+    assert!(suggestion.contains("docs/"), "suggestion: {suggestion}");
+}
+
+#[test]
+fn g005_accepts_security_policy_in_docs_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::create_dir(tmp.path().join("docs")).unwrap();
+    std::fs::write(tmp.path().join("docs/SECURITY.md"), "# Security Policy\n").unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "G005", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    assert_eq!(report["status"], "clean");
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn g005_directory_named_security_md_still_warns() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    // A directory named SECURITY.md is not a committed policy file.
+    std::fs::create_dir(tmp.path().join("SECURITY.md")).unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "G005", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostic = &report["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "G005");
+    assert_eq!(diagnostic["name"], "security-policy-missing");
+    assert_eq!(diagnostic["subject_path"], "SECURITY.md");
+}
+
+#[test]
+fn g005_per_file_override_suppresses_on_security_md_subject() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"SECURITY.md\"]\nsuppress = [\"G005\"]\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--only", "G005", "."]);
+    let stderr = stderr(&output);
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert!(
+        !stderr.contains("security-policy-missing"),
+        "per-file override on SECURITY.md must suppress G005: {stderr}"
+    );
+    assert!(stderr.contains("(1 suppressed)"), "stderr: {stderr}");
 }
 
 #[test]
@@ -1858,14 +1951,14 @@ fn only_preserves_global_suppression_except_in_all_mode() {
         let output = run_in(tmp.path(), &args);
         let stderr = stderr(&output);
         assert!(output.status.success(), "stderr: {stderr}");
-        assert!(!stderr.contains("G005/security-md-missing"));
+        assert!(!stderr.contains("G005/security-policy-missing"));
         assert!(stderr.contains("(1 suppressed)"), "stderr: {stderr}");
     }
 
     let all = run_in(tmp.path(), &["--all", "--only", "G005", "."]);
     let all_stderr = stderr(&all);
     assert_eq!(all.status.code(), Some(1), "stderr: {all_stderr}");
-    assert!(all_stderr.contains("error[G005/security-md-missing]"));
+    assert!(all_stderr.contains("error[G005/security-policy-missing]"));
     assert!(!all_stderr.contains("suppressed)"));
 }
 

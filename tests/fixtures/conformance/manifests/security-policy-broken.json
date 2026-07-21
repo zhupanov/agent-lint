@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "security-policy-broken",
+  "covers": ["security-policy", "plugin-mode", "all", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--all", "--only", "G005", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "G005", "name": "security-policy-missing", "severity": "error", "subject_path": "SECURITY.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

@@ -184,10 +184,10 @@ mod tests {
         assert!(diag.errors()[0].contains("not executable"));
     }
 
-    // V14: validate_security_md
+    // G005 (V14): validate_security_md
     #[test]
     #[serial_test::serial]
-    fn test_v14_security_md_present() {
+    fn test_g005_security_md_present_at_root() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -201,7 +201,63 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_v14_security_md_missing() {
+    fn test_g005_security_md_present_in_github() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".github").unwrap();
+        std::fs::write(".github/SECURITY.md", "# Security Policy\n").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_security_md(&mut diag);
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "a .github/SECURITY.md policy must satisfy G005"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g005_security_md_present_in_docs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("docs").unwrap();
+        std::fs::write("docs/SECURITY.md", "# Security Policy\n").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_security_md(&mut diag);
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "a docs/SECURITY.md policy must satisfy G005"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g005_security_md_multiple_locations_satisfy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".github").unwrap();
+        std::fs::create_dir_all("docs").unwrap();
+        std::fs::write("SECURITY.md", "# Security Policy\n").unwrap();
+        std::fs::write(".github/SECURITY.md", "# Security Policy\n").unwrap();
+        std::fs::write("docs/SECURITY.md", "# Security Policy\n").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_security_md(&mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g005_security_md_missing_reports_with_suggestion() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -210,6 +266,104 @@ mod tests {
         validate_security_md(&mut diag);
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("SECURITY.md"));
+
+        let diagnostic = &diag.diagnostics()[0];
+        assert_eq!(
+            diagnostic.subject_path.as_deref(),
+            Some(std::path::Path::new("SECURITY.md")),
+            "the absent-resource subject is the logical root SECURITY.md"
+        );
+        let suggestion = diagnostic
+            .suggestion
+            .as_deref()
+            .expect("G005 provides an actionable suggestion");
+        for accepted in [".github/", "docs/"] {
+            assert!(
+                suggestion.contains(accepted),
+                "suggestion must name the {accepted} location: {suggestion}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g005_directory_named_security_md_does_not_satisfy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // A directory named SECURITY.md is not a committed policy file.
+        std::fs::create_dir_all("SECURITY.md").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_security_md(&mut diag);
+        assert_eq!(
+            diag.error_count(),
+            1,
+            "a directory named SECURITY.md must not satisfy G005"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g005_wrong_case_does_not_satisfy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Wrong-case name; GitHub requires the exact SECURITY.md spelling.
+        std::fs::write("security.md", "# Security Policy\n").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_security_md(&mut diag);
+        assert_eq!(
+            diag.error_count(),
+            1,
+            "a wrong-case security.md must not satisfy G005 even on a \
+             case-insensitive filesystem"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_g005_symlink_does_not_satisfy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // A symlink to a real file is not a committed policy file.
+        std::fs::write("policy.md", "# Security Policy\n").unwrap();
+        std::os::unix::fs::symlink("policy.md", "SECURITY.md").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_security_md(&mut diag);
+        assert_eq!(
+            diag.error_count(),
+            1,
+            "a symlinked SECURITY.md must not satisfy G005"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_g005_dangling_symlink_does_not_satisfy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // A dangling symlink (target absent) is rejected without traversal, so
+        // rejection does not depend on the symlink target existing.
+        std::os::unix::fs::symlink("nonexistent-target.md", "SECURITY.md").unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_security_md(&mut diag);
+        assert_eq!(
+            diag.error_count(),
+            1,
+            "a dangling symlinked SECURITY.md must not satisfy G005"
+        );
     }
 
     // V9: validate_script_references

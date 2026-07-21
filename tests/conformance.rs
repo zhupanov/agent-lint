@@ -23,6 +23,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "pedantic",
     "per-file-suppression",
     "plugin-mode",
+    "security-policy",
     "q005-unbounded-retry",
     "q006",
     "agent-stop",
