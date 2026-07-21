@@ -340,10 +340,10 @@ fn is_local_host(host: Host<&str>) -> bool {
     }
 }
 
-/// Whether `value` is an HTTP URL whose parsed host is not local.
-pub(crate) fn is_nonlocal_http_url(value: &str) -> bool {
+/// Whether `value` uses `scheme` and has a parsed non-local host.
+pub(crate) fn is_nonlocal_url_with_scheme(value: &str, scheme: &str) -> bool {
     Url::parse(value).is_ok_and(|url| {
-        url.scheme() == "http" && url.host().is_some_and(|host| !is_local_host(host))
+        url.scheme() == scheme && url.host().is_some_and(|host| !is_local_host(host))
     })
 }
 
@@ -407,7 +407,7 @@ mod tool_tests {
 
 #[cfg(test)]
 mod url_tests {
-    use super::{is_nonlocal_http_url, is_valid_http_url};
+    use super::{is_nonlocal_url_with_scheme, is_valid_http_url};
 
     #[test]
     fn accepts_valid_http_urls_across_host_forms() {
@@ -436,14 +436,14 @@ mod url_tests {
     }
 
     #[test]
-    fn identifies_only_remote_http_urls_as_nonlocal() {
+    fn identifies_only_remote_urls_with_the_requested_scheme_as_nonlocal() {
         for value in [
             "http://example.com",
             "http://user:password@b\u{fc}cher.example:8080",
             "http://[2001:db8::1]",
         ] {
             assert!(
-                is_nonlocal_http_url(value),
+                is_nonlocal_url_with_scheme(value, "http"),
                 "expected {value} to be non-local"
             );
         }
@@ -458,10 +458,13 @@ mod url_tests {
             "http://",
         ] {
             assert!(
-                !is_nonlocal_http_url(value),
+                !is_nonlocal_url_with_scheme(value, "http"),
                 "expected {value} to be local or invalid"
             );
         }
+        assert!(is_nonlocal_url_with_scheme("ws://example.com", "ws"));
+        assert!(!is_nonlocal_url_with_scheme("ws://localhost", "ws"));
+        assert!(!is_nonlocal_url_with_scheme("wss://example.com", "ws"));
     }
 }
 
