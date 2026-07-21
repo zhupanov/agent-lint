@@ -1098,6 +1098,38 @@ fn json_preserves_structured_locations_without_fabricating_them() {
 }
 
 #[test]
+fn s059_json_reports_the_fence_line_and_actionable_suggestion() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/example/SKILL.md");
+    let script = tmp.path().join(".claude/skills/example/scripts/run.sh");
+    std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+    std::fs::write(&script, "#!/bin/sh\ncase \"$1\" in --known) ;; esac\n").unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: example\ndescription: Use when checking shipped-script flag signatures\n---\n```bash\nscripts/run.sh --missing\n```\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S059", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["code"], "S059");
+    assert_eq!(
+        diagnostic["subject_path"],
+        ".claude/skills/example/SKILL.md"
+    );
+    assert_eq!(diagnostic["location"]["start"]["line"], 6);
+    assert!(diagnostic["location"]["start"].get("column").is_none());
+    assert_eq!(
+        diagnostic["suggestion"],
+        "remove the unsupported flag or add it to the shipped script's parser"
+    );
+}
+
+#[test]
 fn invalid_json_manifest_diagnostics_are_relative_and_located() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

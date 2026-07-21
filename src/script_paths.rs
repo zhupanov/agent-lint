@@ -13,12 +13,37 @@ pub(crate) enum Invocation {
     Mention,
 }
 
+/// The lexical base used to resolve a script reference.  Consumers that know
+/// a more specific local base (such as a SKILL.md directory) may give only
+/// relative references an additional lookup location.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptReferenceBase {
+    RepositoryRoot,
+    Relative,
+    Absolute,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ScriptReference {
     pub(crate) reference: String,
     pub(crate) path: PathBuf,
+    pub(crate) base: ScriptReferenceBase,
     pub(crate) invocation: Invocation,
     pub(crate) line: usize,
+}
+
+impl ScriptReference {
+    /// True for the shipped-script kinds whose flag signatures S059 can
+    /// inspect. Keeping this classification here prevents consumers from
+    /// drifting on path spellings or file kinds.
+    pub(crate) fn is_flag_signature_script(&self) -> bool {
+        matches!(
+            self.path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("sh") | Some("py")
+        )
+    }
 }
 
 /// Extract root-qualified script paths from a command-like fragment.  The
@@ -35,6 +60,7 @@ pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<Scri
             references.push(ScriptReference {
                 reference,
                 path: PathBuf::new(),
+                base: ScriptReferenceBase::RepositoryRoot,
                 invocation: invocation_for(command, start),
                 line,
             });
@@ -43,6 +69,7 @@ pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<Scri
         references.push(ScriptReference {
             reference,
             path,
+            base: ScriptReferenceBase::RepositoryRoot,
             invocation: invocation_for(command, start),
             line,
         });
@@ -55,31 +82,52 @@ pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<Scri
 /// rule gets the same lexical safety boundary.
 pub(crate) fn extract_bare_script_references(command: &str, line: usize) -> Vec<ScriptReference> {
     let mut references = Vec::new();
-    let mut offset = 0;
-    while let Some(found) = command[offset..].find("scripts/") {
-        let start = offset + found;
-        if start > 0
-            && (command.as_bytes()[start - 1].is_ascii_alphanumeric()
-                || matches!(command.as_bytes()[start - 1], b'/' | b'.'))
-        {
-            offset = start + "scripts/".len();
-            continue;
-        }
+    let mut start = 0;
+    while start < command.len() {
         let end = command[start..]
             .find(is_shell_path_delimiter)
             .map(|index| start + index)
             .unwrap_or(command.len());
-        let reference = &command[start..end];
-        if let Some(path) = normalize_repository_path(reference) {
+        let reference =
+            command[start..end].trim_matches(|character| matches!(character, '\'' | '"'));
+        let relative = reference.strip_prefix("./").unwrap_or(reference);
+        if next_reference(reference, 0).is_none()
+            && (relative.starts_with("scripts/") || relative.contains("/scripts/"))
+            && let Some(path) = normalize_repository_path(relative)
+        {
             references.push(ScriptReference {
                 reference: reference.to_string(),
                 path,
+                base: ScriptReferenceBase::Relative,
                 invocation: invocation_for(command, start),
                 line,
             });
         }
-        offset = end.max(start + "scripts/".len());
+        start = end.saturating_add(1);
     }
+    references
+}
+
+/// Extract the normalized shipped-script reference represented by one shell
+/// token. This is the shared lexical boundary for script consumers; it
+/// recognizes documented root placeholders, relative `scripts/` spellings,
+/// and the historically supported absolute form.
+pub(crate) fn extract_script_token_references(token: &str, line: usize) -> Vec<ScriptReference> {
+    let mut references = extract_command_references(token, line);
+    references.extend(extract_bare_script_references(token, line));
+    if references.is_empty() {
+        let path = Path::new(token);
+        if path.is_absolute() {
+            references.push(ScriptReference {
+                reference: token.to_string(),
+                path: path.to_path_buf(),
+                base: ScriptReferenceBase::Absolute,
+                invocation: Invocation::Direct,
+                line,
+            });
+        }
+    }
+    references.retain(ScriptReference::is_flag_signature_script);
     references
 }
 
@@ -106,6 +154,8 @@ fn next_reference(command: &str, start: usize) -> Option<(String, String, usize,
     const PREFIXES: &[&str] = &[
         "\"${CLAUDE_PLUGIN_ROOT}\"/",
         "\"${CLAUDE_PROJECT_DIR}\"/",
+        "'${CLAUDE_PLUGIN_ROOT}'/",
+        "'${CLAUDE_PROJECT_DIR}'/",
         "\"$CLAUDE_PLUGIN_ROOT/",
         "\"$CLAUDE_PROJECT_DIR/",
         "\"$PWD/",
@@ -125,10 +175,16 @@ fn next_reference(command: &str, start: usize) -> Option<(String, String, usize,
         .min_by_key(|(index, _)| *index)?;
     let match_start = start + relative_start;
     let path_start = match_start + prefix.len();
-    let whole_path_is_quoted = prefix.starts_with('"') && !prefix.contains("}\"/");
+    let path_quote = prefix
+        .chars()
+        .next()
+        .filter(|quote| matches!(quote, '\'' | '"'));
+    let whole_path_is_quoted =
+        path_quote.is_some() && !prefix.contains("}\"/") && !prefix.contains("}'/");
     let path_end = if whole_path_is_quoted {
+        let quote = path_quote.expect("whole quoted path has an opening quote");
         command[path_start..]
-            .find('"')
+            .find(quote)
             .map(|i| path_start + i)
             .unwrap_or(command.len())
     } else {
@@ -192,12 +248,13 @@ mod tests {
     #[test]
     fn recognizes_documented_roots_and_rejects_escapes() {
         let refs = extract_command_references(
-            "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/check.py $CLAUDE_PROJECT_DIR/bin/tool ${CLAUDE_PLUGIN_ROOT}/../outside",
+            "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/check.py '${CLAUDE_PLUGIN_ROOT}/scripts/single.sh' $CLAUDE_PROJECT_DIR/bin/tool ${CLAUDE_PLUGIN_ROOT}/../outside",
             7,
         );
         assert_eq!(refs[0].path, PathBuf::from("scripts/check.py"));
-        assert_eq!(refs[1].path, PathBuf::from("bin/tool"));
-        assert!(refs[2].path.as_os_str().is_empty());
+        assert_eq!(refs[1].path, PathBuf::from("scripts/single.sh"));
+        assert_eq!(refs[2].path, PathBuf::from("bin/tool"));
+        assert!(refs[3].path.as_os_str().is_empty());
         assert_eq!(refs[0].line, 7);
     }
 
