@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "hooks-broken",
+  "covers": ["plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "H002", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "H002", "name": "hooks-json-invalid", "severity": "error", "subject_path": "config/hooks.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

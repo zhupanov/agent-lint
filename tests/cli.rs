@@ -1479,12 +1479,17 @@ suppress = ["M001"]
 fn only_accepts_codes_names_commas_repetition_and_orders_by_registry() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"hooks":"config/missing.json"}"#,
+    )
+    .unwrap();
 
     let output = run_in(
         tmp.path(),
         &[
             "--only",
-            "H001,plugin-json-missing",
+            "H001,plugin-field-missing",
             "--only",
             "hooks-json-missing",
             ".",
@@ -1492,9 +1497,9 @@ fn only_accepts_codes_names_commas_repetition_and_orders_by_registry() {
     );
     let stderr = stderr(&output);
     assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
-    assert_eq!(stderr.matches("M001/plugin-json-missing").count(), 1);
+    assert_eq!(stderr.matches("M003/plugin-field-missing").count(), 1);
     assert_eq!(stderr.matches("H001/hooks-json-missing").count(), 1);
-    let manifest = stderr.find("M001/plugin-json-missing").unwrap();
+    let manifest = stderr.find("M003/plugin-field-missing").unwrap();
     let hooks = stderr.find("H001/hooks-json-missing").unwrap();
     assert!(manifest < hooks, "stderr: {stderr}");
     assert!(!stderr.contains("M005/marketplace-json-missing"));
@@ -1784,6 +1789,11 @@ fn only_excludes_unselected_rules_from_suppressed_and_unused_counts() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
     std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"hooks-test","hooks":"config/missing.json"}"#,
+    )
+    .unwrap();
+    std::fs::write(
         tmp.path().join("agent-lint.toml"),
         r#"[lint]
 [[lint.overrides]]
@@ -1805,6 +1815,11 @@ suppress = ["M001"]
 fn only_reports_unused_overrides_for_selected_rule_entries() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"hooks-test","hooks":"config/missing.json"}"#,
+    )
+    .unwrap();
     std::fs::write(
         tmp.path().join("agent-lint.toml"),
         r#"[lint]
@@ -1933,4 +1948,128 @@ fn inline_path_marker_is_documented_as_d005_only() {
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0]["code"], "I003");
     assert_eq!(diagnostics[0]["evidence"], "docs/missing.md");
+}
+
+#[test]
+fn plugin_hook_declarations_load_all_surfaces_with_their_real_subjects() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+
+    std::fs::write(&manifest, r#"{"name":"hooks-test"}"#).unwrap();
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "H001", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+
+    std::fs::write(
+        &manifest,
+        r#"{"name":"hooks-test","hooks":"./config/missing.json"}"#,
+    )
+    .unwrap();
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "H001", "."]);
+    let report = json(&output);
+    assert_eq!(output.status.code(), Some(1), "{report:#}");
+    assert_eq!(
+        report["diagnostics"][0]["subject_path"],
+        "config/missing.json"
+    );
+
+    std::fs::create_dir_all(tmp.path().join("config")).unwrap();
+    std::fs::write(tmp.path().join("config/one.json"), "{").unwrap();
+    std::fs::write(tmp.path().join("config/two.json"), "{").unwrap();
+    std::fs::write(
+        &manifest,
+        r#"{"name":"hooks-test","hooks":["./config/one.json","config/two.json"]}"#,
+    )
+    .unwrap();
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "H002", "."]);
+    let report = json(&output);
+    let subjects = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        subjects,
+        ["config/one.json", "config/two.json"].into_iter().collect()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = ["config/one.json", "config/two.json"]
+suppress = ["H002"]
+"#,
+    )
+    .unwrap();
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "H002", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+
+    std::fs::write(
+        &manifest,
+        r#"{"name":"hooks-test","hooks":{"PreToolUse":[{"hooks":[{"command":"${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh"}]}]}}"#,
+    )
+    .unwrap();
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "H004,H010", "."],
+    );
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 2, "{report:#}");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "H004" && diagnostic["subject_path"] == "scripts/missing.sh"
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "H010" && diagnostic["subject_path"] == ".claude-plugin/plugin.json"
+    }));
+
+    std::fs::write(&manifest, r#"{"name":"hooks-test","hooks":{}}"#).unwrap();
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "H003,H007", "."],
+    );
+    let report = json(&output);
+    assert_eq!(
+        report["diagnostics"].as_array().unwrap().len(),
+        1,
+        "{report:#}"
+    );
+    assert_eq!(report["diagnostics"][0]["code"], "H007");
+    assert_eq!(
+        report["diagnostics"][0]["subject_path"],
+        ".claude-plugin/plugin.json"
+    );
+}
+
+#[test]
+fn hooks_json_non_collection_values_are_h003_not_h007() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(&manifest, r#"{"name":"hooks-test"}"#).unwrap();
+    std::fs::create_dir_all(tmp.path().join("hooks")).unwrap();
+
+    for value in ["null", "\"x\"", "42"] {
+        std::fs::write(
+            tmp.path().join("hooks/hooks.json"),
+            format!(r#"{{"hooks":{value}}}"#),
+        )
+        .unwrap();
+        let output = run_in(
+            tmp.path(),
+            &["--format", "json", "--only", "H003,H007", "."],
+        );
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{report:#}");
+        assert_eq!(diagnostics[0]["code"], "H003");
+        assert_eq!(diagnostics[0]["subject_path"], "hooks/hooks.json");
+    }
 }

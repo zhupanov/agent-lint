@@ -640,6 +640,7 @@ mod tests {
             plugin_json: plugin,
             marketplace_json: marketplace,
             hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
             settings_json: ManifestState::Missing,
             settings_local_json: ManifestState::Missing,
         }

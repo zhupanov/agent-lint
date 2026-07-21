@@ -1,0 +1,4 @@
+{
+  "name": "hooks-broken",
+  "hooks": "config/hooks.json"
+}

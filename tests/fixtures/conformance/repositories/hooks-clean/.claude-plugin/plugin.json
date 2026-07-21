@@ -1,0 +1,4 @@
+{
+  "name": "hooks-clean",
+  "hooks": "config/hooks.json"
+}

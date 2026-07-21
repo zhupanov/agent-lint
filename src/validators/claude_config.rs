@@ -460,6 +460,7 @@ mod tests {
                     plugin_json: crate::context::ManifestState::Missing,
                     marketplace_json: crate::context::ManifestState::Missing,
                     hooks_json: crate::context::ManifestState::Missing,
+                    declared_hook_configs: vec![],
                     settings_json: crate::context::ManifestState::Missing,
                     settings_local_json: crate::context::ManifestState::Missing,
                 };

@@ -67,13 +67,13 @@ M003, M004, and M018 follow the [Claude Code plugin reference](https://code.clau
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| H001 | `hooks-json-missing` | `hooks/hooks.json` is missing | Plugin | error |
-| H002 | `hooks-json-invalid` | `hooks/hooks.json` is not valid JSON | Plugin | error |
-| H003 | `hooks-key-missing` | `hooks.json` missing top-level `hooks` key | Plugin | error |
+| H001 | `hooks-json-missing` | A hook-config file declared by `plugin.json` cannot be found. Hook configuration is optional upstream; the conventional `hooks/hooks.json` is validated only when present. | Plugin | error |
+| H002 | `hooks-json-invalid` | A discovered plugin hook-config file is not valid JSON | Plugin | error |
+| H003 | `hooks-key-missing` | A file-backed hook config has no top-level `hooks` key, or that value is not an object or array | Plugin | error |
 | H004 | `hook-command-missing` | Hook command script missing on disk | Always | error |
 | H005 | `hook-not-executable` | Hook command script not executable (Unix only) | Always | error |
 | H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Always | error |
-| H007 | `hooks-array-empty` | `hooks.json` has empty `hooks` array | Plugin | error |
+| H007 | `hooks-array-empty` | A plugin hook config has an empty `hooks` collection | Plugin | error |
 | H008 | `hook-event-invalid` | Hook event name is not a recognized Claude Code event | Always | error |
 | H009 | `hook-matcher-invalid` | `matcher` present on an event that takes no matcher | Always | error |
 | H010 | `hook-type-missing` | Hook object missing required `type` field | Always | error |
@@ -95,8 +95,13 @@ M003, M004, and M018 follow the [Claude Code plugin reference](https://code.clau
 
 ### Hook schema validation (H008--H024)
 
-H008--H024 share one hook-object validation engine, applied to
-`hooks/hooks.json`, `.claude/settings.json`, and `.claude/settings.local.json`.
+H008--H024 share one hook-object validation engine, applied to discovered
+plugin hook config files (including `hooks/hooks.json` and paths declared by
+`plugin.json`), inline `plugin.json` hooks, `.claude/settings.json`, and
+`.claude/settings.local.json`. The [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference)
+defines these optional plugin hook locations and inline configuration; H001's
+declared-path requirement is the agent-lint convention that a manifest path
+must resolve.
 The engine walks the event-keyed shape:
 
 ```json
