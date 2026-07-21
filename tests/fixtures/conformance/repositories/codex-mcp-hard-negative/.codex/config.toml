@@ -1,0 +1,2 @@
+approval_policy = "never"
+developer_instructions = "Example invalid-looking text: approval_policy = [never"

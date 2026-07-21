@@ -56,6 +56,8 @@ jobs:
         run: cargo build
       - name: Test
         run: cargo test
+      - name: CLI conformance corpus
+        run: cargo test --test conformance
       - name: Test version-bump classifier
         run: scripts/test-classify-bump.sh
       - name: Clippy

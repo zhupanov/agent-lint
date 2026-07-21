@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "cursor-broken",
+  "covers": ["cursor-mdc", "cursor-legacy", "pedantic", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--pedantic", "--only", "CU001,CU006", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CU001", "name": "cursor-rule-empty", "severity": "error", "subject_path": ".cursor/rules/empty.mdc" },
+    { "code": "CU006", "name": "cursor-legacy-rules", "severity": "error", "subject_path": ".cursorrules" }
+  ],
+  "allowed_additional_diagnostics": []
+}

@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "autofix-broken",
+  "covers": ["autofix", "basic-mode", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--autofix", "--only", "S031", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    { "path": ".claude/skills/url-check/SKILL.md", "contents": "---\nname: url-check\ndescription: Use when checking secure transport in integration documentation\n---\n# Secure transport\n\nVisit https://service.invalid for integration details.\n" }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "instructions-broken",
+  "covers": ["nested-agents-md", "per-file-suppression", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "I003,Q002", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 1,
+  "expected_diagnostics": [
+    { "code": "I003", "name": "instruction-file-path", "severity": "warning", "subject_path": "nested/AGENTS.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

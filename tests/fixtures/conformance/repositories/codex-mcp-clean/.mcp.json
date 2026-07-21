@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "local-tools": {
+      "command": "local-tool-server"
+    }
+  }
+}

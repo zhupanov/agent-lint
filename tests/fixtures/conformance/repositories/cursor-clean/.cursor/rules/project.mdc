@@ -1,0 +1,8 @@
+---
+description: Apply repository checks to Rust source files
+globs: "src/**/*.rs"
+alwaysApply: false
+---
+# Repository checks
+
+Run the focused tests for changed Rust modules.

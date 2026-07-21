@@ -1,0 +1,15 @@
+{
+  "class": "hard-negative",
+  "repository": "autofix-hard-negative",
+  "covers": ["autofix", "basic-mode", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--autofix", "--only", "S031", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    { "path": ".claude/skills/url-check/SKILL.md", "contents": "---\nname: url-check\ndescription: Use when checking secure transport in integration documentation\n---\n# Local examples\n\nVisit http://example.com for placeholder integration details.\n" }
+  ]
+}
