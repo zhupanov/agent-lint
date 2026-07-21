@@ -1,0 +1,16 @@
+{
+  "class": "broken",
+  "repository": "todo-marker-plugin-broken",
+  "covers": ["plugin-mode", "normal", "json", "todo-marker"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "G006,G007,D003", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "G006", "name": "todo-in-skill", "severity": "warning", "subject_path": "skills/demo/SKILL.md" },
+    { "code": "G007", "name": "todo-in-agent", "severity": "warning", "subject_path": "agents/reviewer.md" },
+    { "code": "D003", "name": "todo-in-docs", "severity": "warning", "subject_path": "CLAUDE.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

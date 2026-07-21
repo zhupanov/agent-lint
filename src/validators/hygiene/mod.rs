@@ -1125,4 +1125,69 @@ mod tests {
             "FIXME inside nested 4-backtick fence should not trigger G007"
         );
     }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g006_prose_about_todo_is_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: desc\n---\nRemove any TODO or FIXME markers from generated output before returning it.\nDo not hack around the permission system.\n",
+        )
+        .unwrap();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_todo_in_skills(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g007_lowercase_xxx_prose_is_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\nNever use xxx as a placeholder.\nReject output containing TODO, FIXME, HACK, or XXX markers.\n",
+        )
+        .unwrap();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_todo_in_agents(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_g006_reports_structured_location_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: desc\n---\nIntro\n- [ ] FIXME: first\nTODO: second\n",
+        )
+        .unwrap();
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_todo_in_skills(&mut diag, &crate::config::ExcludeSet::default());
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == crate::rules::LintRule::TodoInSkill)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].evidence.as_deref(), Some("FIXME"));
+        assert_eq!(
+            findings[0].location,
+            Some(crate::diagnostic::SourceSpan::range(6, 7, 6, 12))
+        );
+        assert_eq!(
+            findings[0].suggestion.as_deref(),
+            Some(crate::unfinished_work::UNFINISHED_WORK_SUGGESTION)
+        );
+    }
 }

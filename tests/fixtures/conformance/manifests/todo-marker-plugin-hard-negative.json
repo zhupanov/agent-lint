@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "todo-marker-plugin-hard-negative",
+  "covers": ["plugin-mode", "normal", "json", "todo-marker"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "G006,G007,D003", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

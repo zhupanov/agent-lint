@@ -3874,3 +3874,103 @@ fn l006_cli_runs_in_basic_and_plugin_modes() {
         "missing-plugin"
     );
 }
+
+#[test]
+fn unfinished_work_markers_report_structured_span_and_ignore_prose() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"todo-marker","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("skills/demo")).unwrap();
+    std::fs::write(
+        tmp.path().join("skills/demo/SKILL.md"),
+        "---\nname: demo\ndescription: Use when validating unfinished-work CLI behavior\n---\nRemove any TODO or FIXME markers from generated output before returning it.\nDo not hack around the permission system.\n- [ ] FIXME: real debt\nTODO: later\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("agents")).unwrap();
+    std::fs::write(
+        tmp.path().join("agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Use when validating unfinished-work CLI agent behavior\n---\nNever use xxx as a placeholder.\nReject output containing TODO, FIXME, HACK, or XXX markers.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "# Project\nThe literal marker `TODO` is prohibited in committed instructions.\n",
+    )
+    .unwrap();
+
+    for (arguments, severity, exit_code) in [
+        (
+            vec!["--format", "json", "--only", "G006,G007,D003", "."],
+            "warning",
+            0,
+        ),
+        (
+            vec![
+                "--format",
+                "json",
+                "--pedantic",
+                "--only",
+                "G006,G007,D003",
+                ".",
+            ],
+            "error",
+            1,
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "G006,G007,D003", "."],
+            "error",
+            1,
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(exit_code),
+            "stderr: {}",
+            stderr(&output)
+        );
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic["code"], "G006");
+        assert_eq!(diagnostic["name"], "todo-in-skill");
+        assert_eq!(diagnostic["severity"], severity);
+        assert_eq!(diagnostic["subject_path"], "skills/demo/SKILL.md");
+        assert_eq!(diagnostic["location"]["start"]["line"], 7);
+        assert_eq!(diagnostic["location"]["start"]["column"], 7);
+        assert_eq!(diagnostic["location"]["end"]["line"], 7);
+        assert_eq!(diagnostic["location"]["end"]["column"], 12);
+        assert_eq!(diagnostic["evidence"], "FIXME");
+        assert_eq!(
+            diagnostic["suggestion"],
+            "Remove the unfinished-work marker before publishing."
+        );
+        assert!(
+            !diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("real debt")
+        );
+    }
+
+    let autofix = run_in(
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--autofix",
+            "--only",
+            "G006,G007,D003",
+            ".",
+        ],
+    );
+    assert_eq!(autofix.status.code(), Some(0));
+    let after = std::fs::read_to_string(tmp.path().join("skills/demo/SKILL.md")).unwrap();
+    assert!(after.contains("- [ ] FIXME: real debt"));
+    assert!(after.contains("Do not hack around the permission system."));
+}

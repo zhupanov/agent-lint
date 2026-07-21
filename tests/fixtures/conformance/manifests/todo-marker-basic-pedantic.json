@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "todo-marker-basic-pedantic",
+  "covers": ["basic-mode", "pedantic", "json", "todo-marker"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--pedantic", "--only", "D003", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "D003", "name": "todo-in-docs", "severity": "error", "subject_path": "CLAUDE.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

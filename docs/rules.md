@@ -630,8 +630,8 @@ They run in both Basic and Plugin modes.
 | G003 | `script-not-executable` | Directly executed script file is not executable (Unix only) | Always | error |
 | G004 | `dead-script` | Script has no executable invocation reference | Plugin | warn |
 | G005 | `security-policy-missing` | No repository-local `SECURITY.md` in a GitHub-supported location (root, `.github/`, or `docs/`) | Plugin | warn |
-| G006 | `todo-in-skill` | `TODO`/`FIXME`/`HACK`/`XXX` marker in published skill body | Plugin | warn |
-| G007 | `todo-in-agent` | `TODO`/`FIXME`/`HACK`/`XXX` marker in agent `.md` body | Plugin | warn |
+| G006 | `todo-in-skill` | Syntactic unfinished-work marker (`TODO:` / `FIXME(owner):` / comment or unchecked-task form) in published skill body | Plugin | warn |
+| G007 | `todo-in-agent` | Syntactic unfinished-work marker in agent `.md` body | Plugin | warn |
 | G008 | `gh-inline-body` | Shipped script passes a GitHub body or release notes inline instead of using a file-backed option | Always | warn |
 | G009 | `bash-replacement-unsafe` | Bash global substitution uses a variable replacement that can reinterpret `&` | Always | error |
 | G010 | `bash32-incompatible` | Shipped shell uses syntax unavailable in macOS Bash 3.2 | Always | error |
@@ -663,6 +663,21 @@ autofix replaces only that prefix. G012 reports every other `$PWD` reference and
 machine-specific POSIX or Windows path without autofixing it; select
 `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, or `${CLAUDE_PLUGIN_DATA}`
 according to whether the referenced path is bundled, project-local, or persistent.
+
+G006, G007, and D003 share one unfinished-work marker classifier. A marker word
+(`TODO` / `FIXME` / `HACK` / `XXX`, case-insensitive) warns only when it is
+syntactically recognizable as unfinished work: at line start after optional
+whitespace and an optional Markdown heading, list, or unchecked-task prefix, or
+immediately after a source-comment introducer (`#`, `//`, `/*`, `*`, or `<!--`),
+and followed by `:`, an owner parenthesis, or end-of-line. Frontmatter, fenced
+or indented code, inline code, block quotes, Markdown links/images, and balanced
+quoted prose are ignored; qualifying HTML comments, headings, and unchecked-task
+labels remain visible. Each rule reports at most once per file — the first
+qualifying marker in document order (top-to-bottom, leftmost on the line) — with
+a structured source span, marker-only evidence, and a fixed removal suggestion.
+None of these rules is autofixable. Prose that discusses, prohibits, quotes, or
+teaches about marker words stays clean unless it also contains a syntactic debt
+marker.
 
 ## Email Rules (E)
 
@@ -762,7 +777,7 @@ Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn
 |------|------|-------------|------|---------|
 | D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin | error |
 | D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin | warn |
-| D003 | `todo-in-docs` | `TODO`/`FIXME`/`HACK`/`XXX` marker in `CLAUDE.md` (outside code fences) | Plugin | warn |
+| D003 | `todo-in-docs` | Syntactic unfinished-work marker in root `CLAUDE.md` | Always | warn |
 | D004 | `claude-import-large` | Recursive `CLAUDE.md` `@`-import closure exceeds a global, path-specific, or total line budget | Always | warn |
 | D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
 
@@ -771,6 +786,11 @@ D005 scans inline-code pointers outside fenced code blocks in the configured
 uses the shared I003 lexical and probe policy above after applying its
 `inline-path-prefixes` scope. Its documented
 `<!-- lint-doc-pointer-paths: ok reason -->` marker is intentionally D005-only.
+
+D003 uses the same unfinished-work classifier and Markdown context policy as
+G006/G007 (see Hygiene / Scripts Rules above). It runs in every Basic or Plugin
+mode when an included root `CLAUDE.md` is present, reports the first qualifying
+marker only, and is not autofixable.
 
 ## Link/import integrity Rules (L)
 

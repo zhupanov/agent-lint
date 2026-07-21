@@ -82,6 +82,8 @@ fn run_basic(
     prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // X002–X005: CLAUDE.md structure (when present)
     docs::validate_claudemd_structure(diag, exclude);
+    // D003: unfinished-work markers in root CLAUDE.md (Basic activation surface)
+    docs::validate_claudemd_todos(diag, exclude);
     // Shared prompt/reference/script contracts for private configuration and
     // explicitly configured script or prompt-source inventories.
     contracts::validate_contracts(diag, exclude, false);
