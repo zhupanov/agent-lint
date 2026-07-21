@@ -939,8 +939,7 @@ suppress = ["M001", "H001"]
         diag.report_with(
             LintRule::AgentDescOverlap,
             "agents/a.md and agents/b.md overlap",
-            DiagnosticMetadata::default()
-                .with_related_subjects(["agents/a.md", "agents/b.md"]),
+            DiagnosticMetadata::default().with_related_subjects(["agents/a.md", "agents/b.md"]),
         );
 
         assert_eq!(diag.suppressed_count(), 0);

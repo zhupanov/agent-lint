@@ -292,7 +292,6 @@ H008--H024 codes with a `… frontmatter` path label.
 > multi-source diagnostics that name both repository-relative paths and the
 > score in `related_subjects`; global `suppress` works, but per-file overrides
 > cannot match them.
-
 > **Agent field-value rules (A014-A027).** These spec-grounded checks run on
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
 > (Basic mode). They catch typos and invalid enum values (e.g. `model: sonet`,

@@ -379,8 +379,7 @@ mod tests {
         diagnostics.report_with(
             LintRule::AgentDescOverlap,
             "agents/a.md and agents/b.md have overlapping routing descriptions (similarity 1.00)",
-            DiagnosticMetadata::default()
-                .with_related_subjects(["agents/a.md", "agents/b.md"]),
+            DiagnosticMetadata::default().with_related_subjects(["agents/a.md", "agents/b.md"]),
         );
         let report = build_report(
             Some(LintMode::Basic),
