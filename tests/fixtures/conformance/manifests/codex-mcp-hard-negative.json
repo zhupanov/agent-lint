@@ -2,7 +2,7 @@
   "class": "hard-negative",
   "repository": "codex-mcp-hard-negative",
   "covers": ["codex", "mcp", "all", "json"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--all", "--only", "CX001,P001", "."] },
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--all", "--only", "P001,P009,P010,P011,P012,P017,P018,P019,P022,P023,P024,P025,P026", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",
   "expected_active_platforms": ["claude", "codex"],

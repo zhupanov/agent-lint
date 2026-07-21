@@ -84,6 +84,17 @@ fn mcp_remote_transport_contract_has_exact_json_diagnostics_in_normal_and_all_mo
             vec![
                 "--format",
                 "json",
+                "--pedantic",
+                "--only",
+                "P010,P011,P012,P017",
+                ".",
+            ],
+            "error",
+        ),
+        (
+            vec![
+                "--format",
+                "json",
                 "--all",
                 "--only",
                 "P010,P011,P012,P017",
@@ -120,6 +131,11 @@ fn mcp_remote_transport_contract_has_exact_json_diagnostics_in_normal_and_all_mo
             "{report:#}"
         );
         assert_eq!(diagnostics.len(), 5, "{report:#}");
+        for diagnostic in diagnostics {
+            assert!(diagnostic["location"].is_object(), "{diagnostic:#}");
+            assert!(diagnostic["evidence"].is_string(), "{diagnostic:#}");
+            assert!(diagnostic["suggestion"].is_string(), "{diagnostic:#}");
+        }
         assert_eq!(
             diagnostics
                 .iter()

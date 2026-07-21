@@ -7,7 +7,8 @@ use crate::traversal;
 use crate::validators::common::is_nonlocal_url_with_scheme;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap};
+use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -172,17 +173,33 @@ fn validate_json_document(
     let value: Value = match serde_json::from_str(&content) {
         Ok(value) => value,
         Err(error) => {
-            diag.report_at(
+            let location = if error.column() == 0 {
+                eof_location(&content)
+            } else {
+                SourceSpan::point(error.line().max(1), error.column())
+            };
+            diag.report_at_with(
                 LintRule::McpJsonInvalid,
                 &display,
                 &format!("{display} is not valid JSON: {error}"),
+                DiagnosticMetadata::default()
+                    .with_location(location)
+                    .with_evidence("JSON syntax")
+                    .with_suggestion("fix the JSON syntax"),
             );
             return;
         }
     };
     let raw_keys = scan_mcp_keys(&content);
+    let raw_tokens = RawMcpTokens::parse(&content);
     diag.with_subject_path(&display, |diag| {
-        validate_document(&display, &value, adapter, Some((&content, &raw_keys)), diag);
+        validate_document(
+            &display,
+            &value,
+            adapter,
+            Some((&content, &raw_keys, &raw_tokens)),
+            diag,
+        );
     });
 }
 
@@ -208,10 +225,10 @@ fn validate_document(
     display: &str,
     value: &Value,
     adapter: McpAdapter,
-    raw_document: Option<(&str, &RawMcpKeys)>,
+    raw_document: Option<(&str, &RawMcpKeys, &RawMcpTokens)>,
     diag: &mut DiagnosticCollector,
 ) {
-    if let Some((source, raw_keys)) = raw_document {
+    if let Some((source, raw_keys, raw_tokens)) = raw_document {
         for duplicate in raw_keys.server_maps.iter().skip(1) {
             report_structure(
                 diag,
@@ -242,12 +259,19 @@ fn validate_document(
                 }
             }
         }
-        for duplicate in &raw_keys.server_names {
-            diag.report(
+        for duplicate in &raw_tokens.duplicates {
+            let (line, column) = position_at_offset(source, duplicate.first_key.start);
+            diag.report_with(
                 LintRule::McpDuplicateServer,
                 &format!(
                     "{display}: mcpServers contains duplicate server name '{}'",
                     duplicate.name
+                ),
+                metadata(
+                    source,
+                    Some(&duplicate.duplicate_key),
+                    &format!("first defined at line {line}, column {column}"),
+                    "remove or rename this duplicate server key",
                 ),
             );
         }
@@ -259,15 +283,15 @@ fn validate_document(
     }
     let Some(servers) = servers.and_then(Value::as_object) else {
         let has_duplicate_map =
-            raw_document.is_some_and(|(_, raw_keys)| raw_keys.server_maps.len() > 1);
-        let first_invalid_map = raw_document.is_some_and(|(_, raw_keys)| {
+            raw_document.is_some_and(|(_, raw_keys, _)| raw_keys.server_maps.len() > 1);
+        let first_invalid_map = raw_document.is_some_and(|(_, raw_keys, _)| {
             raw_keys
                 .server_maps
                 .first()
                 .is_some_and(|map| !map.value_is_object)
         });
         if !has_duplicate_map && !first_invalid_map {
-            let location = raw_document.and_then(|(source, raw_keys)| {
+            let location = raw_document.and_then(|(source, raw_keys, _)| {
                 raw_keys
                     .server_maps
                     .last()
@@ -287,10 +311,18 @@ fn validate_document(
 
     for (name, config) in servers {
         let label = format!("{display}: mcpServers.{name}");
+        let token = raw_document.and_then(|(_, _, tokens)| tokens.servers.get(name));
+        let source = raw_document.map(|(source, _, _)| source);
+        let server_key = token.map(|token| &token.key);
         if adapter.allows_claude_only_rules() && RESERVED_SERVER_NAMES.contains(&name.as_str()) {
-            diag.report(
+            report(
+                diag,
                 LintRule::McpServerReserved,
                 &format!("{label} uses reserved server name '{name}'"),
+                source,
+                server_key,
+                name,
+                "rename this server to a non-reserved name",
             );
         }
         let Some(config) = config.as_object() else {
@@ -303,26 +335,38 @@ fn validate_document(
             continue;
         };
         if config.is_empty() {
-            diag.report(
+            report(
+                diag,
                 LintRule::McpServerEmpty,
                 &format!("{label} must not be an empty object"),
+                source,
+                server_key,
+                "server configuration",
+                "add the required server fields",
             );
             continue;
         }
 
         if adapter.allows_claude_transport_rules() {
-            validate_claude_transport(&label, config, diag);
+            validate_claude_transport(&label, config, source, token, server_key, diag);
         } else {
-            validate_cursor_selector(&label, config, diag);
+            validate_cursor_selector(&label, config, source, token, server_key, diag);
         }
         if let Some(args) = config.get("args")
             && !args
                 .as_array()
                 .is_some_and(|items| items.iter().all(Value::is_string))
         {
-            diag.report(
+            report(
+                diag,
                 LintRule::McpArgsInvalid,
                 &format!("{label}.args must be an array of strings"),
+                source,
+                invalid_arg_token(token, args)
+                    .or_else(|| field_value(token, "args"))
+                    .or(server_key),
+                "args",
+                "use only string argv entries",
             );
         }
         if adapter.allows_claude_only_rules()
@@ -330,15 +374,27 @@ fn validate_document(
                 .get("alwaysLoad")
                 .is_some_and(|value| !value.is_boolean())
         {
-            diag.report(
+            report(
+                diag,
                 LintRule::McpAlwaysLoadInvalid,
                 &format!("{label}.alwaysLoad must be a boolean"),
+                source,
+                field_value(token, "alwaysLoad").or(server_key),
+                "alwaysLoad",
+                "use a JSON boolean",
             );
         }
-        if has_literal_secret(config.get("env")) {
-            diag.report(
+        if let Some(env_key) = literal_secret_key(config.get("env")) {
+            report(
+                diag,
                 LintRule::McpEnvSecretLiteral,
                 &format!("{label}.env contains a literal secret-like value"),
+                source,
+                token
+                    .and_then(|token| token.env_key(env_key))
+                    .or(server_key),
+                env_key,
+                &format!("replace the literal value with ${{{env_key}}}"),
             );
         }
         let command = std::iter::once(config.get("command").and_then(Value::as_str))
@@ -354,9 +410,14 @@ fn validate_document(
             .collect::<Vec<_>>()
             .join(" ");
         if RE_DANGEROUS_COMMAND.is_match(&command) {
-            diag.report(
+            report(
+                diag,
                 LintRule::McpCommandDangerous,
                 &format!("{label} contains a dangerous command pattern"),
+                source,
+                server_key,
+                "dangerous command pattern",
+                "remove the dangerous command pattern",
             );
         }
     }
@@ -383,39 +444,71 @@ fn report_structure(
 fn validate_claude_transport(
     label: &str,
     config: &serde_json::Map<String, Value>,
+    source: Option<&str>,
+    token: Option<&ServerTokens>,
+    server_key: Option<&Range<usize>>,
     diag: &mut DiagnosticCollector,
 ) {
     let transport = McpTransport::parse(config.get("type"));
     let Some(transport) = transport else {
-        diag.report(
+        report(
+            diag,
             LintRule::McpTypeInvalid,
             &format!("{label}.type must be {}", McpTransport::ACCEPTED_TYPES),
+            source,
+            field_value(token, "type").or(server_key),
+            "type",
+            "set type to a supported MCP transport",
         );
         return;
     };
     if transport == McpTransport::Stdio && !has_nonempty_string(config.get("command")) {
-        diag.report(
+        report(
+            diag,
             LintRule::McpStdioCommandMissing,
             &format!("{label}: stdio server requires a non-empty command"),
+            source,
+            server_key,
+            "command",
+            "add a non-empty command for this stdio server",
         );
     }
     if transport.is_remote() {
         match config.get("url").and_then(Value::as_str) {
-            Some(url) if transport.accepts_url(url) => validate_url_security(label, url, diag),
-            _ => diag.report(
+            Some(url) if transport.accepts_url(url) => validate_url_security(
+                label,
+                url,
+                source,
+                field_value(token, "url").or(server_key),
+                diag,
+            ),
+            _ => report(
+                diag,
                 LintRule::McpHttpUrlMissing,
                 &format!(
                     "{label}: {} server requires a valid non-empty URL using {}",
                     transport.name(),
                     transport.url_scheme_description(),
                 ),
+                source,
+                field_value(token, "url").or(server_key),
+                "url",
+                &format!(
+                    "use a valid URL with {}",
+                    transport.url_scheme_description()
+                ),
             ),
         }
     }
     if transport == McpTransport::Sse {
-        diag.report(
+        report(
+            diag,
             LintRule::McpSseDeprecated,
             &format!("{label}: SSE transport is deprecated; use Streamable HTTP"),
+            source,
+            field_value(token, "type").or(server_key),
+            "type",
+            "replace sse with streamable-http",
         );
     }
 }
@@ -423,6 +516,9 @@ fn validate_claude_transport(
 fn validate_cursor_selector(
     label: &str,
     config: &serde_json::Map<String, Value>,
+    source: Option<&str>,
+    token: Option<&ServerTokens>,
+    server_key: Option<&Range<usize>>,
     diag: &mut DiagnosticCollector,
 ) {
     match (config.contains_key("command"), config.contains_key("url")) {
@@ -432,19 +528,36 @@ fn validate_cursor_selector(
         ),
         (false, true) => {
             if let Some(url) = config.get("url").and_then(Value::as_str) {
-                validate_url_security(label, url, diag);
+                validate_url_security(
+                    label,
+                    url,
+                    source,
+                    field_value(token, "url").or(server_key),
+                    diag,
+                );
             }
         }
         (true, false) => {}
     }
 }
 
-fn validate_url_security(label: &str, url: &str, diag: &mut DiagnosticCollector) {
+fn validate_url_security(
+    label: &str,
+    url: &str,
+    source: Option<&str>,
+    location: Option<&Range<usize>>,
+    diag: &mut DiagnosticCollector,
+) {
     for (insecure_scheme, secure_scheme) in [("http", "https"), ("ws", "wss")] {
         if is_nonlocal_url_with_scheme(url, insecure_scheme) {
-            diag.report(
+            report(
+                diag,
                 LintRule::McpUrlNotHttps,
                 &format!("{label}.url uses non-local {insecure_scheme}://; use {secure_scheme}://"),
+                source,
+                location,
+                "url",
+                &format!("use a {secure_scheme}:// URL for this non-local server"),
             );
         }
     }
@@ -456,15 +569,370 @@ fn has_nonempty_string(value: Option<&Value>) -> bool {
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-fn has_literal_secret(env: Option<&Value>) -> bool {
-    env.and_then(Value::as_object).is_some_and(|env| {
-        env.iter().any(|(key, value)| {
-            RE_SECRET_ENV_KEY.is_match(key)
-                && value.as_str().is_some_and(|value| {
-                    !value.trim().is_empty() && !value.starts_with('$') && !value.starts_with("{{")
-                })
+fn literal_secret_key(env: Option<&Value>) -> Option<&str> {
+    env.and_then(Value::as_object).and_then(|env| {
+        env.iter().find_map(|(key, value)| {
+            let is_literal = value.as_str().is_some_and(|value| {
+                !value.trim().is_empty() && !value.starts_with('$') && !value.starts_with("{{")
+            });
+            (RE_SECRET_ENV_KEY.is_match(key) && is_literal).then_some(key.as_str())
         })
     })
+}
+
+fn report(
+    diag: &mut DiagnosticCollector,
+    rule: LintRule,
+    message: &str,
+    source: Option<&str>,
+    location: Option<&Range<usize>>,
+    evidence: &str,
+    suggestion: &str,
+) {
+    let metadata = source.map_or_else(DiagnosticMetadata::default, |source| {
+        metadata(source, location, evidence, suggestion)
+    });
+    diag.report_with(rule, message, metadata);
+}
+
+fn metadata(
+    source: &str,
+    location: Option<&Range<usize>>,
+    evidence: &str,
+    suggestion: &str,
+) -> DiagnosticMetadata {
+    let metadata = location
+        .and_then(|range| SourceSpan::from_byte_range(source, range.clone()))
+        .map_or_else(DiagnosticMetadata::default, |span| {
+            DiagnosticMetadata::default().with_location(span)
+        });
+    metadata.with_evidence(evidence).with_suggestion(suggestion)
+}
+
+fn field_value<'a>(token: Option<&'a ServerTokens>, field: &str) -> Option<&'a Range<usize>> {
+    token.and_then(|token| token.fields.get(field).map(|field| &field.value))
+}
+
+fn invalid_arg_token<'a>(
+    token: Option<&'a ServerTokens>,
+    args: &Value,
+) -> Option<&'a Range<usize>> {
+    let index = args
+        .as_array()?
+        .iter()
+        .position(|value| !value.is_string())?;
+    token
+        .and_then(|token| token.fields.get("args"))
+        .and_then(|field| field.elements.get(index))
+}
+
+fn eof_location(content: &str) -> SourceSpan {
+    let (line, column) = position_at_offset(content, content.len());
+    SourceSpan::point(line, column)
+}
+
+fn position_at_offset(content: &str, offset: usize) -> (usize, usize) {
+    let prefix = &content[..offset];
+    let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = prefix
+        .rsplit_once('\n')
+        .map_or(prefix.chars().count() + 1, |(_, tail)| {
+            tail.chars().count() + 1
+        });
+    (line, column)
+}
+
+#[derive(Debug, Default)]
+struct RawMcpTokens {
+    servers: BTreeMap<String, ServerTokens>,
+    duplicates: Vec<DuplicateServer>,
+}
+
+#[derive(Debug)]
+struct DuplicateServer {
+    name: String,
+    first_key: Range<usize>,
+    duplicate_key: Range<usize>,
+}
+
+#[derive(Debug)]
+struct ServerTokens {
+    key: Range<usize>,
+    fields: BTreeMap<String, FieldTokens>,
+}
+
+impl ServerTokens {
+    fn env_key(&self, name: &str) -> Option<&Range<usize>> {
+        self.fields
+            .get("env")
+            .and_then(|field| field.env.get(name))
+            .map(|token| &token.key)
+    }
+}
+
+#[derive(Debug)]
+struct FieldTokens {
+    value: Range<usize>,
+    elements: Vec<Range<usize>>,
+    env: BTreeMap<String, EnvToken>,
+}
+
+#[derive(Debug)]
+struct EnvToken {
+    key: Range<usize>,
+}
+
+impl RawMcpTokens {
+    fn parse(content: &str) -> Self {
+        let mut scanner = TokenScanner::new(content.as_bytes());
+        scanner.scan_root();
+        scanner.tokens
+    }
+}
+
+struct TokenScanner<'a> {
+    input: &'a [u8],
+    pos: usize,
+    tokens: RawMcpTokens,
+}
+
+impl<'a> TokenScanner<'a> {
+    fn new(input: &'a [u8]) -> Self {
+        Self {
+            input,
+            pos: 0,
+            tokens: RawMcpTokens::default(),
+        }
+    }
+
+    fn scan_root(&mut self) {
+        self.skip_ws();
+        if self.input.get(self.pos) == Some(&b'{') {
+            self.scan_root_object();
+        } else {
+            self.scan_value();
+        }
+    }
+
+    fn scan_root_object(&mut self) {
+        self.pos += 1;
+        loop {
+            self.skip_ws();
+            if self.consume(b'}') {
+                return;
+            }
+            let (key, _) = self.scan_string();
+            self.skip_ws();
+            self.consume(b':');
+            self.skip_ws();
+            if key == "mcpServers" {
+                self.tokens.servers.clear();
+                self.tokens.duplicates.clear();
+                if self.input.get(self.pos) == Some(&b'{') {
+                    self.scan_servers_object();
+                } else {
+                    self.scan_value();
+                }
+            } else {
+                self.scan_value();
+            }
+            self.skip_ws();
+            self.consume(b',');
+        }
+    }
+
+    fn scan_servers_object(&mut self) {
+        self.pos += 1;
+        let mut first_keys: HashMap<String, Range<usize>> = HashMap::new();
+        loop {
+            self.skip_ws();
+            if self.consume(b'}') {
+                return;
+            }
+            let (name, key) = self.scan_string();
+            self.skip_ws();
+            self.consume(b':');
+            self.skip_ws();
+            let fields = if self.input.get(self.pos) == Some(&b'{') {
+                self.scan_server_object()
+            } else {
+                self.scan_value();
+                BTreeMap::new()
+            };
+            if let Some(first_key) = first_keys.get(&name) {
+                self.tokens.duplicates.push(DuplicateServer {
+                    name: name.clone(),
+                    first_key: first_key.clone(),
+                    duplicate_key: key.clone(),
+                });
+            } else {
+                first_keys.insert(name.clone(), key.clone());
+            }
+            self.tokens
+                .servers
+                .insert(name, ServerTokens { key, fields });
+            self.skip_ws();
+            self.consume(b',');
+        }
+    }
+
+    fn scan_server_object(&mut self) -> BTreeMap<String, FieldTokens> {
+        self.pos += 1;
+        let mut fields = BTreeMap::new();
+        loop {
+            self.skip_ws();
+            if self.consume(b'}') {
+                return fields;
+            }
+            let (name, _) = self.scan_string();
+            self.skip_ws();
+            self.consume(b':');
+            self.skip_ws();
+            let start = self.pos;
+            let (elements, env) = match name.as_str() {
+                "args" if self.input.get(self.pos) == Some(&b'[') => {
+                    (self.scan_array_elements(), BTreeMap::new())
+                }
+                "env" if self.input.get(self.pos) == Some(&b'{') => {
+                    (Vec::new(), self.scan_env_object())
+                }
+                _ => {
+                    self.scan_value();
+                    (Vec::new(), BTreeMap::new())
+                }
+            };
+            fields.insert(
+                name,
+                FieldTokens {
+                    value: start..self.pos,
+                    elements,
+                    env,
+                },
+            );
+            self.skip_ws();
+            self.consume(b',');
+        }
+    }
+
+    fn scan_env_object(&mut self) -> BTreeMap<String, EnvToken> {
+        self.pos += 1;
+        let mut entries = BTreeMap::new();
+        loop {
+            self.skip_ws();
+            if self.consume(b'}') {
+                return entries;
+            }
+            let (name, key) = self.scan_string();
+            self.skip_ws();
+            self.consume(b':');
+            self.scan_value();
+            entries.insert(name, EnvToken { key });
+            self.skip_ws();
+            self.consume(b',');
+        }
+    }
+
+    fn scan_array_elements(&mut self) -> Vec<Range<usize>> {
+        self.pos += 1;
+        let mut elements = Vec::new();
+        loop {
+            self.skip_ws();
+            if self.consume(b']') {
+                return elements;
+            }
+            let start = self.pos;
+            self.scan_value();
+            elements.push(start..self.pos);
+            self.skip_ws();
+            self.consume(b',');
+        }
+    }
+
+    fn scan_value(&mut self) {
+        self.skip_ws();
+        match self.input.get(self.pos) {
+            Some(b'{') => self.scan_object(),
+            Some(b'[') => self.scan_array(),
+            Some(b'"') => {
+                self.scan_string();
+            }
+            _ => self.scan_scalar(),
+        }
+    }
+
+    fn scan_object(&mut self) {
+        self.pos += 1;
+        loop {
+            self.skip_ws();
+            if self.consume(b'}') {
+                return;
+            }
+            self.scan_string();
+            self.skip_ws();
+            self.consume(b':');
+            self.scan_value();
+            self.skip_ws();
+            self.consume(b',');
+        }
+    }
+
+    fn scan_array(&mut self) {
+        self.pos += 1;
+        loop {
+            self.skip_ws();
+            if self.consume(b']') {
+                return;
+            }
+            self.scan_value();
+            self.skip_ws();
+            self.consume(b',');
+        }
+    }
+
+    fn scan_string(&mut self) -> (String, Range<usize>) {
+        let start = self.pos;
+        self.pos += 1;
+        while self.pos < self.input.len() {
+            match self.input[self.pos] {
+                b'\\' => self.pos += 2,
+                b'"' => {
+                    self.pos += 1;
+                    break;
+                }
+                _ => self.pos += 1,
+            }
+        }
+        let range = start..self.pos;
+        (
+            serde_json::from_slice(&self.input[range.clone()]).expect("validated JSON string"),
+            range,
+        )
+    }
+
+    fn scan_scalar(&mut self) {
+        while self.pos < self.input.len()
+            && !matches!(
+                self.input[self.pos],
+                b',' | b']' | b'}' | b' ' | b'\n' | b'\r' | b'\t'
+            )
+        {
+            self.pos += 1;
+        }
+    }
+
+    fn skip_ws(&mut self) {
+        while self.pos < self.input.len() && self.input[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+    }
+    fn consume(&mut self, byte: u8) -> bool {
+        if self.input.get(self.pos) == Some(&byte) {
+            self.pos += 1;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// Serde intentionally keeps only the last duplicate key. This scanner runs
@@ -472,7 +940,6 @@ fn has_literal_secret(env: Option<&Value>) -> bool {
 struct RawMcpKeys {
     server_maps: Vec<RawServerMap>,
     server_entries: Vec<RawServerEntry>,
-    server_names: Vec<DuplicateServerName>,
 }
 
 struct RawServerMap {
@@ -488,17 +955,12 @@ struct RawServerEntry {
     value_is_object: bool,
 }
 
-struct DuplicateServerName {
-    name: String,
-}
-
 fn scan_mcp_keys(content: &str) -> RawMcpKeys {
     let mut scanner = JsonScanner::new(content.as_bytes());
     scanner.scan_value(ScanObject::TopLevel);
     RawMcpKeys {
         server_maps: scanner.server_maps,
         server_entries: scanner.server_entries,
-        server_names: scanner.server_names,
     }
 }
 
@@ -514,7 +976,6 @@ struct JsonScanner<'a> {
     pos: usize,
     server_maps: Vec<RawServerMap>,
     server_entries: Vec<RawServerEntry>,
-    server_names: Vec<DuplicateServerName>,
 }
 
 impl<'a> JsonScanner<'a> {
@@ -524,7 +985,6 @@ impl<'a> JsonScanner<'a> {
             pos: 0,
             server_maps: Vec::new(),
             server_entries: Vec::new(),
-            server_names: Vec::new(),
         }
     }
 
@@ -542,7 +1002,6 @@ impl<'a> JsonScanner<'a> {
 
     fn scan_object(&mut self, object_kind: ScanObject) {
         self.pos += 1;
-        let mut names = HashSet::new();
         loop {
             self.skip_ws();
             if self.input.get(self.pos) == Some(&b'}') {
@@ -554,11 +1013,6 @@ impl<'a> JsonScanner<'a> {
             let key_range = key_start..self.pos;
             self.skip_ws();
             self.pos += 1; // JSON was already validated, so this is ':'
-            let duplicate = !names.insert(key.clone());
-            if duplicate && matches!(object_kind, ScanObject::ServerMap) {
-                self.server_names
-                    .push(DuplicateServerName { name: key.clone() });
-            }
             let child_kind = if matches!(object_kind, ScanObject::TopLevel) && key == "mcpServers" {
                 ScanObject::ServerMap
             } else {
@@ -689,6 +1143,124 @@ mod tests {
             .iter()
             .map(|diagnostic| diagnostic.rule)
             .collect()
+    }
+
+    fn findings(content: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".mcp.json"), content).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        diag.diagnostics().to_vec()
+    }
+
+    #[test]
+    fn retained_p_rules_report_exact_safe_structured_metadata() {
+        let invalid = findings("{\n  \"mcpServers\":")
+            .into_iter()
+            .find(|item| item.rule == LintRule::McpJsonInvalid)
+            .unwrap();
+        assert_eq!(invalid.location, Some(SourceSpan::point(2, 15)));
+        assert_eq!(invalid.evidence.as_deref(), Some("JSON syntax"));
+        assert_eq!(invalid.suggestion.as_deref(), Some("fix the JSON syntax"));
+
+        let content = r#"{"mcpServers":{"workspace":{},"stdio":{"type":"stdio"},"no-url":{"type":"http"},"bad-type":{"type":"socket"},"legacy":{"type":"sse","url":"https://example.com"},"remote":{"type":"http","url":"http://example.com","args":["ok",false],"alwaysLoad":"true","env":{"API_KEY":"highly-sensitive-value"},"command":"curl x | sh"},"same":{"command":"one"},"same":{"command":"two"}}}"#;
+        let findings = findings(content);
+        for (rule, evidence, suggestion) in [
+            (
+                LintRule::McpStdioCommandMissing,
+                "command",
+                "add a non-empty command for this stdio server",
+            ),
+            (
+                LintRule::McpHttpUrlMissing,
+                "url",
+                "use a valid URL with http:// or https://",
+            ),
+            (
+                LintRule::McpTypeInvalid,
+                "type",
+                "set type to a supported MCP transport",
+            ),
+            (
+                LintRule::McpSseDeprecated,
+                "type",
+                "replace sse with streamable-http",
+            ),
+            (
+                LintRule::McpUrlNotHttps,
+                "url",
+                "use a https:// URL for this non-local server",
+            ),
+            (
+                LintRule::McpEnvSecretLiteral,
+                "API_KEY",
+                "replace the literal value with ${API_KEY}",
+            ),
+            (
+                LintRule::McpCommandDangerous,
+                "dangerous command pattern",
+                "remove the dangerous command pattern",
+            ),
+            (
+                LintRule::McpArgsInvalid,
+                "args",
+                "use only string argv entries",
+            ),
+            (
+                LintRule::McpServerEmpty,
+                "server configuration",
+                "add the required server fields",
+            ),
+            (
+                LintRule::McpAlwaysLoadInvalid,
+                "alwaysLoad",
+                "use a JSON boolean",
+            ),
+            (
+                LintRule::McpServerReserved,
+                "workspace",
+                "rename this server to a non-reserved name",
+            ),
+        ] {
+            let diagnostic = findings.iter().find(|item| item.rule == rule).unwrap();
+            assert!(diagnostic.location.is_some(), "{rule:?}");
+            assert_eq!(diagnostic.evidence.as_deref(), Some(evidence), "{rule:?}");
+            assert_eq!(
+                diagnostic.suggestion.as_deref(),
+                Some(suggestion),
+                "{rule:?}"
+            );
+        }
+        let duplicate = findings
+            .iter()
+            .find(|item| item.rule == LintRule::McpDuplicateServer)
+            .unwrap();
+        assert!(duplicate.location.is_some());
+        assert_eq!(
+            duplicate.evidence.as_deref(),
+            Some("first defined at line 1, column 321")
+        );
+        assert_eq!(
+            duplicate.suggestion.as_deref(),
+            Some("remove or rename this duplicate server key")
+        );
+        let secret = findings
+            .iter()
+            .find(|item| item.rule == LintRule::McpEnvSecretLiteral)
+            .unwrap();
+        assert!(!secret.message.contains("highly-sensitive-value"));
+        assert!(
+            !secret
+                .evidence
+                .as_deref()
+                .unwrap()
+                .contains("highly-sensitive-value")
+        );
     }
 
     #[test]
