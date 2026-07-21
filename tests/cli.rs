@@ -2402,6 +2402,20 @@ fn agent_stop_missing_respects_strictness_only_and_per_file_suppression() {
     assert!(normal.status.success(), "stderr: {normal_stderr}");
     assert!(normal_stderr.contains("warning[A029/agent-stop-missing]"));
 
+    let json_output = run_in(tmp.path(), &["--format", "json", "--only", "A029", "."]);
+    assert!(
+        json_output.status.success(),
+        "stderr: {}",
+        stderr(&json_output)
+    );
+    let report = json(&json_output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0]["suggestion"],
+        "add either a concrete bound or a concrete failure outcome"
+    );
+
     for strictness in ["--pedantic", "--all"] {
         let output = run_in(tmp.path(), &[strictness, "--only", "A029", "."]);
         let output_stderr = stderr(&output);
@@ -2428,6 +2442,49 @@ suppress = ["agent-stop-missing"]
         assert!(!output_stderr.contains("A029/agent-stop-missing"));
         assert!(output_stderr.contains("(1 suppressed)"));
     }
+}
+
+#[test]
+fn agent_evidence_contracts_preserve_focused_policy_and_per_file_suppression() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude/agents")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude/agents/reviewer.md"),
+        "---\nname: reviewer\ndescription: Reviews changes and verifies file-backed evidence\ntools: Bash\n---\nUse the Read tool before reporting.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "A012", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "A012");
+    assert_eq!(diagnostics[0]["subject_path"], ".claude/agents/reviewer.md");
+    assert_eq!(diagnostics[0]["location"]["start"]["line"], 6);
+    assert_eq!(
+        diagnostics[0]["suggestion"],
+        "declare Read in tools or remove the explicit Read-tool mandate"
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = [".claude/agents/reviewer.md"]
+suppress = ["agent-read-mismatch"]
+reason = "Read is supplied by the controlled runtime"
+"#,
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--only", "A012", "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert!(stderr(&suppressed).contains("(1 suppressed)"));
 }
 
 #[test]

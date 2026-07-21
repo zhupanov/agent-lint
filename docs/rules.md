@@ -283,7 +283,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | A009 | `agent-desc-short` | Agent description under 20 characters | Always | error |
 | A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Always | error |
 | A011 | `agent-desc-redundant` | Agent description too similar to agent name | Always | error |
-| A012 | `agent-read-mismatch` | Explicit agent tools omit `Read` while its prompt instructs reading file-backed evidence | Always | error |
+| A012 | `agent-read-mismatch` | Explicit agent tools omit `Read` while live prose explicitly requires the `Read` tool | Always | error |
 | A013 | `agent-output-unsafe` | Machine-only evidence output lacks both an unreadable-evidence outcome and never-invent language | Always | error |
 | A014 | `agent-model-invalid` | Agent `model` is not a recognized Claude Code model | Always | error |
 | A015 | `agent-permission-invalid` | Agent `permissionMode` is not one of the allowed enum values | Always | error |
@@ -303,7 +303,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | A029 | `agent-stop-missing` | Tool-using agent has no explicit stop control or failure outcome | Always | warn |
 | A030 | `agent-desc-overlap` | Two agent routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
-> **Agent field input (A014–A028).** These rules consume the single strict,
+> **Agent field input (A012–A029).** These rules consume the single strict,
 > canonical YAML mapping for the agent frontmatter; comments, quoted keys, flow
 > syntax, and folded scalars therefore have their YAML meaning. `model`,
 > `permissionMode`, `memory`, `effort`, and `isolation` require strings;
@@ -318,7 +318,12 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > skills. For plugin-shipped agents, `hooks`, `mcpServers`, and
 > `permissionMode` are owned solely by A028; private agents may use them. None
 > of A014–A028 has an autofix because selecting replacement values or runtime
-> references is not mechanically unambiguous.
+> references is not mechanically unambiguous. A012/A013 additionally consume
+> only source-aware live prose: frontmatter, code, quotations, comments, and
+> example scopes are inert. A012 requires an explicit operative `Read`-tool
+> mandate; A013 requires an operative file-evidence read mandate plus an
+> exclusive JSON/JSONL output mandate, and then requires both an unreadable
+> evidence outcome and a direct never-invent/fabricate/guess prohibition.
 > **Routing-description overlap (A030 / S074).** These warnings compare
 > frontmatter `description` values with a deterministic shared helper: Unicode
 > lowercase tokenization, punctuation and stopword removal, stripping of

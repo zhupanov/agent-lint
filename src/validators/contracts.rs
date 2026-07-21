@@ -12,8 +12,7 @@ use crate::rules::LintRule;
 use crate::script_paths::{ScriptReference, ScriptReferenceBase, extract_script_token_references};
 use crate::traversal;
 use crate::validators::common::{
-    NEVER_INVENT_PROHIBITION, classify_inline_code_path, is_unsafe_inline_code_path_probe,
-    normalize_inline_code_path_probe,
+    classify_inline_code_path, is_unsafe_inline_code_path_probe, normalize_inline_code_path_probe,
 };
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -21,15 +20,6 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
-static READ_INTENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:read|open)\s+(?:the|each|every|all|any|its|their|this|that)\b[^.\n]{0,60}\b(?:file|files|bundle|bundles|path|paths|diff|diffs|body|bodies|artifact|artifacts|markdown|log|logs)\b|\buse\s+(?:the\s+)?Read\b").unwrap()
-});
-static OUTPUT_ONLY: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\bstrict\s+JSONL?\b|\b(?:emit|output|return|respond\s+with|reply\s+with)\s+(?:strict\s+|valid\s+)?JSONL?\s+only\b|\bonly\s+(?:emit|output|return)\s+(?:strict\s+|valid\s+)?JSONL?\b|\boutput\s+must\s+be\s+(?:strict\s+|valid\s+)?JSONL?\b").unwrap()
-});
-static CANNOT_READ: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\bunreadable\b|\b(?:cannot|can't|could\s+not|unable\s+to)\s+(?:read|open)\b|\bRead\s+fails\b|\bfail[ -]+closed\b").unwrap()
-});
 static SKILL_INVOKE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"\b(?:re-)?[Ii]nvoke\b\s+(?:the\s+)?(?:\*\*[^*\n]{1,40}\*\*\s+)?`/[-\w]+`(?:\s+skill\b)?",
@@ -131,7 +121,6 @@ pub fn validate_contracts(
     exclude: &ExcludeSet,
     include_public: bool,
 ) {
-    validate_agent_contracts(diag, exclude, include_public);
     validate_skill_contracts(diag, exclude, include_public);
     validate_reference_consecutive_bash(diag, exclude, include_public);
     validate_script_contracts(diag, exclude, include_public);
@@ -153,33 +142,12 @@ fn scoped_skill_files(include_public: bool) -> Vec<PathBuf> {
     paths
 }
 
-fn scoped_agent_files(include_public: bool) -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    if include_public {
-        paths.extend(direct_markdown_files("agents"));
-    }
-    paths.extend(direct_markdown_files(".claude/agents"));
-    paths.sort();
-    paths
-}
-
 fn one_level_files(root: &str, filename: &str) -> Vec<PathBuf> {
     crate::traversal::shallow_directories(Path::new(root), Path::new("."), None)
         .entries
         .into_iter()
         .map(|entry| entry.path.join(filename))
         .filter(|path| path.is_file())
-        .collect()
-}
-
-fn direct_markdown_files(root: &str) -> Vec<PathBuf> {
-    crate::traversal::shallow_files(Path::new(root), Path::new("."), None)
-        .entries
-        .into_iter()
-        .map(|entry| entry.path)
-        .filter(|path| {
-            path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("md")
-        })
         .collect()
 }
 
@@ -221,88 +189,6 @@ fn frontmatter_tools(content: &str, key: &str) -> Option<Vec<String>> {
         return Some(tools);
     }
     None
-}
-
-fn frontmatter_explicit_tools(content: &str) -> Option<Vec<String>> {
-    let lines = frontmatter::extract_frontmatter(content)?;
-    for (index, line) in lines.iter().enumerate() {
-        let Some(value) = line.strip_prefix("tools:") else {
-            continue;
-        };
-        let value = value.split(" #").next().unwrap_or(value).trim();
-        if !value.is_empty() {
-            if !value.starts_with('[') || !value.ends_with(']') {
-                return None;
-            }
-            return Some(
-                value[1..value.len() - 1]
-                    .split(',')
-                    .map(|token| token.trim().trim_matches(['\'', '"']).to_string())
-                    .filter(|token| !token.is_empty())
-                    .collect(),
-            );
-        }
-        let mut tools = Vec::new();
-        for child in &lines[index + 1..] {
-            if !child.starts_with([' ', '\t']) {
-                break;
-            }
-            if let Some(item) = child.trim().strip_prefix("- ") {
-                tools.push(item.trim_matches(['\'', '"']).to_string());
-            }
-        }
-        return Some(tools);
-    }
-    None
-}
-
-fn validate_agent_contracts(
-    diag: &mut DiagnosticCollector,
-    exclude: &ExcludeSet,
-    include_public: bool,
-) {
-    for path in scoped_agent_files(include_public) {
-        let Some(content) = read_text(&path, exclude) else {
-            continue;
-        };
-        let document = MarkdownDocument::parse(&content);
-        let body = document.body();
-        let read_line = first_matching_line(body, &READ_INTENT);
-        if let (Some(tools), Some(line)) = (frontmatter_explicit_tools(&content), read_line) {
-            let suppressed = has_reasoned_marker(&content, "lint-agent-tool-contract: ok");
-            if !tools.iter().any(|tool| tool == "Read") && !suppressed {
-                diag.report_at(
-                    LintRule::AgentReadMismatch,
-                    &path,
-                    &format!(
-                        "{}:{}: explicit tools omit Read but the prompt instructs reading evidence",
-                        path.display(),
-                        body_line_number(&content, line)
-                    ),
-                );
-            }
-        }
-        if let (Some(read), Some(output)) = (read_line, first_matching_line(body, &OUTPUT_ONLY)) {
-            if (!CANNOT_READ.is_match(body) || !NEVER_INVENT_PROHIBITION.is_match(body))
-                && !has_reasoned_marker(&content, "lint-agent-output-mandate: ok")
-            {
-                diag.report_at(
-                    LintRule::AgentOutputUnsafe,
-                    &path,
-                    &format!(
-                        "{}:{}: machine-only output that reads evidence must define an unreadable-evidence outcome and prohibit invented evidence (read instruction at body line {})",
-                        path.display(),
-                        body_line_number(&content, output),
-                        read + 1
-                    ),
-                );
-            }
-        }
-    }
-}
-
-fn first_matching_line(text: &str, pattern: &Regex) -> Option<usize> {
-    text.lines().position(|line| pattern.is_match(line))
 }
 
 fn body_line_number(content: &str, body_offset: usize) -> usize {
@@ -1744,65 +1630,6 @@ mod tests {
             config.error.insert(*rule);
         }
         DiagnosticCollector::with_config_silent(config)
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn agent_contracts_are_distinct_and_fail_closed() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        fs::create_dir_all(".claude/agents").unwrap();
-        fs::write(
-            ".claude/agents/judge.md",
-            "---\nname: judge\ndescription: Evidence judge prompt\ntools: [Bash]\n---\nRead every evidence file. Output strict JSONL only.\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_contracts(&mut diag, &ExcludeSet::default(), false);
-        assert!(
-            diag.diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::AgentReadMismatch)
-        );
-        assert!(
-            diag.diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::AgentOutputUnsafe)
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn agent_output_contract_accepts_explicit_unreadable_and_do_not_invent_language() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        fs::create_dir_all(".claude/agents").unwrap();
-        fs::write(
-            ".claude/agents/judge.md",
-            "---\nname: judge\ndescription: Evidence judge prompt\ntools: [Read]\n---\nRead every evidence file. For an unreadable file, return NEEDS_DEEP and do not invent evidence. Emit strict JSONL only.\n",
-        )
-        .unwrap();
-        fs::write(
-            ".claude/agents/scalar.md",
-            "---\nname: scalar\ndescription: Scalar tools are not an explicit list\ntools: Bash\n---\nRead every evidence file.\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_contracts(&mut diag, &ExcludeSet::default(), false);
-        assert!(
-            !diag
-                .diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::AgentOutputUnsafe)
-        );
-        assert!(
-            !diag
-                .diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::AgentReadMismatch)
-        );
     }
 
     #[test]
