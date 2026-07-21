@@ -2450,7 +2450,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn agents_and_cursor_rules_receive_source_aware_prompt_diagnostics_in_both_modes() {
+    fn agents_and_live_cursor_rules_receive_source_aware_prompt_diagnostics_in_both_modes() {
         for mode in [LintMode::Basic, LintMode::Plugin] {
             let tmp = tempfile::tempdir().unwrap();
             let _guard = crate::test_helpers::CwdGuard::new();
@@ -2502,7 +2502,6 @@ mod tests {
                 "AGENTS.md",
                 "nested/AGENTS.md",
                 ".cursor/rules/example.mdc",
-                ".cursor/rules/nested/example.md",
                 ".cursorrules",
             ] {
                 assert!(
@@ -2517,6 +2516,18 @@ mod tests {
                     .iter()
                     .any(|item| { item.subject_path.as_deref() == Some(Path::new("notes.md")) })
             );
+            assert!(
+                !prompt_diagnostics.iter().any(|item| {
+                    item.subject_path.as_deref()
+                        == Some(Path::new(".cursor/rules/nested/example.md"))
+                }),
+                "inactive .md files must not enter the prompt-content pass"
+            );
+            assert!(diag.diagnostics().iter().any(|item| {
+                item.rule == LintRule::CursorRuleExtension
+                    && item.subject_path.as_deref()
+                        == Some(Path::new(".cursor/rules/nested/example.md"))
+            }));
             let mdc = prompt_diagnostics
                 .iter()
                 .find(|item| {

@@ -9,10 +9,11 @@ use jsonschema::error::ValidationErrorKind;
 use serde_json::{Value as JsonValue, json};
 
 use crate::config::ExcludeSet;
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
+use crate::platforms;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::yaml::{Mapping, Value as YamlValue};
@@ -151,27 +152,23 @@ fn validate_project_rules(
     exclude: &ExcludeSet,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let root = Path::new(".cursor/rules");
-    if !root.is_dir() {
-        return;
-    }
-    for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
+    for entry in platforms::cursor_rule_candidates(exclude) {
         let extension = entry.path.extension().and_then(|ext| ext.to_str());
-        if !matches!(extension, Some("md" | "mdc")) {
-            continue;
-        }
         let path = entry.display;
-        if let Ok(content) = fs::read_to_string(&entry.path) {
+        if extension == Some("md") {
+            let renamed_path = path
+                .strip_suffix(".md")
+                .map(|stem| format!("{stem}.mdc"))
+                .expect("Cursor candidate filtering only returns .md or .mdc files");
+            diag.report_at_with(
+                LintRule::CursorRuleExtension,
+                &path,
+                &format!("{path}: Cursor project rules must use the .mdc extension"),
+                DiagnosticMetadata::default().with_suggestion(format!("rename to {renamed_path}")),
+            );
+        } else if let Ok(content) = fs::read_to_string(&entry.path) {
             if extension == Some("mdc") {
                 validate_rule_file(diag, &path, &content, prompt_pass);
-            } else {
-                let markdown = MarkdownDocument::parse_body(&content);
-                let document = LiveInstructionDocument::new(
-                    Path::new(&path),
-                    InstructionSurfaceKind::CursorRule,
-                    &markdown,
-                );
-                prompt_pass.validate(&document, diag);
             }
         }
     }
@@ -724,6 +721,44 @@ mod tests {
         ] {
             assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_mdc_rules_are_live_and_md_rules_only_report_extension() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mdc = tmp.path().join("packages/api/.cursor/rules/api.mdc");
+        let md = tmp.path().join("packages/web/.cursor/rules/not-a-rule.md");
+        std::fs::create_dir_all(mdc.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(md.parent().unwrap()).unwrap();
+        std::fs::write(&mdc, "---\nalwaysApply: true\n---\nRetry until success.\n").unwrap();
+        std::fs::write(&md, "Retry until success.\n").unwrap();
+
+        let _guard = CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+
+        let identities: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .map(|item| {
+                (
+                    item.rule.code(),
+                    item.subject_path.as_ref().unwrap().display().to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            identities,
+            vec![
+                ("Q005", "packages/api/.cursor/rules/api.mdc".to_string()),
+                (
+                    "CU020",
+                    "packages/web/.cursor/rules/not-a-rule.md".to_string()
+                ),
+            ]
+        );
     }
 
     #[test]

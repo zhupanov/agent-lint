@@ -784,6 +784,9 @@ pub enum LintRule {
     /// CU019: Cursor prompt hook model is not a string
     #[strum(props(code = "CU019", name = "cursor-model-invalid"))]
     CursorPromptHookModelInvalid,
+    /// CU020: Cursor project rule has an unsupported extension
+    #[strum(props(code = "CU020", name = "cursor-rule-extension"))]
+    CursorRuleExtension,
     /// CR-SK-001: Cursor skill uses unsupported frontmatter
     #[strum(props(code = "CR-SK-001", name = "cursor-skill-unsupported"))]
     CursorSkillFieldUnsupported,
@@ -1084,6 +1087,7 @@ impl LintRule {
             Self::CursorRuleDescriptionMissing | Self::CursorHookEventUnknown |
             Self::CursorHookFieldTypeInvalid | Self::CursorPromptHookPromptMissing |
             Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
+            Self::CursorRuleExtension |
 
             // ── Default-warning: contact metadata ───────────────────
             Self::InvalidEmailFormat |
@@ -1240,7 +1244,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            295,
+            296,
             "every enum variant must be registered"
         );
     }
@@ -1403,8 +1407,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            126,
-            "Expected 126 default-warning rules, got {}",
+            127,
+            "Expected 127 default-warning rules, got {}",
             warnings.len()
         );
     }
