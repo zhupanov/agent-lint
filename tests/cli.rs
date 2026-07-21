@@ -798,6 +798,85 @@ fn q006_discovers_cursor_mdc_and_legacy_rules_through_the_cli() {
 }
 
 #[test]
+fn q004_cli_preserves_source_metadata_modes_and_claude_scoped_policy() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "Keep the changelog current.\nRun the focused test suite.\nReview diagnostics before merging.\nUse small commits.\nPreserve unrelated formatting.\nCheck the final diff.\nDocument intentional deviations.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("README.md"),
+        "Keep the changelog current.\nRun the focused test suite.\nReview diagnostics before merging.\n",
+    )
+    .unwrap();
+
+    let normal = run_in(tmp.path(), &["--format", "json", "--only", "Q004", "."]);
+    assert!(normal.status.success(), "stderr: {}", stderr(&normal));
+    let report = json(&normal);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{report:#}");
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic["code"], "Q004");
+    assert_eq!(diagnostic["severity"], "warning");
+    assert_eq!(diagnostic["subject_path"], "CLAUDE.md");
+    assert_eq!(
+        diagnostic["related_subjects"],
+        serde_json::json!(["README.md"])
+    );
+    assert_eq!(diagnostic["location"]["start"]["line"], 1);
+    assert_eq!(
+        diagnostic["evidence"],
+        "matched 3 of 7 eligible CLAUDE.md lines; line pairs: 1:1, 2:2, 3:3"
+    );
+    assert_eq!(
+        diagnostic["suggestion"],
+        "Replace the duplicated block with a README link, or keep only agent-specific instructions in CLAUDE.md."
+    );
+
+    for strictness in ["--pedantic", "--all"] {
+        let output = run_in(
+            tmp.path(),
+            &["--format", "json", strictness, "--only", "Q004", "."],
+        );
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        assert_eq!(json(&output)["diagnostics"][0]["severity"], "error");
+    }
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nerror = [\"Q004\"]\n",
+    )
+    .unwrap();
+    let explicit_error = run_in(tmp.path(), &["--format", "json", "--only", "Q004", "."]);
+    assert_eq!(explicit_error.status.code(), Some(1));
+    assert_eq!(json(&explicit_error)["diagnostics"][0]["severity"], "error");
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"CLAUDE.md\"]\nsuppress = [\"Q004\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--format", "json", "--only", "Q004", "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert_eq!(json(&suppressed)["counts"]["suppressed"], 1);
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\"CLAUDE.md\"]\n",
+    )
+    .unwrap();
+    let excluded = run_in(tmp.path(), &["--format", "json", "--only", "Q004", "."]);
+    assert!(excluded.status.success(), "stderr: {}", stderr(&excluded));
+    assert_eq!(json(&excluded)["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
 fn json_no_work_run_is_clean_with_no_selected_mode() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

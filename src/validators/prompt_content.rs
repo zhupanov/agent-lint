@@ -11,7 +11,7 @@ use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::common::{NEVER_INVENT_PROHIBITION, has_bound_or_fallback, sentence_ranges};
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -299,14 +299,6 @@ fn validate_body(path: &str, body: &str, diag: &mut DiagnosticCollector) {
     PromptContentPass::default().validate(&document, diag);
 }
 
-/// Run the shared body checks for every included `CLAUDE.md`. Only the root
-/// file participates in the root-README overlap check.
-#[cfg(test)]
-pub(crate) fn validate_claude_md(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let mut prompt_pass = PromptContentPass::default();
-    validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
-}
-
 pub(crate) fn validate_claude_md_with_prompt_pass(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
@@ -339,7 +331,13 @@ pub(crate) fn validate_claude_md_with_prompt_pass(
             let Ok(readme) = fs::read_to_string("README.md") else {
                 return;
             };
-            check_readme_overlap(&claude, &readme, diag);
+            let readme_markdown = MarkdownDocument::parse(readme);
+            let readme_document = LiveInstructionDocument::new(
+                Path::new("README.md"),
+                InstructionSurfaceKind::ClaudeProject,
+                &readme_markdown,
+            );
+            check_readme_overlap(&document, &readme_document, diag);
         });
     }
 }
@@ -1535,42 +1533,171 @@ fn describe_requirement(requirement: &OutputRequirement) -> String {
     }
 }
 
-fn check_readme_overlap(claude: &str, readme: &str, diag: &mut DiagnosticCollector) {
-    let claude_lines = normalized_line_set(claude);
-    let readme_lines = normalized_line_set(readme);
-    if claude_lines.is_empty() || readme_lines.is_empty() {
+#[derive(Debug, PartialEq, Eq)]
+struct ReadmeOverlap {
+    claude_line_count: usize,
+    matched_line_pairs: Vec<(usize, usize)>,
+}
+
+fn check_readme_overlap(
+    claude: &LiveInstructionDocument<'_>,
+    readme: &LiveInstructionDocument<'_>,
+    diag: &mut DiagnosticCollector,
+) {
+    let overlap = readme_overlap(claude, readme);
+    if overlap.claude_line_count == 0 {
         return;
     }
 
-    let shared = claude_lines.intersection(&readme_lines).count();
-    let overlap = shared as f64 / claude_lines.len() as f64;
-    if shared >= MIN_SHARED_README_LINES && overlap > README_OVERLAP_THRESHOLD {
-        diag.report(
+    let matched_line_count = overlap.matched_line_pairs.len();
+    let percentage = matched_line_count as f64 / overlap.claude_line_count as f64;
+    if matched_line_count >= MIN_SHARED_README_LINES && percentage > README_OVERLAP_THRESHOLD {
+        let pairs = overlap
+            .matched_line_pairs
+            .iter()
+            .map(|(claude_line, readme_line)| format!("{claude_line}:{readme_line}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        diag.report_with(
             LintRule::ClaudeReadmeDuplicate,
             &format!(
-                "CLAUDE.md duplicates README.md content ({:.0}% of {} normalized prose lines overlap); keep project instructions concise and link to the README instead",
-                overlap * 100.0,
-                claude_lines.len()
+                "CLAUDE.md duplicates README.md live instruction prose ({:.0}% of {} eligible lines overlap)",
+                percentage * 100.0,
+                overlap.claude_line_count,
             ),
+            DiagnosticMetadata::at_line(overlap.matched_line_pairs[0].0)
+                .with_related_subjects(["README.md"])
+                .with_evidence(format!(
+                    "matched {matched_line_count} of {} eligible CLAUDE.md lines; line pairs: {pairs}",
+                    overlap.claude_line_count,
+                ))
+                .with_suggestion(
+                    "Replace the duplicated block with a README link, or keep only agent-specific instructions in CLAUDE.md.",
+                ),
         );
     }
 }
 
-fn normalized_line_set(content: &str) -> HashSet<String> {
-    crate::fence::lines_outside_fences(content)
-        .filter_map(normalize_line)
+fn readme_overlap(
+    claude: &LiveInstructionDocument<'_>,
+    readme: &LiveInstructionDocument<'_>,
+) -> ReadmeOverlap {
+    let claude_lines = normalized_live_prose_lines(claude);
+    let mut readme_lines: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for line in normalized_live_prose_lines(readme) {
+        readme_lines.entry(line.text).or_default().push(line.line);
+    }
+
+    let mut matched_per_line = BTreeMap::<String, usize>::new();
+    let mut matched_line_pairs = Vec::new();
+    for line in &claude_lines {
+        let matched = matched_per_line.entry(line.text.clone()).or_default();
+        let Some(readme_line) = readme_lines
+            .get(&line.text)
+            .and_then(|lines| lines.get(*matched))
+        else {
+            continue;
+        };
+        matched_line_pairs.push((line.line, *readme_line));
+        *matched += 1;
+    }
+
+    ReadmeOverlap {
+        claude_line_count: claude_lines.len(),
+        matched_line_pairs,
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NormalizedProseLine {
+    line: usize,
+    text: String,
+}
+
+fn normalized_live_prose_lines(document: &LiveInstructionDocument<'_>) -> Vec<NormalizedProseLine> {
+    let heading_lines: HashSet<_> = document
+        .headings()
+        .iter()
+        .map(|heading| heading.line)
+        .collect();
+    document
+        .prose_lines()
+        .iter()
+        .zip(document.example_scopes())
+        .filter_map(|(line, is_example)| {
+            (!is_example && !heading_lines.contains(&line.line))
+                .then(|| normalize_prose_line(line))
+                .flatten()
+                .map(|text| NormalizedProseLine {
+                    line: line.line,
+                    text,
+                })
+        })
         .collect()
 }
 
-fn normalize_line(line: &str) -> Option<String> {
-    let normalized = line
-        .trim()
-        .trim_start_matches(['#', '-', '*', '+', '>', ' ', '\t'])
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase();
-    (!normalized.is_empty()).then_some(normalized)
+fn normalize_prose_line(line: &crate::markdown::MarkdownProseLine) -> Option<String> {
+    let trimmed = line.text.trim_start();
+    let start_column = line.text.chars().count() - trimmed.chars().count() + 1;
+    let marked = strip_markdown_list_marker(trimmed);
+    let start_column = start_column + trimmed.chars().count() - marked.chars().count();
+    let content = marked.trim_start();
+    let start_column = start_column + marked.chars().count() - content.chars().count();
+    let normalized = masked_whitespace_normalized(
+        content.trim_end(),
+        start_column,
+        &line.masked_inline_code_columns,
+    );
+    (!normalized.is_empty()).then_some(normalized.to_ascii_lowercase())
+}
+
+fn masked_whitespace_normalized(
+    text: &str,
+    start_column: usize,
+    masked_columns: &[std::ops::RangeInclusive<usize>],
+) -> String {
+    let mut with_masks = String::new();
+    let mut in_mask = false;
+    for (index, character) in text.chars().enumerate() {
+        let masked = masked_columns
+            .iter()
+            .any(|columns| columns.contains(&(start_column + index)));
+        if masked {
+            if !in_mask {
+                with_masks.push('\u{e000}');
+            }
+            in_mask = true;
+        } else {
+            with_masks.push(character);
+            in_mask = false;
+        }
+    }
+    with_masks.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn strip_markdown_list_marker(line: &str) -> &str {
+    if let Some(rest) = line
+        .strip_prefix(['-', '*', '+'])
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+    {
+        return rest;
+    }
+
+    let marker_end = line
+        .char_indices()
+        .take_while(|(_, character)| character.is_ascii_digit())
+        .last()
+        .map_or(0, |(index, character)| index + character.len_utf8());
+    if marker_end == 0 {
+        return line;
+    }
+    let Some(marker) = line.get(marker_end..) else {
+        return line;
+    };
+    marker
+        .strip_prefix(['.', ')'])
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .unwrap_or(line)
 }
 
 fn contains_phrase(text: &str, phrases: &[&str]) -> bool {
@@ -1655,6 +1782,42 @@ mod tests {
             .filter(|item| item.rule == LintRule::PromptNegativeOnly)
             .cloned()
             .collect()
+    }
+
+    fn q004_overlap(claude: &str, readme: &str) -> ReadmeOverlap {
+        let claude_markdown = MarkdownDocument::parse(claude);
+        let readme_markdown = MarkdownDocument::parse(readme);
+        let claude = LiveInstructionDocument::new(
+            Path::new("CLAUDE.md"),
+            InstructionSurfaceKind::ClaudeProject,
+            &claude_markdown,
+        );
+        let readme = LiveInstructionDocument::new(
+            Path::new("README.md"),
+            InstructionSurfaceKind::ClaudeProject,
+            &readme_markdown,
+        );
+        readme_overlap(&claude, &readme)
+    }
+
+    fn q004_diagnostics(claude: &str, readme: &str, config: LintConfig) -> DiagnosticCollector {
+        let claude_markdown = MarkdownDocument::parse(claude);
+        let readme_markdown = MarkdownDocument::parse(readme);
+        let claude = LiveInstructionDocument::new(
+            Path::new("CLAUDE.md"),
+            InstructionSurfaceKind::ClaudeProject,
+            &claude_markdown,
+        );
+        let readme = LiveInstructionDocument::new(
+            Path::new("README.md"),
+            InstructionSurfaceKind::ClaudeProject,
+            &readme_markdown,
+        );
+        let mut diagnostics = DiagnosticCollector::with_config(config);
+        diagnostics.with_subject_path(Path::new("CLAUDE.md"), |diagnostics| {
+            check_readme_overlap(&claude, &readme, diagnostics);
+        });
+        diagnostics
     }
 
     fn q005_diagnostics(body: &str) -> Vec<crate::diagnostic::Diagnostic> {
@@ -2040,25 +2203,79 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn claudemd_readme_overlap_uses_normalized_prose_lines() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::write(
-            "CLAUDE.md",
-            "# Project\n- Run cargo test\n- Run cargo fmt\n- Review diagnostics\n- Commit focused changes\n",
-        )
-        .unwrap();
-        std::fs::write(
-            "README.md",
-            "# Project\nRun cargo test\nRun cargo fmt\nReview diagnostics\nCommit focused changes\n",
-        )
-        .unwrap();
+    fn q004_counts_only_live_prose_and_uses_multiset_arithmetic() {
+        let heading_only = q004_diagnostics(
+            "# Setup\n# Avoidance\n# Separate preference\n# Testing\n# Usage\nUse focused changes.\n",
+            "# Setup\n# Avoidance\n# Separate preference\n# Testing\n# Usage\nDocument every change.\n",
+            LintConfig::default(),
+        );
+        assert!(heading_only.diagnostics().is_empty());
 
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_claude_md(&mut diag, &ExcludeSet::default());
-        assert_eq!(diag.error_count(), 1);
+        let repeated = q004_overlap(
+            "Repeat this instruction.\nRepeat this instruction.\nRepeat this instruction.\nRepeat this instruction.\nKeep this unique.\n",
+            "Repeat this instruction.\nRepeat this instruction.\nRepeat this instruction.\n",
+        );
+        assert_eq!(repeated.claude_line_count, 5);
+        assert_eq!(repeated.matched_line_pairs, vec![(1, 1), (2, 2), (3, 3)]);
+
+        let repeated_on_both_sides = q004_overlap(
+            "Alpha.\nAlpha.\nBeta.\nBeta.\nBeta.\n",
+            "Alpha.\nAlpha.\nAlpha.\nBeta.\nBeta.\n",
+        );
+        assert_eq!(repeated_on_both_sides.claude_line_count, 5);
+        assert_eq!(
+            repeated_on_both_sides.matched_line_pairs,
+            vec![(1, 1), (2, 2), (3, 4), (4, 5)]
+        );
+    }
+
+    #[test]
+    fn q004_preserves_markdown_scope_and_normalization_boundaries() {
+        let claude = "# Instructions\n- Keep   the changelog current.\n> Keep the block quote out.\n<!-- Keep comments out. -->\nFor example, keep examples out.\nUse `cargo test` before merging.\n## Examples\nKeep this example out.\n```md\nKeep fenced code out.\n```\n";
+        let readme = "1. keep the changelog current.\nKeep the block quote out.\nKeep comments out.\nKeep examples out.\nKeep this example out.\nKeep fenced code out.\nUse before merging.\n";
+        let overlap = q004_overlap(claude, readme);
+        assert_eq!(overlap.claude_line_count, 2);
+        assert_eq!(overlap.matched_line_pairs, vec![(2, 1)]);
+    }
+
+    #[test]
+    fn q004_requires_more_than_forty_percent_and_three_matches() {
+        let exactly_forty = q004_diagnostics(
+            "One.\nTwo.\nThree.\nFour.\nFive.\n",
+            "One.\nTwo.\n",
+            LintConfig::default(),
+        );
+        assert!(exactly_forty.diagnostics().is_empty());
+
+        let fewer_than_three = q004_diagnostics(
+            "One.\nTwo.\nThree.\nFour.\n",
+            "One.\nTwo.\n",
+            LintConfig::default(),
+        );
+        assert!(fewer_than_three.diagnostics().is_empty());
+
+        let just_above_forty = q004_diagnostics(
+            "One.\nTwo.\nThree.\nFour.\nFive.\nSix.\nSeven.\n",
+            "One.\nTwo.\nThree.\n",
+            LintConfig::default(),
+        );
+        let diagnostic = just_above_forty
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::ClaudeReadmeDuplicate)
+            .unwrap();
+        assert_eq!(diagnostic.location, Some(SourceSpan::line(1)));
+        assert_eq!(diagnostic.related_subjects, vec![Path::new("README.md")]);
+        assert_eq!(
+            diagnostic.evidence.as_deref(),
+            Some("matched 3 of 7 eligible CLAUDE.md lines; line pairs: 1:1, 2:2, 3:3")
+        );
+        assert_eq!(
+            diagnostic.suggestion.as_deref(),
+            Some(
+                "Replace the duplicated block with a README link, or keep only agent-specific instructions in CLAUDE.md."
+            )
+        );
     }
 
     #[test]
