@@ -262,16 +262,10 @@ fn validate_skill_frontmatter_in_dir(
         let raw_desc = frontmatter::get_field(fm_lines, "description");
         let canonical_name = parsed_frontmatter
             .as_ref()
-            .and_then(crate::yaml::Value::as_mapping)
-            .and_then(|mapping| mapping.get("name"))
-            .and_then(crate::yaml::Value::as_str)
-            .filter(|name| !name.is_empty());
+            .and_then(|yaml| frontmatter::canonical_nonempty_string_field(yaml, "name"));
         let canonical_desc = parsed_frontmatter
             .as_ref()
-            .and_then(crate::yaml::Value::as_mapping)
-            .and_then(|mapping| mapping.get("description"))
-            .and_then(crate::yaml::Value::as_str)
-            .filter(|description| !description.is_empty());
+            .and_then(|yaml| frontmatter::canonical_nonempty_string_field(yaml, "description"));
         // Invalid YAML is already reported by X001. For a valid document,
         // require canonical non-empty string scalars rather than treating YAML
         // syntax as a field value.
@@ -321,11 +315,18 @@ fn validate_skill_frontmatter_in_dir(
             continue;
         }
         for field in super::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
-            let prefix = format!("{field}:");
-            let field_present = fm_lines.iter().any(|line| line.starts_with(&prefix));
+            let field_present = frontmatter::optional_field_is_present(
+                fm_lines,
+                parsed_frontmatter.as_ref(),
+                field,
+            );
             if field_present {
-                let val = frontmatter::get_field(fm_lines, field);
-                if val.is_none() {
+                let is_empty = frontmatter::optional_field_is_empty(
+                    fm_lines,
+                    parsed_frontmatter.as_ref(),
+                    field,
+                );
+                if is_empty {
                     // For allowed-tools: suppress S007 if YAML list items follow (S045 handles that case)
                     if *field == "allowed-tools" {
                         let has_list_items = fm_lines
@@ -1128,6 +1129,63 @@ mod tests {
             diag.diagnostics()
                 .iter()
                 .any(|d| d.rule == LintRule::FrontmatterNameMismatch)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s007_uses_canonical_yaml_values_with_an_invalid_yaml_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        for (name, optional_field) in [
+            ("continued", "argument-hint:\n  \"[issue-number]\""),
+            ("folded", "argument-hint: >-\n  [issue-number]"),
+            ("quoted-empty", "argument-hint: \"\""),
+            ("quoted-key", "\"argument-hint\": \"\""),
+            ("flow-tools", "allowed-tools: [Read, Write]"),
+            ("block-tools", "allowed-tools:\n  - Read\n  - Write"),
+            ("invalid", "argument-hint:\n\tinvalid: yaml"),
+        ] {
+            let path = format!(".claude/skills/{name}/SKILL.md");
+            std::fs::create_dir_all(
+                std::path::Path::new(&path)
+                    .parent()
+                    .expect("skill has a parent directory"),
+            )
+            .unwrap();
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description\n{optional_field}\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        let s007_subjects = diag
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::FrontmatterFieldEmpty)
+            .map(|diagnostic| {
+                diagnostic
+                    .subject_path
+                    .as_ref()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            s007_subjects,
+            vec![
+                ".claude/skills/invalid/SKILL.md".to_string(),
+                ".claude/skills/quoted-empty/SKILL.md".to_string(),
+                ".claude/skills/quoted-key/SKILL.md".to_string(),
+            ]
         );
     }
 }

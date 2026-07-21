@@ -3,6 +3,7 @@ use crate::context::LintMode;
 use crate::fence::CodeFenceTracker;
 use crate::frontmatter;
 use crate::hook_commands::extract_hook_command_paths;
+use crate::platforms::ValidationTargets;
 use crate::pwd_hygiene::replace_bundled_asset_prefixes;
 use crate::rules::LintRule;
 use crate::traversal;
@@ -27,13 +28,16 @@ static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9
 pub fn apply_fix(
     rule: LintRule,
     mode: LintMode,
+    targets: ValidationTargets,
     exclude: &ExcludeSet,
     config: &LintConfig,
 ) -> bool {
     match rule {
         LintRule::HookNotExecutable => fix_executability_hooks(mode, config),
         LintRule::ScriptNotExecutable => fix_executability_scripts(mode, exclude, config),
-        LintRule::FrontmatterNameMismatch => fix_frontmatter_name_mismatch(exclude, config),
+        LintRule::FrontmatterNameMismatch => {
+            fix_frontmatter_name_mismatch(mode, targets, exclude, config)
+        }
         LintRule::FrontmatterFieldEmpty => fix_frontmatter_field_empty(mode, exclude, config),
         LintRule::DescHasXml => fix_desc_has_xml(mode, exclude, config),
         LintRule::ConsecutiveBash => fix_consecutive_bash(mode, exclude, config),
@@ -172,9 +176,23 @@ fn make_executable(path: &str) -> bool {
 
 // ── S006: frontmatter name mismatch ─────────────────────────────────────
 
-fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet, config: &LintConfig) -> bool {
+fn fix_frontmatter_name_mismatch(
+    mode: LintMode,
+    targets: ValidationTargets,
+    exclude: &ExcludeSet,
+    config: &LintConfig,
+) -> bool {
     let mut fixed = false;
-    for base_dir in &["skills", ".claude/skills"] {
+    let mut base_dirs = Vec::new();
+    if mode == LintMode::Plugin {
+        base_dirs.push("skills");
+    }
+    base_dirs.push(".claude/skills");
+    if targets.agent_skills {
+        base_dirs.push(".agents/skills");
+    }
+
+    for base_dir in base_dirs {
         let dir = Path::new(base_dir);
         if !dir.is_dir() {
             continue;
@@ -185,7 +203,7 @@ fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet, config: &LintConfig) -> b
                 Some(n) => n.to_string(),
                 None => continue,
             };
-            if dir_name == "shared" {
+            if dir_name == "shared" && base_dir != ".agents/skills" {
                 continue;
             }
             let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
@@ -216,27 +234,29 @@ fn fix_frontmatter_name_mismatch(exclude: &ExcludeSet, config: &LintConfig) -> b
                 Some(lines) => lines,
                 None => continue,
             };
-            let name = match frontmatter::get_field(&fm_lines, "name") {
-                Some(n) => n,
-                None => continue,
+            let parsed_frontmatter = match frontmatter::parse_yaml_strict(&fm_lines) {
+                Ok(yaml) => yaml,
+                Err(_) => continue,
             };
+            let name =
+                match frontmatter::canonical_nonempty_string_field(&parsed_frontmatter, "name") {
+                    Some(name) => name,
+                    None => continue,
+                };
             if name == dir_name {
                 continue;
             }
 
-            // Only fix in public skills (check_name_match=true only for "skills")
-            if *base_dir != "skills" {
+            let Some(raw_name_index) = single_line_frontmatter_field_index(&fm_lines, "name")
+            else {
+                continue;
+            };
+            let raw_name_line = &fm_lines[raw_name_index];
+            if raw_name_line["name:".len()..].trim().is_empty() {
                 continue;
             }
-
-            // Replace the raw name line (handles quoted values)
-            let raw_name_line = fm_lines
-                .iter()
-                .find(|l| l.starts_with("name:"))
-                .cloned()
-                .unwrap_or_default();
             let new_line = format!("name: {dir_name}");
-            if let Some(new_content) = replace_in_frontmatter(&content, &raw_name_line, &new_line) {
+            if let Some(new_content) = replace_in_frontmatter(&content, raw_name_line, &new_line) {
                 if fs::write(&skill_md, new_content).is_ok() {
                     log_fix(
                         LintRule::FrontmatterNameMismatch,
@@ -272,36 +292,20 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &Li
             };
 
             for field in crate::validators::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
-                let prefix = format!("{field}:");
-                let field_present = info.fm_lines.iter().any(|line| line.starts_with(&prefix));
-                if !field_present {
+                let parsed_frontmatter = frontmatter::parse_yaml_strict(&info.fm_lines).ok();
+                if !frontmatter::optional_field_is_present(
+                    &info.fm_lines,
+                    parsed_frontmatter.as_ref(),
+                    field,
+                ) {
                     continue;
                 }
-                let val = frontmatter::get_field(&info.fm_lines, field);
-                if val.is_some() {
+                if !frontmatter::optional_field_is_empty(
+                    &info.fm_lines,
+                    parsed_frontmatter.as_ref(),
+                    field,
+                ) {
                     continue; // Not empty
-                }
-
-                // For allowed-tools: skip if YAML list items follow (S045 handles that)
-                if *field == "allowed-tools" {
-                    let has_list_items = info
-                        .fm_lines
-                        .iter()
-                        .position(|l| l.starts_with("allowed-tools:"))
-                        .is_some_and(|i| {
-                            info.fm_lines[i + 1..]
-                                .iter()
-                                .take_while(|l| {
-                                    l.is_empty()
-                                        || l.starts_with(' ')
-                                        || l.starts_with('\t')
-                                        || l.starts_with("- ")
-                                })
-                                .any(|l| l.trim_start().starts_with("- "))
-                        });
-                    if has_list_items {
-                        continue;
-                    }
                 }
 
                 // FINDING_8: skip removing argument-hint if body uses $ARGUMENTS
@@ -309,7 +313,17 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &Li
                     continue;
                 }
 
-                // Remove the empty field line from the file
+                // A bare field line with no indented continuation is the only
+                // unambiguous removal. In particular, never orphan a YAML
+                // continuation or child block.
+                let Some(index) = single_line_frontmatter_field_index(&info.fm_lines, field) else {
+                    continue;
+                };
+                let prefix = format!("{field}:");
+                if info.fm_lines[index].trim_end() != prefix {
+                    continue;
+                }
+
                 if let Some(new_content) = remove_frontmatter_line(&content, &prefix) {
                     if fs::write(&skill_path, &new_content).is_ok() {
                         log_fix(
@@ -324,6 +338,18 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &Li
         }
     }
     fixed
+}
+
+/// Return a top-level frontmatter field line only when no indented YAML lines
+/// belong to that field before the next top-level entry.
+fn single_line_frontmatter_field_index(fm_lines: &[String], field: &str) -> Option<usize> {
+    let prefix = format!("{field}:");
+    let index = fm_lines.iter().position(|line| line.starts_with(&prefix))?;
+    let has_continuation = fm_lines[index + 1..]
+        .iter()
+        .take_while(|line| line.is_empty() || line.starts_with(' ') || line.starts_with('\t'))
+        .any(|line| line.starts_with(' ') || line.starts_with('\t'));
+    (!has_continuation).then_some(index)
 }
 
 // ── S018: XML tags in description ───────────────────────────────────────
@@ -1132,6 +1158,39 @@ mod tests {
         let result = remove_frontmatter_line(content, "argument-hint:").unwrap();
         assert!(!result.contains("argument-hint"));
         assert!(result.contains("name: foo"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn fix_frontmatter_field_empty_removes_a_bare_field_via_invalid_yaml_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/empty").unwrap();
+        std::fs::write(
+            ".claude/skills/empty/SKILL.md",
+            "---\nname: empty\ndescription: A valid description\nargument-hint:\n---\nBody\n",
+        )
+        .unwrap();
+
+        let skills = collect_skills(".claude/skills", &ExcludeSet::default());
+        assert_eq!(skills.len(), 1);
+        assert!(frontmatter::parse_yaml_strict(&skills[0].fm_lines).is_err());
+        assert_eq!(
+            single_line_frontmatter_field_index(&skills[0].fm_lines, "argument-hint"),
+            Some(2)
+        );
+
+        assert!(fix_frontmatter_field_empty(
+            LintMode::Basic,
+            &ExcludeSet::default(),
+            &LintConfig::default()
+        ));
+        assert!(
+            !std::fs::read_to_string(".claude/skills/empty/SKILL.md")
+                .unwrap()
+                .contains("argument-hint:")
+        );
     }
 
     #[test]
