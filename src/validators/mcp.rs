@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
-use crate::context::LintContext;
+use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::DiagnosticCollector;
+use crate::platforms::ValidationTargets;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::common::is_nonlocal_url_with_scheme;
@@ -74,14 +75,6 @@ impl McpTransport {
             Self::Stdio => unreachable!("stdio does not accept a remote URL"),
         }
     }
-
-    fn insecure_scheme(self) -> Option<(&'static str, &'static str)> {
-        match self {
-            Self::Http | Self::StreamableHttp | Self::Sse => Some(("http", "https")),
-            Self::WebSocket => Some(("ws", "wss")),
-            Self::Stdio => None,
-        }
-    }
 }
 
 static RE_SECRET_ENV_KEY: LazyLock<Regex> = LazyLock::new(|| {
@@ -92,66 +85,114 @@ static RE_DANGEROUS_COMMAND: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid dangerous-command regex")
 });
 
-/// Validate MCP configuration files found in the repository. MCP files are
-/// optional; this only reports diagnostics for files that are present.
+#[derive(Clone, Copy)]
+enum McpAdapter {
+    ClaudeStandalone,
+    ClaudeInlinePlugin,
+    Cursor,
+}
+
+impl McpAdapter {
+    fn requires_server_map(self) -> bool {
+        !matches!(self, Self::ClaudeInlinePlugin)
+    }
+
+    fn allows_claude_transport_rules(self) -> bool {
+        matches!(self, Self::ClaudeStandalone | Self::ClaudeInlinePlugin)
+    }
+
+    fn allows_claude_only_rules(self) -> bool {
+        self.allows_claude_transport_rules()
+    }
+}
+
+/// Validate MCP configuration through explicit adapters for the supported
+/// Claude and Cursor repository surfaces. Codex TOML remains CX-owned.
 pub fn validate_mcp_configs(
     ctx: &LintContext,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
+    targets: ValidationTargets,
 ) {
-    for path in mcp_config_paths(ctx) {
-        let display = display_path(&ctx.base_path, &path);
-        if exclude.is_excluded(&display) {
-            continue;
-        }
-        let content = match std::fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(error) => {
-                diag.report_at(
-                    LintRule::McpJsonInvalid,
-                    &display,
-                    &format!("{display} cannot be read: {error}"),
-                );
-                continue;
-            }
-        };
-        let value: Value = match serde_json::from_str(&content) {
-            Ok(value) => value,
-            Err(error) => {
-                diag.report_at(
-                    LintRule::McpJsonInvalid,
-                    &display,
-                    &format!("{display} is not valid JSON: {error}"),
-                );
-                continue;
-            }
-        };
+    for path in claude_mcp_config_paths(ctx) {
+        validate_json_document(
+            &path,
+            McpAdapter::ClaudeStandalone,
+            &ctx.base_path,
+            diag,
+            exclude,
+        );
+    }
 
-        diag.with_subject_path(&display, |diag| {
-            for name in duplicate_mcp_server_names(&content) {
-                diag.report(
-                    LintRule::McpDuplicateServer,
-                    &format!("{display}: mcpServers contains duplicate server name '{name}'"),
-                );
-            }
-            validate_servers(&display, value.get("mcpServers"), diag);
-        });
+    if targets.cursor {
+        validate_json_document(
+            &ctx.base_path.join(".cursor/mcp.json"),
+            McpAdapter::Cursor,
+            &ctx.base_path,
+            diag,
+            exclude,
+        );
+    }
+
+    if let ManifestState::Parsed(value) = &ctx.plugin_json {
+        let display = ".claude-plugin/plugin.json";
+        if !exclude.is_excluded(display) {
+            diag.with_subject_path(display, |diag| {
+                validate_document(display, value, McpAdapter::ClaudeInlinePlugin, None, diag);
+            });
+        }
     }
 }
 
-fn mcp_config_paths(ctx: &LintContext) -> Vec<std::path::PathBuf> {
-    let mut paths = HashSet::new();
+fn validate_json_document(
+    path: &Path,
+    adapter: McpAdapter,
+    base_path: &Path,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    if !path.is_file() {
+        return;
+    }
+    let display = display_path(base_path, path);
+    if exclude.is_excluded(&display) {
+        return;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) => {
+            diag.report_at(
+                LintRule::McpJsonInvalid,
+                &display,
+                &format!("{display} cannot be read: {error}"),
+            );
+            return;
+        }
+    };
+    let value: Value = match serde_json::from_str(&content) {
+        Ok(value) => value,
+        Err(error) => {
+            diag.report_at(
+                LintRule::McpJsonInvalid,
+                &display,
+                &format!("{display} is not valid JSON: {error}"),
+            );
+            return;
+        }
+    };
+    let duplicates = duplicate_mcp_keys(&content);
+    diag.with_subject_path(&display, |diag| {
+        validate_document(&display, &value, adapter, Some(duplicates), diag);
+    });
+}
+
+fn claude_mcp_config_paths(ctx: &LintContext) -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
     for entry in traversal::recursive_files(&ctx.base_path, &ctx.base_path, None).entries {
-        let name = entry.path.file_name().unwrap_or_default().to_string_lossy();
-        if name == ".mcp.json"
-            || name.ends_with(".mcp.json")
-            || entry.path == ctx.base_path.join(".claude/settings.json")
-            || entry.path == ctx.base_path.join(".claude/settings.local.json")
-        {
-            paths.insert(entry.path);
+        if entry.path.file_name().and_then(|name| name.to_str()) == Some(".mcp.json") {
+            paths.push(entry.path);
         }
     }
-    let mut paths: Vec<_> = paths.into_iter().collect();
     paths.sort();
     paths
 }
@@ -163,14 +204,43 @@ fn display_path(base: &Path, path: &Path) -> String {
         .replace('\\', "/")
 }
 
-fn validate_servers(display: &str, servers: Option<&Value>, diag: &mut DiagnosticCollector) {
+fn validate_document(
+    display: &str,
+    value: &Value,
+    adapter: McpAdapter,
+    duplicates: Option<DuplicateMcpKeys>,
+    diag: &mut DiagnosticCollector,
+) {
+    if let Some(duplicates) = duplicates {
+        for () in duplicates.top_level_server_maps {
+            diag.report(
+                LintRule::McpStructureInvalid,
+                &format!("{display}: duplicate top-level mcpServers key"),
+            );
+        }
+        for name in duplicates.server_names {
+            diag.report(
+                LintRule::McpDuplicateServer,
+                &format!("{display}: mcpServers contains duplicate server name '{name}'"),
+            );
+        }
+    }
+
+    let servers = value.get("mcpServers");
+    if servers.is_none() && !adapter.requires_server_map() {
+        return;
+    }
     let Some(servers) = servers.and_then(Value::as_object) else {
+        diag.report(
+            LintRule::McpStructureInvalid,
+            &format!("{display}: mcpServers must be an object"),
+        );
         return;
     };
 
     for (name, config) in servers {
         let label = format!("{display}: mcpServers.{name}");
-        if RESERVED_SERVER_NAMES.contains(&name.as_str()) {
+        if adapter.allows_claude_only_rules() && RESERVED_SERVER_NAMES.contains(&name.as_str()) {
             diag.report(
                 LintRule::McpServerReserved,
                 &format!("{label} uses reserved server name '{name}'"),
@@ -178,62 +248,27 @@ fn validate_servers(display: &str, servers: Option<&Value>, diag: &mut Diagnosti
         }
         let Some(config) = config.as_object() else {
             diag.report(
-                LintRule::McpServerEmpty,
-                &format!("{label} must be a non-empty object"),
+                LintRule::McpStructureInvalid,
+                &format!("{label} must be an object"),
             );
             continue;
         };
         if config.is_empty() {
-            diag.report(
-                LintRule::McpServerEmpty,
-                &format!("{label} must not be an empty object"),
-            );
+            if matches!(adapter, McpAdapter::Cursor) {
+                validate_cursor_selector(&label, config, diag);
+            } else {
+                diag.report(
+                    LintRule::McpServerEmpty,
+                    &format!("{label} must not be an empty object"),
+                );
+            }
             continue;
         }
 
-        let Some(transport) = McpTransport::parse(config.get("type")) else {
-            diag.report(
-                LintRule::McpTypeInvalid,
-                &format!("{label}.type must be {}", McpTransport::ACCEPTED_TYPES),
-            );
-            continue;
-        };
-        if transport == McpTransport::Stdio && !has_nonempty_string(config.get("command")) {
-            diag.report(
-                LintRule::McpStdioCommandMissing,
-                &format!("{label}: stdio server requires a non-empty command"),
-            );
-        }
-        if transport.is_remote() {
-            match config.get("url").and_then(Value::as_str) {
-                Some(url) if transport.accepts_url(url) => {
-                    let (insecure_scheme, secure_scheme) = transport
-                        .insecure_scheme()
-                        .expect("remote transport has an insecure scheme");
-                    if is_nonlocal_url_with_scheme(url, insecure_scheme) {
-                        diag.report(
-                            LintRule::McpUrlNotHttps,
-                            &format!(
-                                "{label}.url uses non-local {insecure_scheme}://; use {secure_scheme}://"
-                            ),
-                        );
-                    }
-                }
-                _ => diag.report(
-                    LintRule::McpHttpUrlMissing,
-                    &format!(
-                        "{label}: {} server requires a valid non-empty URL using {}",
-                        transport.name(),
-                        transport.url_scheme_description(),
-                    ),
-                ),
-            }
-        }
-        if transport == McpTransport::Sse {
-            diag.report(
-                LintRule::McpSseDeprecated,
-                &format!("{label}: SSE transport is deprecated; use Streamable HTTP"),
-            );
+        if adapter.allows_claude_transport_rules() {
+            validate_claude_transport(&label, config, diag);
+        } else {
+            validate_cursor_selector(&label, config, diag);
         }
         if let Some(args) = config.get("args")
             && !args
@@ -245,9 +280,10 @@ fn validate_servers(display: &str, servers: Option<&Value>, diag: &mut Diagnosti
                 &format!("{label}.args must be an array of strings"),
             );
         }
-        if config
-            .get("alwaysLoad")
-            .is_some_and(|value| !value.is_boolean())
+        if adapter.allows_claude_only_rules()
+            && config
+                .get("alwaysLoad")
+                .is_some_and(|value| !value.is_boolean())
         {
             diag.report(
                 LintRule::McpAlwaysLoadInvalid,
@@ -281,6 +317,76 @@ fn validate_servers(display: &str, servers: Option<&Value>, diag: &mut Diagnosti
     }
 }
 
+fn validate_claude_transport(
+    label: &str,
+    config: &serde_json::Map<String, Value>,
+    diag: &mut DiagnosticCollector,
+) {
+    let transport = McpTransport::parse(config.get("type"));
+    let Some(transport) = transport else {
+        diag.report(
+            LintRule::McpTypeInvalid,
+            &format!("{label}.type must be {}", McpTransport::ACCEPTED_TYPES),
+        );
+        return;
+    };
+    if transport == McpTransport::Stdio && !has_nonempty_string(config.get("command")) {
+        diag.report(
+            LintRule::McpStdioCommandMissing,
+            &format!("{label}: stdio server requires a non-empty command"),
+        );
+    }
+    if transport.is_remote() {
+        match config.get("url").and_then(Value::as_str) {
+            Some(url) if transport.accepts_url(url) => validate_url_security(label, url, diag),
+            _ => diag.report(
+                LintRule::McpHttpUrlMissing,
+                &format!(
+                    "{label}: {} server requires a valid non-empty URL using {}",
+                    transport.name(),
+                    transport.url_scheme_description(),
+                ),
+            ),
+        }
+    }
+    if transport == McpTransport::Sse {
+        diag.report(
+            LintRule::McpSseDeprecated,
+            &format!("{label}: SSE transport is deprecated; use Streamable HTTP"),
+        );
+    }
+}
+
+fn validate_cursor_selector(
+    label: &str,
+    config: &serde_json::Map<String, Value>,
+    diag: &mut DiagnosticCollector,
+) {
+    match (config.contains_key("command"), config.contains_key("url")) {
+        (false, false) | (true, true) => diag.report(
+            LintRule::McpStructureInvalid,
+            &format!("{label} must define exactly one of command or url"),
+        ),
+        (false, true) => {
+            if let Some(url) = config.get("url").and_then(Value::as_str) {
+                validate_url_security(label, url, diag);
+            }
+        }
+        (true, false) => {}
+    }
+}
+
+fn validate_url_security(label: &str, url: &str, diag: &mut DiagnosticCollector) {
+    for (insecure_scheme, secure_scheme) in [("http", "https"), ("ws", "wss")] {
+        if is_nonlocal_url_with_scheme(url, insecure_scheme) {
+            diag.report(
+                LintRule::McpUrlNotHttps,
+                &format!("{label}.url uses non-local {insecure_scheme}://; use {secure_scheme}://"),
+            );
+        }
+    }
+}
+
 fn has_nonempty_string(value: Option<&Value>) -> bool {
     value
         .and_then(Value::as_str)
@@ -299,17 +405,33 @@ fn has_literal_secret(env: Option<&Value>) -> bool {
 }
 
 /// Serde intentionally keeps the last duplicate key. This lightweight scanner
-/// runs only after JSON parsing succeeds, preserving raw duplicate server names.
-fn duplicate_mcp_server_names(content: &str) -> Vec<String> {
+/// runs only after JSON parsing succeeds, preserving raw duplicate keys.
+struct DuplicateMcpKeys {
+    top_level_server_maps: Vec<()>,
+    server_names: Vec<String>,
+}
+
+fn duplicate_mcp_keys(content: &str) -> DuplicateMcpKeys {
     let mut scanner = JsonScanner::new(content.as_bytes());
-    scanner.scan_value(false);
-    scanner.duplicates
+    scanner.scan_value(ScanObject::TopLevel);
+    DuplicateMcpKeys {
+        top_level_server_maps: scanner.top_level_server_maps,
+        server_names: scanner.server_names,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ScanObject {
+    None,
+    TopLevel,
+    ServerMap,
 }
 
 struct JsonScanner<'a> {
     input: &'a [u8],
     pos: usize,
-    duplicates: Vec<String>,
+    top_level_server_maps: Vec<()>,
+    server_names: Vec<String>,
 }
 
 impl<'a> JsonScanner<'a> {
@@ -317,14 +439,15 @@ impl<'a> JsonScanner<'a> {
         Self {
             input,
             pos: 0,
-            duplicates: Vec::new(),
+            top_level_server_maps: Vec::new(),
+            server_names: Vec::new(),
         }
     }
 
-    fn scan_value(&mut self, duplicate_keys: bool) {
+    fn scan_value(&mut self, object_kind: ScanObject) {
         self.skip_ws();
         match self.input.get(self.pos) {
-            Some(b'{') => self.scan_object(duplicate_keys),
+            Some(b'{') => self.scan_object(object_kind),
             Some(b'[') => self.scan_array(),
             Some(b'\"') => {
                 self.scan_string();
@@ -333,7 +456,7 @@ impl<'a> JsonScanner<'a> {
         }
     }
 
-    fn scan_object(&mut self, duplicate_keys: bool) {
+    fn scan_object(&mut self, object_kind: ScanObject) {
         self.pos += 1;
         let mut names = HashSet::new();
         loop {
@@ -345,11 +468,21 @@ impl<'a> JsonScanner<'a> {
             let key = self.scan_string();
             self.skip_ws();
             self.pos += 1; // JSON was already validated, so this is ':'
-            let is_servers = key == "mcpServers";
-            if duplicate_keys && !names.insert(key.clone()) {
-                self.duplicates.push(key);
+            if !names.insert(key.clone()) {
+                match object_kind {
+                    ScanObject::TopLevel if key == "mcpServers" => {
+                        self.top_level_server_maps.push(())
+                    }
+                    ScanObject::ServerMap => self.server_names.push(key.clone()),
+                    ScanObject::None | ScanObject::TopLevel => {}
+                }
             }
-            self.scan_value(is_servers);
+            let child_kind = if matches!(object_kind, ScanObject::TopLevel) && key == "mcpServers" {
+                ScanObject::ServerMap
+            } else {
+                ScanObject::None
+            };
+            self.scan_value(child_kind);
             self.skip_ws();
             if self.input.get(self.pos) == Some(&b',') {
                 self.pos += 1;
@@ -365,7 +498,7 @@ impl<'a> JsonScanner<'a> {
                 self.pos += 1;
                 return;
             }
-            self.scan_value(false);
+            self.scan_value(ScanObject::None);
             self.skip_ws();
             if self.input.get(self.pos) == Some(&b',') {
                 self.pos += 1;
@@ -430,7 +563,12 @@ mod tests {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, content).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_mcp_configs(&context(temp.path()), &mut diag, &ExcludeSet::default());
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
         diag.errors()
     }
 
@@ -440,7 +578,12 @@ mod tests {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, content).unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_mcp_configs(&context(temp.path()), &mut diag, &ExcludeSet::default());
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
         diag.diagnostics()
             .iter()
             .map(|diagnostic| diagnostic.rule)
@@ -462,27 +605,108 @@ mod tests {
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_mcp_configs(&context(temp.path()), &mut diag, &ExcludeSet::default());
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
         assert_eq!(diag.error_count(), 0);
     }
 
     #[test]
-    fn validates_settings_and_settings_local_surfaces() {
+    fn does_not_treat_claude_settings_as_an_mcp_surface() {
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp.path().join(".claude")).unwrap();
+        std::fs::write(temp.path().join(".claude/settings.json"), "{").unwrap();
+        std::fs::write(temp.path().join(".claude/settings.local.json"), "{").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn validates_inline_plugin_servers_from_the_parsed_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let ctx = LintContext {
+            base_path: temp.path().to_path_buf(),
+            mode: LintMode::Plugin,
+            plugin_json: ManifestState::Parsed(serde_json::json!({
+                "mcpServers": {
+                    "missing-command": {"type": "stdio"},
+                    "secret": {"command": "ok", "env": {"API_KEY": "plaintext"}}
+                }
+            })),
+            marketplace_json: ManifestState::Missing,
+            hooks_json: ManifestState::Missing,
+            settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
+        };
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &ctx,
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert!(diag.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == LintRule::McpStdioCommandMissing
+                && diagnostic.subject_path.as_deref()
+                    == Some(Path::new(".claude-plugin/plugin.json"))
+        }));
+        assert!(diag.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == LintRule::McpEnvSecretLiteral
+                && diagnostic.subject_path.as_deref()
+                    == Some(Path::new(".claude-plugin/plugin.json"))
+        }));
+    }
+
+    #[test]
+    fn cursor_uses_selector_presence_without_claude_transport_defaults() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".cursor/mcp.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
-            temp.path().join(".claude/settings.json"),
-            r#"{"mcpServers":{"a":{"command":"ok"}}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            temp.path().join(".claude/settings.local.json"),
-            r#"{"mcpServers":{"b":{"command":"ok"}}}"#,
+            &path,
+            r#"{"mcpServers":{"remote":{"url":"https://example.com/mcp"},"stdio":{"command":"server"},"bad":{"url":"http://example.com/mcp","args":[1],"env":{"TOKEN":"plaintext"}},"neither":{},"both":{"command":"server","url":"https://example.com/mcp"}}}"#,
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_mcp_configs(&context(temp.path()), &mut diag, &ExcludeSet::default());
-        assert_eq!(diag.error_count(), 0);
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                ..ValidationTargets::default()
+            },
+        );
+        let rules: Vec<_> = diag.diagnostics().iter().map(|item| item.rule).collect();
+        assert!(rules.contains(&LintRule::McpUrlNotHttps));
+        assert!(rules.contains(&LintRule::McpArgsInvalid));
+        assert!(rules.contains(&LintRule::McpEnvSecretLiteral));
+        assert_eq!(
+            rules
+                .iter()
+                .filter(|rule| **rule == LintRule::McpStructureInvalid)
+                .count(),
+            2
+        );
+        for claude_only in [
+            LintRule::McpStdioCommandMissing,
+            LintRule::McpHttpUrlMissing,
+            LintRule::McpTypeInvalid,
+            LintRule::McpSseDeprecated,
+            LintRule::McpAlwaysLoadInvalid,
+            LintRule::McpServerReserved,
+        ] {
+            assert!(!rules.contains(&claude_only), "{claude_only:?}");
+        }
     }
 
     #[test]

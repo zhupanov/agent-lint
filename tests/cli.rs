@@ -132,6 +132,123 @@ fn mcp_remote_transport_contract_has_exact_json_diagnostics_in_normal_and_all_mo
 }
 
 #[test]
+fn platform_aware_mcp_adapters_preserve_cli_ownership_and_subject_paths() {
+    let cursor = tempfile::tempdir().unwrap();
+    init_git(cursor.path());
+    std::fs::create_dir(cursor.path().join(".cursor")).unwrap();
+    std::fs::write(
+        cursor.path().join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"remote":{"url":"https://example.com/mcp"},"stdio":{"command":"server"}}}"#,
+    )
+    .unwrap();
+    let clean = run_in(
+        cursor.path(),
+        &[
+            "--format",
+            "json",
+            "--all",
+            "--only",
+            "P009,P010,P011,P012,P017,P022,P025,P026,P027",
+            ".",
+        ],
+    );
+    assert!(clean.status.success(), "stderr: {}", stderr(&clean));
+    let clean = json(&clean);
+    assert_eq!(clean["mode"], "basic");
+    assert_eq!(
+        clean["active_platforms"],
+        serde_json::json!(["claude", "cursor"])
+    );
+    assert_eq!(clean["diagnostics"], serde_json::json!([]));
+
+    std::fs::write(
+        cursor.path().join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"bad":{"url":"http://example.com/mcp","args":[1]},"both":{"command":"server","url":"https://example.com/mcp"}}}"#,
+    )
+    .unwrap();
+    let broken = run_in(
+        cursor.path(),
+        &[
+            "--format",
+            "json",
+            "--only",
+            "P009,P010,P011,P012,P017,P022,P025,P026,P027",
+            ".",
+        ],
+    );
+    assert_eq!(broken.status.code(), Some(1), "stderr: {}", stderr(&broken));
+    let broken = json(&broken);
+    let codes: Vec<_> = broken["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, vec!["P017", "P022", "P027"]);
+    assert!(
+        broken["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| { diagnostic["subject_path"] == ".cursor/mcp.json" })
+    );
+
+    let plugin = tempfile::tempdir().unwrap();
+    init_git(plugin.path());
+    std::fs::create_dir(plugin.path().join(".claude-plugin")).unwrap();
+    std::fs::write(plugin.path().join(".claude-plugin/plugin.json"), "{").unwrap();
+    let malformed = run_in(
+        plugin.path(),
+        &["--format", "json", "--only", "M002,P001", "."],
+    );
+    assert_eq!(malformed.status.code(), Some(1));
+    let malformed = json(&malformed);
+    assert_eq!(
+        malformed["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["M002"]
+    );
+
+    std::fs::write(
+        plugin.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"example","mcpServers":{"missing-command":{"type":"stdio"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        plugin.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".claude-plugin/plugin.json\"]\nsuppress = [\"P009\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(plugin.path(), &["--format", "json", "--only", "P009", "."]);
+    assert!(suppressed.status.success());
+    assert_eq!(json(&suppressed)["diagnostics"], serde_json::json!([]));
+
+    let settings = tempfile::tempdir().unwrap();
+    init_git(settings.path());
+    std::fs::create_dir(settings.path().join(".claude")).unwrap();
+    std::fs::write(settings.path().join(".claude/settings.json"), "{").unwrap();
+    let settings = run_in(
+        settings.path(),
+        &["--format", "json", "--only", "H006,P001", "."],
+    );
+    assert_eq!(settings.status.code(), Some(1));
+    let settings = json(&settings);
+    assert_eq!(
+        settings["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["H006"]
+    );
+}
+
+#[test]
 fn help_succeeds_and_lists_supported_options() {
     let output = run(&["--help"]);
     assert!(output.status.success());

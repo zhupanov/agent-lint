@@ -62,7 +62,7 @@ fn run_basic(
     hooks::validate_settings_schema(ctx, diag);
     // V28: settings.local.json validity + hook schema
     hooks::validate_settings_local(ctx, diag);
-    mcp::validate_mcp_configs(ctx, diag, exclude);
+    mcp::validate_mcp_configs(ctx, diag, exclude, targets);
     // V6-adapted: private SKILL.md frontmatter for .claude/skills/
     skills::validate_private_skill_frontmatter(diag, exclude);
     // V9-adapted: script ref integrity for $PWD/.claude/skills/ refs
@@ -122,7 +122,7 @@ fn run_plugin(
     hooks::validate_settings_schema(ctx, diag);
     // V28: settings.local.json validity + hook schema
     hooks::validate_settings_local(ctx, diag);
-    mcp::validate_mcp_configs(ctx, diag, exclude);
+    mcp::validate_mcp_configs(ctx, diag, exclude, targets);
     // V5: skills layout
     skills::validate_skills_layout(diag, exclude);
     // V6: SKILL.md frontmatter (public)

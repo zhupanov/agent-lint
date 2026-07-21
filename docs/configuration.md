@@ -135,7 +135,7 @@ repository with no platform files), and `false` disables its platform-specific
 validators. Omit a key to use auto-detection. Only `cursor` and `codex` are
 accepted.
 
-Cursor surfaces are `.cursorrules`, `.cursor/rules/**/*.{md,mdc}`,
+Cursor surfaces are `.cursorrules`, `.cursor/mcp.json`, `.cursor/rules/**/*.{md,mdc}`,
 `.cursor/hooks.json`, `.cursor/agents/**/*.md`, `.cursor/environment.json`,
 and `.cursor/skills/*/SKILL.md`. Unique Codex surfaces are
 `.codex/config.toml`, `.codex-plugin/plugin.json`, and root

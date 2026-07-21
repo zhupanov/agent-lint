@@ -476,7 +476,7 @@ fn has_mcp_config() -> bool {
             entry
                 .path
                 .file_name()
-                .is_some_and(|name| name.to_string_lossy().ends_with(".mcp.json"))
+                .is_some_and(|name| name == ".mcp.json")
         })
 }
 
@@ -672,13 +672,25 @@ mod tests {
 
     #[test]
     #[serial]
-    fn detect_mode_nested_mcp_config_returns_basic() {
+    fn detect_mode_nested_claude_mcp_config_returns_basic() {
         let _guard = test_helpers::CwdGuard::new();
         let tmp = tempfile::tempdir().unwrap();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         std::fs::create_dir("config").unwrap();
-        std::fs::write("config/development.mcp.json", "{}").unwrap();
+        std::fs::write("config/.mcp.json", "{}").unwrap();
+        assert_eq!(detect_mode(), Some(context::LintMode::Basic));
+    }
+
+    #[test]
+    #[serial]
+    fn detect_mode_cursor_mcp_config_returns_basic() {
+        let _guard = test_helpers::CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir(".cursor").unwrap();
+        std::fs::write(".cursor/mcp.json", r#"{"mcpServers":{}}"#).unwrap();
         assert_eq!(detect_mode(), Some(context::LintMode::Basic));
     }
 

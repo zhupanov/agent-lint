@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 293 rules organized into 20 code-prefix categories. A category
+Agent Lint ships 294 rules organized into 20 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -570,10 +570,14 @@ repository wants its portability policy visible in configuration.
 
 ## MCP Configuration Rules (P)
 
-MCP configuration is validated in root and nested `*.mcp.json` files and in
-`.claude/settings.json` / `.claude/settings.local.json` when those files are
-present. These rules run in both Basic and Plugin modes. The accepted transport
-matrix follows Claude Code's [remote HTTP](https://code.claude.com/docs/en/mcp#option-1-add-a-remote-http-server),
+MCP input is adapted by platform before P rules run. Claude standalone inputs
+are repository `.mcp.json` files (at the project or plugin root); Claude plugin
+manifests may provide an inline `.claude-plugin/plugin.json#mcpServers` object;
+and Cursor project input is `.cursor/mcp.json`. Invalid JSON in an inline
+plugin manifest remains M002-owned. Claude settings files and Codex TOML are
+not MCP P-rule inputs: settings retain their Claude-validator diagnostics, and
+`.codex/config.toml` remains CX-owned. These rules run in both Basic and Plugin
+modes. The Claude transport matrix follows Claude Code's [remote HTTP](https://code.claude.com/docs/en/mcp#option-1-add-a-remote-http-server),
 [WebSocket](https://code.claude.com/docs/en/mcp#option-4-add-a-remote-websocket-server),
 and [legacy SSE](https://code.claude.com/docs/en/mcp#option-2-add-a-remote-sse-server)
 documentation: `streamable-http` is the HTTP alias, `ws` uses WebSocket URLs,
@@ -594,6 +598,7 @@ and legacy `sse` remains supported but deprecated.
 | P024 | `mcp-server-empty` | Server configuration is an empty object | Always | error |
 | P025 | `mcp-alwaysload-invalid` | `alwaysLoad` is not a boolean | Always | warn |
 | P026 | `mcp-server-reserved` | Server name is reserved by Claude Code | Always | error |
+| P027 | `mcp-structure-invalid` | MCP server map, entry, or adapter selector structure is invalid | Always | error |
 
 ## Slack Rules (K)
 
@@ -643,7 +648,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 293):**
+**Auto-fixable rules (11 of 294):**
 
 | Rule | Code | Fix |
 |------|------|-----|
