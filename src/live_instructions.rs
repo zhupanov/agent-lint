@@ -85,32 +85,38 @@ impl<'a> LiveInstructionDocument<'a> {
     /// outside such a section. Consumers use this shared source-aware fact
     /// when deciding whether prose is a live instruction.
     pub fn example_scopes(&self) -> Vec<bool> {
-        let mut active_heading_level = None;
-        self.prose_lines()
-            .iter()
-            .map(|line| {
-                if let Some(heading) = self
-                    .headings()
-                    .iter()
-                    .find(|heading| heading.line == line.line)
-                {
-                    if active_heading_level.is_some_and(|level| heading.level <= level) {
-                        active_heading_level = None;
-                    }
-                    if is_example_heading(&heading.text) {
-                        active_heading_level = Some(heading.level);
-                        return true;
-                    }
-                }
-
-                active_heading_level.is_some() || is_explicit_example_line(&line.text)
-            })
-            .collect()
+        example_scopes_for(self.markdown)
     }
 
     pub fn has_outer_execution_bound(&self) -> bool {
         self.outer_max_turns.is_some()
     }
+}
+
+/// Shared example-scope classification for Markdown live prose.
+pub(crate) fn example_scopes_for(markdown: &MarkdownDocument) -> Vec<bool> {
+    let mut active_heading_level = None;
+    markdown
+        .body_prose()
+        .iter()
+        .map(|line| {
+            if let Some(heading) = markdown
+                .headings()
+                .iter()
+                .find(|heading| heading.line == line.line)
+            {
+                if active_heading_level.is_some_and(|level| heading.level <= level) {
+                    active_heading_level = None;
+                }
+                if is_example_heading(&heading.text) {
+                    active_heading_level = Some(heading.level);
+                    return true;
+                }
+            }
+
+            active_heading_level.is_some() || is_explicit_example_line(&line.text)
+        })
+        .collect()
 }
 
 fn is_example_heading(text: &str) -> bool {

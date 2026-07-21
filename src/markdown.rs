@@ -25,6 +25,29 @@ pub struct MarkdownHeading {
 pub struct MarkdownLink {
     pub destination: String,
     pub line: usize,
+    /// Inclusive one-based start column of the full link node.
+    pub start_column: usize,
+    /// Inclusive one-based end line of the full link node.
+    pub end_line: usize,
+    /// Inclusive one-based end column of the full link node.
+    pub end_column: usize,
+}
+
+/// A source-positioned inline code span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownInlineCode {
+    /// Literal contents after CommonMark fence-space stripping.
+    pub literal: String,
+    /// Inclusive one-based start line of the full code span (including backticks).
+    pub start_line: usize,
+    /// Inclusive one-based start column of the full code span.
+    pub start_column: usize,
+    /// Inclusive one-based end line of the full code span.
+    pub end_line: usize,
+    /// Inclusive one-based end column of the full code span.
+    pub end_column: usize,
+    /// Number of opening backticks.
+    pub num_backticks: usize,
 }
 
 /// One live prose line with its original one-based source line.
@@ -49,6 +72,7 @@ pub struct MarkdownDocument {
     unclosed_fence_line: Option<usize>,
     headings: Vec<MarkdownHeading>,
     links: Vec<MarkdownLink>,
+    inline_code: Vec<MarkdownInlineCode>,
     body_prose: Vec<MarkdownProseLine>,
 }
 
@@ -81,6 +105,7 @@ impl MarkdownDocument {
         let root = parse_document(&arena, &content, &options);
         let mut headings = Vec::new();
         let mut links = Vec::new();
+        let mut inline_code = Vec::new();
         let mut excluded_lines = std::collections::HashSet::new();
         let mut inline_exclusions = Vec::new();
         for node in root.descendants() {
@@ -105,6 +130,9 @@ impl MarkdownDocument {
                 NodeValue::Link(link) => links.push(MarkdownLink {
                     destination: link.url.clone(),
                     line: data.sourcepos.start.line,
+                    start_column: data.sourcepos.start.column,
+                    end_line: data.sourcepos.end.line,
+                    end_column: data.sourcepos.end.column,
                 }),
                 NodeValue::BlockQuote
                 | NodeValue::MultilineBlockQuote(_)
@@ -112,12 +140,22 @@ impl MarkdownDocument {
                 | NodeValue::CodeBlock(_) => {
                     excluded_lines.extend(data.sourcepos.start.line..=data.sourcepos.end.line);
                 }
-                NodeValue::Code(_) => inline_exclusions.push((
-                    data.sourcepos.start.line,
-                    data.sourcepos.start.column,
-                    data.sourcepos.end.line,
-                    data.sourcepos.end.column,
-                )),
+                NodeValue::Code(code) => {
+                    inline_exclusions.push((
+                        data.sourcepos.start.line,
+                        data.sourcepos.start.column,
+                        data.sourcepos.end.line,
+                        data.sourcepos.end.column,
+                    ));
+                    inline_code.push(MarkdownInlineCode {
+                        literal: code.literal.clone(),
+                        start_line: data.sourcepos.start.line,
+                        start_column: data.sourcepos.start.column,
+                        end_line: data.sourcepos.end.line,
+                        end_column: data.sourcepos.end.column,
+                        num_backticks: code.num_backticks,
+                    });
+                }
                 _ => {}
             }
         }
@@ -207,6 +245,7 @@ impl MarkdownDocument {
             unclosed_fence_line,
             headings,
             links,
+            inline_code,
             body_prose,
         }
     }
@@ -252,6 +291,11 @@ impl MarkdownDocument {
 
     pub fn links(&self) -> &[MarkdownLink] {
         &self.links
+    }
+
+    /// Source-positioned inline code spans in document order.
+    pub fn inline_code(&self) -> &[MarkdownInlineCode] {
+        &self.inline_code
     }
 
     pub fn body_prose(&self) -> &[MarkdownProseLine] {
@@ -376,10 +420,25 @@ mod tests {
             doc.links(),
             [MarkdownLink {
                 destination: "docs/a.md".into(),
-                line: 5
+                line: 5,
+                start_column: 1,
+                end_line: 5,
+                end_column: 17,
             }]
         );
         assert_eq!(doc.fences().len(), 1);
+    }
+
+    #[test]
+    fn document_owns_positioned_inline_code() {
+        let doc = MarkdownDocument::parse("Use `npm run build` now.\n");
+        assert_eq!(doc.inline_code().len(), 1);
+        let code = &doc.inline_code()[0];
+        assert_eq!(code.literal, "npm run build");
+        assert_eq!(code.start_line, 1);
+        assert_eq!(code.start_column, 5);
+        assert_eq!(code.end_line, 1);
+        assert_eq!(code.num_backticks, 1);
     }
 
     #[test]

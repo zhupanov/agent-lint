@@ -780,7 +780,7 @@ imports are legitimate in Claude Code and are not flagged.
 | L003 | `import-depth-exceeded` | `@import` chain depth exceeds 5 hops (Claude Code's documented limit) | Plugin | error |
 | L004 | `duplicate-import` | Duplicate `@import` of the same file within one instruction file (`./` prefixes normalized) | Plugin | warn |
 | L005 | `broken-markdown-link` | Broken relative `[text](path.md)` link target in a configured instruction file; external URLs, anchors, and links inside code fences are skipped | Plugin | warn |
-| L006 | `npm-script-missing` | `npm run <script>` referenced from a configured instruction file is not defined in `package.json` `scripts` (silently skipped when there is no `package.json` or no `scripts` object) | Plugin | warn |
+| L006 | `npm-script-missing` | Actionable `npm run` / `npm run-script` commands in configured instruction files whose script is missing from the root `package.json` `scripts` object. Scans inline code, shell fences (`bash`/`sh`/`shell`/`zsh`/`console`, with one leading `$` or `>` console prompt plus its trailing space stripped), and live prose `npm` tokens after line start/whitespace/opening punctuation; skips non-shell fences, quotes, example scopes, same-clause prose negation, package-qualified flags (`--workspace`/`-w`/`--workspaces`/`--prefix`/`--global`/`-g`), substitutions/heredocs/malformed shell, and value-taking non-qualifier flags. Silent when root `package.json` is absent, unreadable, invalid, or has no object-valued `scripts`. One diagnostic per missing script per file at the first command span, with script-name evidence and a correction suggestion. Not autofixable. | Always | warn |
 
 ## Auto-Fixable Rules
 

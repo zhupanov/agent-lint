@@ -50,7 +50,8 @@ src/
     +-- hook_schema.rs   # H008-H024: shared hook object schema engine
     +-- skills.rs        # S001-S008: skills layout & frontmatter
     +-- skill_content/   # S009-S057, S063-S071: name, description, body, MCP, execution fields, security
-    +-- contracts.rs     # A012-A013, S058-S062, G008-G011, D004-D005, L001-L006
+    +-- contracts.rs     # A012-A013, S058-S062, G008-G011, D004-D005, L001-L005
+    +-- npm_scripts.rs   # L006
     +-- agents.rs        # A001-A011, A014-A028: agent frontmatter, field values, templates, description quality
     +-- prompt_content.rs # Q001-Q004: shared CLAUDE.md, skill-body, and agent-body prompt checks
     +-- hygiene.rs       # G001-G007: PWD hygiene, scripts, executability, TODO detection

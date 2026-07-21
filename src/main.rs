@@ -10,6 +10,7 @@ mod hook_commands;
 mod json_output;
 mod live_instructions;
 mod markdown;
+mod markdown_commands;
 mod platforms;
 mod prompt_budget;
 mod pwd_hygiene;
