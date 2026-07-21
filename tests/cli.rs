@@ -208,6 +208,59 @@ fn json_clean_run_is_schema_valid_and_deterministic() {
 }
 
 #[test]
+fn marketplace_only_repo_does_not_report_missing_plugin_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/marketplace.json"),
+        "{ not valid JSON",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "M001", "."]);
+    assert!(output.status.success());
+    assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn plugin_only_repo_preserves_missing_marketplace_severity_across_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"plugin","version":"1.0.0"}"#,
+    )
+    .unwrap();
+
+    for (arguments, exit_code, severity) in [
+        (
+            vec!["--format", "json", "--only", "M005", "."],
+            0,
+            "warning",
+        ),
+        (
+            vec!["--format", "json", "--pedantic", "--only", "M005", "."],
+            1,
+            "error",
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "M005", "."],
+            1,
+            "error",
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(exit_code));
+        let diagnostics = &json(&output)["diagnostics"];
+        assert_eq!(diagnostics.as_array().map(Vec::len), Some(1));
+        assert_eq!(diagnostics[0]["code"], "M005");
+        assert_eq!(diagnostics[0]["severity"], severity);
+    }
+}
+
+#[test]
 fn prompt_analysis_covers_all_supported_live_instruction_surfaces() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

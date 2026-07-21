@@ -27,7 +27,7 @@ pub enum LintRule {
     /// M002: .claude-plugin/plugin.json is not valid JSON
     #[strum(props(code = "M002", name = "plugin-json-invalid"))]
     PluginJsonInvalid,
-    /// M003: plugin.json missing required field (name or version)
+    /// M003: plugin.json missing required name field
     #[strum(props(code = "M003", name = "plugin-field-missing"))]
     PluginFieldMissing,
     /// M004: plugin.json version is not strict semver
@@ -72,6 +72,9 @@ pub enum LintRule {
     /// M017: plugin.json channels entry does not reference a server
     #[strum(props(code = "M017", name = "channel-server-missing"))]
     ChannelServerMissing,
+    /// M018: plugin.json omits its optional version field
+    #[strum(props(code = "M018", name = "plugin-version-missing"))]
+    PluginVersionMissing,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
     /// H001: hooks/hooks.json is missing
@@ -1001,7 +1004,10 @@ impl LintRule {
 
             // ── Default-warning: optional manifest sections ──────────
             Self::AuthorNameMissing | Self::HomepageUrlInvalid |
-            Self::ChannelServerMissing |
+            Self::ChannelServerMissing | Self::PluginVersionMissing |
+
+            // ── Default-warning: optional manifest files ────────────
+            Self::MarketplaceJsonMissing | Self::MarketplacePluginsEmpty |
 
             // ── Default-warning: style / quality (skills) ────────────
             Self::DescTruncated | Self::ConsecutiveBash |
@@ -1216,7 +1222,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            289,
+            290,
             "every enum variant must be registered"
         );
     }
@@ -1361,8 +1367,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            115,
-            "Expected 115 default-warning rules, got {}",
+            118,
+            "Expected 118 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1436,8 +1442,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            171,
-            "Expected 171 default-error rules, got {}",
+            169,
+            "Expected 169 default-error rules, got {}",
             errors.len()
         );
     }

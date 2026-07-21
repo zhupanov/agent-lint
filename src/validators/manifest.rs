@@ -7,8 +7,14 @@ use serde_json::Value;
 use std::path::Path;
 use std::sync::LazyLock;
 
-static RE_SEMVER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+$").unwrap());
+/// Semantic Versioning 2.0.0, including optional pre-release and build
+/// metadata. Numeric identifiers cannot have leading zeroes.
+static RE_SEMVER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$",
+    )
+    .unwrap()
+});
 
 /// Windows drive-letter path prefix, e.g. `C:\` or `c:/`.
 static RE_WIN_DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[\\/]").unwrap());
@@ -55,6 +61,12 @@ pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
         ManifestState::Missing => {
+            if matches!(
+                &ctx.marketplace_json,
+                ManifestState::Parsed(_) | ManifestState::Invalid(_)
+            ) {
+                return;
+            }
             diag.report(LintRule::PluginJsonMissing, &format!("{f} is missing"));
             return;
         }
@@ -66,7 +78,6 @@ pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     };
 
     let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let version = val.get("version").and_then(|v| v.as_str()).unwrap_or("");
 
     // An absent, empty, or whitespace-only name all mean "no name".
     if name.trim().is_empty() {
@@ -75,16 +86,16 @@ pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
             &format!("{f} missing required field: name"),
         );
     }
-    if version.is_empty() {
-        diag.report(
-            LintRule::PluginFieldMissing,
-            &format!("{f} missing required field: version"),
-        );
-    } else {
-        if !RE_SEMVER.is_match(version) {
+    match val.get("version") {
+        None => diag.report(
+            LintRule::PluginVersionMissing,
+            &format!("{f} omits optional field: version"),
+        ),
+        Some(Value::String(version)) if RE_SEMVER.is_match(version) => {}
+        Some(_) => {
             diag.report(
                 LintRule::PluginVersionFormat,
-                &format!("{f} version '{version}' is not strict MAJOR.MINOR.PATCH semver"),
+                &format!("{f} version is not valid Semantic Versioning 2.0.0"),
             );
         }
     }
@@ -406,6 +417,19 @@ mod tests {
     }
 
     #[test]
+    fn test_v1_missing_plugin_json_with_marketplace_does_not_report() {
+        for marketplace in [
+            ManifestState::Parsed(json!({})),
+            ManifestState::Invalid("parse error".to_string()),
+        ] {
+            let ctx = make_ctx(ManifestState::Missing, marketplace);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_json(&ctx, &mut diag);
+            assert!(diag.diagnostics().is_empty());
+        }
+    }
+
+    #[test]
     fn test_v1_invalid_plugin_json() {
         let ctx = make_ctx(
             ManifestState::Invalid("parse error".to_string()),
@@ -428,23 +452,40 @@ mod tests {
     }
 
     #[test]
-    fn test_v1_invalid_semver() {
-        let val = json!({"name": "p", "version": "not-a-version"});
-        let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_plugin_json(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("semver"));
+    fn test_v1_semver_2_0_0_versions_are_accepted() {
+        for version in ["1.0.0", "1.0.0-beta.1", "1.0.0+build.5", "1.0.0-rc.1+build"] {
+            let val = json!({"name": "p", "version": version});
+            let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_json(&ctx, &mut diag);
+            assert!(
+                diag.diagnostics().is_empty(),
+                "expected {version} to be accepted"
+            );
+        }
     }
 
     #[test]
-    fn test_v1_missing_version() {
+    fn test_v1_invalid_semver_2_0_0_versions_are_rejected() {
+        for version in ["01.2.3", "1.2", "v1.2.3", "1.0.0-", " 1.0.0 "] {
+            let val = json!({"name": "p", "version": version});
+            let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_json(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 1, "expected {version} to be rejected");
+            assert_eq!(diag.diagnostics()[0].rule, LintRule::PluginVersionFormat);
+        }
+    }
+
+    #[test]
+    fn test_v1_missing_version_is_a_warning() {
         let val = json!({"name": "p"});
         let ctx = make_ctx(ManifestState::Parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new_all_enabled();
+        let mut diag = DiagnosticCollector::new();
         validate_plugin_json(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("version"));
+        assert_eq!(diag.error_count(), 0);
+        assert_eq!(diag.warning_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::PluginVersionMissing);
     }
 
     // V2: validate_marketplace_json
@@ -464,20 +505,25 @@ mod tests {
     #[test]
     fn test_v2_missing_marketplace_json() {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new_all_enabled();
+        let mut diag = DiagnosticCollector::new();
         validate_marketplace_json(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("is missing"));
+        assert_eq!(diag.error_count(), 0);
+        assert_eq!(diag.warning_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::MarketplaceJsonMissing);
     }
 
     #[test]
     fn test_v2_empty_plugins_array() {
         let val = json!({"name": "mp", "owner": {"name": "o"}, "plugins": []});
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
+        let mut diag = DiagnosticCollector::new();
         validate_marketplace_json(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("empty plugins array"));
+        assert_eq!(diag.error_count(), 0);
+        assert_eq!(diag.warning_count(), 1);
+        assert_eq!(
+            diag.diagnostics()[0].rule,
+            LintRule::MarketplacePluginsEmpty
+        );
     }
 
     #[test]
