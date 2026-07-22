@@ -1,4 +1,5 @@
 use crate::config::{ExcludeSet, LintConfig};
+use crate::context::LintContext;
 use crate::context::LintMode;
 use crate::fence::CodeFenceTracker;
 use crate::frontmatter;
@@ -11,7 +12,7 @@ use crate::validators::skill_content::security::flagged_http_offsets;
 use crate::validators::skill_content::{
     RE_BACKSLASH_PATH, contains_backslash_path, is_named_tex_escape_pair,
 };
-use crate::validators::skills::collect_skills;
+use crate::validators::skills::{collect_plugin_skill_files, collect_skills};
 use regex::Regex;
 use std::fs;
 use std::io::Write;
@@ -361,70 +362,66 @@ fn single_line_frontmatter_field_index(fm_lines: &[String], field: &str) -> Opti
 
 fn fix_desc_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
     let mut fixed = false;
-    let base_dirs: &[&str] = match mode {
-        LintMode::Plugin => &["skills", ".claude/skills"],
-        LintMode::Basic => &[".claude/skills"],
-    };
-    for base_dir in base_dirs {
-        let skills = collect_skills(base_dir, exclude);
-        for info in &skills {
-            let display = format!("{base_dir}/{}/SKILL.md", info.dir_name);
-            if is_suppressed(config, LintRule::DescHasXml, &display) {
-                continue;
-            }
-            let value = match frontmatter::get_strict_string_field(&info.fm_lines, "description") {
-                Some(v) => v,
-                None => continue,
-            };
-            if !crate::validators::skill_content::description_contains_xml_tags(&value) {
-                continue;
-            }
-            let new_value = crate::validators::skill_content::strip_description_xml_tags(&value);
-            let new_value = new_value.trim().to_string();
-            if new_value == value || new_value.is_empty() {
-                continue;
-            }
+    let ctx = LintContext::new(Path::new("."), mode);
+    let discovery = crate::validators::skill_discovery::SkillDiscovery::from_context(&ctx, exclude);
+    let mut paths = discovery.private_skill_files;
+    if mode == LintMode::Plugin {
+        paths.extend(discovery.exported_skill_files);
+    }
+    for info in collect_plugin_skill_files(paths, exclude) {
+        let display = info.path.clone();
+        if is_suppressed(config, LintRule::DescHasXml, &display) {
+            continue;
+        }
+        let value = match frontmatter::get_strict_string_field(&info.fm_lines, "description") {
+            Some(v) => v,
+            None => continue,
+        };
+        if !crate::validators::skill_content::description_contains_xml_tags(&value) {
+            continue;
+        }
+        let new_value = crate::validators::skill_content::strip_description_xml_tags(&value);
+        let new_value = new_value.trim().to_string();
+        if new_value == value || new_value.is_empty() {
+            continue;
+        }
 
-            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
-            let content = match fs::read_to_string(&skill_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+        let skill_path = Path::new(&display);
+        let content = match fs::read_to_string(skill_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
 
-            // A multiline or quoted scalar cannot be rewritten safely with a
-            // line replacement. Only rewrite a single raw value that is
-            // exactly the canonical parsed scalar.
-            let prefix = "description:";
-            let Some(raw_index) = info
-                .fm_lines
-                .iter()
-                .position(|line| line.starts_with(prefix))
-            else {
-                continue;
-            };
-            let raw_line = &info.fm_lines[raw_index];
-            let Some(raw_value) = raw_line.strip_prefix(prefix) else {
-                continue;
-            };
-            let has_continuation = info.fm_lines[raw_index + 1..]
-                .first()
-                .is_some_and(|line| line.is_empty() || line.starts_with(char::is_whitespace));
-            if has_continuation || raw_value.trim_start() != value {
-                continue;
-            }
+        // A multiline or quoted scalar cannot be rewritten safely with a
+        // line replacement. Only rewrite a single raw value that is
+        // exactly the canonical parsed scalar.
+        let prefix = "description:";
+        let Some(raw_index) = info
+            .fm_lines
+            .iter()
+            .position(|line| line.starts_with(prefix))
+        else {
+            continue;
+        };
+        let raw_line = &info.fm_lines[raw_index];
+        let Some(raw_value) = raw_line.strip_prefix(prefix) else {
+            continue;
+        };
+        let has_continuation = info.fm_lines[raw_index + 1..]
+            .first()
+            .is_some_and(|line| line.is_empty() || line.starts_with(char::is_whitespace));
+        if has_continuation || raw_value.trim_start() != value {
+            continue;
+        }
 
-            let new_line = format!("description: {new_value}");
-            if let Some(new_content) = replace_in_frontmatter(&content, raw_line, &new_line) {
-                if fs::write(&skill_path, new_content).is_ok() {
-                    log_fix(
-                        LintRule::DescHasXml,
-                        &format!(
-                            "{base_dir}/{}/SKILL.md: stripped XML tags from description",
-                            info.dir_name
-                        ),
-                    );
-                    fixed = true;
-                }
+        let new_line = format!("description: {new_value}");
+        if let Some(new_content) = replace_in_frontmatter(&content, raw_line, &new_line) {
+            if fs::write(skill_path, new_content).is_ok() {
+                log_fix(
+                    LintRule::DescHasXml,
+                    &format!("{display}: stripped XML tags from description"),
+                );
+                fixed = true;
             }
         }
     }

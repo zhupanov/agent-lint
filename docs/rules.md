@@ -166,13 +166,21 @@ would require a block parser.
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S001 | `skills-dir-missing` | `skills/` directory is missing (deprecated — no longer fires; config alias retained) | Plugin | error |
-| S002 | `skill-md-missing` | `skills/{name}/` missing `SKILL.md` | Plugin | error |
-| S003 | `no-exported-skills` | No plugin-exported skills found under `skills/` | Plugin | error |
+| S002 | `skill-md-missing` | A conventional or manifest-declared skill directory entry is missing `SKILL.md` | Plugin | error |
+| S003 | `no-exported-skills` | A present conventional `skills/` tree exports no skills through `skills/`, manifest-declared skill roots, commands, or the root fallback | Plugin | error |
 | S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Always | error |
 | S005 | `frontmatter-field-missing` | `SKILL.md` required `name` or `description` is missing or not a non-empty string | Always | error |
 | S006 | `frontmatter-name-mismatch` | Frontmatter `name` does not match directory name | Always | error |
 | S007 | `frontmatter-field-empty` | Optional frontmatter field present but empty | Always | error |
-| S008 | `shared-md-missing` | Shared markdown reference missing on disk | Plugin | error |
+| S008 | `shared-md-missing` | Shared markdown reference missing on disk from an active exported plugin `SKILL.md` | Plugin | error |
+
+Plugin skill discovery includes immediate `skills/*/SKILL.md` entries (except
+`skills/shared/`), safe manifest-declared skill directories, and the root
+`SKILL.md` fallback when neither a `skills/` directory nor a `skills` manifest
+field is present. `commands/*.md` and manifest-selected command files count as
+exports for S003 but are otherwise command-style files; they do not receive the
+SKILL.md content-rule suite. Private `.claude/skills/shared/SKILL.md` is an
+ordinary private skill.
 
 ### Name Validation (S009--S011, S033, S049)
 
@@ -195,7 +203,7 @@ would require a block parser.
 | S018 | `desc-has-xml` | Skill description contains XML/HTML tags | Always | error |
 | S034 | `desc-too-short` | Skill description under 20 characters | All skill surfaces | warn |
 | S050 | `desc-vague-content` | Skill description content is too vague/generic | Plugin | warn |
-| S074 | `skill-desc-overlap` | Two skill routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
+| S074 | `skill-desc-overlap` | Two active Claude skill or command routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
 Description-content rules (S014--S018, S034, S050, and S054) use the canonical parsed YAML string scalar. Invalid or non-mapping YAML frontmatter and missing, empty, or non-string descriptions are skipped by these rules; X001 and the required-frontmatter rules retain ownership of those conditions.
 
@@ -227,7 +235,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| S058 | `skill-invoke-missing` | `allowed-tools` includes `Skill` without a clear Skill tool invocation step, or uses ambiguous `Invoke /name` prose | Always | error |
+| S058 | `skill-invoke-missing` | An active SKILL.md `allowed-tools` includes `Skill` without a clear Skill tool invocation step, or uses ambiguous `Invoke /name` prose | Always | error |
 | S059 | `skill-flag-mismatch` | A flag in a fenced shipped-script invocation is not accepted by that script; forwarding scripts are skipped. Use `lint-skill-md-flag-signature: ok <reason>` on the logical command line only for reviewed exceptions. Recognized invocation roots are `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD`; skill-local `scripts/...` paths take precedence over repository-root paths. | Always | error |
 | S060 | `awk-field-ref` | Awk positional fields such as `$0` or `$1` appear inside a `SKILL.md` shell fence | Always | error |
 | S061 | `unsafe-grep-probe` | A shell fence contains unbounded grep-family input, bare top-level `grep`, or a parent-directory ascent | Always | error |

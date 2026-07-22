@@ -22,6 +22,7 @@ mod prompt_content;
 pub(crate) mod shared_md_refs;
 mod shell;
 pub(crate) mod skill_content;
+pub(crate) mod skill_discovery;
 pub(crate) mod skills;
 mod user_config;
 
@@ -81,10 +82,10 @@ fn run_basic(
     // A030/S074: overlapping routing descriptions within simultaneously available namespaces.
     // Basic mode has no plugin manifest, so no manifest-declared agent roots apply.
     desc_overlap::validate_agent_desc_overlap(diag, exclude, false, &[], targets.cursor);
-    desc_overlap::validate_skill_desc_overlap(
+    desc_overlap::validate_discovered_skill_desc_overlap(
+        ctx,
         diag,
         exclude,
-        false,
         targets.agent_skills,
         targets.cursor,
     );
@@ -98,7 +99,7 @@ fn run_basic(
     docs::validate_claudemd_todos(diag, exclude);
     // Shared prompt/reference/script contracts for private configuration and
     // explicitly configured script or prompt-source inventories.
-    contracts::validate_contracts(diag, exclude, false);
+    contracts::validate_contracts(ctx, diag, exclude, false);
 }
 
 /// Plugin mode: run all validators plus `.claude/` checks.
@@ -140,9 +141,10 @@ fn run_plugin(
     hooks::validate_settings_local(ctx, diag);
     mcp::validate_mcp_configs(ctx, diag, exclude, targets);
     // V5: skills layout
-    skills::validate_skills_layout(diag, exclude);
+    skills::validate_discovered_skills_layout(ctx, diag, exclude);
     // V6: SKILL.md frontmatter (public)
     skills::validate_skill_frontmatter(diag, exclude);
+    skills::validate_discovered_skill_frontmatter(ctx, diag, exclude);
     // V7: agents frontmatter (default `agents/` plus manifest-declared roots)
     agents::validate_agents_with_prompt_pass(
         diag,
@@ -169,7 +171,7 @@ fn run_plugin(
     // V14: SECURITY.md presence
     hygiene::validate_security_md(diag);
     // V15: shared markdown reference integrity
-    skills::validate_shared_md_references(diag, exclude);
+    skills::validate_discovered_shared_md_references(ctx, diag, exclude);
     // V16/V21: opt-in larch reviewer-template convention
     agents::validate_agent_template_convention(diag, exclude);
     // V17: email format
@@ -197,7 +199,12 @@ fn run_plugin(
         manifest::validate_channels(ctx, diag);
     });
     // Original skill content checks (S009-S057, including plugin-only rules)
-    skill_content::validate_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    skill_content::validate_discovered_skill_content_with_prompt_pass(
+        ctx,
+        diag,
+        exclude,
+        &mut prompt_pass,
+    );
     // Private skill content checks (both-mode subset)
     skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // A030/S074: overlapping routing descriptions (Claude private∪plugin runtime union)
@@ -208,10 +215,10 @@ fn run_plugin(
         &declared_agent_roots,
         targets.cursor,
     );
-    desc_overlap::validate_skill_desc_overlap(
+    desc_overlap::validate_discovered_skill_desc_overlap(
+        ctx,
         diag,
         exclude,
-        true,
         targets.agent_skills,
         targets.cursor,
     );
@@ -226,7 +233,7 @@ fn run_plugin(
     // G007: TODO/FIXME in agents
     hygiene::validate_todo_in_agents(diag, exclude);
     // Prompt/reference/script contracts shared with private configuration mode.
-    contracts::validate_contracts(diag, exclude, true);
+    contracts::validate_contracts(ctx, diag, exclude, true);
 }
 
 fn validate_optional_surfaces(

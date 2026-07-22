@@ -11,10 +11,12 @@ pub(crate) mod security;
 pub(crate) use description::{description_contains_xml_tags, strip_description_xml_tags};
 
 use crate::config::ExcludeSet;
+use crate::context::LintContext;
 use crate::diagnostic::DiagnosticCollector;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::validators::skills::{
-    SkillInfo, collect_agent_skills, collect_cursor_runtime_skills, collect_skills,
+    SkillInfo, collect_agent_skills, collect_cursor_runtime_skills, collect_plugin_skill_files,
+    collect_skills, collect_skills_including_shared,
 };
 use regex::Regex;
 use std::path::Path;
@@ -119,6 +121,7 @@ pub fn validate_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeS
     validate_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
 }
 
+#[cfg(test)]
 pub(crate) fn validate_skill_content_with_prompt_pass(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
@@ -132,6 +135,26 @@ pub(crate) fn validate_skill_content_with_prompt_pass(
     cross_skill::validate_nested_references("skills", &skills, diag);
     cross_skill::validate_orphaned_skill_files("skills", diag, exclude);
     cross_skill::validate_ref_no_toc("skills", &skills, diag, exclude);
+    cross_skill::validate_generic_ref_names("skills", diag, exclude);
+}
+
+pub(crate) fn validate_discovered_skill_content_with_prompt_pass(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    prompt_pass: &mut super::prompt_content::PromptContentPass,
+) {
+    let skills = collect_plugin_skill_files(
+        super::skill_discovery::SkillDiscovery::from_context(ctx, exclude).exported_skill_files,
+        exclude,
+    );
+    for info in &skills {
+        run_content_checks(info, true, diag, exclude, prompt_pass);
+    }
+    let conventional = collect_skills("skills", exclude);
+    cross_skill::validate_nested_references("skills", &conventional, diag);
+    cross_skill::validate_orphaned_skill_files("skills", diag, exclude);
+    cross_skill::validate_ref_no_toc("skills", &conventional, diag, exclude);
     cross_skill::validate_generic_ref_names("skills", diag, exclude);
 }
 
@@ -149,7 +172,7 @@ pub(crate) fn validate_private_skill_content_with_prompt_pass(
     exclude: &ExcludeSet,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let skills = collect_skills(".claude/skills", exclude);
+    let skills = collect_skills_including_shared(".claude/skills", exclude);
     for info in &skills {
         run_content_checks(info, false, diag, exclude, prompt_pass);
     }
