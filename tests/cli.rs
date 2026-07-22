@@ -1163,6 +1163,83 @@ fn prompt_analysis_covers_all_supported_live_instruction_surfaces() {
 }
 
 #[test]
+fn cursor_frontmatter_recovery_keeps_q005_selection_and_suppression_independent() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let rules = tmp.path().join(".cursor/rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("missing-frontmatter.mdc"),
+        "Retry until success.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rules.join("invalid-frontmatter.mdc"),
+        "---\ndescription: [unclosed\n---\nRetry until success.\n",
+    )
+    .unwrap();
+
+    let q_only = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "Q005", "."],
+    ));
+    assert_eq!(
+        q_only["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            ".cursor/rules/invalid-frontmatter.mdc",
+            ".cursor/rules/missing-frontmatter.mdc",
+        ]
+        .into_iter()
+        .collect()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".cursor/rules/*.mdc\"]\nsuppress = [\"CU002\", \"CU003\"]\n",
+    )
+    .unwrap();
+    let structural_suppressed = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CU002,CU003,Q005", "."],
+    ));
+    assert_eq!(structural_suppressed["counts"]["suppressed"], 2);
+    assert_eq!(
+        structural_suppressed["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["Q005", "Q005"]
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".cursor/rules/*.mdc\"]\nsuppress = [\"Q005\"]\n",
+    )
+    .unwrap();
+    let prompt_suppressed = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CU002,CU003,Q005", "."],
+    ));
+    assert_eq!(prompt_suppressed["counts"]["suppressed"], 2);
+    assert_eq!(
+        prompt_suppressed["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["CU002", "CU003"]
+    );
+}
+
+#[test]
 fn prompt_analysis_excludes_quoted_codex_override_prose() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

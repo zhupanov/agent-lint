@@ -1,0 +1,7 @@
+---
+description: Explain repository maintenance steps
+alwaysApply: true
+---
+```text
+Retry until success.
+```

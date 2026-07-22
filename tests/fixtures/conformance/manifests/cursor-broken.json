@@ -1,14 +1,18 @@
 {
   "class": "broken",
   "repository": "cursor-broken",
-  "covers": ["cursor-mdc", "cursor-md-extension", "cursor-legacy", "normal", "json"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CU001,CU006,CU020", "."] },
+  "covers": ["cursor-mdc", "cursor-md-extension", "cursor-frontmatter-recovery", "cursor-legacy", "normal", "json", "q005-unbounded-retry"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CU001,CU002,CU003,CU006,CU020,Q005", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",
   "expected_active_platforms": ["claude", "cursor"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
+    { "code": "Q005", "name": "prompt-unbounded-retry", "severity": "error", "subject_path": ".cursor/rules/invalid-frontmatter.mdc" },
+    { "code": "Q005", "name": "prompt-unbounded-retry", "severity": "error", "subject_path": ".cursor/rules/missing-frontmatter.mdc" },
     { "code": "CU001", "name": "cursor-rule-empty", "severity": "error", "subject_path": ".cursor/rules/empty.mdc" },
+    { "code": "CU002", "name": "cursor-frontmatter-missing", "severity": "warning", "subject_path": ".cursor/rules/missing-frontmatter.mdc" },
+    { "code": "CU003", "name": "cursor-frontmatter-invalid", "severity": "error", "subject_path": ".cursor/rules/invalid-frontmatter.mdc" },
     { "code": "CU006", "name": "cursor-legacy-rules", "severity": "warning", "subject_path": ".cursorrules" },
     { "code": "CU020", "name": "cursor-rule-extension", "severity": "warning", "subject_path": "packages/api/.cursor/rules/not-a-rule.md" }
   ],

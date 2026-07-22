@@ -1,5 +1,5 @@
 ---
-description: Explain repository maintenance steps
+description: Retry until success.
 alwaysApply: true
 ---
 # Maintenance

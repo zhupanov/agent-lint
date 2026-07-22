@@ -402,8 +402,11 @@ and shared-agent skill bodies (`.claude/skills`, `skills`, and
 (`**/.cursor/rules/**/*.mdc`, `.cursorrules`, and
 `.cursor/skills/*/SKILL.md`) in both Basic and Plugin modes. They skip
 frontmatter where the surface defines it, fenced and inline code, and
-identifiable quoted examples. A missing or malformed frontmatter block does
-not exempt the remaining live prose. Q004 applies only when both root
+identifiable quoted examples. Missing frontmatter, and malformed frontmatter
+with a closing delimiter, do not exempt the remaining live prose. An exact
+opening frontmatter delimiter without a closing delimiter has no deterministic
+body boundary, so Q rules deliberately skip that file. Q004 applies only when
+both root
 `CLAUDE.md` and `README.md` exist.
 
 Q001-Q003 share one operativity contract: within its sentence a directive
