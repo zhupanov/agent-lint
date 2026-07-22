@@ -528,6 +528,7 @@ const KNOWN_AGENT_FIELDS: &[&str] = &[
     "skills",
     "memory",
     "effort",
+    "initialPrompt",
     "hooks",
     "mcpServers",
 ];
@@ -536,10 +537,11 @@ const KNOWN_AGENT_FIELDS: &[&str] = &[
 const VALID_PERMISSION_MODES: &[&str] = &[
     "default",
     "acceptEdits",
+    "auto",
     "dontAsk",
     "bypassPermissions",
     "plan",
-    "delegate",
+    "manual",
 ];
 
 /// Allowed `memory` values (CC-AG-008).
@@ -1098,7 +1100,7 @@ fn check_agent_field_values(
     {
         if let Some(mode) = value.as_str() {
             if !VALID_PERMISSION_MODES.contains(&mode) {
-                diag.report(LintRule::AgentPermissionInvalid, &format!("{agent_path}: permissionMode '{mode}' is not one of [default, acceptEdits, dontAsk, bypassPermissions, plan, delegate]"));
+                diag.report(LintRule::AgentPermissionInvalid, &format!("{agent_path}: permissionMode '{mode}' is not one of [default, acceptEdits, auto, dontAsk, bypassPermissions, plan, manual]"));
             } else if mode == "bypassPermissions" {
                 diag.report(
                     LintRule::AgentBypassPermissions,
@@ -1157,15 +1159,13 @@ fn check_agent_field_values(
         }
     }
 
-    // A024: isolation must be worktree or remote (CC-AG-015).
+    // A024: isolation must be worktree (CC-AG-015).
     if let Some(value) = frontmatter.value("isolation") {
         if let Some(isolation) = value.as_str() {
-            if !["worktree", "remote"].contains(&isolation) {
+            if isolation != "worktree" {
                 diag.report(
                     LintRule::AgentIsolationInvalid,
-                    &format!(
-                        "{agent_path}: isolation '{isolation}' is not one of [worktree, remote]"
-                    ),
+                    &format!("{agent_path}: isolation '{isolation}' is not one of [worktree]"),
                 );
             }
         } else {
@@ -3390,6 +3390,25 @@ Body ## Reviewer
         });
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH15PH_newly_documented_permission_modes_no_fire() {
+        for mode in ["auto", "manual"] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\npermissionMode: {mode}\n---\nBody\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(
+                    !diag
+                        .errors()
+                        .iter()
+                        .any(|e| e.contains(&format!("permissionMode '{mode}'"))),
+                    "A015 must accept documented permissionMode {mode}"
+                );
+            });
+        }
+    }
+
     // ── A016: agent-skill-missing ────────────────────────────────────
 
     #[test]
@@ -3615,16 +3634,17 @@ Body ## Reviewer
 
     #[test]
     #[serial_test::serial]
-    fn test_aPH19PH_absent_candidate_still_fires() {
+    fn test_aPH19PH_newly_documented_tool_no_fire() {
         let content = format!(
             "---\nname: general\ndescription: {GOOD_DESC}\ntools: ExitPlanMode\n---\nBody\n"
         );
         run_agent(&content, |diag| {
             assert!(
-                diag.errors()
+                !diag
+                    .errors()
                     .iter()
-                    .any(|e| e.contains("tools lists unrecognized tool 'ExitPlanMode'")),
-                "A019 must still reject ExitPlanMode (not authorized in this vocabulary fix)"
+                    .any(|e| e.contains("tools lists unrecognized tool")),
+                "A019 must accept the documented ExitPlanMode tool"
             );
         });
     }
@@ -3803,6 +3823,7 @@ Body ## Reviewer
         for (isolation, expected) in [
             ("container", "container"),
             ("Remote", "Remote"),
+            ("remote", "remote"),
             ("worktre", "worktre"),
             ("\"\"", ""),
         ] {
@@ -3811,9 +3832,10 @@ Body ## Reviewer
             );
             run_agent(&content, |diag| {
                 assert!(
-                    diag.errors().iter().any(|e| e.contains(&format!(
-                        "isolation '{expected}' is not one of [worktree, remote]"
-                    ))),
+                    diag.errors()
+                        .iter()
+                        .any(|e| e
+                            .contains(&format!("isolation '{expected}' is not one of [worktree]"))),
                     "expected invalid isolation {isolation:?} to fire"
                 );
             });
@@ -3837,17 +3859,15 @@ Body ## Reviewer
     #[test]
     #[serial_test::serial]
     fn test_aPH24PH_valid_isolation_no_fire() {
-        for isolation in ["worktree", "remote"] {
-            let content = format!(
-                "---\nname: general\ndescription: {GOOD_DESC}\nisolation: {isolation}\n---\nBody\n"
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nisolation: worktree\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag.errors().iter().any(|e| e.contains("isolation")),
+                "expected worktree isolation not to fire"
             );
-            run_agent(&content, |diag| {
-                assert!(
-                    !diag.errors().iter().any(|e| e.contains("isolation")),
-                    "expected valid isolation {isolation:?} not to fire"
-                );
-            });
-        }
+        });
     }
 
     // ── A025: agent-background-invalid (warn) ────────────────────────
@@ -3943,7 +3963,7 @@ Body ## Reviewer
     #[serial_test::serial]
     fn test_aPH27PH_known_fields_no_fire() {
         let content = format!(
-            "---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonnet\neffort: high\ncolor: cyan\n---\nBody\n"
+            "---\nname: general\ndescription: {GOOD_DESC}\nmodel: sonnet\neffort: high\ninitialPrompt: Start by reading the project guide.\ncolor: cyan\n---\nBody\n"
         );
         run_agent(&content, |diag| {
             assert!(

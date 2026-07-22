@@ -336,27 +336,49 @@ pub(crate) fn is_valid_model_value(value: &str) -> bool {
 /// A017/A019/A020 (agent `tools`/`disallowedTools`).
 pub(crate) const KNOWN_TOOLS: &[&str] = &[
     "AskUserQuestion",
+    "Artifact",
     "Bash",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
     "EndConversation",
+    "EnterPlanMode",
+    "EnterWorktree",
+    "ExitPlanMode",
+    "ExitWorktree",
     "Read",
     "Edit",
     "Write",
     "Grep",
     "Glob",
     "Agent",
-    "Task",
-    "WebFetch",
-    "WebSearch",
-    "Skill",
-    "NotebookEdit",
+    "ListMcpResourcesTool",
     "LSP",
+    "Monitor",
+    "NotebookEdit",
     "PowerShell",
+    "PushNotification",
+    "ReadMcpResourceTool",
+    "RemoteTrigger",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "SendUserFile",
+    "ShareOnboardingGuide",
+    "Skill",
+    "Task",
     "TaskCreate",
     "TaskUpdate",
     "TaskList",
     "TaskGet",
     "TaskStop",
     "TaskOutput",
+    "TodoWrite",
+    "ToolSearch",
+    "WaitForMcpServers",
+    "WebFetch",
+    "WebSearch",
+    "Workflow",
 ];
 
 /// Split a scalar tool field at commas and whitespace outside scoped `(...)`
@@ -617,11 +639,27 @@ mod tool_tests {
 
     #[test]
     fn accepts_builtin_tools() {
-        assert!(is_known_tool_name("Bash"));
-        assert!(is_known_tool_name("Read"));
-        assert!(is_known_tool_name("Agent"));
-        assert!(is_known_tool_name("EndConversation"));
-        assert!(is_known_tool_name("PowerShell"));
+        for tool in [
+            "Agent",
+            "Artifact",
+            "AskUserQuestion",
+            "Bash",
+            "CronCreate",
+            "EnterPlanMode",
+            "ExitPlanMode",
+            "ListMcpResourcesTool",
+            "Monitor",
+            "PowerShell",
+            "Read",
+            "ReadMcpResourceTool",
+            "SendMessage",
+            "ShareOnboardingGuide",
+            "TodoWrite",
+            "ToolSearch",
+            "Workflow",
+        ] {
+            assert!(is_known_tool_name(tool), "expected {tool} to be known");
+        }
     }
 
     #[test]
@@ -646,7 +684,6 @@ mod tool_tests {
     #[test]
     fn rejects_unknown_tools() {
         assert!(!is_known_tool_name("UnknownTool"));
-        assert!(!is_known_tool_name("ExitPlanMode"));
         assert!(!is_known_tool_name(""));
     }
 }

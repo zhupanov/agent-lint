@@ -8,7 +8,7 @@ tools: [Bash, Read]
 disallowedTools: [Write]
 memory: project
 effort: high
-isolation: remote
+isolation: worktree
 color: cyan
 background: false
 maxTurns: 2
