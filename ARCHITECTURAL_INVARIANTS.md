@@ -40,6 +40,19 @@ multi-source findings remain pathless and cannot match file overrides.
 Mechanical backing: the `Diagnostic::subject_path` type, collector/config
 matching tests, validator dispatch tests, and per-file CLI regressions.
 
+### I-Diag-3: Diagnostics never embed sensitive values or machine-local paths
+
+Rendered diagnostics - message, evidence, and suggestion, in text and JSON -
+never contain values the rule itself classifies as possibly sensitive (secret
+literals, credential-bearing field values, server names in secret-scanning
+contexts), never contain raw control characters, and never contain absolute
+machine-local filesystem paths. Subjects and evidence use repository-relative
+paths and neutralized text. When a finding is about a sensitive value, the
+diagnostic identifies the key or location, not the value.
+
+Mechanical backing: token-shaped and control-character regression fixtures;
+conformance manifests assert redacted evidence for secret-scanning rules.
+
 ### I-Severity-1: Severity precedence is deterministic
 
 For normal linting, global suppression wins over matching per-file
@@ -131,6 +144,19 @@ causes a whole-file early return when other branches remain interpretable.
 Mechanical backing: mixed-validity fixtures for manifest, hook, MCP, Cursor,
 Codex, and user-configuration validators assert both non-cascade behavior and
 continued sibling diagnostics.
+
+### I-Collection-1: Every element and occurrence is validated
+
+When a validator walks a collection or scans a document, it evaluates every
+element and reports every independent violation. Checking never stops at the
+first element, the first occurrence, or the first violation unless the rule's
+documented contract is first-match-only. Duplicate or repeated values are
+each located at their own source position, never at the first textual match.
+A filter that removes every declared element leaves the declaration invalid;
+it does not fall back to the behavior of an absent declaration.
+
+Mechanical backing: regression fixtures place defects in the second element
+or occurrence; span assertions distinguish repeated equal values.
 
 ### I-Exclude-1: Strictness never changes file selection
 
