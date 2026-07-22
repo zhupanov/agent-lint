@@ -199,27 +199,7 @@ pub(super) fn check_description_quality(
 
     let char_count = desc.chars().count();
 
-    // S014: description too long
-    if char_count > MAX_DESC_CHARS {
-        diag.report(
-            LintRule::DescTooLong,
-            &format!(
-                "{}: description exceeds 1024 characters ({})",
-                info.path, char_count
-            ),
-        );
-    }
-
-    // S034: description too short
-    if char_count < MIN_DESC_CHARS {
-        diag.report(
-            LintRule::DescTooShort,
-            &format!(
-                "{}: description is under 20 characters ({})",
-                info.path, char_count
-            ),
-        );
-    }
+    check_description_length(info, char_count, diag);
 
     // S015: Claude Code lists the canonical description and when_to_use together.
     let when_to_use = frontmatter::get_strict_string_field(&info.fm_lines, "when_to_use");
@@ -281,6 +261,43 @@ pub(super) fn check_description_quality(
                 "{}: description content is too vague/generic; \
                  add specific terms describing what the skill does",
                 info.path
+            ),
+        );
+    }
+}
+
+/// Run the specification-owned description length checks shared by Claude and
+/// cross-client Agent Skills surfaces. Callers own frontmatter validity; only
+/// a canonical non-empty string scalar reaches this helper.
+pub(super) fn check_agent_skills_description_contract(
+    info: &SkillInfo,
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(desc) = frontmatter::get_strict_string_field(&info.fm_lines, "description") else {
+        return;
+    };
+    check_description_length(info, desc.chars().count(), diag);
+}
+
+fn check_description_length(info: &SkillInfo, char_count: usize, diag: &mut DiagnosticCollector) {
+    // S014: description too long
+    if char_count > MAX_DESC_CHARS {
+        diag.report(
+            LintRule::DescTooLong,
+            &format!(
+                "{}: description exceeds 1024 characters ({})",
+                info.path, char_count
+            ),
+        );
+    }
+
+    // S034: description too short
+    if char_count < MIN_DESC_CHARS {
+        diag.report(
+            LintRule::DescTooShort,
+            &format!(
+                "{}: description is under 20 characters ({})",
+                info.path, char_count
             ),
         );
     }

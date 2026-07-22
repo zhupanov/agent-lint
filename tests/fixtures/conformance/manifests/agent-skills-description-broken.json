@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "agent-skills-description-broken",
+  "covers": ["basic-mode", "normal", "json", "agent-skills-description"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S014", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "S014", "name": "desc-too-long", "severity": "error", "subject_path": ".agents/skills/long-description/SKILL.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

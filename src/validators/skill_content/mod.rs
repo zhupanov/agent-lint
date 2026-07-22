@@ -157,10 +157,11 @@ pub(crate) fn validate_private_skill_content_with_prompt_pass(
     cross_skill::validate_generic_ref_names(".claude/skills", diag, exclude);
 }
 
-/// Validate the Agent Skills name contract for a platform-gated skill surface.
+/// Validate the Agent Skills name and description contract for a
+/// platform-gated skill surface.
 /// Broader content validation remains owned by the public/private passes;
 /// S031/S032 reuse `validate_agent_skills_content_security` on these surfaces.
-pub(crate) fn validate_agent_skills_name_contract(
+pub(crate) fn validate_agent_skills_contract(
     base_dir: &str,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
@@ -171,11 +172,12 @@ pub(crate) fn validate_agent_skills_name_contract(
         collect_skills(base_dir, exclude)
     };
     for info in skills {
-        let Some(name) = crate::frontmatter::get_strict_string_field(&info.fm_lines, "name") else {
-            continue;
-        };
         diag.with_subject_path(&info.path, |diag| {
-            name::check_agent_skills_name_contract(&info, &name, diag);
+            if let Some(name) = crate::frontmatter::get_strict_string_field(&info.fm_lines, "name")
+            {
+                name::check_agent_skills_name_contract(&info, &name, diag);
+            }
+            description::check_agent_skills_description_contract(&info, diag);
         });
     }
 }
@@ -204,17 +206,19 @@ pub(crate) fn validate_agent_skills_content_security(
 
 /// Run Cursor's shared runtime inventory through the Agent Skills contracts.
 /// Keeping this inventory alongside CR-SK-001 prevents nested Cursor skills
-/// from receiving platform-schema checks but missing S009/S031/S032.
-pub(crate) fn validate_cursor_runtime_skills_name_contract(
+/// from receiving platform-schema checks but missing S009--S011, S014, S034,
+/// S031, or S032.
+pub(crate) fn validate_cursor_runtime_skills_contract(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
 ) {
     for info in collect_cursor_runtime_skills(exclude) {
-        let Some(name) = crate::frontmatter::get_strict_string_field(&info.fm_lines, "name") else {
-            continue;
-        };
         diag.with_subject_path(&info.path, |diag| {
-            name::check_agent_skills_name_contract(&info, &name, diag);
+            if let Some(name) = crate::frontmatter::get_strict_string_field(&info.fm_lines, "name")
+            {
+                name::check_agent_skills_name_contract(&info, &name, diag);
+            }
+            description::check_agent_skills_description_contract(&info, diag);
         });
     }
 }
@@ -321,7 +325,7 @@ mod tests {
             )
             .unwrap();
             let mut diag = DiagnosticCollector::new_all_enabled();
-            validate_agent_skills_name_contract(
+            validate_agent_skills_contract(
                 ".agents/skills",
                 &mut diag,
                 &crate::config::ExcludeSet::default(),
@@ -340,7 +344,7 @@ mod tests {
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_skills_name_contract(
+        validate_agent_skills_contract(
             ".agents/skills",
             &mut diag,
             &crate::config::ExcludeSet::default(),
@@ -384,7 +388,7 @@ mod tests {
             )
             .unwrap();
             let mut diag = DiagnosticCollector::new_all_enabled();
-            validate_agent_skills_name_contract(
+            validate_agent_skills_contract(
                 ".agents/skills",
                 &mut diag,
                 &crate::config::ExcludeSet::default(),
@@ -395,6 +399,129 @@ mod tests {
                 diag.diagnostics()
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agent_skills_description_contract_uses_canonical_lengths_and_only_spec_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let cases = [
+            ("too-long", "x".repeat(1025)),
+            ("too-short", "x".repeat(19)),
+            ("at-cap", "x".repeat(1024)),
+            ("at-floor", "x".repeat(20)),
+            (
+                "hard-negative",
+                format!("I use <tag> {}", "specific ".repeat(35)),
+            ),
+        ];
+        for (name, description) in cases {
+            let path = format!(".agents/skills/{name}/SKILL.md");
+            std::fs::create_dir_all(Path::new(&path).parent().unwrap()).unwrap();
+            std::fs::write(
+                &path,
+                format!("---\nname: {name}\ndescription: {description}\n---\nBody\n"),
+            )
+            .unwrap();
+        }
+        let block_path = ".agents/skills/block-scalar/SKILL.md";
+        std::fs::create_dir_all(Path::new(block_path).parent().unwrap()).unwrap();
+        std::fs::write(
+            block_path,
+            format!(
+                "---\nname: block-scalar\ndescription: >-\n  {}\n  {}\n---\nBody\n",
+                "x".repeat(600),
+                "y".repeat(600)
+            ),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_skills_contract(
+            ".agents/skills",
+            &mut diag,
+            &crate::config::ExcludeSet::default(),
+        );
+        let rules_at = |path: &str| {
+            diag.diagnostics()
+                .iter()
+                .filter(|item| item.subject_path.as_deref() == Some(Path::new(path)))
+                .map(|item| item.rule)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            rules_at(".agents/skills/too-long/SKILL.md"),
+            vec![LintRule::DescTooLong]
+        );
+        assert_eq!(
+            rules_at(".agents/skills/too-short/SKILL.md"),
+            vec![LintRule::DescTooShort]
+        );
+        assert!(rules_at(".agents/skills/at-cap/SKILL.md").is_empty());
+        assert!(rules_at(".agents/skills/at-floor/SKILL.md").is_empty());
+        assert_eq!(
+            rules_at(block_path),
+            vec![LintRule::DescTooLong],
+            "block-scalar text must be counted from its canonical YAML scalar"
+        );
+        assert!(
+            rules_at(".agents/skills/hard-negative/SKILL.md").is_empty(),
+            "Agent Skills surfaces must not inherit Claude-only S015/S016/S018 checks"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn agent_skills_description_contract_honors_nested_exclusions_and_overrides() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for path in [
+            "packages/keep/.agents/skills/long/SKILL.md",
+            "packages/excluded/.agents/skills/long/SKILL.md",
+            "packages/suppressed/.agents/skills/long/SKILL.md",
+        ] {
+            std::fs::create_dir_all(Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: long\ndescription: {}\n---\nBody\n",
+                    "x".repeat(1025)
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            "agent-lint.toml",
+            r#"
+[lint]
+exclude = ["packages/excluded/**"]
+
+[[lint.overrides]]
+files = ["packages/suppressed/.agents/skills/long/SKILL.md"]
+suppress = ["S014"]
+"#,
+        )
+        .unwrap();
+
+        let config = crate::config::LintConfig::load(tmp.path()).unwrap();
+        let exclude = config.build_exclude_set();
+        let mut diag = DiagnosticCollector::with_config(config);
+        validate_agent_skills_contract(".agents/skills", &mut diag, &exclude);
+        let findings = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::DescTooLong)
+            .collect::<Vec<_>>();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(
+            findings[0].subject_path.as_deref(),
+            Some(Path::new("packages/keep/.agents/skills/long/SKILL.md"))
+        );
+        assert_eq!(diag.suppressed_count(), 1);
     }
 
     // ── S010: name-invalid-chars ─────────────────────────────────────
@@ -466,7 +593,7 @@ mod tests {
             )
             .unwrap();
             let mut diag = DiagnosticCollector::new_all_enabled();
-            validate_agent_skills_name_contract(
+            validate_agent_skills_contract(
                 ".agents/skills",
                 &mut diag,
                 &crate::config::ExcludeSet::default(),
