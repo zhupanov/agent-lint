@@ -10,10 +10,9 @@
 //! - Skill frontmatter compatibility (CX060): ignored Claude / Agent Skills
 //!   behavior fields on `.agents/skills/<skill>/SKILL.md` and selected plugin
 //!   skill roots; strict top-level YAML only; default warning, non-autofixable.
-//! - Soft-retired compatibility identifiers: CX046 (mislocated manifest — a
-//!   recognized manifest always establishes its own plugin root) and CX058
-//!   (unsupported hooks — Codex loads plugin-bundled hooks). Neither is emitted;
-//!   both remain parseable for existing configuration.
+//!
+//! Recognized manifest directories establish their own plugin roots, and Codex
+//! loads plugin-bundled hooks; neither valid behavior has a lint identity.
 //!
 //! Verified against openai/codex commit
 //! `7442f5f9323d116755dfe630e22c931a8aeaa5c7`

@@ -1,0 +1,559 @@
+{
+  "contracts": [
+    {
+      "code": "M001",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "tests/cli.rs#json_mixed_run_has_structured_rule_fields_and_unchanged_exit_status"
+    },
+    {
+      "code": "M004",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_v1_invalid_semver_2_0_0_versions_are_rejected"
+    },
+    {
+      "code": "M005",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_v2_missing_marketplace_json"
+    },
+    {
+      "code": "M007",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#marketplace_required_field_types_are_owned_by_m007"
+    },
+    {
+      "code": "M008",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#marketplace_required_field_types_are_owned_by_m007"
+    },
+    {
+      "code": "M009",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_m007_and_m009_whitespace_only_values_fire"
+    },
+    {
+      "code": "M012",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_m012_dot_slash_prefix_still_detected"
+    },
+    {
+      "code": "M013",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#symlinked_agents_declaration_reports_m013_with_exact_metadata"
+    },
+    {
+      "code": "M014",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_m014_author_object_without_name_fires"
+    },
+    {
+      "code": "M015",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_m015_invalid_urls_fire"
+    },
+    {
+      "code": "M016",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_m016_missing_command_fires"
+    },
+    {
+      "code": "M017",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_m017_inline_mcp_server_reference_must_exist"
+    },
+    {
+      "code": "M018",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_v1_missing_version_is_a_warning"
+    },
+    {
+      "code": "M019",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_v2_plugin_source_shapes_table"
+    },
+    {
+      "code": "M020",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "src/validators/manifest.rs#test_m020_non_object_authors_are_errors"
+    },
+    {
+      "code": "M022",
+      "owner": "src/validators/manifest.rs",
+      "fixture": "tests/cli.rs#plugin_field_rules_cover_marketplace_entries_with_safe_metadata"
+    },
+    {
+      "code": "H003",
+      "owner": "src/validators/hooks.rs",
+      "fixture": "src/validators/hooks.rs#test_v3_missing_hooks_key"
+    },
+    {
+      "code": "H006",
+      "owner": "src/validators/hooks.rs",
+      "fixture": "tests/cli.rs#only_filters_basic_mode_dispatch"
+    },
+    {
+      "code": "H008",
+      "owner": "src/validators/agents.rs",
+      "fixture": "src/validators/hook_schema.rs#h008_unknown_event_fires"
+    },
+    {
+      "code": "H009",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h009_non_string_matcher_fires_once"
+    },
+    {
+      "code": "H010",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h010_missing_type_fires"
+    },
+    {
+      "code": "H011",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h011_non_string_type_fires"
+    },
+    {
+      "code": "H012",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h012_command_without_command_fires"
+    },
+    {
+      "code": "H013",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h013_agent_without_prompt_fires"
+    },
+    {
+      "code": "H014",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h014_http_without_url_fires"
+    },
+    {
+      "code": "H015",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h015_h016_mcp_tool_without_server_or_tool_fires"
+    },
+    {
+      "code": "H016",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h015_h016_mcp_tool_without_server_or_tool_fires"
+    },
+    {
+      "code": "H017",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h017_rejects_negative_zero_float_and_string"
+    },
+    {
+      "code": "H018",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h018_async_true_on_prompt_fires"
+    },
+    {
+      "code": "H019",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h019_model_on_prompt_and_agent_passes_but_fires_elsewhere"
+    },
+    {
+      "code": "H020",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h020_non_boolean_once_fires"
+    },
+    {
+      "code": "H021",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h021_empty_or_non_string_if_fires"
+    },
+    {
+      "code": "H022",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h022_bad_shell_fires_and_shares_s026_enum"
+    },
+    {
+      "code": "H023",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h023_flags_destructive_commands"
+    },
+    {
+      "code": "H024",
+      "owner": "src/validators/hook_schema.rs",
+      "fixture": "src/validators/hook_schema.rs#h024_braced_interpolation_fires"
+    },
+    {
+      "code": "H025",
+      "owner": "src/validators/hooks.rs",
+      "fixture": "src/validators/hooks.rs#test_v28_settings_local_invalid_fires_h025"
+    },
+    {
+      "code": "X002",
+      "owner": "src/validators/markdown_structure.rs",
+      "fixture": "src/validators/skills.rs#test_x002_unclosed_fence_in_skill"
+    },
+    {
+      "code": "X003",
+      "owner": "src/validators/markdown_structure.rs",
+      "fixture": "src/validators/markdown_structure.rs#xml_diagnostics_have_their_source_line"
+    },
+    {
+      "code": "X004",
+      "owner": "src/validators/markdown_structure.rs",
+      "fixture": "src/validators/markdown_structure.rs#xml_diagnostics_have_their_source_line"
+    },
+    {
+      "code": "X005",
+      "owner": "src/validators/markdown_structure.rs",
+      "fixture": "src/validators/markdown_structure.rs#xml_diagnostics_have_their_source_line"
+    },
+    {
+      "code": "S002",
+      "owner": "src/validators/skills.rs",
+      "fixture": "src/validators/skills.rs#test_v5_missing_skill_md"
+    },
+    {
+      "code": "S003",
+      "owner": "src/validators/skills.rs",
+      "fixture": "src/validators/skills.rs#test_v5_missing_skill_md"
+    },
+    {
+      "code": "S004",
+      "owner": "src/validators/skills.rs",
+      "fixture": "src/validators/skills.rs#test_s004_bom_hint_and_line_location"
+    },
+    {
+      "code": "S005",
+      "owner": "src/validators/skills.rs",
+      "fixture": "src/validators/skills.rs#test_s005_s006_s007_structured_locations"
+    },
+    {
+      "code": "S006",
+      "owner": "src/validators/skills.rs",
+      "fixture": "src/validators/skills.rs#test_s006_private_skill_name_mismatch"
+    },
+    {
+      "code": "S007",
+      "owner": "src/validators/skills.rs",
+      "fixture": "src/validators/skills.rs#test_s005_s006_s007_structured_locations"
+    },
+    {
+      "code": "S008",
+      "owner": "src/validators/skills.rs",
+      "fixture": "src/validators/skills.rs#test_s008_dedupes_and_locates_missing_refs"
+    },
+    {
+      "code": "S009",
+      "owner": "src/validators/skill_content/name.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s009_name_too_long"
+    },
+    {
+      "code": "S010",
+      "owner": "src/validators/skill_content/name.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s010_rejects_every_non_contract_character_class"
+    },
+    {
+      "code": "S011",
+      "owner": "src/validators/skill_content/name.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s011_consecutive_hyphens"
+    },
+    {
+      "code": "S017",
+      "owner": "src/validators/skill_content/description.rs",
+      "fixture": "tests/cli.rs#s016_s017_warn_normally_and_error_under_pedantic"
+    },
+    {
+      "code": "S019",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s019_body_too_long"
+    },
+    {
+      "code": "S020",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s020_body_empty"
+    },
+    {
+      "code": "S021",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "tests/cli.rs#s021_autofix_follows_shared_policy_across_skill_and_reference_files"
+    },
+    {
+      "code": "S022",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s022_windows_path_in_body"
+    },
+    {
+      "code": "S024",
+      "owner": "src/validators/skill_content/frontmatter_fields.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s024_invalid_context"
+    },
+    {
+      "code": "S025",
+      "owner": "src/validators/skill_content/frontmatter_fields.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s025_invalid_effort"
+    },
+    {
+      "code": "S026",
+      "owner": "src/validators/skill_content/frontmatter_fields.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s026_invalid_shell"
+    },
+    {
+      "code": "S027",
+      "owner": "src/validators/skill_content/frontmatter_fields.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s027_fires_on_commented_boolean_gates"
+    },
+    {
+      "code": "S028",
+      "owner": "src/validators/skill_content/cross_field.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s028_null_hint_counts_as_unset"
+    },
+    {
+      "code": "S029",
+      "owner": "src/validators/skill_content/cross_skill.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s029_nested_reference_fires"
+    },
+    {
+      "code": "S033",
+      "owner": "src/validators/skill_content/name.rs",
+      "fixture": "src/validators/skill_content/name.rs#s033_flags_every_retained_denylist_entry"
+    },
+    {
+      "code": "S034",
+      "owner": "src/validators/skill_content/description.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s034_desc_too_short"
+    },
+    {
+      "code": "S035",
+      "owner": "src/validators/skill_content/frontmatter_extended.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s035_counts_multiline_block_scalar"
+    },
+    {
+      "code": "S037",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s037_body_no_refs"
+    },
+    {
+      "code": "S038",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s038_masks_inline_code_and_link_destinations"
+    },
+    {
+      "code": "S039",
+      "owner": "src/validators/skill_content/frontmatter_extended.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s039_metadata_value_table"
+    },
+    {
+      "code": "S041",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s041_fork_gate_reads_canonical_context"
+    },
+    {
+      "code": "S043",
+      "owner": "src/validators/skill_content/frontmatter_extended.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s043_scope_table"
+    },
+    {
+      "code": "S044",
+      "owner": "src/validators/skill_content/mcp.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s044_dedup_same_tool_fires_once"
+    },
+    {
+      "code": "S046",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s046_body_no_workflow"
+    },
+    {
+      "code": "S047",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s046_s047_independence"
+    },
+    {
+      "code": "S050",
+      "owner": "src/validators/skill_content/description.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s050_vague_description_flagged"
+    },
+    {
+      "code": "S051",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s051_s052_detected_via_body_ref"
+    },
+    {
+      "code": "S052",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s051_s052_detected_via_body_ref"
+    },
+    {
+      "code": "S053",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s053_masks_inline_code_and_link_destinations_but_keeps_labels"
+    },
+    {
+      "code": "S054",
+      "owner": "src/validators/skill_content/cross_field.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s054_misaligned_desc_body_fires"
+    },
+    {
+      "code": "S056",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s056_midline_if_still_fires"
+    },
+    {
+      "code": "S057",
+      "owner": "src/validators/skill_content/body.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s057_skips_flag_values_and_checks_every_assignment_in_order"
+    },
+    {
+      "code": "S062",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "tests/cli.rs#s062_counts_raw_at_imports_in_closure"
+    },
+    {
+      "code": "S064",
+      "owner": "src/validators/skill_content/frontmatter_fields.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s064_agent_shape_table"
+    },
+    {
+      "code": "S066",
+      "owner": "src/validators/skill_content/frontmatter_fields.rs",
+      "fixture": "src/validators/skill_content/mod.rs#test_s066_deploy_without_dmi"
+    },
+    {
+      "code": "S069",
+      "owner": "src/validators/skill_content/cross_field.rs",
+      "fixture": "src/validators/skill_content/mod.rs#s069_gate_engages_for_quoted_key_hint"
+    },
+    {
+      "code": "A002",
+      "owner": "src/validators/agents.rs",
+      "fixture": "src/validators/agents.rs#nested_private_agent_malformed_frontmatter_reports_a002"
+    },
+    {
+      "code": "A005",
+      "owner": "src/validators/agents.rs",
+      "fixture": "src/validators/agents.rs#template_convention_is_opt_in_and_respects_exclusions"
+    },
+    {
+      "code": "A008",
+      "owner": "src/validators/agents.rs",
+      "fixture": "src/validators/agents.rs#test_a008_desc_too_long"
+    },
+    {
+      "code": "A010",
+      "owner": "src/validators/agents.rs",
+      "fixture": "src/validators/agents.rs#test_a010_name_invalid"
+    },
+    {
+      "code": "A012",
+      "owner": "src/validators/agents.rs",
+      "fixture": "src/validators/agents.rs#a012_uses_canonical_tool_lists_and_source_aware_live_prose"
+    },
+    {
+      "code": "A013",
+      "owner": "src/validators/agents.rs",
+      "fixture": "src/validators/agents.rs#a013_requires_live_unreadable_outcome_and_never_invent_prohibition"
+    },
+    {
+      "code": "Q001",
+      "owner": "src/validators/prompt_content.rs",
+      "fixture": "src/validators/prompt_content.rs#q001_reports_every_line_once_with_structured_masked_metadata"
+    },
+    {
+      "code": "Q003",
+      "owner": "src/validators/prompt_content.rs",
+      "fixture": "src/validators/prompt_content.rs#q003_flags_operative_hedges_under_live_critical_headings_only"
+    },
+    {
+      "code": "Q004",
+      "owner": "src/validators/prompt_content.rs",
+      "fixture": "src/validators/prompt_content.rs#q004_requires_more_than_forty_percent_and_three_matches"
+    },
+    {
+      "code": "O002",
+      "owner": "src/validators/claude_config.rs",
+      "fixture": "src/validators/claude_config.rs#output_style_keep_coding_type_reports_o002"
+    },
+    {
+      "code": "O004",
+      "owner": "src/validators/claude_config.rs",
+      "fixture": "src/validators/claude_config.rs#output_style_empty_body_reports_o004"
+    },
+    {
+      "code": "CX045",
+      "owner": "src/validators/instruction_files.rs",
+      "fixture": "src/validators/instruction_files.rs#cx045_only_scans_model_visible_project_document_prefix"
+    },
+    {
+      "code": "CR-SK-001",
+      "owner": "src/validators/cursor.rs",
+      "fixture": "src/validators/cursor.rs#cursor_skill_allowlist_uses_the_documented_fields_and_rejects_user_invocable"
+    },
+    {
+      "code": "G001",
+      "owner": "src/validators/hygiene/pwd.rs",
+      "fixture": "src/validators/hygiene/mod.rs#test_v8_reports_rule_specific_location_evidence_and_suggestion"
+    },
+    {
+      "code": "G002",
+      "owner": "src/validators/hygiene/scripts.rs",
+      "fixture": "tests/cli.rs#manifest_declared_skill_sources_feed_g002_g003_and_g004_once"
+    },
+    {
+      "code": "G003",
+      "owner": "src/validators/hygiene/scripts.rs",
+      "fixture": "tests/cli.rs#manifest_declared_skill_sources_feed_g002_g003_and_g004_once"
+    },
+    {
+      "code": "G004",
+      "owner": "src/validators/hygiene/dead_scripts.rs",
+      "fixture": "tests/cli.rs#manifest_declared_skill_sources_feed_g002_g003_and_g004_once"
+    },
+    {
+      "code": "E001",
+      "owner": "src/validators/email.rs",
+      "fixture": "src/validators/email.rs#format_and_type_findings_are_distinct_and_redacted"
+    },
+    {
+      "code": "E002",
+      "owner": "src/validators/email.rs",
+      "fixture": "src/validators/email.rs#present_wrong_types_emit_only_e002"
+    },
+    {
+      "code": "U001",
+      "owner": "src/validators/user_config.rs",
+      "fixture": "src/validators/user_config.rs#top_level_non_object_container_is_u001"
+    },
+    {
+      "code": "D004",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "src/validators/contracts.rs#configured_closures_and_inline_paths_fire"
+    },
+    {
+      "code": "D005",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "src/validators/contracts.rs#d005_uses_shared_classification_within_its_prefix_scope"
+    },
+    {
+      "code": "L001",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "src/validators/contracts.rs#l001_flags_missing_import_target_once_per_pair"
+    },
+    {
+      "code": "L002",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "src/validators/contracts.rs#l002_reports_circular_import_chain"
+    },
+    {
+      "code": "L003",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "src/validators/contracts.rs#l003_flags_chain_deeper_than_five_hops"
+    },
+    {
+      "code": "L004",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "src/validators/contracts.rs#l004_flags_duplicate_import_with_dot_slash_normalization"
+    },
+    {
+      "code": "L005",
+      "owner": "src/validators/contracts.rs",
+      "fixture": "src/validators/contracts.rs#l005_flags_broken_relative_markdown_link"
+    },
+    {
+      "code": "L006",
+      "owner": "src/validators/npm_scripts.rs",
+      "fixture": "src/validators/npm_scripts.rs#l006_flags_npm_run_script_missing_from_package_json"
+    }
+  ]
+}

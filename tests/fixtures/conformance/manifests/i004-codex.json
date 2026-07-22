@@ -2,7 +2,7 @@
   "class": "broken",
   "repository": "i004-codex",
   "covers": ["codex", "normal", "json", "i004-generic"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "codex-agents-generic", "."] },
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "instruction-file-generic", "."] },
   "expected_exit_code": 0,
   "expected_status": "warnings",
   "expected_active_platforms": ["claude", "codex"],

@@ -1,6 +1,6 @@
-use crate::rules::{ACTIVE_RULES, ALL_RULES, LintRule};
 #[cfg(test)]
-use crate::rules::{RETIRED_IDENTIFIERS, SOFT_RETIRED_IDENTIFIERS};
+use crate::rules::RETIRED_IDENTIFIERS;
+use crate::rules::{ALL_RULES, LintRule};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -22,26 +22,21 @@ pub enum CliMode {
 
 /// Invocation-scoped rule policy resolved from CLI strictness and `--only`.
 ///
-/// A focused selection preserves canonical requested identities separately
-/// from the active identities that may execute. This lets compatibility-only
-/// retired rules remain visible in public output without making them active.
-/// Both views use registry order, so duplicate and reordered CLI identifiers
-/// cannot affect output, validation, or autofix ordering.
+/// A focused selection uses registry order, so duplicate and reordered CLI
+/// identifiers cannot affect output, validation, or autofix ordering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunPolicy {
     mode: CliMode,
-    requested_rules: Option<Vec<LintRule>>,
-    effective_rules: Option<Vec<LintRule>>,
-    effective_set: Option<HashSet<LintRule>>,
+    selected_rules: Option<Vec<LintRule>>,
+    selected_set: Option<HashSet<LintRule>>,
 }
 
 impl Default for RunPolicy {
     fn default() -> Self {
         Self {
             mode: CliMode::Normal,
-            requested_rules: None,
-            effective_rules: None,
-            effective_set: None,
+            selected_rules: None,
+            selected_set: None,
         }
     }
 }
@@ -75,47 +70,38 @@ impl RunPolicy {
             }
         }
 
-        let requested_rules = ALL_RULES
-            .iter()
-            .copied()
-            .filter(|rule| requested_set.contains(rule))
-            .collect();
-        let effective_rules: Vec<_> = ACTIVE_RULES
+        let selected_rules: Vec<_> = ALL_RULES
             .iter()
             .copied()
             .filter(|rule| requested_set.contains(rule))
             .collect();
         Ok(Self {
             mode,
-            requested_rules: Some(requested_rules),
-            effective_set: Some(effective_rules.iter().copied().collect()),
-            effective_rules: Some(effective_rules),
+            selected_set: Some(selected_rules.iter().copied().collect()),
+            selected_rules: Some(selected_rules),
         })
     }
 
     pub fn selects(&self, rule: LintRule) -> bool {
-        self.effective_set
+        self.selected_set
             .as_ref()
             .is_none_or(|selected| selected.contains(&rule))
     }
 
-    pub fn effective_rules(&self) -> &[LintRule] {
-        self.effective_rules.as_deref().unwrap_or(&ACTIVE_RULES)
+    pub fn selected_rules(&self) -> &[LintRule] {
+        self.selected_rules.as_deref().unwrap_or(ALL_RULES)
     }
 
-    /// Canonical identities explicitly requested by `--only`, including
-    /// accepted retired identities. This view is for user-facing reporting;
-    /// dispatch, severity, accounting, and autofix use `effective_rules`.
-    pub fn requested_rules(&self) -> Option<&[LintRule]> {
-        self.requested_rules.as_deref()
+    pub fn focused_rules(&self) -> Option<&[LintRule]> {
+        self.selected_rules.as_deref()
     }
 
     pub fn is_focused(&self) -> bool {
-        self.requested_rules.is_some()
+        self.selected_rules.is_some()
     }
 
     pub fn registry_rank(&self, rule: LintRule) -> Option<usize> {
-        self.effective_rules
+        self.selected_rules
             .as_ref()?
             .iter()
             .position(|selected| *selected == rule)
@@ -595,7 +581,7 @@ impl LintConfig {
                 }
                 // Promote default-warning rules to error (except too-long
                 // and already-suppressed).
-                for r in policy.effective_rules() {
+                for r in policy.selected_rules() {
                     if r.default_severity() == DefaultSeverity::Warning
                         && !r.is_too_long()
                         && !self.suppress.contains(r)
@@ -608,7 +594,7 @@ impl LintConfig {
                 self.suppress.clear();
                 self.warn.clear();
                 self.error.clear();
-                for r in policy.effective_rules() {
+                for r in policy.selected_rules() {
                     self.error.insert(*r);
                 }
                 self.overrides_enabled = false;
@@ -1035,39 +1021,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            policy.effective_rules(),
+            policy.selected_rules(),
             &[LintRule::AgentMaxturnsInvalid, LintRule::PromptNegativeOnly]
         );
         assert_eq!(
-            policy.requested_rules(),
+            policy.focused_rules(),
             Some(&[LintRule::AgentMaxturnsInvalid, LintRule::PromptNegativeOnly,][..])
         );
         assert!(policy.selects(LintRule::PromptNegativeOnly));
         assert!(!policy.selects(LintRule::PluginJsonMissing));
-    }
-
-    #[test]
-    fn focused_policy_preserves_retired_requests_but_keeps_them_inert() {
-        let policy = RunPolicy::resolve(
-            CliMode::All,
-            &["S045,S040,O005,S045,style-name-long".to_string()],
-        )
-        .unwrap();
-
-        assert_eq!(
-            policy.requested_rules(),
-            Some(
-                &[
-                    LintRule::ToolsUnknown,
-                    LintRule::ToolsListSyntax,
-                    LintRule::OutputStyleNameTooLong,
-                ][..]
-            )
-        );
-        assert_eq!(policy.effective_rules(), &[LintRule::ToolsUnknown]);
-        assert!(policy.selects(LintRule::ToolsUnknown));
-        assert!(!policy.selects(LintRule::ToolsListSyntax));
-        assert!(!policy.selects(LintRule::OutputStyleNameTooLong));
     }
 
     #[test]
@@ -1361,23 +1323,6 @@ suppress = ["S033"]
             let err = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
             assert!(err.contains("unknown rule"), "{identifier}: {err}");
             assert!(err.contains(identifier), "{identifier}: {err}");
-        }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn soft_retired_rules_stay_valid_config_identifiers() {
-        // S042/S045/S049/O005 are soft-retired: they never fire, but their
-        // registry identifiers keep parsing so existing configuration loads.
-        let tmp = tempfile::tempdir().unwrap();
-        for identifier in SOFT_RETIRED_IDENTIFIERS {
-            std::fs::write(
-                tmp.path().join("agent-lint.toml"),
-                format!("[lint]\nsuppress = [\"{identifier}\"]\n"),
-            )
-            .unwrap();
-            LintConfig::load(tmp.path().to_str().unwrap())
-                .unwrap_or_else(|err| panic!("{identifier} must stay accepted: {err}"));
         }
     }
 
@@ -2221,20 +2166,6 @@ root-max-lines = 10
     }
 
     #[test]
-    fn apply_pedantic_leaves_suppressed_alone() {
-        let mut config = LintConfig {
-            suppress: HashSet::new(),
-            error: HashSet::new(),
-            warn: HashSet::new(),
-            exclude: vec![],
-            ..LintConfig::default()
-        };
-        config.apply_cli_mode(CliMode::Pedantic);
-        // NameNotGerund is default-suppressed, should not be promoted.
-        assert!(!config.error.contains(&LintRule::NameNotGerund));
-    }
-
-    #[test]
     fn apply_all_enables_everything() {
         let mut config = LintConfig {
             suppress: HashSet::from([LintRule::PluginJsonMissing]),
@@ -2246,7 +2177,7 @@ root-max-lines = 10
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 297);
+        assert_eq!(config.error.len(), ALL_RULES.len());
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }

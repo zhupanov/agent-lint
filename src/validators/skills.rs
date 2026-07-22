@@ -868,6 +868,16 @@ mod tests {
         // Missing SKILL.md + no skills found = 2 errors
         assert!(diag.error_count() >= 1);
         assert!(diag.errors().iter().any(|e| e.contains("missing SKILL.md")));
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::SkillMdMissing)
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::NoExportedSkills)
+        );
     }
 
     #[test]

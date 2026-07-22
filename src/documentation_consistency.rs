@@ -1,6 +1,7 @@
-use crate::rules::ACTIVE_RULES;
+use crate::rules::ALL_RULES;
+use crate::rules::RETIRED_IDENTIFIERS;
 use regex::Regex;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 const PACKAGE_MANIFEST: &str = include_str!("../package.json");
@@ -57,7 +58,7 @@ fn matching_manifest_version(cargo: &str, package: &str) -> Result<String, Strin
 
 fn registry_prefix_counts() -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
-    for rule in &*ACTIVE_RULES {
+    for rule in ALL_RULES {
         let prefix = rule
             .code()
             .trim_end_matches(|character: char| character.is_ascii_digit())
@@ -132,16 +133,150 @@ fn validate_rule_summaries(readme: &str, rules_documentation: &str) -> Result<()
         ("docs/rules.md", rules_documentation),
     ] {
         let (total, categories) = documented_rule_summary(document, path)?;
-        if total != ACTIVE_RULES.len() || categories != registry.len() {
+        if total != ALL_RULES.len() || categories != registry.len() {
             return Err(format!(
                 "{path} documents {total} rules in {categories} categories; registry has {} rules in {} categories",
-                ACTIVE_RULES.len(),
+                ALL_RULES.len(),
                 registry.len()
             ));
         }
     }
 
     Ok(())
+}
+
+fn validate_autofix_documentation(rules_documentation: &str) -> Result<(), String> {
+    let summary = Regex::new(r"Auto-fixable rules \(([0-9]+) of ([0-9]+)\)")
+        .expect("autofix summary regex is valid");
+    let captures = summary
+        .captures(rules_documentation)
+        .ok_or_else(|| "docs/rules.md is missing the autofix summary".to_owned())?;
+    let documented_fixable: usize = captures[1]
+        .parse()
+        .map_err(|_| "docs/rules.md has an invalid autofix count".to_owned())?;
+    let documented_total: usize = captures[2]
+        .parse()
+        .map_err(|_| "docs/rules.md has an invalid autofix denominator".to_owned())?;
+    let live_fixable: BTreeSet<_> = ALL_RULES
+        .iter()
+        .filter(|rule| rule.is_autofixable())
+        .map(|rule| rule.code())
+        .collect();
+    if documented_fixable != live_fixable.len() || documented_total != ALL_RULES.len() {
+        return Err(format!(
+            "docs/rules.md documents {documented_fixable} autofixable rules of {documented_total}; registry has {} of {}",
+            live_fixable.len(),
+            ALL_RULES.len()
+        ));
+    }
+
+    let mut in_table = false;
+    let mut documented_codes = BTreeSet::new();
+    for line in rules_documentation.lines() {
+        if line == "| Rule | Code | Fix |" {
+            in_table = true;
+            continue;
+        }
+        if !in_table || line.starts_with("|---") {
+            continue;
+        }
+        if !line.starts_with('|') {
+            break;
+        }
+        let cells: Vec<_> = line.trim_matches('|').split('|').map(str::trim).collect();
+        if cells.len() != 3 {
+            return Err(format!("invalid autofix documentation row: {line}"));
+        }
+        if !documented_codes.insert(cells[1]) {
+            return Err(format!("duplicate autofix documentation for {}", cells[1]));
+        }
+    }
+    if documented_codes != live_fixable {
+        return Err(format!(
+            "documented autofix codes {documented_codes:?} differ from registry codes {live_fixable:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_no_retired_rule_references(documents: &[(String, String)]) -> Result<(), String> {
+    fn contains_identifier(document: &str, identifier: &str) -> bool {
+        let bytes = document.as_bytes();
+        document.match_indices(identifier).any(|(start, matched)| {
+            let end = start + matched.len();
+            let is_identifier_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'-';
+            let starts_at_boundary = start == 0 || !is_identifier_byte(bytes[start - 1]);
+            let ends_at_boundary = end == bytes.len() || !is_identifier_byte(bytes[end]);
+            starts_at_boundary && ends_at_boundary
+        })
+    }
+
+    for (path, document) in documents {
+        for identifier in RETIRED_IDENTIFIERS {
+            if contains_identifier(document, identifier) {
+                return Err(format!(
+                    "{path} references retired rule identifier {identifier}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn current_documentation_files() -> Vec<(String, String)> {
+    fn visit(
+        directory: &std::path::Path,
+        root: &std::path::Path,
+        files: &mut Vec<(String, String)>,
+    ) {
+        for entry in std::fs::read_dir(directory).expect("documentation directory is readable") {
+            let entry = entry.expect("documentation entry is readable");
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, root, files);
+            } else if path.extension().is_some_and(|extension| extension == "md") {
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("documentation path is beneath repository root")
+                    .to_string_lossy()
+                    .into_owned();
+                if relative != "CHANGELOG.md" {
+                    let contents = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+                        panic!("cannot read documentation {relative}: {error}")
+                    });
+                    files.push((relative, contents));
+                }
+            }
+        }
+    }
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(root).expect("repository root is readable") {
+        let entry = entry.expect("repository root entry is readable");
+        let path = entry.path();
+        if path.is_file() && path.extension().is_some_and(|extension| extension == "md") {
+            let name = path
+                .file_name()
+                .expect("root documentation has a name")
+                .to_string_lossy()
+                .into_owned();
+            if name != "CHANGELOG.md" {
+                files.push((
+                    name,
+                    std::fs::read_to_string(&path).expect("root documentation is readable"),
+                ));
+            }
+        }
+    }
+    visit(&root.join("docs"), root, &mut files);
+    let proposal = root.join("PROPOSED_AGNIX_CHANGES.txt");
+    files.push((
+        "PROPOSED_AGNIX_CHANGES.txt".to_owned(),
+        std::fs::read_to_string(proposal).expect("proposal document is readable"),
+    ));
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
 }
 
 fn validate_release_examples(
@@ -208,6 +343,10 @@ fn package_version_mismatch_fixture_is_rejected() {
 fn documented_rule_summaries_match_registry() {
     validate_rule_summaries(README, RULES_DOCUMENTATION)
         .expect("public rule summaries must be derived from the registry");
+    validate_autofix_documentation(RULES_DOCUMENTATION)
+        .expect("autofix documentation must match live rule metadata");
+    validate_no_retired_rule_references(&current_documentation_files())
+        .expect("current rule documentation must not reference retired identities");
 }
 
 #[test]

@@ -11,11 +11,14 @@ specification, not a substitute for those checks.
 ### I-Rule-1: Every diagnostic has one canonical rule identity
 
 Every emitted lint diagnostic is associated with exactly one `LintRule`.
-Every `LintRule` has a unique code and unique name, a compiled default
-severity, and an entry in `ALL_RULES`. Code and name lookup round-trips to the
-same variant. Validators never invent ad hoc diagnostic identifiers.
+Every `LintRule` is current, has a reachable production validator, and has a
+unique code and unique name, a compiled default severity, and an entry in the
+sole live registry, `ALL_RULES`. Code and name lookup round-trips to the same
+variant, and no retired or renamed identifier resolves. Validators never
+invent ad hoc diagnostic identifiers.
 
-Mechanical backing: exhaustive mappings and the registry tests in `rules.rs`.
+Mechanical backing: exhaustive mappings and registry, production-owner,
+positive-contract, canonical-lookup, and documentation tests.
 
 ### I-Diag-1: Validators report; the collector decides disposition
 
@@ -90,22 +93,22 @@ Mechanical backing: deny-unknown deserialization and validation in
 
 ### I-Platform-1: Detection and activation are separate decisions
 
-`PlatformDetection` records observed repository surfaces. `PlatformOverrides`
+`DetectedSurfaces` records observed repository surfaces. `PlatformOverrides`
 may explicitly enable or disable a supported platform. After configuration is
-loaded, the `ActivePlatforms` value used for validation is resolved from both
+loaded, the `ValidationTargets` value used for validation is resolved from both
 inputs and passed unchanged to central validator dispatch. A validator does not
 independently override its platform's activation.
 
-Mechanical backing: `PlatformDetection::discover`,
-`PlatformDetection::activate`, and `run_all_with_platforms`.
+Mechanical backing: `DetectedSurfaces::discover`,
+`DetectedSurfaces::resolve`, and `run_all_with_targets`.
 
 ## Validation pipeline
 
 ### I-Dispatch-1: Mode and platform scope are owned by central dispatch
 
-Production validators are entered through `run_all_with_platforms`. Basic and
+Production validators are entered through `run_all_with_targets`. Basic and
 plugin scope is selected from the run's `LintContext`; Cursor and Codex scope
-is selected from `ActivePlatforms`. Domain validators do not call peer domains
+is selected from `ValidationTargets`. Domain validators do not call peer domains
 to bypass those decisions.
 
 Mechanical backing: the dispatch integration tests in `validators/mod.rs`.

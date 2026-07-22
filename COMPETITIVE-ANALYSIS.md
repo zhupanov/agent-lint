@@ -75,7 +75,7 @@ The 30 repos cluster into these sub-niches:
 
 5. **GitHub Actions integration exists in a few tools** (agent-lint, Pulser, Skills Check CI) but the majority of competitors do not ship published Actions.
 
-6. **SKILL.md linting is an active sub-niche** with 5+ dedicated tools — agent-lint itself has 57 dedicated SKILL.md rules (S001-S057).
+6. **SKILL.md linting is an active sub-niche** with 5+ dedicated tools — agent-lint itself has 68 dedicated SKILL.md rules.
 
 7. **Semantic/grounding validation is partially addressed** — agent-lint (dead scripts, path validation), agents-lint, and ctxlint cross-reference context files against the live codebase, but most tools remain purely structural.
 

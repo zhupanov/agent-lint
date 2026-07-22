@@ -2,7 +2,7 @@
   "class": "broken",
   "repository": "codex-plugin-broken",
   "covers": ["codex-plugin", "codex", "json", "normal"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CX046,CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX058,CX059,CX063", "."] },
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX059,CX063", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",
   "expected_active_platforms": ["claude", "codex"],
