@@ -90,10 +90,10 @@ rules.
 
 ## `--list-scripts`
 
-Outputs discovered script paths, one per line. It includes `.sh`, `.py`,
-`.js`, `.mjs`, `.inc.bash`, and extensionless files in the configured script
-directories. With an explicit inventory, it preserves the existing shell-only
-listing contract; choose a downstream tool appropriate for each path.
+Outputs discovered script paths, one per line. It includes `.sh`, `.bash`,
+`.inc.bash`, `.awk`, `.py`, `.js`, `.mjs`, and extensionless files in the
+configured script directories. The same matrix applies to an explicit
+inventory; choose a downstream tool appropriate for each path.
 For shell-only repositories it remains useful for piping to external tools:
 
 ```bash
@@ -103,10 +103,9 @@ agent-lint --list-scripts . | xargs -r shellcheck
 The wrapper script `scripts/shellcheck-scripts.sh` automates this.
 
 When `[lint].script-inventory` is configured, this flag prints its validated,
-sorted `.sh` and `.inc.bash` entries; standalone `.awk` entries remain part of
-G011's scope but are not sent to shell-oriented consumers. Pre-commit runs the
-linter without filenames, so G009-G011 deterministically inspect the complete
-configured inventory rather than only the files staged in an invocation.
+sorted entries. Pre-commit runs the linter without filenames, so G009-G011
+deterministically inspect the complete configured inventory rather than only
+the files staged in an invocation.
 
 ## `--closure-report`
 

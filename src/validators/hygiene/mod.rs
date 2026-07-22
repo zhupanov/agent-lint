@@ -884,6 +884,245 @@ mod tests {
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn g002_accepts_directories_and_reports_source_locations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts/nested").unwrap();
+        std::fs::create_dir_all("skills/example").unwrap();
+        std::fs::write(
+            "skills/example/SKILL.md",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1);
+        let finding = &diag.diagnostics()[0];
+        assert_eq!(
+            finding.location,
+            Some(crate::diagnostic::SourceSpan::line(2))
+        );
+        assert_eq!(
+            finding.evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn g002_keeps_distinct_escaping_references() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/example").unwrap();
+        std::fs::write(
+            "skills/example/SKILL.md",
+            "Run ${CLAUDE_PLUGIN_ROOT}/../first.sh\nRun ${CLAUDE_PLUGIN_ROOT}/../../second.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 2);
+        assert_eq!(
+            diag.diagnostics()[0].location,
+            Some(crate::diagnostic::SourceSpan::line(1))
+        );
+        assert_eq!(
+            diag.diagnostics()[1].location,
+            Some(crate::diagnostic::SourceSpan::line(2))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn g002_expands_supported_globs_and_skips_unsupported_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/example").unwrap();
+        std::fs::write("scripts/a.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write("scripts/b.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/example/SKILL.md",
+            "Run bash ${CLAUDE_PLUGIN_ROOT}/scripts/*.sh\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/nope*.sh\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/[ab].sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(
+            diag.diagnostics()[0].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/nope*.sh")
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "matched glob invocation keeps every match live"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn g003_checks_each_direct_glob_match_and_env_prefixed_invocation() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/example").unwrap();
+        for path in ["scripts/a.sh", "scripts/b.sh", "scripts/c.sh"] {
+            std::fs::write(path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        std::fs::write(
+            "skills/example/SKILL.md",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/*.sh\nRun FOO=1 ${CLAUDE_PLUGIN_ROOT}/scripts/c.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_executability(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn yaml_only_treats_run_and_block_scalar_lines_as_commands() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all(".github/workflows").unwrap();
+        for path in ["scripts/run.sh", "scripts/block.sh"] {
+            std::fs::write(path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        std::fs::write(
+            ".github/workflows/ci.yml",
+            "path: ${CLAUDE_PLUGIN_ROOT}/scripts/artifact.sh\nwith: ${CLAUDE_PLUGIN_ROOT}/scripts/also-artifact.sh\nrun: ${CLAUDE_PLUGIN_ROOT}/scripts/run.sh\nrun: |\n  ${CLAUDE_PLUGIN_ROOT}/scripts/block.sh\n",
+        )
+        .unwrap();
+
+        let mut references = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut references, &crate::config::ExcludeSet::default());
+        assert_eq!(references.error_count(), 0);
+
+        let mut executable = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_executability(&mut executable, &crate::config::ExcludeSet::default());
+        assert_eq!(executable.error_count(), 2);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn commands_are_script_reference_surfaces_in_public_and_private_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("commands").unwrap();
+        std::fs::create_dir_all(".claude/commands").unwrap();
+        std::fs::write("scripts/live.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write("commands/deploy.md", "Run ${CLAUDE_PLUGIN_ROOT}/scripts/live.sh\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh\n").unwrap();
+        std::fs::write(
+            ".claude/commands/private.md",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/private-missing.sh\n",
+        )
+        .unwrap();
+
+        let mut plugin = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut plugin, &crate::config::ExcludeSet::default());
+        assert_eq!(plugin.error_count(), 2);
+        assert!(
+            plugin
+                .diagnostics()
+                .iter()
+                .any(|finding| finding.subject_path.as_deref()
+                    == Some(std::path::Path::new("commands/deploy.md")))
+        );
+
+        let mut private = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_private_script_references(&mut private, &crate::config::ExcludeSet::default());
+        assert_eq!(private.error_count(), 1);
+        assert_eq!(
+            private.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new(".claude/commands/private.md"))
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(dead.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn permission_rule_forms_mark_scripts_live() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all(".claude").unwrap();
+        for path in [
+            "scripts/wildcard.sh",
+            "scripts/argument.sh",
+            "scripts/bare.sh",
+        ] {
+            std::fs::write(path, "#!/bin/sh\n").unwrap();
+        }
+        std::fs::write(
+            ".claude/settings.json",
+            r#"{"permissions":{"allow":["Bash(scripts/wildcard.sh:*)","Bash(scripts/argument.sh --flag)","scripts/bare.sh"],"deny":["Bash(scripts/denied.sh:*)"]}}"#,
+        )
+        .unwrap();
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn collect_script_paths_uses_the_shared_script_kind_matrix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        for path in [
+            "shell.sh",
+            "shell.bash",
+            "library.inc.bash",
+            "rules.awk",
+            "tool.py",
+            "tool.js",
+            "tool.mjs",
+            "extensionless",
+            "readme.txt",
+        ] {
+            std::fs::write(format!("scripts/{path}"), "content\n").unwrap();
+        }
+        let paths = collect_script_paths(LintMode::Plugin, &crate::config::ExcludeSet::default());
+        assert_eq!(paths.len(), 8);
+        assert!(paths.iter().any(|path| path.ends_with("shell.bash")));
+        assert!(paths.iter().any(|path| path.ends_with("library.inc.bash")));
+        assert!(paths.iter().any(|path| path.ends_with("rules.awk")));
+        assert!(!paths.iter().any(|path| path.ends_with("readme.txt")));
+    }
+
     // expand_script_dirs tests
     #[test]
     #[serial_test::serial]

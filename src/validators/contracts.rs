@@ -9,6 +9,7 @@ use crate::prompt_budget::{
     INLINE_CODE, MARKDOWN_LINK, normalize_repo_relative, resolve_repo_reference,
 };
 use crate::rules::LintRule;
+use crate::script_paths::{ScriptKind, script_kind};
 use crate::script_paths::{ScriptReference, ScriptReferenceBase, extract_script_token_references};
 use crate::traversal;
 use crate::validators::common::{
@@ -1460,24 +1461,6 @@ struct ScriptScope {
     ignore_exclude: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ScriptKind {
-    Shell,
-    Awk,
-    Other,
-}
-
-fn script_kind(path: &Path) -> ScriptKind {
-    let value = path.to_string_lossy();
-    if value.ends_with(".sh") || value.ends_with(".inc.bash") {
-        ScriptKind::Shell
-    } else if value.ends_with(".awk") {
-        ScriptKind::Awk
-    } else {
-        ScriptKind::Other
-    }
-}
-
 fn conventionally_scoped_scripts(include_public: bool) -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from(".claude/skills")];
     if include_public {
@@ -1490,11 +1473,11 @@ fn conventionally_scoped_scripts(include_public: bool) -> Vec<PathBuf> {
         }
         for entry in traversal::recursive_files(&root, Path::new("."), None).entries {
             let path = entry.path;
+            let kind = script_kind(&path);
             if !path.is_symlink()
-                && (matches!(script_kind(&path), ScriptKind::Shell | ScriptKind::Awk)
-                    || path.extension().and_then(|value| value.to_str()) == Some("py"))
+                && kind.is_some()
                 && (path.components().any(|part| part.as_os_str() == "scripts")
-                    || script_kind(&path) == ScriptKind::Awk)
+                    || kind == Some(ScriptKind::Awk))
             {
                 paths.insert(path);
             }
@@ -1713,7 +1696,7 @@ fn validate_script_contracts(
         let Some(content) = content else {
             continue;
         };
-        let kind = script_kind(&path);
+        let kind = script_kind(&path).unwrap_or(ScriptKind::Other);
         let mut heredoc: Option<HeredocState> = None;
         let mut continuation = String::new();
         let mut awk_single_body = false;

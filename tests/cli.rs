@@ -853,6 +853,40 @@ fn format_conflicts_with_commands_that_own_stdout() {
 }
 
 #[test]
+fn list_scripts_uses_the_shared_script_kind_matrix() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let plugin = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+    std::fs::write(
+        plugin,
+        r#"{"name":"script-list","version":"1.0.0","description":"Fixture"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+    for path in [
+        "shell.sh",
+        "shell.bash",
+        "library.inc.bash",
+        "rules.awk",
+        "tool.py",
+        "tool.js",
+        "tool.mjs",
+        "extensionless",
+        "readme.txt",
+    ] {
+        std::fs::write(tmp.path().join("scripts").join(path), "fixture\n").unwrap();
+    }
+
+    let output = run_in(tmp.path(), &["--list-scripts", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "scripts/extensionless\nscripts/library.inc.bash\nscripts/rules.awk\nscripts/shell.bash\nscripts/shell.sh\nscripts/tool.js\nscripts/tool.mjs\nscripts/tool.py\n"
+    );
+}
+
+#[test]
 fn json_clean_run_is_schema_valid_and_deterministic() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

@@ -707,7 +707,7 @@ They run in both Basic and Plugin modes.
 | G011 | `awk-regex-nonascii` | Dynamic awk regex contains non-ASCII text with implementation-dependent behavior | Always | error |
 | G012 | `hardcoded-machine-path` | `SKILL.md` uses a machine-specific or ambiguous runtime path | Plugin | warn |
 
-G002 resolves `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD` forms lexically within the repository. Escaping `..` paths are unresolvable; symlink targets are intentionally not audited. G003 is Unix-only and applies only when a regular file is invoked directly; interpreter-launched and sourced files do not require an execute bit. G004 is a warning because static reachability is incomplete; use the existing reason-bearing per-file suppression for intentional inventory entries.
+G002 resolves `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD` forms lexically within the repository. Escaping `..` paths are unresolvable; existing directories are valid references, while `*` globs expand safely within the repository and `?`/`[` patterns are ignored. Workflow YAML scans `run` values and block-scalar continuation lines, not descriptive keyed values. G003 is Unix-only and applies only when a regular file is invoked directly; interpreter-launched and sourced files do not require an execute bit. G004 treats supported command surfaces and allowed Claude permission rules as reachability, but not comments, prose, self-references, directories, or denied permissions. G004 is a warning because static reachability is incomplete; use the existing reason-bearing per-file suppression for intentional inventory entries.
 
 G005 accepts an exact-case, regular, non-symlink `SECURITY.md` in the
 repository root, `.github/`, or `docs/`, following GitHub's supported
@@ -718,12 +718,14 @@ satisfy the rule. An organization default served from a public `.github`
 repository cannot be observed locally, so G005 stays a warning and normal
 suppression is the escape hatch for that inherited policy.
 
-G009-G011 use conventional script discovery unless `[lint].script-inventory`
-is configured. An explicit inventory supports `.sh`, `.inc.bash`, and `.awk`
-files, remains authoritative when global exclusions match an entry, and is
-scanned in deterministic order on every run. G010 and G011 are hard errors by
-default; listing `error = ["G010", "G011"]` explicitly is also supported when a
-repository wants its portability policy visible in configuration.
+G008-G011 use conventional script discovery unless `[lint].script-inventory`
+is configured. Script discovery and the inventory use one matrix: `.sh`,
+`.bash`, `.inc.bash`, `.awk`, `.py`, `.js`, `.mjs`, and extensionless files.
+An explicit inventory remains authoritative when global exclusions match an
+entry and is scanned in deterministic order on every run. G010 and G011 are
+hard errors by default; listing `error = ["G010", "G011"]` explicitly is also
+supported when a repository wants its portability policy visible in
+configuration.
 
 G001 applies only when a `$PWD/` or `${PWD}/` reference resolves to an existing
 bundled plugin component (`scripts`, `skills`, `agents`, `commands`, `hooks`,
