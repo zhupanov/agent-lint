@@ -24,6 +24,8 @@ mod rules;
 mod script_paths;
 mod sensitive;
 #[cfg(test)]
+mod source_policy;
+#[cfg(test)]
 mod test_helpers;
 mod traversal;
 mod unfinished_work;

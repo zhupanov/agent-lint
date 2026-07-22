@@ -23,5 +23,7 @@ strum_macros = "0.27"
 comrak = { version = "0.41", default-features = false }
 
 [dev-dependencies]
+proc-macro2 = { version = "1", features = ["span-locations"] }
+syn = { version = "2", features = ["full", "visit"] }
 tempfile = "3"
 serial_test = "3"

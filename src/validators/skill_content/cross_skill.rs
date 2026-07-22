@@ -328,7 +328,7 @@ pub(super) fn validate_generic_ref_names(
     }
 }
 
-fn should_descend_skill_reference_directory(entry: &walkdir::DirEntry) -> bool {
+fn should_descend_skill_reference_directory(entry: traversal::DirectoryEntry<'_>) -> bool {
     traversal::should_descend_except_git(entry)
         && !(entry.depth() == 1 && entry.file_name() == "scripts")
 }

@@ -14,6 +14,23 @@ use crate::config::{ExcludeSet, normalize_path};
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
+/// Read-only directory facts exposed to specialized traversal policies.
+///
+/// Keeping the `walkdir` type private makes this module the sole owner of the
+/// recursive-walking implementation.
+#[derive(Clone, Copy)]
+pub struct DirectoryEntry<'a>(&'a DirEntry);
+
+impl<'a> DirectoryEntry<'a> {
+    pub fn depth(self) -> usize {
+        self.0.depth()
+    }
+
+    pub fn file_name(self) -> &'a std::ffi::OsStr {
+        self.0.file_name()
+    }
+}
+
 /// Directory names skipped by every recursive repository walk.
 pub const IGNORED_DIRECTORY_NAMES: &[&str] =
     &[".git", "node_modules", "vendor", "target", "dist", "build"];
@@ -75,7 +92,7 @@ pub fn entries_with_pruning(
     depth: WalkDepth,
     kind: EntryKind,
     exclude: Option<&ExcludeSet>,
-    should_descend: fn(&DirEntry) -> bool,
+    should_descend: fn(DirectoryEntry<'_>) -> bool,
 ) -> WalkReport {
     if !std::fs::symlink_metadata(base).is_ok_and(|metadata| metadata.file_type().is_dir()) {
         return WalkReport::default();
@@ -87,7 +104,10 @@ pub fn entries_with_pruning(
     }
 
     let mut report = WalkReport::default();
-    for entry in walker.into_iter().filter_entry(should_descend) {
+    for entry in walker
+        .into_iter()
+        .filter_entry(|entry| should_descend(DirectoryEntry(entry)))
+    {
         match entry {
             Ok(entry) if includes(&entry, kind) => {
                 let path = entry.into_path();
@@ -139,7 +159,7 @@ pub fn recursive_files_with_pruning(
     base: &Path,
     root: &Path,
     exclude: Option<&ExcludeSet>,
-    should_descend: fn(&DirEntry) -> bool,
+    should_descend: fn(DirectoryEntry<'_>) -> bool,
 ) -> WalkReport {
     entries_with_pruning(
         base,
@@ -191,13 +211,13 @@ fn includes(entry: &DirEntry, kind: EntryKind) -> bool {
 }
 
 /// Skip repository metadata, dependency trees, and conventional build output.
-pub fn should_descend(entry: &DirEntry) -> bool {
+pub fn should_descend(entry: DirectoryEntry<'_>) -> bool {
     !IGNORED_DIRECTORY_NAMES.contains(&entry.file_name().to_string_lossy().as_ref())
 }
 
 /// Skip only Git metadata. Specialized recursive validators use this when
 /// files in packaged directories are part of their ownership contract.
-pub fn should_descend_except_git(entry: &DirEntry) -> bool {
+pub fn should_descend_except_git(entry: DirectoryEntry<'_>) -> bool {
     entry.file_name() != ".git"
 }
 
