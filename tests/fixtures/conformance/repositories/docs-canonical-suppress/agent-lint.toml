@@ -1,0 +1,4 @@
+[[lint.overrides]]
+files = ["CLAUDE.md"]
+suppress = ["D001"]
+reason = "Tracked missing canonical docs reference is intentional for this fixture"
