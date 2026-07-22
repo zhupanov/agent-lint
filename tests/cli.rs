@@ -65,6 +65,96 @@ fn init_git(path: &std::path::Path) {
     );
 }
 
+#[test]
+fn q002_cli_rejects_descriptive_history_but_accepts_documented_imperatives() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let claude = tmp.path().join("CLAUDE.md");
+    std::fs::write(
+        &claude,
+        "Never apologize. Historically, the team preferred JSON instead.\n",
+    )
+    .unwrap();
+
+    let broken = run_in(tmp.path(), &["--format", "json", "--only", "Q002", "."]);
+    assert_eq!(broken.status.code(), Some(1), "stderr: {}", stderr(&broken));
+    let diagnostics = json(&broken)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0]["code"], "Q002");
+    assert_eq!(diagnostics[0]["subject_path"], "CLAUDE.md");
+
+    std::fs::write(
+        &claude,
+        "Never apologize. Serialize responses as JSON instead.\n",
+    )
+    .unwrap();
+    let clean = run_in(tmp.path(), &["--format", "json", "--only", "Q002", "."]);
+    assert!(clean.status.success(), "stderr: {}", stderr(&clean));
+    assert_eq!(json(&clean)["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn i004_cli_requires_a_real_phrase_separator_and_preserves_mode_and_autofix_behavior() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let agents = tmp.path().join("AGENTS.md");
+    std::fs::write(&agents, "Be helpful be accurate.\n").unwrap();
+
+    for arguments in [
+        vec!["--format", "json", "--only", "I004", "."],
+        vec!["--format", "json", "--pedantic", "--only", "I004", "."],
+        vec!["--format", "json", "--all", "--only", "I004", "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            stderr(&output)
+        );
+        assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+    }
+
+    std::fs::write(
+        &agents,
+        "Be helpful, be accurate, and follow best practices.\n",
+    )
+    .unwrap();
+    let before = std::fs::read_to_string(&agents).unwrap();
+    for (arguments, severity, exit_code) in [
+        (
+            vec!["--format", "json", "--only", "I004", "."],
+            "warning",
+            Some(0),
+        ),
+        (
+            vec!["--format", "json", "--pedantic", "--only", "I004", "."],
+            "error",
+            Some(1),
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "I004", "."],
+            "error",
+            Some(1),
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(
+            output.status.code(),
+            exit_code,
+            "{arguments:?}: {}",
+            stderr(&output)
+        );
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        assert_eq!(diagnostics[0]["code"], "I004");
+        assert_eq!(diagnostics[0]["severity"], severity);
+    }
+
+    let autofix = run_in(tmp.path(), &["--autofix", "--only", "I004", "."]);
+    assert!(autofix.status.success(), "stderr: {}", stderr(&autofix));
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), before);
+}
+
 fn write_public_path_hygiene_fixture(root: &std::path::Path) -> std::path::PathBuf {
     init_git(root);
     let plugin = root.join(".claude-plugin/plugin.json");

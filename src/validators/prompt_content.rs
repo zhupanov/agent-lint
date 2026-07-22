@@ -34,6 +34,7 @@ const GENERIC_FILLER_PHRASES: &[&str] = &[
 
 const NEGATIVE_INSTRUCTIONS: &[&str] = &["don't", "do not", "never", "avoid"];
 const POSITIVE_ALTERNATIVES: &[&str] = &["instead", "rather", "prefer"];
+const LEADING_ALTERNATIVE_ADVERBS: &[&str] = &["instead", "rather"];
 const NEGATIVE_WINDOW: usize = 3;
 const README_OVERLAP_THRESHOLD: f64 = 0.4;
 const MIN_SHARED_README_LINES: usize = 3;
@@ -354,35 +355,79 @@ fn first_operative_weak_word(line: &str) -> Option<std::ops::Range<usize>> {
     None
 }
 
-/// Sentence openers that are unambiguously not imperative verbs (articles and
-/// personal pronouns), used only to reject a would-be Q002 alternative whose
-/// clause opens with a descriptive subject. The set is deliberately conservative
-/// so a genuine imperative alternative is never rejected: ambiguous openers
-/// (demonstratives, `one`, `there`) stay operative, and `you` is omitted so
-/// second-person agent instructions remain directives.
-const NON_DIRECTIVE_OPENERS: &[&str] = &[
-    "the", "a", "an", "it", "its", "they", "them", "their", "theirs", "we", "our", "ours", "us",
-    "i", "he", "she", "him", "his", "her", "hers",
+/// Finite imperative vocabulary accepted for a Q002 positive alternative.
+///
+/// Q002 cannot infer imperativity from the absence of a descriptive subject:
+/// that made arbitrary historical prose repair a negative. Keep this list
+/// explicit and documented, while subject-modal and setup-clause forms below
+/// retain their grammar-based recognition.
+const Q002_IMPERATIVE_VERBS: &[&str] = &[
+    "acknowledge",
+    "add",
+    "answer",
+    "apply",
+    "ask",
+    "build",
+    "call",
+    "check",
+    "clarify",
+    "commit",
+    "communicate",
+    "confirm",
+    "correct",
+    "create",
+    "describe",
+    "document",
+    "edit",
+    "ensure",
+    "explain",
+    "fix",
+    "follow",
+    "give",
+    "include",
+    "keep",
+    "list",
+    "make",
+    "offer",
+    "prefer",
+    "preserve",
+    "provide",
+    "record",
+    "report",
+    "respond",
+    "return",
+    "review",
+    "run",
+    "save",
+    "serialize",
+    "set",
+    "state",
+    "summarize",
+    "tell",
+    "update",
+    "use",
+    "verify",
+    "write",
 ];
 
 /// Whether `line` carries an operative positive alternative: a sentence that is
-/// itself an operative directive (an imperative opener or an agent subject plus
-/// modal) and contains `instead`, `rather`, or `prefer` at a word boundary. The
-/// keyword may trail the verb (`Give the answer directly instead.`), so
-/// operativity is judged from the sentence opening, not the keyword position.
+/// itself an operative directive (a known imperative opener, an agent subject
+/// plus modal, or a setup clause followed by either) and contains
+/// `instead`, `rather`, or `prefer` at a word boundary. The keyword may trail
+/// the verb (`Give the answer directly instead.`), so operativity is judged
+/// from the sentence opening, not the keyword position.
 fn line_has_operative_alternative(line: &str) -> bool {
     let lowered = line.to_ascii_lowercase();
     sentence_ranges(&lowered).into_iter().any(|range| {
         let sentence = &lowered[range];
         !phrase_ranges(sentence, POSITIVE_ALTERNATIVES).is_empty()
-            && sentence_opens_as_directive(sentence)
+            && alternative_sentence_is_operative(sentence)
     })
 }
 
-/// Whether a lowercased sentence opens as an operative directive: an agent
-/// subject and modal, or a bare imperative that does not open with a descriptive
-/// subject or a question.
-fn sentence_opens_as_directive(sentence: &str) -> bool {
+/// Whether a lowercased sentence is a positively recognized Q002 alternative.
+/// An optional leading alternative adverb keeps `Instead, state ...` operative.
+fn alternative_sentence_is_operative(sentence: &str) -> bool {
     if sentence.trim_end().ends_with('?') {
         return false;
     }
@@ -390,9 +435,25 @@ fn sentence_opens_as_directive(sentence: &str) -> bool {
     if subject_modal_prefix(core) {
         return true;
     }
+    if let Some((setup, directive)) = core.split_once(',') {
+        if SETUP_CLAUSE_OPENERS
+            .iter()
+            .any(|opener| strip_leading_word(setup.trim(), opener).is_some())
+        {
+            return alternative_sentence_is_operative(directive);
+        }
+    }
+    let core = LEADING_ALTERNATIVE_ADVERBS
+        .iter()
+        .find_map(|alternative| strip_leading_word(core, alternative))
+        .map_or(core, |rest| {
+            rest.trim_start_matches(|character: char| {
+                character.is_whitespace() || matches!(character, ',' | ':')
+            })
+        });
     core.split(|character: char| character.is_whitespace() || character == ',')
         .find(|word| !word.is_empty())
-        .is_some_and(|first| !NON_DIRECTIVE_OPENERS.contains(&first))
+        .is_some_and(|first| Q002_IMPERATIVE_VERBS.contains(&first))
 }
 
 /// The leftmost operative, non-exempt negative in `line`.
@@ -2826,7 +2887,11 @@ mod tests {
             std::env::set_current_dir(tmp.path()).unwrap();
             std::fs::create_dir_all("nested").unwrap();
             std::fs::create_dir_all(".cursor/rules/nested").unwrap();
-            std::fs::write("AGENTS.md", "Never apologize.\n").unwrap();
+            std::fs::write(
+                "AGENTS.md",
+                "Never apologize. Historically, the team preferred JSON instead.\n",
+            )
+            .unwrap();
             std::fs::write("nested/AGENTS.md", "Be helpful when responding.\n").unwrap();
             std::fs::write(
                 ".cursor/rules/example.mdc",
@@ -2917,6 +2982,18 @@ mod tests {
                     .count(),
                 1,
                 "frontmatter text must not be linted"
+            );
+            let agents_q002: Vec<_> = prompt_diagnostics
+                .iter()
+                .filter(|item| {
+                    item.rule == LintRule::PromptNegativeOnly
+                        && item.subject_path.as_deref() == Some(Path::new("AGENTS.md"))
+                })
+                .collect();
+            assert_eq!(agents_q002.len(), 1, "{mode:?}: {agents_q002:?}");
+            assert_eq!(
+                agents_q002[0].evidence.as_deref(),
+                Some("Never apologize. Historically, the team preferred JSON instead.")
             );
         }
     }
@@ -4006,8 +4083,25 @@ Markdown.
         for reported in [
             "Never apologize.\nThe user instead wanted an apology.",
             "Never apologize.\nThe team would prefer a softer tone.",
+            "Never apologize.\nHistorically, the team preferred JSON instead.",
+            "Never apologize.\nPreviously, the team preferred JSON instead.",
+            "Never apologize.\nIn the old workflow, the team preferred JSON instead.",
+            "Never apologize.\nWhat did the team prefer instead?",
         ] {
             assert_eq!(q002_diagnostics(reported).len(), 1, "reported: {reported}");
+        }
+
+        // The vocabulary is intentionally positive and includes ordinary
+        // directive verbs that are not covered by Q006's output-only set.
+        for repaired in [
+            "Never apologize. Serialize responses as JSON instead.",
+            "Never apologize. When responding, serialize responses as JSON instead.",
+            "Never apologize. Preserve the classifier result instead.",
+        ] {
+            assert!(
+                q002_diagnostics(repaired).is_empty(),
+                "repaired: {repaired}"
+            );
         }
     }
 

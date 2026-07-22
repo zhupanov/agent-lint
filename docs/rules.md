@@ -546,7 +546,14 @@ elsewhere in a sentence do not exempt an unrelated style negative. A conjoined
 negative after a safety-exempt one (`Never expose credentials, and never
 apologize.`) is still evaluated. A positive alternative repairs a negative only
 within the same instruction scope, never across a heading, example, fence, or
-blank boundary.
+blank boundary. Its imperative form begins with a documented directive verb:
+`acknowledge`, `add`, `answer`, `apply`, `ask`, `build`, `call`, `check`,
+`clarify`, `commit`, `communicate`, `confirm`, `correct`, `create`, `describe`,
+`document`, `edit`, `ensure`, `explain`, `fix`, `follow`, `give`, `include`,
+`keep`, `list`, `make`, `offer`, `prefer`, `preserve`, `provide`, `record`, `report`,
+`respond`, `return`, `review`, `run`, `save`, `serialize`, `set`, `state`,
+`summarize`, `tell`, `update`, `use`, `verify`, or `write`; current-agent
+modal and allowed setup-clause forms remain operative.
 
 Q003 activates only under a live `critical` or `important` heading whose example
 scope is false; a heading naming an example (`# Important examples`) is an
@@ -694,8 +701,10 @@ ignored as organization, and frontmatter, fenced or indented code, inline code,
 links, quotes, and identifiable examples are excluded. Remaining non-empty
 prose clauses must each be exactly one of `be helpful`, `be accurate`,
 `write good code`, or `follow best practices`, or a conjunction composed only
-of those complete phrases, after case, ASCII punctuation, and whitespace
-normalization. Substring matches are not enough. Empty or whitespace-only
+of those complete phrases. Consecutive phrases require `and` or a comma
+separator (with an optional final `and`) after case, whitespace, and non-comma
+punctuation normalization; unseparated adjacent phrases are not a conjunction.
+Substring matches are not enough. Empty or whitespace-only
 files remain exclusively I001. I004 emits once per file with a span on the
 first qualifying clause, bounded evidence, and suggestion
 `add concrete project commands, paths, or constraints`. It is not auto-fixable.
