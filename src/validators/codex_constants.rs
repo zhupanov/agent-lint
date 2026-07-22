@@ -1,4 +1,5 @@
-//! Codex configuration allowlists, rechecked with codex-cli 0.144.6 on 2026-07-21.
+//! Codex configuration allowlists, rechecked with codex-cli 0.144.6 on 2026-07-22.
+//! Profile-scoped scalar values accept or reject the same contracts as root values.
 //!
 //! Keep these values together so schema updates are a localized maintenance change.
 

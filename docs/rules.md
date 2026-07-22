@@ -748,12 +748,15 @@ aliases are no longer recognized.
 
 These optional rules validate a project-local `.codex/config.toml` in Basic
 and Plugin modes. The allowlists were rechecked with official `codex-cli 0.144.6`
-on 2026-07-21. Nested `apps.*.approvals_reviewer` / `apps._default.approvals_reviewer`
-and `mcp_servers.*.default_tools_approval_mode` were reconfirmed as closed enums
-against the same `codex-cli 0.144.6` (`codex features list` with `CODEX_HOME`)
-during #397. Codex's legacy `approvalMode` and `fullAutoErrorMode` keys are
-not registered as standalone rules because they are absent from the current
-schema and are covered by the unknown-key rules.
+on 2026-07-22. CX005--CX009, CX014, CX016--CX018, CX021--CX024, CX026, and
+CX027 apply the same value contracts inside `[profiles.*]`; profile-scoped
+structured sections are intentionally not traversed. Nested
+`apps.*.approvals_reviewer` / `apps._default.approvals_reviewer` and
+`mcp_servers.*.default_tools_approval_mode` were reconfirmed as closed enums
+against the same `codex-cli 0.144.6` during #397. Codex's legacy
+`approvalMode` and `fullAutoErrorMode` keys are not registered as standalone
+rules because they are absent from the current schema and are covered by the
+unknown-key rules.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|

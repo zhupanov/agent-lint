@@ -216,9 +216,10 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         &[],
     );
     validate_project_docs(diag, root, &source);
-    validate_scalar_enums(diag, root, &source);
+    validate_scalar_enums(diag, root, &source, CONFIG_PATH, &[]);
     validate_types(diag, root, &source);
     validate_nested(diag, root, &source);
+    validate_profile_values(diag, root, &source);
 }
 
 fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
@@ -257,7 +258,13 @@ fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table, source: &
     }
 }
 
-fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
+fn validate_scalar_enums(
+    diag: &mut DiagnosticCollector,
+    root: &Table,
+    source: &SourceMap<'_>,
+    label: &str,
+    parent: &[&str],
+) {
     for (key, allowed, rule) in [
         (
             "approval_policy",
@@ -296,15 +303,13 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &
             && !(key == "approval_policy" && value.is_table())
             && !value.as_str().is_some_and(|value| allowed.contains(&value))
         {
+            let path = config_value_path(parent, key);
             report_config(
                 diag,
                 source,
                 rule,
-                &format!(
-                    "{CONFIG_PATH}: '{key}' must be one of: {}",
-                    allowed.join(", ")
-                ),
-                &[key],
+                &format!("{label}: '{key}' must be one of: {}", allowed.join(", ")),
+                &path,
                 false,
                 value.as_str(),
                 "select one of the supported values",
@@ -314,12 +319,13 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &
     if let Some(value) = root.get("model_reasoning_effort")
         && value.as_str().is_none_or(str::is_empty)
     {
+        let path = config_value_path(parent, "model_reasoning_effort");
         report_config(
             diag,
             source,
             LintRule::CodexReasoningEffort,
-            &format!("{CONFIG_PATH}: 'model_reasoning_effort' must be a non-empty string"),
-            &["model_reasoning_effort"],
+            &format!("{label}: 'model_reasoning_effort' must be a non-empty string"),
+            &path,
             false,
             value.as_str(),
             "use a non-empty string",
@@ -328,12 +334,13 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &
     if let Some(value) = root.get("service_tier")
         && !value.is_str()
     {
+        let path = config_value_path(parent, "service_tier");
         report_config(
             diag,
             source,
             LintRule::CodexServiceTier,
-            &format!("{CONFIG_PATH}: 'service_tier' must be a string"),
-            &["service_tier"],
+            &format!("{label}: 'service_tier' must be a string"),
+            &path,
             false,
             value.as_str(),
             "use a string",
@@ -342,27 +349,64 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &
 }
 
 fn validate_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
+    validate_string_types(diag, root, source, CONFIG_PATH, &[]);
+    validate_profile_selector_type(diag, root, source);
+    validate_table_types(diag, root, source);
+    validate_positive_integer_types(diag, root, source, CONFIG_PATH, &[]);
+}
+
+fn validate_string_types(
+    diag: &mut DiagnosticCollector,
+    root: &Table,
+    source: &SourceMap<'_>,
+    label: &str,
+    parent: &[&str],
+) {
     for (key, rule) in [
         ("model", LintRule::CodexModelType),
         ("model_provider", LintRule::CodexModelProviderType),
         ("file_opener", LintRule::CodexFileOpenerType),
-        ("profile", LintRule::CodexProfileType),
     ] {
         if let Some(value) = root.get(key)
             && !value.is_str()
         {
+            let path = config_value_path(parent, key);
             report_config(
                 diag,
                 source,
                 rule,
-                &format!("{CONFIG_PATH}: '{key}' must be a string"),
-                &[key],
+                &format!("{label}: '{key}' must be a string"),
+                &path,
                 false,
                 value.as_str(),
                 "use a string",
             );
         }
     }
+}
+
+fn validate_profile_selector_type(
+    diag: &mut DiagnosticCollector,
+    root: &Table,
+    source: &SourceMap<'_>,
+) {
+    if let Some(value) = root.get("profile")
+        && !value.is_str()
+    {
+        report_config(
+            diag,
+            source,
+            LintRule::CodexProfileType,
+            &format!("{CONFIG_PATH}: 'profile' must be a string"),
+            &["profile"],
+            false,
+            value.as_str(),
+            "use a string",
+        );
+    }
+}
+
+fn validate_table_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
     for (key, rule) in [
         ("history", LintRule::CodexHistoryType),
         ("tui", LintRule::CodexTuiType),
@@ -383,6 +427,15 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceM
             );
         }
     }
+}
+
+fn validate_positive_integer_types(
+    diag: &mut DiagnosticCollector,
+    root: &Table,
+    source: &SourceMap<'_>,
+    label: &str,
+    parent: &[&str],
+) {
     for (key, rule) in [
         ("model_context_window", LintRule::CodexContextWindow),
         (
@@ -393,17 +446,44 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceM
         if let Some(value) = root.get(key)
             && (!value.is_integer() || value.as_integer().is_none_or(|number| number <= 0))
         {
+            let path = config_value_path(parent, key);
             report_config(
                 diag,
                 source,
                 rule,
-                &format!("{CONFIG_PATH}: '{key}' must be a positive integer"),
-                &[key],
+                &format!("{label}: '{key}' must be a positive integer"),
+                &path,
                 false,
                 value.as_str(),
                 "use a positive integer",
             );
         }
+    }
+}
+
+fn config_value_path<'a>(parent: &[&'a str], key: &'a str) -> Vec<&'a str> {
+    let mut path = parent.to_vec();
+    path.push(key);
+    path
+}
+
+/// Profiles inherit the scalar contracts of root configuration keys, but Codex
+/// does not have a recorded project-local contract for profile-scoped nested
+/// sections. Keep this pass limited to the same scalar, string, and integer
+/// checks as root configuration, and never infer profile names or keys.
+fn validate_profile_values(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
+    let Some(profiles) = root.get("profiles").and_then(Value::as_table) else {
+        return;
+    };
+    for (name, value) in profiles {
+        let Some(profile) = value.as_table() else {
+            continue;
+        };
+        let label = format!("{CONFIG_PATH} [profiles.{name}]");
+        let parent = ["profiles", name.as_str()];
+        validate_scalar_enums(diag, profile, source, &label, &parent);
+        validate_string_types(diag, profile, source, &label, &parent);
+        validate_positive_integer_types(diag, profile, source, &label, &parent);
     }
 }
 
@@ -533,6 +613,7 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table, source
         "shell_environment_policy",
         "sandbox_workspace_write",
         "mcp_servers",
+        "profiles",
     ] {
         if let Some(value) = root.get(key)
             && !value.is_table()
@@ -563,6 +644,22 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table, source
             None,
             "use a TOML table",
         );
+    }
+    if let Some(profiles) = root.get("profiles").and_then(Value::as_table) {
+        for (name, value) in profiles {
+            if !value.is_table() {
+                report_config(
+                    diag,
+                    source,
+                    LintRule::CodexConfigContainerType,
+                    &format!("{CONFIG_PATH} [profiles]: '{name}' must be a TOML table"),
+                    &["profiles", name],
+                    false,
+                    None,
+                    "use a TOML table",
+                );
+            }
+        }
     }
 }
 
@@ -1517,6 +1614,9 @@ mod tests {
             "shell_environment_policy = 'bad'",
             "sandbox_workspace_write = 'bad'",
             "mcp_servers = 'bad'",
+            "profiles = 5",
+            "profiles = []",
+            "[profiles]\ndirect = 'scalar'",
             "[permissions]\nnetwork = 'bad'",
         ] {
             assert_eq!(
@@ -1533,6 +1633,154 @@ mod tests {
                 LintRule::CodexSkillsType
             ]
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_values_reuse_root_contracts_with_profile_locations() {
+        use crate::diagnostic::Severity;
+
+        for (field, rule, severity, message) in [
+            (
+                "approval_policy = 'yolo'",
+                LintRule::CodexApprovalPolicy,
+                Severity::Error,
+                "'approval_policy' must be one of: untrusted, on-request, on-failure, never",
+            ),
+            (
+                "sandbox_mode = 'yolo'",
+                LintRule::CodexSandboxMode,
+                Severity::Error,
+                "'sandbox_mode' must be one of: read-only, workspace-write, danger-full-access",
+            ),
+            (
+                "model_reasoning_effort = ''",
+                LintRule::CodexReasoningEffort,
+                Severity::Error,
+                "'model_reasoning_effort' must be a non-empty string",
+            ),
+            (
+                "model_verbosity = 'extreme'",
+                LintRule::CodexModelVerbosity,
+                Severity::Error,
+                "'model_verbosity' must be one of: low, medium, high",
+            ),
+            (
+                "personality = 'extreme'",
+                LintRule::CodexPersonality,
+                Severity::Error,
+                "'personality' must be one of: none, friendly, pragmatic",
+            ),
+            (
+                "cli_auth_credentials_store = 'plaintext'",
+                LintRule::CodexCliCredentialsStore,
+                Severity::Error,
+                "'cli_auth_credentials_store' must be one of: file, keyring, auto, ephemeral",
+            ),
+            (
+                "mcp_oauth_credentials_store = 'plaintext'",
+                LintRule::CodexMcpCredentialsStore,
+                Severity::Error,
+                "'mcp_oauth_credentials_store' must be one of: file, keyring, auto",
+            ),
+            (
+                "model_reasoning_summary = 'verbose'",
+                LintRule::CodexReasoningSummary,
+                Severity::Error,
+                "'model_reasoning_summary' must be one of: auto, none, concise, detailed",
+            ),
+            (
+                "approvals_reviewer = 'human'",
+                LintRule::CodexApprovalsReviewer,
+                Severity::Error,
+                "'approvals_reviewer' must be one of: user, auto_review, guardian_subagent",
+            ),
+            (
+                "service_tier = false",
+                LintRule::CodexServiceTier,
+                Severity::Error,
+                "'service_tier' must be a string",
+            ),
+            (
+                "model = 5",
+                LintRule::CodexModelType,
+                Severity::Error,
+                "'model' must be a string",
+            ),
+            (
+                "model_provider = 1",
+                LintRule::CodexModelProviderType,
+                Severity::Error,
+                "'model_provider' must be a string",
+            ),
+            (
+                "file_opener = 2",
+                LintRule::CodexFileOpenerType,
+                Severity::Error,
+                "'file_opener' must be a string",
+            ),
+            (
+                "model_context_window = 0",
+                LintRule::CodexContextWindow,
+                Severity::Warning,
+                "'model_context_window' must be a positive integer",
+            ),
+            (
+                "model_auto_compact_token_limit = 0",
+                LintRule::CodexAutoCompactLimit,
+                Severity::Warning,
+                "'model_auto_compact_token_limit' must be a positive integer",
+            ),
+        ] {
+            let diagnostics = with_default_config(&format!("[profiles.risky]\n{field}\n"));
+            assert_eq!(rules(&diagnostics), vec![rule], "{field}");
+            let finding = diagnostics.diagnostics().first().unwrap();
+            assert_eq!(finding.severity, severity, "{field}");
+            assert_eq!(
+                finding.message,
+                format!("{CONFIG_PATH} [profiles.risky]: {message}"),
+                "{field}"
+            );
+            assert_eq!(
+                finding.subject_path.as_deref(),
+                Some(std::path::Path::new(CONFIG_PATH)),
+                "{field}"
+            );
+            assert!(finding.location.is_some(), "{field}: {finding:?}");
+            assert!(finding.evidence.is_some(), "{field}: {finding:?}");
+            assert!(finding.suggestion.is_some(), "{field}: {finding:?}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn valid_and_unchecked_profile_values_do_not_cascade() {
+        let clean = "[profiles.clean]\napproval_policy = 'on-failure'\nsandbox_mode = 'danger-full-access'\nmodel_reasoning_effort = 'future-value'\nmodel_verbosity = 'high'\npersonality = 'friendly'\ncli_auth_credentials_store = 'auto'\nmcp_oauth_credentials_store = 'keyring'\nmodel_reasoning_summary = 'detailed'\napprovals_reviewer = 'user'\nservice_tier = ''\nmodel = 'gpt-5'\nmodel_provider = 'openai'\nfile_opener = 'vscode'\nmodel_context_window = 1\nmodel_auto_compact_token_limit = 1\nchatgpt_base_url = 'x'\nprofile = 5\nhistory = 'not traversed'\n[profiles.empty]\n";
+        assert_eq!(rules(&with_config(clean)), Vec::<LintRule>::new());
+
+        let multiple = with_config(
+            "[profiles.clean]\napproval_policy = 'never'\n[profiles.risky]\nsandbox_mode = 'yolo'\n",
+        );
+        assert_eq!(rules(&multiple), vec![LintRule::CodexSandboxMode]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_diagnostics_are_deterministic_with_root_findings() {
+        let content = "approval_policy = 'yolo'\n[profiles.zulu]\nsandbox_mode = 'bad'\n[profiles.alpha]\nmodel = 5\n";
+        let expected: Vec<_> = with_config(content)
+            .diagnostics()
+            .iter()
+            .map(|finding| (finding.rule, finding.message.clone()))
+            .collect();
+        for _ in 0..3 {
+            let actual: Vec<_> = with_config(content)
+                .diagnostics()
+                .iter()
+                .map(|finding| (finding.rule, finding.message.clone()))
+                .collect();
+            assert_eq!(actual, expected);
+        }
     }
 
     #[test]

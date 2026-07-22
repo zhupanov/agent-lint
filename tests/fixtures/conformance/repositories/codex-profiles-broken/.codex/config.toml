@@ -1,0 +1,4 @@
+[profiles.risky]
+approval_policy = "yolo"
+model = 5
+model_context_window = 0

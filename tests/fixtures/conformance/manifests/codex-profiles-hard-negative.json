@@ -1,0 +1,15 @@
+{
+  "class": "hard-negative",
+  "repository": "codex-profiles-hard-negative",
+  "covers": ["codex", "codex-profiles", "normal", "json", "per-file-suppression", "autofix"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--autofix", "--only", "CX005", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 1,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    { "path": ".codex/config.toml", "contents": "[profiles.risky]\napproval_policy = \"yolo\"\n" }
+  ]
+}

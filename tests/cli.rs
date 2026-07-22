@@ -4848,6 +4848,48 @@ fn cx026_cx030_nested_sites_honor_cli_selection_exclusion_and_autofix() {
 }
 
 #[test]
+fn codex_profile_values_honor_only_suppression_and_noop_autofix() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    let config_path = tmp.path().join(".codex/config.toml");
+    let broken = "[profiles.risky]\napproval_policy = 'yolo'\nmodel_context_window = 0\n";
+    std::fs::write(&config_path, broken).unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "CX005", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+    let finding = &report["diagnostics"][0];
+    assert_eq!(finding["code"], "CX005");
+    assert_eq!(finding["severity"], "error");
+    assert_eq!(finding["subject_path"], ".codex/config.toml");
+    assert!(
+        finding["message"]
+            .as_str()
+            .unwrap()
+            .starts_with(".codex/config.toml [profiles.risky]: 'approval_policy'")
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".codex/config.toml\"]\nsuppress = [\"CX005\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--format", "json", "--only", "CX005", "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert_eq!(json(&suppressed)["counts"]["suppressed"], 1);
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    let _ = run_in(tmp.path(), &["--autofix", "--only", "CX005,CX023", "."]);
+    assert_eq!(std::fs::read_to_string(config_path).unwrap(), broken);
+}
+
+#[test]
 fn cx060_cli_covers_modes_platform_policy_locations_and_autofix() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
