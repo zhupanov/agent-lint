@@ -1,0 +1,17 @@
+{
+  "class": "broken",
+  "repository": "agent-roots-broken",
+  "covers": ["plugin-mode", "normal", "json", "agents-dir-missing", "no-agent-files"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A001,A004", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A001", "name": "agents-dir-missing", "severity": "error", "subject_path": "ghost", "suggestion": "create the declared agent path or remove its plugin.json agents declaration" },
+    { "code": "A004", "name": "no-agent-files", "severity": "error", "subject_path": "agents", "suggestion": "add an agent .md file under this root or remove the empty agents declaration or directory" },
+    { "code": "A004", "name": "no-agent-files", "severity": "error", "subject_path": "empty-root", "suggestion": "add an agent .md file under this root or remove the empty agents declaration or directory" },
+    { "code": "A004", "name": "no-agent-files", "severity": "error", "subject_path": "notes.txt", "suggestion": "add an agent .md file under this root or remove the empty agents declaration or directory" }
+  ],
+  "allowed_additional_diagnostics": []
+}

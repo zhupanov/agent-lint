@@ -538,12 +538,16 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                     }
                     _ => {}
                 }
+                // Marketplace component paths resolve against each entry's own
+                // plugin root (possibly not this repository), so they keep the
+                // lexical-only contract and are never filesystem-probed here.
                 validate_declared_component_paths(
                     plugin,
                     &format!("{f} plugins[{i}]"),
                     val.source(),
                     &[Seg::Key("plugins"), Seg::Index(i)],
                     diag,
+                    false,
                 );
             }
 
@@ -906,19 +910,39 @@ pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_declared_component_paths(val, f, val.source(), &[], diag);
+    validate_declared_component_paths(val, f, val.source(), &[], diag, true);
+}
+
+/// Whether a declaration label names a field whose lexically safe paths feed
+/// the shared recursive discovery collector (`agents`, `outputStyles`).
+/// Discovery refuses any root with a symlinked component or a canonical
+/// repository escape, so a declaration in that filesystem shape is unusable and
+/// M013 owns it; other component fields keep their lexical-only contract.
+fn is_discovery_root_label(label: &str) -> bool {
+    ["agents", "outputStyles"]
+        .iter()
+        .any(|field| label == *field || label.starts_with(&format!("{field}[")))
 }
 
 /// Report M012/M013 for every path-bearing component declaration. The shared
 /// extractor is also used by marketplace validation and discovery consumers.
 /// `path_prefix` locates the declaring object inside `source` (empty for
 /// plugin.json, `plugins[i]` for a marketplace entry).
+///
+/// `probe_discovery_roots` additionally checks the filesystem shape of lexically
+/// safe `agents`/`outputStyles` declarations against the same containment probe
+/// discovery uses, so a symlinked or repository-escaping declaration is
+/// diagnosed here instead of being misreported as missing (A001) or silently
+/// skipped. Only the plugin.json owner sets it: marketplace component paths are
+/// relative to each entry's own plugin root, which may not be this repository,
+/// so probing them against the lint root would be untruthful.
 fn validate_declared_component_paths(
     value: &Value,
     owner: &str,
     source: Option<&str>,
     path_prefix: &[Seg<'_>],
     diag: &mut DiagnosticCollector,
+    probe_discovery_roots: bool,
 ) {
     for path in declared_component_paths(value) {
         // H026 owns hook declarations that normalize to no path. Keep M013
@@ -932,7 +956,32 @@ fn validate_declared_component_paths(
             continue;
         }
         let (rule, requirement) = match classify_component_path(path.raw) {
-            ComponentPathSafety::Safe => continue,
+            ComponentPathSafety::Safe => {
+                if probe_discovery_roots
+                    && is_discovery_root_label(&path.label)
+                    && let Some(probe) = safe_component_path(path.raw)
+                    && crate::repo_path::probe_repo_relative(&probe)
+                        == crate::repo_path::PathProbe::Rejected
+                {
+                    // The declaration is lexically safe but its filesystem
+                    // shape is not: a component is a symlink or the path
+                    // canonically escapes the repository. Discovery never
+                    // follows a symlink (in- or out-of-repository) to decide,
+                    // so the declaration is unusable as declared.
+                    report_component_path_with_suggestion(
+                        diag,
+                        LintRule::ComponentPathUnsafe,
+                        owner,
+                        &path.label,
+                        path.raw,
+                        "must not resolve through a symlink or outside the repository",
+                        "replace the symlinked path with a regular in-repository file or directory",
+                        source,
+                        &extend_path(path_prefix, &path.path),
+                    );
+                }
+                continue;
+            }
             ComponentPathSafety::Absolute => (
                 LintRule::ComponentPathUnsafe,
                 "must be relative, not absolute",
@@ -972,16 +1021,35 @@ fn report_component_path(
     source: Option<&str>,
     path: &[Seg<'_>],
 ) {
+    report_component_path_with_suggestion(
+        diag,
+        rule,
+        owner,
+        label,
+        raw,
+        requirement,
+        "use a plugin-root-relative './' component path",
+        source,
+        path,
+    );
+}
+
+#[allow(clippy::too_many_arguments)] // keeps the rule, display label, and span path explicit at the call site.
+fn report_component_path_with_suggestion(
+    diag: &mut DiagnosticCollector,
+    rule: LintRule,
+    owner: &str,
+    label: &str,
+    raw: &str,
+    requirement: &str,
+    suggestion: &str,
+    source: Option<&str>,
+    path: &[Seg<'_>],
+) {
     diag.report_with(
         rule,
         &format!("{owner} {label} path '{raw}' {requirement}"),
-        metadata_at(
-            source,
-            path,
-            label,
-            "use a plugin-root-relative './' component path",
-            false,
-        ),
+        metadata_at(source, path, label, suggestion, false),
     );
 }
 
@@ -3058,6 +3126,217 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_component_paths(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
+    }
+
+    // ── #556 (#530): filesystem shape of discovery-root declarations ──
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn symlinked_agents_declaration_reports_m013_with_exact_metadata() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("secret")).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        symlink(
+            outside.path().join("secret"),
+            tmp.path().join("custom-agents"),
+        )
+        .unwrap();
+
+        let source = r#"{"name":"audit-symlink","version":"1.0.0","agents":"./custom-agents"}"#;
+        let val: Value = serde_json::from_str(source).unwrap();
+        let ctx = make_ctx(
+            ManifestState::parsed_with_source(val, source.to_string()),
+            ManifestState::Missing,
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+
+        let findings = diag.diagnostics();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].rule, LintRule::ComponentPathUnsafe);
+        assert_eq!(
+            findings[0].message,
+            ".claude-plugin/plugin.json agents path './custom-agents' must not resolve through a symlink or outside the repository"
+        );
+        assert_eq!(findings[0].evidence.as_deref(), Some("agents"));
+        assert_eq!(
+            findings[0].suggestion.as_deref(),
+            Some("replace the symlinked path with a regular in-repository file or directory")
+        );
+        assert!(
+            findings[0].location.is_some(),
+            "the declaration's source token span is reported"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn symlinked_ancestor_agents_declaration_reports_m013() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("agents")).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        symlink(outside.path(), tmp.path().join("via")).unwrap();
+
+        let val = json!({"name": "p", "version": "1.0.0", "agents": "./via/agents"});
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert!(
+            diag.errors()[0].contains("must not resolve through a symlink"),
+            "{:?}",
+            diag.errors()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn in_repository_symlinked_declaration_still_reports_m013() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("real-styles").unwrap();
+        // Discovery never follows any symlink, so even an in-repository
+        // symlinked declaration is unusable as declared; deciding otherwise
+        // would require following the link.
+        symlink("real-styles", "linked-styles").unwrap();
+
+        let val = json!({"name": "p", "version": "1.0.0", "outputStyles": ["./linked-styles"]});
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1, "{:?}", diag.errors());
+        assert!(diag.errors()[0].contains("outputStyles[0]"));
+        assert!(diag.errors()[0].contains("must not resolve through a symlink"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn mixed_lexical_and_filesystem_m013_report_in_declaration_order() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("real").unwrap();
+        symlink("real", "linked").unwrap();
+
+        let val = json!({
+            "name": "p",
+            "version": "1.0.0",
+            "agents": ["/abs", "./linked", "./missing-is-fine"],
+        });
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        let messages = diag.errors();
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        assert!(
+            messages[0].contains("agents[0]") && messages[0].contains("must be relative"),
+            "{messages:?}"
+        );
+        assert!(
+            messages[1].contains("agents[1]")
+                && messages[1].contains("must not resolve through a symlink"),
+            "declaration order interleaves lexical and filesystem findings: {messages:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn non_discovery_component_fields_keep_the_lexical_only_contract() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("real").unwrap();
+        symlink("real", "linked").unwrap();
+
+        // `skills`/`commands` declarations do not feed the shared symlink-refusing
+        // discovery collector, so their filesystem shape stays unprobed.
+        let val = json!({
+            "name": "p",
+            "version": "1.0.0",
+            "skills": "./linked",
+            "commands": ["./linked"],
+        });
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0, "{:?}", diag.errors());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn marketplace_component_paths_are_never_filesystem_probed() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("real").unwrap();
+        symlink("real", "linked").unwrap();
+
+        // A marketplace entry's component paths resolve against that entry's own
+        // plugin root, which may not be this repository, so no probe applies.
+        let val = json!({
+            "name": "mp",
+            "owner": {"name": "o"},
+            "plugins": [{"name": "p", "source": "./p", "agents": "./linked"}],
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|finding| finding.message.contains("symlink")),
+            "{:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn missing_and_present_safe_declarations_are_never_m013() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("present-agents").unwrap();
+
+        let val = json!({
+            "name": "p",
+            "version": "1.0.0",
+            "agents": ["./present-agents", "./missing-agents"],
+            "outputStyles": "./missing-styles",
+        });
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "a genuinely missing or safely present declaration stays A-rule/silent territory: {:?}",
+            diag.errors()
+        );
     }
 
     #[test]

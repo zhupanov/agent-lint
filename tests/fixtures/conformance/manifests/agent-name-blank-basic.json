@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "agent-name-blank-basic",
+  "covers": ["basic-mode", "normal", "json", "agent-field-missing", "agent-name-duplicate"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A003,A031", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A003", "name": "agent-field-missing", "severity": "error", "subject_path": ".claude/agents/backend.md" },
+    { "code": "A003", "name": "agent-field-missing", "severity": "error", "subject_path": ".claude/agents/frontend.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

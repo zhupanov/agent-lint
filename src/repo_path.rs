@@ -103,14 +103,16 @@ pub fn resolve_repo_path(source: &Path, raw: &str, base: ResolutionBase) -> Path
     probe_normalized(&normalized)
 }
 
-/// Whether a normalized repository-relative `path` is safe to read from: it has
-/// no symlinked component (final or intermediate) and does not canonically
-/// escape the repository. A path that does not exist is safe — there is simply
-/// nothing to read — so callers can distinguish absence from a containment
-/// violation. Recursive discovery collectors use this to refuse a root that a
-/// symlinked ancestor would otherwise use to pull in outside-repository files.
-pub fn is_repo_contained(path: &Path) -> bool {
-    !matches!(probe_normalized(path), PathProbe::Rejected)
+/// Probe an already-normalized repository-relative path, preserving the full
+/// four-way outcome: a safe file, a safe directory, a genuinely missing path,
+/// or a rejected one (a symlinked component — final or intermediate — or a
+/// canonical repository escape). Recursive discovery collectors use this to
+/// refuse a root that a symlinked ancestor would otherwise use to pull in
+/// outside-repository files, while still distinguishing absence from a
+/// containment violation so a present-but-rejected declaration is never
+/// misreported as nonexistent.
+pub fn probe_repo_relative(path: &Path) -> PathProbe {
+    probe_normalized(path)
 }
 
 fn probe_normalized(normalized: &Path) -> PathProbe {

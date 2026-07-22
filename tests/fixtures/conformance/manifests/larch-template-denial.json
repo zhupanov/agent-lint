@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "larch-template-denial",
+  "covers": ["plugin-mode", "normal", "json", "template-marker-missing"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A005,A006,A007", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A006", "name": "template-marker-missing", "severity": "warning", "subject_path": "agents/alpha.md", "suggestion": "Derived from skills/shared/reviewer-templates.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

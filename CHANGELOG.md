@@ -42,6 +42,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- A001 (`agents-dir-missing`) and A004 (`no-agent-files`) now carry a stable
+  structured `suggestion` in versioned JSON output: create the declared agent
+  path or remove its `plugin.json` declaration (A001), and add an agent `.md`
+  file under the root or remove the empty declaration/directory (A004). No
+  ownership, discovery, ordering, severity, or suppression behavior changed.
+- A001 no longer misreports an existing unsafe symlinked `plugin.json` agent
+  declaration as missing. Discovery now preserves distinct missing,
+  present-safe, and rejected-unsafe root outcomes; a declaration whose path
+  resolves through a symlinked component (even one pointing inside the
+  repository) or canonically escapes the repository is reported by M013
+  (`component-path-unsafe`) with the exact manifest field/index, symlink/
+  containment wording, and a structured suggestion, while A001/A004 and every
+  per-agent rule stay silent for it and no rejected root contributes files or
+  identities to discovery, A030, prompt analysis, or S065. The same filesystem
+  shape check covers `outputStyles` declarations, whose rejected roots were
+  previously skipped silently; marketplace entries keep the lexical-only
+  contract because their paths resolve against each entry's own plugin root.
+- A006 (`template-marker-missing`) no longer accepts open-ended denials or
+  descriptive sentences as live derivation markers. The finite negative-word
+  list is replaced by a deterministic positive grammar — optional Markdown
+  list marker, case-insensitive `Derived from`, whitespace, the exact
+  `skills/shared/reviewer-templates.md` token, and at most one terminal `.` —
+  applied identically to prose lines and complete standalone HTML comments.
+  Rejected prose neither suppresses A006 nor activates A005; benign trailing
+  clauses (for example `… for routing.`) are deliberately no longer accepted,
+  and a bare trailing period now is.
+- A031 (`agent-name-duplicate`) no longer groups whitespace-only quoted agent
+  names: a canonical string whose trimmed value is empty is blank under A003's
+  usable-required-string predicate and declares no identity, so it stays with
+  A003 instead of producing a cascading duplicate-name advisory that echoes
+  invisible whitespace. Nonblank names keep exact, case-sensitive, untrimmed
+  grouping.
 - P010 (`mcp-http-url`) no longer rejects two documented Claude remote URL
   states on the standalone, inline-plugin, and plugin-referenced adapters: an
   explicit exact empty `url` (the documented disabled/not-configured connector
