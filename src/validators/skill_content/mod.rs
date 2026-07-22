@@ -4692,6 +4692,101 @@ suppress = ["S033"]
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_evidence_line_because_no_fire() {
+        // Regression for the leaf-#251 evidence line: the only "context" is the
+        // substring `use` inside *Because*, which must not pass the word-boundary gate.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nBecause the `user_id` column is indexed, lookups stay fast.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("MCP tool reference")),
+            "Should not fire S044 on the 'Because' evidence line, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_substring_context_no_fire() {
+        // Substrings of the vocabulary in ordinary prose must not pass the gate:
+        // *reused* is not *use*, *user* is not *use*, *prune* is not *run*.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nThe `user_id` is reused across requests.\nAsk the user about `retry_count`.\nWe prune `old_entries` nightly.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("MCP tool reference")),
+            "Should not fire S044 on substring-only context lines, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_word_boundary_positives_fire() {
+        // Genuine invocation vocabulary (including inflections and the plural noun)
+        // must still fire once per distinct identifier.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        // "Use `create_issue`" omits "tool" so the `use` branch is exercised alone;
+        // "call"/"Invoke" lines likewise carry no "tool", isolating those branches.
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A skill\n---\nUse `create_issue` to file bugs.\nRun the `sync_data` tool.\ncall `fetch_records` first\nInvoke `update_row` afterwards.\nthese tools: `list_files`\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        for identifier in [
+            "create_issue",
+            "sync_data",
+            "fetch_records",
+            "update_row",
+            "list_files",
+        ] {
+            assert_eq!(
+                diag.errors()
+                    .iter()
+                    .filter(|e| e.contains(identifier) && e.contains("MCP tool reference"))
+                    .count(),
+                1,
+                "Expected exactly one S044 for '{identifier}', got: {:?}",
+                diag.errors()
+            );
+        }
+    }
+
     // ── S048: ref-name-generic ──────────────────────────────────────
 
     #[test]
