@@ -845,7 +845,7 @@ Windows `rd`/`rmdir /s /q` against a drive root, are detected from argv.
 Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn.
 
 P026 reserved names follow Claude Code's documented built-in server list
-(https://code.claude.com/docs/en/mcp, retrieved 2026-07-21): `workspace`,
+([MCP docs](https://code.claude.com/docs/en/mcp), retrieved 2026-07-21): `workspace`,
 `claude-in-chrome`, `computer-use`, `Claude Preview`, and `Claude Browser`
 (exact, case-sensitive). Cursor MCP is unaffected.
 
