@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "g009-g011-dynamic-flow-hard-negative",
+  "covers": ["plugin-mode", "normal", "json", "g009-g011-dynamic-flow"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "G009,G010,G011", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

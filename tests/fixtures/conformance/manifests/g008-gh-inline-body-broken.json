@@ -8,6 +8,7 @@
   "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
+    { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/publish.bash", "suggestion": "use --body-file with a file path or '-' for stdin", "location": { "line": 2 } },
     { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/publish.sh", "suggestion": "use --body-file with a file path or '-' for stdin" },
     { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/publish.sh", "suggestion": "use --body-file with a file path or '-' for stdin" },
     { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/publish.sh", "suggestion": "use --body-file with a file path or '-' for stdin" },

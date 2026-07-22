@@ -1,0 +1,17 @@
+{
+  "class": "broken",
+  "repository": "g009-g011-dynamic-flow-broken",
+  "covers": ["plugin-mode", "normal", "json", "g009-g011-dynamic-flow"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "G009,G010,G011", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "G009", "name": "bash-replacement-unsafe", "severity": "error", "subject_path": "scripts/render.sh", "suggestion": "quote the replacement inside the expansion (${var//pat/\"$rep\"}) or escape '&'", "location": { "line": 3 } },
+    { "code": "G009", "name": "bash-replacement-unsafe", "severity": "error", "subject_path": "scripts/render.sh", "suggestion": "quote the replacement inside the expansion (${var//pat/\"$rep\"}) or escape '&'", "location": { "line": 4 } },
+    { "code": "G010", "name": "bash32-incompatible", "severity": "warning", "subject_path": "scripts/arrays.sh", "suggestion": "guard the expansion, e.g. ${arr[@]+\"${arr[@]}\"}, or seed the array before use", "location": { "line": 4 } },
+    { "code": "G011", "name": "awk-regex-nonascii", "severity": "warning", "subject_path": "scripts/awkflow.sh", "suggestion": "use an ASCII regex or a byte-oriented match; keep display text separate", "location": { "line": 2 } }
+  ],
+  "allowed_additional_diagnostics": []
+}

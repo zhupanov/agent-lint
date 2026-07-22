@@ -310,6 +310,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   identifier; it is not aliased to any other rule and now fails as an invalid
   rule identifier
 
+### Fixed
+
+- G008 (`gh-inline-body`) now dispatches on the shared script-kind matrix, so
+  plain `.bash` shell scripts receive the same gh inline-payload analysis as
+  `.sh` and `.inc.bash`; non-shell script kinds (`.py`, `.js`, `.mjs`,
+  extensionless) still never reach the shell lexer, and `docs/rules.md` now
+  states that actual language scope
+- G009 (`bash-replacement-unsafe`) treats a live legacy `` `cmd` `` backtick
+  command substitution in replacement position as dynamic, exactly like
+  `$(cmd)`; quoted, escaped, commented, and inert-string backticks stay clean
+- G010 (`bash32-incompatible`) empty-array analysis is scope-isolated: tracked
+  facts are cleared at function/group/subshell exits and case-arm terminators,
+  so an uncalled function's `local arr=()` no longer produces a false positive
+  on a non-empty top-level array of the same name
+- G011 (`awk-regex-nonascii`) adds conservative in-program constant
+  propagation: a variable's single, unconditional `name = "text"` string
+  assignment reaching a later regex-operand use (`~`/`!~`, `match`,
+  `sub`/`gsub`, `split`/`patsplit`, or an `FS` assignment) is reported at the
+  assignment line; reassigned, branch-dependent, computed, or caller-supplied
+  values stay silent
+
 ## [3.0.1] - 2026-07-17
 
 ### Added
