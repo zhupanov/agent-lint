@@ -12,7 +12,7 @@ use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 /// Semantic Versioning 2.0.0, including optional pre-release and build
@@ -55,6 +55,18 @@ const OBJECT_SOURCE_REQUIRED: &[(&str, &[&str])] = &[
 fn is_non_empty_string(v: Option<&Value>) -> bool {
     v.and_then(Value::as_str)
         .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// Whether an entry has passed M009's basic name/source shape gate. Deeper
+/// source validation remains M009-owned; this predicate only controls child
+/// validators that need a structurally usable entry.
+fn has_basic_marketplace_entry_shape(plugin: &Value) -> bool {
+    is_non_empty_string(plugin.get("name"))
+        && match plugin.get("source") {
+            Some(Value::String(source)) => !source.trim().is_empty(),
+            Some(Value::Object(_)) => true,
+            _ => false,
+        }
 }
 
 /// The private Claude configuration directory. Plugin component paths that point
@@ -456,13 +468,7 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                     }
                 }
 
-                let source_missing_or_wrong = match plugin.get("source") {
-                    None => true,
-                    Some(Value::String(s)) => s.trim().is_empty(),
-                    Some(Value::Object(_)) => false,
-                    Some(_) => true,
-                };
-                if name_missing || source_missing_or_wrong {
+                if !has_basic_marketplace_entry_shape(plugin) {
                     diag.report(
                         LintRule::MarketplacePluginInvalid,
                         &format!(
@@ -664,8 +670,9 @@ pub fn validate_marketplace_enriched(ctx: &LintContext, diag: &mut DiagnosticCol
 
     if let Some(plugins) = val.get("plugins").and_then(|v| v.as_array()) {
         for (i, plugin) in plugins.iter().enumerate() {
-            // Object-only gate: scalar/non-object entries are M009-owned.
-            if !plugin.is_object() {
+            // M009 owns malformed entries, including object entries whose
+            // basic name/source shape is unusable.
+            if !has_basic_marketplace_entry_shape(plugin) {
                 continue;
             }
             let label = format!("plugins[{i}].category");
@@ -1167,9 +1174,13 @@ pub fn validate_plugin_fields(ctx: &LintContext, diag: &mut DiagnosticCollector)
     if let ManifestState::Parsed(value) = &ctx.plugin_json
         && value.is_object()
     {
+        let field_ctx = PluginFieldContext {
+            lint: ctx,
+            mcp_base: Some(&ctx.base_path),
+        };
         diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
             validate_plugin_fields_surface(
-                ctx,
+                &field_ctx,
                 value,
                 value.source(),
                 ".claude-plugin/plugin.json",
@@ -1187,8 +1198,13 @@ pub fn validate_plugin_fields(ctx: &LintContext, diag: &mut DiagnosticCollector)
             for (index, entry) in entries.iter().enumerate() {
                 if entry.is_object() {
                     let prefix = format!("plugins[{index}]");
+                    let mcp_base = effective_marketplace_plugin_root(ctx, marketplace, entry);
+                    let field_ctx = PluginFieldContext {
+                        lint: ctx,
+                        mcp_base: mcp_base.as_deref(),
+                    };
                     validate_plugin_fields_surface(
-                        ctx,
+                        &field_ctx,
                         entry,
                         marketplace.source(),
                         ".claude-plugin/marketplace.json",
@@ -1211,7 +1227,11 @@ pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_plugin_fields_surface(ctx, val, val.source(), f, "", &[], diag);
+    let field_ctx = PluginFieldContext {
+        lint: ctx,
+        mcp_base: Some(&ctx.base_path),
+    };
+    validate_plugin_fields_surface(&field_ctx, val, val.source(), f, "", &[], diag);
 }
 
 /// V31: Validate plugin.json lspServers entries (M016).
@@ -1223,7 +1243,11 @@ pub fn validate_lsp_servers(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_plugin_fields_surface(ctx, val, val.source(), f, "", &[], diag);
+    let field_ctx = PluginFieldContext {
+        lint: ctx,
+        mcp_base: Some(&ctx.base_path),
+    };
+    validate_plugin_fields_surface(&field_ctx, val, val.source(), f, "", &[], diag);
 }
 
 /// V32: Validate plugin.json channels entries (M017).
@@ -1236,11 +1260,20 @@ pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_plugin_fields_surface(ctx, val, val.source(), f, "", &[], diag);
+    let field_ctx = PluginFieldContext {
+        lint: ctx,
+        mcp_base: Some(&ctx.base_path),
+    };
+    validate_plugin_fields_surface(&field_ctx, val, val.source(), f, "", &[], diag);
+}
+
+struct PluginFieldContext<'a> {
+    lint: &'a LintContext,
+    mcp_base: Option<&'a Path>,
 }
 
 fn validate_plugin_fields_surface(
-    ctx: &LintContext,
+    field_ctx: &PluginFieldContext<'_>,
     value: &Value,
     source: Option<&str>,
     document: &str,
@@ -1251,7 +1284,15 @@ fn validate_plugin_fields_surface(
     validate_author(value, source, document, prefix, path_prefix, diag);
     validate_homepage(value, source, document, prefix, path_prefix, diag);
     validate_lsp_servers_value(value, source, document, prefix, path_prefix, diag);
-    validate_channels_value(ctx, value, source, document, prefix, path_prefix, diag);
+    validate_channels_value(
+        field_ctx,
+        value,
+        source,
+        document,
+        prefix,
+        path_prefix,
+        diag,
+    );
 }
 
 fn field_label(prefix: &str, field: &str) -> String {
@@ -1502,14 +1543,49 @@ enum KnownMcpServers {
     Unknown,
 }
 
-fn known_mcp_servers(ctx: &LintContext, value: &Value) -> KnownMcpServers {
+/// Resolve the filesystem base for a local marketplace entry. Object sources
+/// are fetched remotely and therefore intentionally remain unavailable to the
+/// cross-reference check. `metadata.pluginRoot` prepends bare relative sources
+/// exactly as the marketplace contract specifies.
+fn effective_marketplace_plugin_root(
+    ctx: &LintContext,
+    marketplace: &Value,
+    entry: &Value,
+) -> Option<PathBuf> {
+    let source = entry.get("source")?.as_str()?.trim();
+    if source.is_empty()
+        || is_absolute_path(source)
+        || path_segments(source).any(|segment| segment == "..")
+    {
+        return None;
+    }
+    let source_path: PathBuf = path_segments(source).collect();
+
+    if source.starts_with("./") {
+        return Some(ctx.base_path.join(source_path));
+    }
+
+    if source_path.as_os_str().is_empty() {
+        return None;
+    }
+
+    let plugin_root = marketplace.get("metadata")?.get("pluginRoot")?.as_str()?;
+    if !plugin_root_is_safe(plugin_root) {
+        return None;
+    }
+    let plugin_root_path: PathBuf = path_segments(plugin_root).collect();
+    Some(ctx.base_path.join(plugin_root_path).join(source_path))
+}
+
+fn known_mcp_servers(ctx: &LintContext, value: &Value, mcp_base: Option<&Path>) -> KnownMcpServers {
     let Some(declaration) = value.get("mcpServers") else {
         return KnownMcpServers::Known(BTreeSet::new());
     };
     let mut names = BTreeSet::new();
     match declaration {
         Value::Object(map) => names.extend(map.keys().cloned()),
-        Value::String(path) => match mcp_names_from_path(ctx, path) {
+        Value::String(path) => match mcp_base.and_then(|base| mcp_names_from_path(ctx, base, path))
+        {
             Some(found) => names.extend(found),
             None => return KnownMcpServers::Unknown,
         },
@@ -1517,10 +1593,12 @@ fn known_mcp_servers(ctx: &LintContext, value: &Value) -> KnownMcpServers {
             for item in items {
                 match item {
                     Value::Object(map) => names.extend(map.keys().cloned()),
-                    Value::String(path) => match mcp_names_from_path(ctx, path) {
-                        Some(found) => names.extend(found),
-                        None => return KnownMcpServers::Unknown,
-                    },
+                    Value::String(path) => {
+                        match mcp_base.and_then(|base| mcp_names_from_path(ctx, base, path)) {
+                            Some(found) => names.extend(found),
+                            None => return KnownMcpServers::Unknown,
+                        }
+                    }
                     _ => return KnownMcpServers::Unknown,
                 }
             }
@@ -1530,10 +1608,14 @@ fn known_mcp_servers(ctx: &LintContext, value: &Value) -> KnownMcpServers {
     KnownMcpServers::Known(names)
 }
 
-fn mcp_names_from_path(ctx: &LintContext, path: &str) -> Option<BTreeSet<String>> {
+fn mcp_names_from_path(ctx: &LintContext, mcp_base: &Path, path: &str) -> Option<BTreeSet<String>> {
     let relative = safe_component_path(path)?;
-    let candidate = ctx.base_path.join(relative);
-    let base = std::fs::canonicalize(&ctx.base_path).ok()?;
+    let candidate = mcp_base.join(relative);
+    let repository_root = std::fs::canonicalize(&ctx.base_path).ok()?;
+    let base = std::fs::canonicalize(mcp_base).ok()?;
+    if !base.starts_with(repository_root) {
+        return None;
+    }
     let resolved = std::fs::canonicalize(candidate).ok()?;
     if !resolved.starts_with(base) {
         return None;
@@ -1547,7 +1629,7 @@ fn mcp_names_from_path(ctx: &LintContext, path: &str) -> Option<BTreeSet<String>
 }
 
 fn validate_channels_value(
-    ctx: &LintContext,
+    field_ctx: &PluginFieldContext<'_>,
     value: &Value,
     source: Option<&str>,
     document: &str,
@@ -1571,7 +1653,7 @@ fn validate_channels_value(
         );
         return;
     };
-    let known_servers = known_mcp_servers(ctx, value);
+    let known_servers = known_mcp_servers(field_ctx.lint, value, field_ctx.mcp_base);
     for (index, entry) in entries.iter().enumerate() {
         let path = extend_path(&root_path, &[Seg::Index(index)]);
         let label = format!("{root_label}[{index}]");
@@ -2500,7 +2582,7 @@ mod tests {
     }
 
     #[test]
-    fn test_v12_category_matrix_and_object_only_gate() {
+    fn test_v12_category_matrix_and_basic_m009_shape_gate() {
         let cases = [
             (
                 "absent category",
@@ -2566,6 +2648,38 @@ mod tests {
                 }),
                 Some("plugins[1].category"),
             ),
+            (
+                "missing name is M009-owned",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"source": "./p"}]
+                }),
+                None,
+            ),
+            (
+                "blank name is M009-owned",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": " ", "source": "./p"}]
+                }),
+                None,
+            ),
+            (
+                "missing source is M009-owned",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p"}]
+                }),
+                None,
+            ),
+            (
+                "wrong-type source is M009-owned",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": false}]
+                }),
+                None,
+            ),
         ];
         for (label, val, expected_evidence) in cases {
             let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
@@ -2598,6 +2712,38 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_v12_malformed_object_entries_remain_m009_only() {
+        let val = json!({
+            "name": "market",
+            "owner": {"name": "owner", "email": "owner@example.com"},
+            "plugins": [
+                {"source": "./missing-name"},
+                {"name": "blank-name", "source": "   "},
+                {"name": "wrong-source", "source": false},
+                {"name": "usable", "source": "./usable"}
+            ]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        validate_marketplace_enriched(&ctx, &mut diag);
+
+        let m009 = diag
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::MarketplacePluginInvalid)
+            .count();
+        let m010: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::MarketplaceEnrichedMissing)
+            .collect();
+        assert_eq!(m009, 3, "{:?}", diag.diagnostics());
+        assert_eq!(m010.len(), 1, "{:?}", diag.diagnostics());
+        assert_eq!(m010[0].evidence.as_deref(), Some("plugins[3].category"));
     }
 
     #[test]
@@ -3742,6 +3888,140 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_channels(&ctx, &mut diag);
         assert!(diag.diagnostics().is_empty(), "{:?}", diag.diagnostics());
+    }
+
+    #[test]
+    fn test_m017_marketplace_entry_uses_effective_local_plugin_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin_root = tmp.path().join("plugins/local");
+        std::fs::create_dir_all(&plugin_root).unwrap();
+        std::fs::write(
+            plugin_root.join("mcp.json"),
+            r#"{"mcpServers":{"known":{"command":"server"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("mcp.json"),
+            r#"{"mcpServers":{"missing":{"command":"decoy"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(plugin_root.join("invalid.json"), "{").unwrap();
+
+        let marketplace = |source: Value, mcp_servers: Value, server: &str| {
+            json!({
+                "metadata": {"pluginRoot": "./plugins"},
+                "plugins": [{
+                    "name": "local",
+                    "source": source,
+                    "mcpServers": mcp_servers,
+                    "channels": [{"server": server}]
+                }]
+            })
+        };
+        let run_marketplace = |value| {
+            let ctx = LintContext {
+                base_path: tmp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::Missing,
+                marketplace_json: ManifestState::parsed(value),
+                hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            };
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_fields(&ctx, &mut diag);
+            diag
+        };
+
+        let mismatch = run_marketplace(marketplace(
+            json!("./plugins/local"),
+            json!(["./mcp.json"]),
+            "missing",
+        ));
+        assert_eq!(
+            mismatch.diagnostics().len(),
+            1,
+            "{:?}",
+            mismatch.diagnostics()
+        );
+        assert_eq!(
+            mismatch.diagnostics()[0].rule,
+            LintRule::ChannelServerMissing
+        );
+
+        let marketplace_root =
+            run_marketplace(marketplace(json!("./"), json!("./mcp.json"), "missing"));
+        assert!(
+            marketplace_root.diagnostics().is_empty(),
+            "{:?}",
+            marketplace_root.diagnostics()
+        );
+
+        let matching = run_marketplace(marketplace(json!("local"), json!("./mcp.json"), "known"));
+        assert!(
+            matching.diagnostics().is_empty(),
+            "{:?}",
+            matching.diagnostics()
+        );
+
+        let remote = run_marketplace(marketplace(
+            json!({"source": "github", "repo": "owner/local"}),
+            json!("./mcp.json"),
+            "missing",
+        ));
+        assert!(
+            remote.diagnostics().is_empty(),
+            "{:?}",
+            remote.diagnostics()
+        );
+
+        let unavailable = run_marketplace(marketplace(
+            json!("local"),
+            json!("./absent.json"),
+            "missing",
+        ));
+        assert!(
+            unavailable.diagnostics().is_empty(),
+            "{:?}",
+            unavailable.diagnostics()
+        );
+
+        let invalid = run_marketplace(marketplace(
+            json!("local"),
+            json!("./invalid.json"),
+            "missing",
+        ));
+        assert!(
+            invalid.diagnostics().is_empty(),
+            "{:?}",
+            invalid.diagnostics()
+        );
+
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            std::fs::write(
+                outside.path().join("mcp.json"),
+                r#"{"mcpServers":{"missing":{"command":"escape"}}}"#,
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(
+                outside.path().join("mcp.json"),
+                plugin_root.join("escape.json"),
+            )
+            .unwrap();
+            let escaped = run_marketplace(marketplace(
+                json!("local"),
+                json!("./escape.json"),
+                "missing",
+            ));
+            assert!(
+                escaped.diagnostics().is_empty(),
+                "{:?}",
+                escaped.diagnostics()
+            );
+        }
     }
 
     #[test]
