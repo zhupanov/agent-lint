@@ -1,0 +1,14 @@
+{
+  "class": "hard-negative",
+  "repository": "m023-plugin-name-hard-negative",
+  "covers": ["m023-plugin-name", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "M003,M023", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "M023", "name": "plugin-name-format", "severity": "warning", "subject_path": ".claude-plugin/plugin.json", "suggestion": "use a lowercase kebab-case plugin name, for example my-plugin", "location": { "line": 2 } }
+  ],
+  "allowed_additional_diagnostics": []
+}

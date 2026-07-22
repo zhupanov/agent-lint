@@ -26,10 +26,10 @@ pub enum LintRule {
     /// M001: .claude-plugin/plugin.json is missing
     #[strum(props(code = "M001", name = "plugin-json-missing"))]
     PluginJsonMissing,
-    /// M002: .claude-plugin/plugin.json is not valid JSON
+    /// M002: .claude-plugin/plugin.json is invalid JSON or has a non-object root
     #[strum(props(code = "M002", name = "plugin-json-invalid"))]
     PluginJsonInvalid,
-    /// M003: plugin.json missing required name field
+    /// M003: plugin.json required name is missing or unusable
     #[strum(props(code = "M003", name = "plugin-field-missing"))]
     PluginFieldMissing,
     /// M004: plugin.json version is not strict semver
@@ -38,10 +38,10 @@ pub enum LintRule {
     /// M005: .claude-plugin/marketplace.json is missing
     #[strum(props(code = "M005", name = "marketplace-json-missing"))]
     MarketplaceJsonMissing,
-    /// M006: .claude-plugin/marketplace.json is not valid JSON
+    /// M006: .claude-plugin/marketplace.json is invalid JSON or has a non-object root
     #[strum(props(code = "M006", name = "marketplace-json-invalid"))]
     MarketplaceJsonInvalid,
-    /// M007: marketplace.json missing required field (name or owner.name)
+    /// M007: marketplace.json required field is missing or unusable
     #[strum(props(code = "M007", name = "marketplace-field-missing"))]
     MarketplaceFieldMissing,
     /// M008: marketplace.json plugins array is empty
@@ -89,6 +89,9 @@ pub enum LintRule {
     /// M022: plugin metadata homepage is present but not a string
     #[strum(props(code = "M022", name = "homepage-type-invalid"))]
     HomepageTypeInvalid,
+    /// M023: plugin.json name is not kebab-case
+    #[strum(props(code = "M023", name = "plugin-name-format"))]
+    PluginNameFormat,
     /// M024: marketplace.json marketplace or plugin name contains whitespace
     #[strum(props(code = "M024", name = "marketplace-name-whitespace"))]
     MarketplaceNameWhitespace,
@@ -1072,6 +1075,7 @@ impl LintRule {
 
             // ── Default-warning: marketplace entry advisories ────────
             Self::MarketplaceBarePath | Self::MarketplaceNameFormat |
+            Self::PluginNameFormat |
 
             // ── Default-warning: optional manifest files ────────────
             Self::MarketplaceJsonMissing | Self::MarketplacePluginsEmpty |
@@ -1315,7 +1319,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            300,
+            301,
             "every enum variant must be registered"
         );
     }
@@ -1549,8 +1553,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            120,
-            "Expected 120 active default-warning rules, got {}",
+            121,
+            "Expected 121 active default-warning rules, got {}",
             warnings.len()
         );
     }

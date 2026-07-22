@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "m023-plugin-name-broken",
+  "covers": ["m023-plugin-name", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "M002,M003,M004,M006,M007,M008,M018,M023", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "M002", "name": "plugin-json-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json", "suggestion": "make the plugin manifest a JSON object with a required name", "location": { "line": 1 } },
+    { "code": "M006", "name": "marketplace-json-invalid", "severity": "error", "subject_path": ".claude-plugin/marketplace.json", "suggestion": "make the marketplace manifest a JSON object with name, owner, and plugins", "location": { "line": 1 } }
+  ],
+  "allowed_additional_diagnostics": []
+}

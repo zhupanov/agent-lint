@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 298 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 299 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -40,13 +40,13 @@ run only when their platform is auto-detected or force-enabled in
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | M001 | `plugin-json-missing` | `.claude-plugin/plugin.json` is missing when no marketplace manifest file is present. Claude Code permits an omitted plugin manifest, so requiring at least one manifest file is an agent-lint convention. | Plugin | error |
-| M002 | `plugin-json-invalid` | `plugin.json` is not valid JSON | Plugin | error |
-| M003 | `plugin-field-missing` | `plugin.json` missing required `name`. A `name` that is absent, empty, or whitespace-only counts as missing; this matches the Claude Code plugin manifest contract. | Plugin | error |
+| M002 | `plugin-json-invalid` | `plugin.json` is not valid JSON or its root is not an object. A non-object root produces one M002 error without downstream manifest-field cascades. | Plugin | error |
+| M003 | `plugin-field-missing` | `plugin.json` has an unusable required `name`: absent, non-string, empty/blank, or containing Unicode whitespace. | Plugin | error |
 | M004 | `plugin-version-format` | Present `plugin.json` version is not valid Semantic Versioning 2.0.0 (pre-release and build metadata are accepted). This follows the Claude Code manifest contract. | Plugin | error |
 | M005 | `marketplace-json-missing` | `.claude-plugin/marketplace.json` is missing. Plugin-only repositories are valid in Claude Code, so this is advisory. | Plugin | warn |
-| M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON | Plugin | error |
-| M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name`, `owner.name`, or `plugins`) | Plugin | error |
-| M008 | `marketplace-plugins-empty` | `marketplace.json` `plugins` is empty or has the wrong type. Claude Code treats an empty array as a non-blocking warning. | Plugin | warn |
+| M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON or its root is not an object. A non-object root produces one M006 error without downstream manifest-field cascades. | Plugin | error |
+| M007 | `marketplace-field-missing` | `marketplace.json` has an unusable required field: `name`, `owner.name`, or `plugins` is missing, blank, or the wrong JSON type (including a non-array `plugins`). | Plugin | error |
+| M008 | `marketplace-plugins-empty` | `marketplace.json` has a present, empty `plugins` array. Claude Code treats this as a non-blocking warning. | Plugin | warn |
 | M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name`/effective local `source`: missing/empty fields, duplicate names, unknown object source type, missing required per-type subfields, unsafe `metadata.pluginRoot`, or `git-subdir.path` traversal | Plugin | error |
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing usable `owner.email`, or object plugin entry missing/blank/non-string `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing usable `description`, missing `author.email`, or unusable `keywords` (non-array, empty, or any blank/non-string item) | Plugin | warn |
@@ -61,9 +61,10 @@ run only when their platform is auto-detected or force-enabled in
 | M020 | `author-type-invalid` | Plugin or inline marketplace-entry `author` is present but not an object. Claude Code rejects non-object authors as manifest load errors. | Plugin | error |
 | M021 | `marketplace-name-format` | Marketplace or plugin entry `name` is not kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`); claude.ai marketplace sync rejects other forms | Plugin | warn |
 | M022 | `homepage-type-invalid` | Plugin or inline marketplace-entry `homepage` is present but not a string | Plugin | error |
+| M023 | `plugin-name-format` | A usable `plugin.json` `name` is not kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`). | Plugin | warn |
 | M024 | `marketplace-name-whitespace` | Marketplace or plugin entry `name` contains Unicode whitespace. Claude Code rejects whitespace-bearing names; replace whitespace with hyphens and use a whitespace-free identifier. | Plugin | error |
 
-M003, M004, and M018 follow the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and its [plugin manifest schema](https://www.schemastore.org/claude-code-plugin-manifest.json). When `plugin.json` omits optional `version`, effective version resolution uses the matching marketplace-entry version, then the Git commit SHA for git-backed sources, then `unknown` for npm or non-git local sources; M018 still warns because Claude recommends declaring `version` on the plugin manifest. M005, M008, M009, M019, M021, and M024 follow the [Claude Code marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces); M005 remains an agent-lint advisory for repositories that intend to publish a self-hosted marketplace. M024 covers whitespace because the current Claude validator rejects it, while M021 remains advisory for whitespace-free non-kebab forms that local Claude accepts but claude.ai marketplace sync rejects.
+M002, M003, M004, M018, and M023 follow the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and its [plugin manifest schema](https://www.schemastore.org/claude-code-plugin-manifest.json). When `plugin.json` omits optional `version`, effective version resolution uses the matching marketplace-entry version, then the Git commit SHA for git-backed sources, then `unknown` for npm or non-git local sources; M018 still warns because Claude recommends declaring `version` on the plugin manifest. M005, M006, M007, M008, M009, M019, M021, and M024 follow the [Claude Code marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces); M005 remains an agent-lint advisory for repositories that intend to publish a self-hosted marketplace. M024 covers whitespace because the current Claude validator rejects it, while M021 remains advisory for whitespace-free non-kebab forms that local Claude accepts but claude.ai marketplace sync rejects.
 
 M012/M013 apply the same lexical component-path contract to `plugin.json` and
 to every marketplace plugin entry, including `commands.<name>.source`. Paths
@@ -1259,7 +1260,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (10 of 298):**
+**Auto-fixable rules (10 of 299):**
 
 | Rule | Code | Fix |
 |------|------|-----|
