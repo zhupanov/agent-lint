@@ -4168,17 +4168,22 @@ fn symlinked_agents_declaration_is_m013_not_a001() {
     assert_eq!(finding["code"], "M013", "{finding:#}");
     assert_eq!(finding["name"], "component-path-unsafe");
     assert_eq!(finding["severity"], "error");
+    assert_eq!(finding["subject_path"], ".claude-plugin/plugin.json");
     assert_eq!(finding["evidence"], "agents");
     assert_eq!(
         finding["suggestion"],
-        "replace the symlinked path with a regular in-repository file or directory"
+        "point the declaration at a regular in-repository file or directory reached without symlinks"
     );
-    assert!(finding["location"].is_object(), "{finding:#}");
+    // The exact source token span of "./custom-agents" in the checked-in
+    // manifest above.
+    assert_eq!(finding["location"]["start"]["line"], 1, "{finding:#}");
+    assert_eq!(finding["location"]["start"]["column"], 52, "{finding:#}");
+    assert_eq!(finding["location"]["end"]["line"], 1, "{finding:#}");
+    assert_eq!(finding["location"]["end"]["column"], 69, "{finding:#}");
     assert!(
-        finding["message"]
-            .as_str()
-            .unwrap()
-            .contains("must not resolve through a symlink or outside the repository"),
+        finding["message"].as_str().unwrap().contains(
+            "must resolve to a regular in-repository file or directory with no symlinked component"
+        ),
         "{finding:#}"
     );
 
@@ -4200,6 +4205,88 @@ fn symlinked_agents_declaration_is_m013_not_a001() {
         all.iter().all(|diagnostic| diagnostic["code"] != "A001"),
         "A001 stays silent for the unsafe declaration: {all:#?}"
     );
+}
+
+#[test]
+fn a001_and_a004_stay_errors_under_pedantic_and_all_modes() {
+    // #556 (#537): both rules default to error, so pedantic promotion and the
+    // all-mode error blanket leave their disposition unchanged.
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name": "p", "version": "1.0.0", "agents": ["./ghost", "./empty-root"]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir(tmp.path().join("agents")).unwrap();
+    std::fs::create_dir(tmp.path().join("empty-root")).unwrap();
+
+    for mode in [None, Some("--pedantic"), Some("--all")] {
+        let mut arguments = vec!["--format", "json", "--only", "A001,A004"];
+        if let Some(flag) = mode {
+            arguments.insert(2, flag);
+        }
+        arguments.push(".");
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{mode:?} stderr: {}",
+            stderr(&output)
+        );
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        let identities: Vec<(String, String)> = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                (
+                    diagnostic["code"].as_str().unwrap().to_string(),
+                    diagnostic["subject_path"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            identities,
+            vec![
+                ("A001".to_string(), "ghost".to_string()),
+                ("A004".to_string(), "agents".to_string()),
+                ("A004".to_string(), "empty-root".to_string()),
+            ],
+            "{mode:?}: {diagnostics:#?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic["severity"] == "error"
+                    && diagnostic["suggestion"].is_string()),
+            "{mode:?}: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
+fn a004_empty_declared_root_honors_per_file_override() {
+    // #556 (#537): A004 carries the root as its subject, so a per-file
+    // override on that path suppresses it (and is therefore not "unused").
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name": "p", "version": "1.0.0", "agents": "./custom"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir(tmp.path().join("custom")).unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"custom\"]\nsuppress = [\"A004\"]\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["."]);
+    let stderr = stderr(&output);
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
+    assert!(!stderr.contains("A004/no-agent-files"), "stderr: {stderr}");
+    assert!(stderr.contains("(1 suppressed)"), "stderr: {stderr}");
+    assert!(!stderr.contains("unused-override"), "stderr: {stderr}");
 }
 
 #[test]

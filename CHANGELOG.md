@@ -51,14 +51,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   declaration as missing. Discovery now preserves distinct missing,
   present-safe, and rejected-unsafe root outcomes; a declaration whose path
   resolves through a symlinked component (even one pointing inside the
-  repository) or canonically escapes the repository is reported by M013
-  (`component-path-unsafe`) with the exact manifest field/index, symlink/
-  containment wording, and a structured suggestion, while A001/A004 and every
-  per-agent rule stay silent for it and no rejected root contributes files or
-  identities to discovery, A030, prompt analysis, or S065. The same filesystem
-  shape check covers `outputStyles` declarations, whose rejected roots were
-  previously skipped silently; marketplace entries keep the lexical-only
-  contract because their paths resolve against each entry's own plugin root.
+  repository), canonically escapes the repository, or names a non-regular
+  entry (for example a FIFO) is reported by M013 (`component-path-unsafe`)
+  with the exact manifest field/index, cause-neutral actionable wording, and a
+  structured suggestion, while A001/A004 and every per-agent rule stay silent
+  for it and no rejected root contributes files or identities to discovery,
+  A030, prompt analysis, or S065. The same filesystem shape check covers
+  `outputStyles`, `skills`, `commands` (including `commands.<name>.source`),
+  and `hooks` declarations, whose rejected paths were previously refused
+  silently by their consumers with zero diagnostics; marketplace entries keep
+  the lexical-only contract because their paths resolve against each entry's
+  own plugin root, `mcpServers` references stay unprobed because they are read
+  through ordinary path resolution (never silently dropped), and
+  `lspServers`/`experimental.*` targets have no consuming validator.
 - A006 (`template-marker-missing`) no longer accepts open-ended denials or
   descriptive sentences as live derivation markers. The finite negative-word
   list is replaced by a deterministic positive grammar — optional Markdown

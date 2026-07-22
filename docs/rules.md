@@ -51,7 +51,7 @@ run only when their platform is auto-detected or force-enabled in
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing usable `owner.email`, or a basic M009-valid plugin entry missing/blank/non-string `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing usable `description`, missing `author.email`, or unusable `keywords` (non-array, empty, or any blank/non-string item) | Plugin | warn |
 | M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a plugin/marketplace component path points there | Plugin | error |
-| M013 | `component-path-unsafe` | A plugin or marketplace component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`), uses `..` traversal, or does not start with exact `./` | Plugin | error |
+| M013 | `component-path-unsafe` | A plugin or marketplace component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`), uses `..` traversal, or does not start with exact `./`; additionally, a lexically safe `plugin.json` `agents`, `outputStyles`, `skills`, `commands`, or `hooks` declaration whose path resolves through a symlinked component, canonically escapes the repository, or names a non-regular entry | Plugin | error |
 | M014 | `author-name-missing` | Plugin or inline marketplace-entry `author` object has a missing or invalid `author.name` | Plugin | error |
 | M015 | `homepage-url-invalid` | Plugin or inline marketplace-entry `homepage` string is not a valid http(s) URL | Plugin | warn |
 | M016 | `lsp-server-invalid` | Plugin or inline marketplace-entry `lspServers` has an unsupported shape or invalid inline server | Plugin | error |
@@ -75,17 +75,23 @@ paths as load errors. The extractor is shared with manifest-declared discovery,
 which never probes an unsafe declaration.
 
 On top of that lexical contract, M013 additionally checks the filesystem shape
-of lexically safe `plugin.json` `agents` and `outputStyles` declarations — the
-two fields that feed the shared symlink-refusing recursive discovery collector.
-A declaration whose path resolves through a symlinked component (final or
-intermediate, even one pointing inside the repository) or canonically escapes
-the repository is unusable as declared: discovery never follows it, so M013
-reports the exact field/index with symlink/containment wording and A001 stays
-silent (A001 owns only a lexically and filesystem-safe declared agent path that
-is genuinely absent). Marketplace entries keep the lexical-only contract
-because their component paths resolve against each entry's own plugin root,
-which may not be the linted repository. Other component fields are not
-filesystem-probed.
+of lexically safe `plugin.json` `agents`, `outputStyles`, `skills`, `commands`
+(including `commands.<name>.source`), and `hooks` declarations — the fields
+whose consumers refuse unsafe filesystem shapes (`agents`/`outputStyles` feed
+the shared symlink-refusing recursive discovery collector; `skills`/`commands`
+roots are gated by the skill-discovery safety helpers; a symlinked declared
+`hooks` config is dropped by the loader). A declaration whose path resolves
+through a symlinked component (final or intermediate, even one pointing inside
+the repository), canonically escapes the repository, or names a non-regular
+entry is unusable as declared: its consumer silently refuses it, so M013
+reports the exact field/index with actionable wording and A001 stays silent
+(A001 owns only a lexically and filesystem-safe declared agent path that is
+genuinely absent). Marketplace entries keep the lexical-only contract because
+their component paths resolve against each entry's own plugin root, which may
+not be the linted repository. `mcpServers` references are not probed — they
+are read through ordinary path resolution, so a symlinked reference is still
+validated rather than silently dropped — and `lspServers`/`experimental.*`
+targets have no consuming validator.
 
 M010 and M011 are agent-lint discovery-quality conventions, not Claude Code
 load-error rules. They require usable enrichment values after Unicode trimming:

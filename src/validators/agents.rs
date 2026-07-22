@@ -2678,7 +2678,10 @@ mod tests {
             "Derived from skills/shared/reviewer-templates.md? No\n",
             "Derived from skills/shared/reviewer-templates.md, but this agent is independent\n",
             "<!-- Derived from skills/shared/reviewer-templates.md is false. -->\n",
+            "<!-- Derived from skills/shared/reviewer-templates.md is incorrect -->\n",
+            "<!-- Derived from skills/shared/reviewer-templates.md? No -->\n",
             "<!--\nDerived from skills/shared/reviewer-templates.md\nno longer applies\n-->\n",
+            "<!--\nDerived from skills/shared/reviewer-templates.md,\nbut this agent is independent\n-->\n",
             // The positive grammar deliberately also rejects benign trailing
             // clauses the negative-word list used to accept.
             "Derived from skills/shared/reviewer-templates.md for routing.\n",
