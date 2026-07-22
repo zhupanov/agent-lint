@@ -2484,46 +2484,53 @@ fn m010_m011_usable_enrichment_contract_modes_suppression_and_no_autofix() {
             diagnostics[0]["subject_path"],
             ".claude-plugin/marketplace.json"
         );
-        assert!(diagnostics[0]["message"]
-            .as_str()
-            .unwrap()
-            .contains("owner.email"));
+        assert!(
+            diagnostics[0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("owner.email")
+        );
         assert_eq!(diagnostics[0]["evidence"], "owner.email");
         assert!(diagnostics[0]["suggestion"].is_string());
         assert_eq!(diagnostics[0]["location"]["start"]["line"], 3);
 
         assert_eq!(diagnostics[1]["code"], "M010");
-        assert!(diagnostics[1]["message"]
-            .as_str()
-            .unwrap()
-            .contains("plugins[1].category"));
+        assert!(
+            diagnostics[1]["message"]
+                .as_str()
+                .unwrap()
+                .contains("plugins[1].category")
+        );
         assert_eq!(diagnostics[1]["evidence"], "plugins[1].category");
         assert_eq!(diagnostics[1]["location"]["start"]["line"], 6);
 
         assert_eq!(diagnostics[2]["code"], "M011");
-        assert_eq!(
-            diagnostics[2]["subject_path"],
-            ".claude-plugin/plugin.json"
+        assert_eq!(diagnostics[2]["subject_path"], ".claude-plugin/plugin.json");
+        assert!(
+            diagnostics[2]["message"]
+                .as_str()
+                .unwrap()
+                .contains("description")
         );
-        assert!(diagnostics[2]["message"]
-            .as_str()
-            .unwrap()
-            .contains("description"));
         assert_eq!(diagnostics[2]["evidence"], "description");
         assert_eq!(diagnostics[2]["location"]["start"]["line"], 4);
 
         assert_eq!(diagnostics[3]["code"], "M011");
-        assert!(diagnostics[3]["message"]
-            .as_str()
-            .unwrap()
-            .contains("author.email"));
+        assert!(
+            diagnostics[3]["message"]
+                .as_str()
+                .unwrap()
+                .contains("author.email")
+        );
         assert_eq!(diagnostics[3]["evidence"], "author.email");
 
         assert_eq!(diagnostics[4]["code"], "M011");
-        assert!(diagnostics[4]["message"]
-            .as_str()
-            .unwrap()
-            .contains("keywords"));
+        assert!(
+            diagnostics[4]["message"]
+                .as_str()
+                .unwrap()
+                .contains("keywords")
+        );
         assert_eq!(
             diagnostics[4]["evidence"],
             "keywords[0],keywords[1],keywords[2]"
@@ -2618,11 +2625,11 @@ suppress = ["M010", "M011"]
         &["--autofix", "--format", "json", "--only", "M010,M011", "."],
     );
     assert_eq!(autofix.status.code(), Some(0));
+    assert_eq!(json(&autofix)["diagnostics"].as_array().unwrap().len(), 5);
     assert_eq!(
-        json(&autofix)["diagnostics"].as_array().unwrap().len(),
-        5
+        std::fs::read(manifest_dir.join("plugin.json")).unwrap(),
+        before
     );
-    assert_eq!(std::fs::read(manifest_dir.join("plugin.json")).unwrap(), before);
     assert_eq!(
         std::fs::read_to_string(manifest_dir.join("marketplace.json")).unwrap(),
         marketplace_body
@@ -2681,7 +2688,13 @@ fn m010_m011_do_not_cascade_from_malformed_parents_or_claim_present_emails() {
 
     let ownership = run_in(
         tmp.path(),
-        &["--format", "json", "--only", "M007,M009,M020,E001,E002,M010,M011", "."],
+        &[
+            "--format",
+            "json",
+            "--only",
+            "M007,M009,M020,E001,E002,M010,M011",
+            ".",
+        ],
     );
     let codes: Vec<_> = json(&ownership)["diagnostics"]
         .as_array()

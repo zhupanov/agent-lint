@@ -2397,7 +2397,11 @@ mod tests {
     #[test]
     fn test_v13_description_matrix() {
         let cases = [
-            ("absent", json!({"author": {"email": "a@b.com"}, "keywords": ["lint"]}), true),
+            (
+                "absent",
+                json!({"author": {"email": "a@b.com"}, "keywords": ["lint"]}),
+                true,
+            ),
             (
                 "wrong type",
                 json!({"description": 1, "author": {"email": "a@b.com"}, "keywords": ["lint"]}),
@@ -2460,17 +2464,25 @@ mod tests {
             })
         };
         let cases = [
-            ("absent author", json!({"description": "usable", "keywords": ["lint"]}), true),
+            (
+                "absent author",
+                json!({"description": "usable", "keywords": ["lint"]}),
+                true,
+            ),
             ("object missing email", base(json!({"name": "a"})), true),
             ("present string", base(json!({"email": "a@b.com"})), false),
             ("present blank", base(json!({"email": "  "})), false),
             ("present non-string", base(json!({"email": true})), false),
             ("present null", base(json!({"email": null})), false),
-            ("non-object author no cascade", json!({
-                "description": "usable",
-                "author": "not-an-object",
-                "keywords": ["lint"]
-            }), false),
+            (
+                "non-object author no cascade",
+                json!({
+                    "description": "usable",
+                    "author": "not-an-object",
+                    "keywords": ["lint"]
+                }),
+                false,
+            ),
         ];
         for (label, val, expect_m011_email) in cases {
             let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
@@ -2566,7 +2578,11 @@ mod tests {
                 None => assert!(keyword_hits.is_empty(), "{label}: {keyword_hits:?}"),
                 Some(evidence) => {
                     assert_eq!(keyword_hits.len(), 1, "{label}: {keyword_hits:?}");
-                    assert_eq!(keyword_hits[0].evidence.as_deref(), Some(evidence), "{label}");
+                    assert_eq!(
+                        keyword_hits[0].evidence.as_deref(),
+                        Some(evidence),
+                        "{label}"
+                    );
                     assert!(keyword_hits[0].suggestion.is_some());
                 }
             }
