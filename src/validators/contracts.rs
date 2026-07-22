@@ -780,9 +780,7 @@ fn awk_programs(command: &str) -> Vec<String> {
             let token = &tokens[index];
             if matches!(token.as_str(), "-F" | "-v" | "-W") {
                 index += 2;
-            } else if token.starts_with("-F")
-                || token.starts_with("-v")
-                || token.starts_with("-W")
+            } else if token.starts_with("-F") || token.starts_with("-v") || token.starts_with("-W")
             {
                 index += 1;
             } else if token == "-f" {
@@ -887,10 +885,7 @@ fn validate_grep_probe(skill: &Path, line: usize, command: &str, diag: &mut Diag
                 ),
                 metadata("prefix top-level grep with command or feed it through a pipe"),
             );
-        } else if !pipe_fed
-            && !analysis.stdin_redirected
-            && !analysis.has_explicit_path
-            && !arg_fed
+        } else if !pipe_fed && !analysis.stdin_redirected && !analysis.has_explicit_path && !arg_fed
         {
             diag.report_at_with(
                 LintRule::UnsafeGrepProbe,
@@ -3566,7 +3561,10 @@ mod tests {
             awk_programs("first=$(awk '{print $1}' data.txt)"),
             ["{print $1}"]
         );
-        assert_eq!(awk_programs("notawk '{print $1}' data.txt"), Vec::<String>::new());
+        assert_eq!(
+            awk_programs("notawk '{print $1}' data.txt"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
