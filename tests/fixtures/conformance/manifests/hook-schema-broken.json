@@ -1,0 +1,16 @@
+{
+  "class": "broken",
+  "repository": "hook-schema-broken",
+  "covers": ["hook-schema", "basic-mode", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "H026", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "H026", "name": "hook-config-malformed", "severity": "error", "subject_path": ".claude/settings.json" },
+    { "code": "H026", "name": "hook-config-malformed", "severity": "error", "subject_path": ".claude/skills/schema/SKILL.md" },
+    { "code": "H026", "name": "hook-config-malformed", "severity": "error", "subject_path": ".claude/agents/schema.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

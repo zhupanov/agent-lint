@@ -1,6 +1,9 @@
-use crate::context::{DeclaredHookConfig, DeclaredHookConfigKind, LintContext, ManifestState};
-use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
+use crate::context::{
+    DeclaredHookConfig, DeclaredHookConfigKind, LintContext, ManifestState, ParsedManifest,
+};
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::hook_commands::extract_hook_command_paths;
+use crate::plugin_paths::{has_normalized_path_segment, is_absolute_path, path_segments};
 use crate::rules::LintRule;
 use crate::validators::{common::manifest_error_metadata, hook_schema};
 use serde_json::Value;
@@ -76,6 +79,7 @@ pub fn validate_hooks_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     for config in &ctx.declared_hook_configs {
         validate_declared_hook_config(config, diag);
     }
+    validate_plugin_hook_declarations(ctx, diag);
 }
 
 fn validate_declared_hook_config(config: &DeclaredHookConfig, diag: &mut DiagnosticCollector) {
@@ -125,28 +129,6 @@ fn validate_hook_config(
             subject_path,
             &format!("{f} missing top-level 'hooks' key"),
         ),
-        // Plugin hooks use an event-keyed object. Retain the legacy flat-array
-        // check so existing configurations continue to receive H007 as well.
-        Some(hooks)
-            if hooks.as_object().is_some_and(|events| events.is_empty())
-                || hooks.as_array().is_some_and(|entries| entries.is_empty()) =>
-        {
-            diag.report_at(
-                LintRule::HooksArrayEmpty,
-                subject_path,
-                &format!("{f} has empty 'hooks' collection"),
-            );
-        }
-        Some(hooks) if !hooks.is_object() && !hooks.is_array() => {
-            diag.report_at(
-                LintRule::HooksKeyMissing,
-                subject_path,
-                &format!(
-                    "{f} hooks key missing or not an object/array (found {})",
-                    json_type(hooks)
-                ),
-            );
-        }
         Some(_) | None => {}
     }
 
@@ -170,6 +152,107 @@ fn json_type(value: &Value) -> &'static str {
         Value::Array(_) => "array",
         Value::Object(_) => "object",
     }
+}
+
+/// H026 validates the declaration form before discovery. Invalid values are
+/// intentionally never converted to missing hook configurations: H001 is
+/// reserved for a valid declared path whose file cannot be found.
+fn validate_plugin_hook_declarations(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    let ManifestState::Parsed(plugin) = &ctx.plugin_json else {
+        return;
+    };
+    let Some(hooks) = plugin.get("hooks") else {
+        return;
+    };
+
+    match hooks {
+        Value::String(path) => {
+            validate_hook_declaration_path(path, "hooks field", hooks, plugin, diag)
+        }
+        Value::Array(paths) => {
+            for (index, value) in paths.iter().enumerate() {
+                let label = format!("hooks array entry {}", index + 1);
+                match value {
+                    Value::String(path) => {
+                        validate_hook_declaration_path(path, &label, value, plugin, diag)
+                    }
+                    value => report_plugin_declaration_malformed(
+                        &format!("{label} must be a string (found {})", json_type(value)),
+                        &label,
+                        value,
+                        plugin,
+                        diag,
+                    ),
+                }
+            }
+        }
+        Value::Object(_) => {}
+        value => report_plugin_declaration_malformed(
+            &format!(
+                "hooks field must be a string, array, or object (found {})",
+                json_type(value)
+            ),
+            "hooks field",
+            value,
+            plugin,
+            diag,
+        ),
+    }
+}
+
+fn validate_hook_declaration_path(
+    path: &str,
+    label: &str,
+    value: &Value,
+    plugin: &ParsedManifest,
+    diag: &mut DiagnosticCollector,
+) {
+    // Empty and dot-only declarations normalize to no path. Absolute and
+    // traversal declarations remain exclusively M013-owned.
+    if !is_absolute_path(path)
+        && !path_segments(path).any(|segment| segment == "..")
+        && !has_normalized_path_segment(path)
+    {
+        report_plugin_declaration_malformed(
+            &format!("{label} must contain at least one normalized path segment"),
+            label,
+            value,
+            plugin,
+            diag,
+        );
+    }
+}
+
+fn report_plugin_declaration_malformed(
+    detail: &str,
+    label: &str,
+    value: &Value,
+    plugin: &ParsedManifest,
+    diag: &mut DiagnosticCollector,
+) {
+    let mut metadata = DiagnosticMetadata::default().with_evidence(label);
+    if let Some(location) = plugin
+        .source()
+        .and_then(|source| json_value_range(source, value))
+        .and_then(|range| {
+            plugin
+                .source()
+                .and_then(|source| SourceSpan::from_byte_range(source, range))
+        })
+    {
+        metadata = metadata.with_location(location);
+    }
+    diag.report_at_with(
+        LintRule::HookConfigMalformed,
+        ".claude-plugin/plugin.json",
+        &format!(".claude-plugin/plugin.json {detail}"),
+        metadata,
+    );
+}
+
+fn json_value_range(source: &str, value: &Value) -> Option<std::ops::Range<usize>> {
+    let token = serde_json::to_string(value).expect("JSON values always serialize");
+    source.find(&token).map(|start| start..start + token.len())
 }
 
 /// V4: Validate .claude/settings.json hook command paths
@@ -200,36 +283,51 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
 }
 
 /// V26: Validate hook object schemas in every plugin hook configuration
-/// surface (H008-H024).
+/// surface (H007-H026).
 pub fn validate_hooks_json_schema(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     // H001/H002 already report missing or unparseable configurations.
     if let ManifestState::Parsed(val) = &ctx.hooks_json {
         diag.with_subject_path("hooks/hooks.json", |diag| {
-            hook_schema::validate_hook_schema(val, "hooks/hooks.json", diag);
+            let result = hook_schema::validate_hook_schema(val, "hooks/hooks.json", true, diag);
+            report_effectively_empty_plugin_config(result, "hooks/hooks.json", diag);
         });
     }
     for config in &ctx.declared_hook_configs {
         if let ManifestState::Parsed(val) = &config.state {
             let label = config.subject_path.display().to_string();
             diag.with_subject_path(&config.subject_path, |diag| {
-                hook_schema::validate_hook_schema(val, &label, diag);
+                let result = hook_schema::validate_hook_schema(val, &label, true, diag);
+                report_effectively_empty_plugin_config(result, &label, diag);
             });
         }
     }
 }
 
-/// V27: Validate the hook object schema in .claude/settings.json (H008-H024).
+fn report_effectively_empty_plugin_config(
+    result: hook_schema::HookSchemaResult,
+    label: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    if result.is_effectively_empty() {
+        diag.report(
+            LintRule::HooksArrayEmpty,
+            &format!("{label} has no hook handler entries"),
+        );
+    }
+}
+
+/// V27: Validate the hook object schema in .claude/settings.json (H008-H026).
 pub fn validate_settings_schema(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     // H006 already reports an unparseable settings.json.
     if let ManifestState::Parsed(val) = &ctx.settings_json {
         diag.with_subject_path(".claude/settings.json", |diag| {
-            hook_schema::validate_hook_schema(val, ".claude/settings.json", diag);
+            hook_schema::validate_hook_schema(val, ".claude/settings.json", false, diag);
         });
     }
 }
 
 /// V28: Validate .claude/settings.local.json (H025), hook command paths
-/// (H004/H005), and hook object schema (H008-H024).
+/// (H004/H005), and hook object schema (H008-H026).
 pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     match &ctx.settings_local_json {
         ManifestState::Missing => {} // Optional file
@@ -250,7 +348,7 @@ pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector
                 );
             });
             diag.with_subject_path(".claude/settings.local.json", |diag| {
-                hook_schema::validate_hook_schema(val, ".claude/settings.local.json", diag);
+                hook_schema::validate_hook_schema(val, ".claude/settings.local.json", false, diag);
             });
         }
     }
@@ -320,40 +418,88 @@ mod tests {
     }
 
     #[test]
-    fn test_v3_empty_hooks_array() {
+    fn test_v26_empty_legacy_hooks_array_is_h007() {
         let val = json!({"hooks": []});
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_hooks_json(&ctx, &mut diag);
+        validate_hooks_json_schema(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksArrayEmpty);
-        assert!(diag.errors()[0].contains("empty"));
+        assert!(diag.errors()[0].contains("no hook handler entries"));
     }
 
     #[test]
-    fn test_v3_empty_event_keyed_hooks_object() {
+    fn test_v26_empty_event_keyed_hooks_object_is_h007() {
         let val = json!({"hooks": {}});
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_hooks_json(&ctx, &mut diag);
+        validate_hooks_json_schema(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksArrayEmpty);
-        assert!(diag.errors()[0].contains("empty"));
+        assert!(diag.errors()[0].contains("no hook handler entries"));
     }
 
     #[test]
-    fn test_v3_non_collection_hooks_values_fire_h003() {
+    fn test_v26_canonical_empty_groups_are_h007_once() {
+        let val = json!({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": []}]}});
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksArrayEmpty);
+    }
+
+    #[test]
+    fn test_v26_malformed_shape_does_not_cascade_to_h007() {
+        let val = json!({"hooks": {"PreToolUse": ["not-an-object"]}});
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::HookConfigMalformed);
+    }
+
+    #[test]
+    fn test_v26_non_collection_hooks_values_fire_h026_not_h007() {
         for value in [json!(null), json!("not-a-collection"), json!(42)] {
             let ctx = make_ctx(
                 ManifestState::parsed(json!({"hooks": value})),
                 ManifestState::Missing,
             );
             let mut diag = DiagnosticCollector::new_all_enabled();
-            validate_hooks_json(&ctx, &mut diag);
+            validate_hooks_json_schema(&ctx, &mut diag);
             assert_eq!(diag.error_count(), 1);
-            assert_eq!(diag.diagnostics()[0].rule, LintRule::HooksKeyMissing);
-            assert!(diag.errors()[0].contains("not an object/array"));
+            assert_eq!(diag.diagnostics()[0].rule, LintRule::HookConfigMalformed);
         }
+    }
+
+    #[test]
+    fn plugin_declaration_malformations_use_h026_without_h001() {
+        let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        ctx.plugin_json = ManifestState::parsed(json!({
+            "name": "hooks-test",
+            "hooks": ["", 42, null, false, {}, []]
+        }));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 6);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.rule == LintRule::HookConfigMalformed)
+        );
+        assert!(diag.diagnostics().iter().all(|diagnostic| {
+            diagnostic.subject_path.as_deref() == Some(Path::new(".claude-plugin/plugin.json"))
+        }));
+    }
+
+    #[test]
+    fn empty_plugin_declaration_array_is_valid_and_silent() {
+        let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        ctx.plugin_json = ManifestState::parsed(json!({"name": "hooks-test", "hooks": []}));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hooks_json(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
     }
 
     // V4: validate_settings_hooks
@@ -613,6 +759,28 @@ mod tests {
     }
 
     #[test]
+    fn test_v27_settings_non_object_hooks_is_h026_but_empty_object_is_silent() {
+        for hooks in [json!(null), json!("x"), json!([])] {
+            let ctx = make_ctx(
+                ManifestState::Missing,
+                ManifestState::parsed(json!({"hooks": hooks})),
+            );
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_settings_schema(&ctx, &mut diag);
+            assert_eq!(diag.error_count(), 1);
+            assert_eq!(diag.diagnostics()[0].rule, LintRule::HookConfigMalformed);
+        }
+
+        let ctx = make_ctx(
+            ManifestState::Missing,
+            ManifestState::parsed(json!({"hooks": {}})),
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_schema(&ctx, &mut diag);
+        assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
     fn test_v28_settings_local_schema_surface() {
         let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
         ctx.settings_local_json = ManifestState::parsed(schema_violation());
@@ -631,7 +799,10 @@ mod tests {
 
         let mut ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
         ctx.settings_local_json = ManifestState::parsed(json!({
-            "hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/nonexistent.sh"}]
+            "hooks": {"PreToolUse": [{"hooks": [{
+                "type": "command",
+                "command": "${CLAUDE_PLUGIN_ROOT}/scripts/nonexistent.sh"
+            }]}]}
         }));
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_settings_local(&ctx, &mut diag);

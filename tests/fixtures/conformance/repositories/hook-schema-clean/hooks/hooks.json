@@ -1,0 +1,9 @@
+{
+  "hooks": {
+    "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "echo clean"}]}],
+    "PostToolUse": [{"matcher": "Write", "hooks": [{"type": "prompt", "prompt": "Review the result."}]}],
+    "SubagentStart": [{"matcher": "general-purpose", "hooks": [{"type": "agent", "prompt": "Check the task."}]}],
+    "Notification": [{"matcher": "permission_prompt", "hooks": [{"type": "http", "url": "https://example.com/hook"}]}],
+    "Elicitation": [{"matcher": "server", "hooks": [{"type": "mcp_tool", "server": "server", "tool": "tool"}]}]
+  }
+}

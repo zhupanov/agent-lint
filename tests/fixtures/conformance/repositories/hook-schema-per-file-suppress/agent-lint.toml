@@ -1,0 +1,5 @@
+[lint]
+
+[[lint.overrides]]
+files = [".claude/settings.json"]
+suppress = ["H026"]

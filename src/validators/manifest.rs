@@ -1,8 +1,8 @@
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::plugin_paths::{
-    ComponentPathSafety, classify_component_path, declared_component_paths, is_absolute_path,
-    path_segments, plugin_root_is_safe,
+    ComponentPathSafety, classify_component_path, declared_component_paths,
+    has_normalized_path_segment, is_absolute_path, path_segments, plugin_root_is_safe,
 };
 use crate::rules::LintRule;
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
@@ -468,6 +468,16 @@ fn validate_declared_component_paths(
     diag: &mut DiagnosticCollector,
 ) {
     for path in declared_component_paths(value) {
+        // H026 owns hook declarations that normalize to no path. Keep M013
+        // focused on unsafe paths; absolute and traversal forms retain its
+        // established precedence and never reach H026.
+        if (path.label == "hooks" || path.label.starts_with("hooks["))
+            && !is_absolute_path(path.raw)
+            && !path_segments(path.raw).any(|segment| segment == "..")
+            && !has_normalized_path_segment(path.raw)
+        {
+            continue;
+        }
         let (rule, requirement) = match classify_component_path(path.raw) {
             ComponentPathSafety::Safe => continue,
             ComponentPathSafety::Absolute => (

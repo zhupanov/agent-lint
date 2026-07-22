@@ -121,6 +121,12 @@ pub(crate) fn path_segments(path: &str) -> impl Iterator<Item = &str> {
         .filter(|segment| !segment.is_empty() && *segment != ".")
 }
 
+/// Whether a declaration retains a usable component after normalization.
+/// Dot-only forms normalize to no path and therefore cannot name a component.
+pub(crate) fn has_normalized_path_segment(path: &str) -> bool {
+    path_segments(path).next().is_some()
+}
+
 pub(crate) fn is_absolute_path(path: &str) -> bool {
     path.starts_with('/') || path.starts_with('\\') || RE_WIN_DRIVE.is_match(path)
 }
@@ -147,7 +153,7 @@ pub(crate) fn safe_component_path(raw: &str) -> Option<PathBuf> {
     if classify_component_path(raw) != ComponentPathSafety::Safe {
         return None;
     }
-    Some(path_segments(raw).collect())
+    has_normalized_path_segment(raw).then(|| path_segments(raw).collect())
 }
 
 /// Classify `metadata.pluginRoot`; unlike a component path it may name the

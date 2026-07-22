@@ -4030,7 +4030,7 @@ suppress = ["H002"]
 }
 
 #[test]
-fn hooks_json_non_collection_values_are_h003_not_h007() {
+fn hooks_json_non_collection_values_are_h026_not_h003_or_h007() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
     let manifest = tmp.path().join(".claude-plugin/plugin.json");
@@ -4046,14 +4046,114 @@ fn hooks_json_non_collection_values_are_h003_not_h007() {
         .unwrap();
         let output = run_in(
             tmp.path(),
-            &["--format", "json", "--only", "H003,H007", "."],
+            &["--format", "json", "--only", "H003,H007,H026", "."],
         );
         let report = json(&output);
         let diagnostics = report["diagnostics"].as_array().unwrap();
         assert_eq!(diagnostics.len(), 1, "{report:#}");
-        assert_eq!(diagnostics[0]["code"], "H003");
+        assert_eq!(diagnostics[0]["code"], "H026");
         assert_eq!(diagnostics[0]["subject_path"], "hooks/hooks.json");
     }
+}
+
+#[test]
+fn plugin_hook_declaration_shapes_use_h026_with_structured_manifest_locations() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+
+    std::fs::write(
+        &manifest,
+        r#"{
+  "name": "hooks-test",
+  "hooks": ["", 42, null, false, {}, []]
+}"#,
+    )
+    .unwrap();
+    let output = run_in(
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--only",
+            "H001,H003,H007,H026,M013",
+            ".",
+        ],
+    );
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 6, "{report:#}");
+    assert!(diagnostics.iter().all(|diagnostic| {
+        diagnostic["code"] == "H026"
+            && diagnostic["subject_path"] == ".claude-plugin/plugin.json"
+            && diagnostic["location"].is_object()
+    }));
+    assert!(diagnostics.iter().all(|diagnostic| {
+        diagnostic["evidence"]
+            .as_str()
+            .is_some_and(|evidence| !evidence.is_empty())
+    }));
+
+    for declaration in ["\"\"", "\".\"", "\"./\"", "\"././.\""] {
+        std::fs::write(
+            &manifest,
+            format!(r#"{{"name":"hooks-test","hooks":{declaration}}}"#),
+        )
+        .unwrap();
+        let output = run_in(
+            tmp.path(),
+            &[
+                "--format",
+                "json",
+                "--only",
+                "H001,H003,H007,H026,M013",
+                ".",
+            ],
+        );
+        let report = json(&output);
+        assert_eq!(
+            report["diagnostics"].as_array().unwrap().len(),
+            1,
+            "{report:#}"
+        );
+        assert_eq!(report["diagnostics"][0]["code"], "H026");
+    }
+
+    std::fs::write(
+        &manifest,
+        r#"{"name":"hooks-test","hooks":"./config/missing.json"}"#,
+    )
+    .unwrap();
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "H001,H026", "."],
+    );
+    let report = json(&output);
+    assert_eq!(
+        report["diagnostics"].as_array().unwrap().len(),
+        1,
+        "{report:#}"
+    );
+    assert_eq!(report["diagnostics"][0]["code"], "H001");
+
+    std::fs::write(
+        &manifest,
+        r#"{"name":"hooks-test","hooks":["/absolute.json","../escape.json"]}"#,
+    )
+    .unwrap();
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "H026,M013", "."],
+    );
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 2, "{report:#}");
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["code"] == "M013")
+    );
 }
 
 #[test]
