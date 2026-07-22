@@ -48,10 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   and rejects leading zeros.
 - M005 (`marketplace-json-missing`) re-severitized from error to warning:
   plugin-only repositories are valid upstream.
-- Marketplace `plugins` shape diagnostics split: absent key is M007
-  `missing required field: plugins`; a present non-array is M008
-  `plugins must be an array (found <type>)`; an empty array keeps the existing
-  M008 message.
+- Marketplace `plugins` shape diagnostics split: absent key and a present
+  non-array are M007 errors (`missing required field: plugins` and `plugins
+  must be an array (found <type>)`); a present empty array is M008 warning.
 - M009 deep-validates marketplace plugin entries: duplicate names, object
   source types (`github`/`url`/`git-subdir`/`npm`) with required subfields,
   `..` traversal, absolute paths, and whitespace-trimmed emptiness.

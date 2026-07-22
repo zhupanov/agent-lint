@@ -1,0 +1,13 @@
+{
+  "name": "userconfig-multiple-false-broken",
+  "version": "1.0.0",
+  "userConfig": {
+    "retries": {
+      "type": "number",
+      "title": "Retries",
+      "description": "Retry count",
+      "multiple": false,
+      "default": 3
+    }
+  }
+}

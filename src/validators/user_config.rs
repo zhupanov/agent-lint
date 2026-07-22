@@ -407,9 +407,7 @@ fn validate_semantic_combinations(
     fields: &Map<String, Value>,
     type_name: &str,
 ) {
-    if let Some(Value::Bool(true)) = fields.get("multiple")
-        && type_name != "string"
-    {
+    if matches!(fields.get("multiple"), Some(Value::Bool(_))) && type_name != "string" {
         report(
             diag,
             LintRule::UserconfigOptionInvalid,
@@ -764,6 +762,54 @@ mod tests {
             }
         }));
         assert!(diag.diagnostics().is_empty(), "{:?}", codes(&diag));
+    }
+
+    #[test]
+    fn u008_multiple_boolean_is_string_only_across_all_userconfig_surfaces() {
+        for type_name in VALID_TYPES {
+            for multiple in [true, false] {
+                let option = serde_json::json!({
+                    "type": type_name,
+                    "title": "T",
+                    "description": "D",
+                    "multiple": multiple,
+                });
+                let surfaces = [
+                    (
+                        "top-level",
+                        serde_json::json!({"userConfig": {"opt": option}}),
+                        "/userConfig/opt/multiple",
+                    ),
+                    (
+                        "array channel",
+                        serde_json::json!({"channels": [{"userConfig": {"opt": option}}]}),
+                        "/channels/0/userConfig/opt/multiple",
+                    ),
+                    (
+                        "object channel",
+                        serde_json::json!({"channels": {"alerts": {"userConfig": {"opt": option}}}}),
+                        "/channels/alerts/userConfig/opt/multiple",
+                    ),
+                ];
+                for (surface, value, pointer) in surfaces {
+                    let diag = run(value);
+                    let u008: Vec<_> = diag
+                        .diagnostics()
+                        .iter()
+                        .filter(|diagnostic| diagnostic.rule == LintRule::UserconfigOptionInvalid)
+                        .collect();
+                    if *type_name == "string" {
+                        assert!(
+                            u008.is_empty(),
+                            "{surface} {type_name} {multiple}: {u008:?}"
+                        );
+                    } else {
+                        assert_eq!(u008.len(), 1, "{surface} {type_name} {multiple}: {u008:?}");
+                        assert_eq!(u008[0].evidence.as_deref(), Some(pointer));
+                    }
+                }
+            }
+        }
     }
 
     #[test]

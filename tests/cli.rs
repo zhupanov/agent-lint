@@ -6242,6 +6242,23 @@ fn u009_userconfig_default_secret_modes_privacy_and_suppression() {
     assert!(per_file.status.success(), "stderr: {}", stderr(&per_file));
     assert_eq!(json(&per_file)["diagnostics"], serde_json::json!([]));
 
+    // Exclusions select discovered files only; this fixed-path manifest rule
+    // remains active unless its rule policy suppresses it.
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\".claude-plugin/plugin.json\"]\n",
+    )
+    .unwrap();
+    let excluded = run_in(tmp.path(), &["--format", "json", "--only", "U009", "."]);
+    assert_eq!(
+        excluded.status.code(),
+        Some(0),
+        "stderr: {}",
+        stderr(&excluded)
+    );
+    assert_eq!(json(&excluded)["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(json(&excluded)["diagnostics"][0]["code"], "U009");
+
     // Basic mode (no plugin manifest) is silent for U009.
     let basic_tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(basic_tmp.path().join(".claude")).unwrap();
