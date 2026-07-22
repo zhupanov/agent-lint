@@ -1,0 +1,3 @@
+[[lint.overrides]]
+files = [".cursor/agents/bad.md"]
+suppress = ["CU014", "CU015"]

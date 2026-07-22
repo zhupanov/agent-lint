@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 
 use globset::GlobBuilder;
 use jsonschema::error::ValidationErrorKind;
+use regex::Regex;
 use serde_json::Value as JsonValue;
 #[cfg(test)]
 use serde_json::json;
@@ -17,8 +18,15 @@ use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::platforms;
 use crate::rules::LintRule;
+use crate::sensitive::contains_sensitive_evidence;
 use crate::traversal;
 use crate::yaml::{Mapping, Value as YamlValue};
+
+/// Cursor subagent identifiers: lowercase letters with single hyphens between
+/// segments (`security-auditor`). Digits, underscores, and leading, trailing,
+/// or consecutive hyphens are rejected.
+static CURSOR_AGENT_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z]+(-[a-z]+)*$").expect("cursor agent name regex"));
 
 const RULE_KEYS: &[&str] = &["description", "globs", "alwaysApply"];
 const CURSOR_SKILL_KEYS: &[&str] = &[
@@ -87,6 +95,108 @@ fn report(diag: &mut DiagnosticCollector, rule: LintRule, path: &str, message: &
 
 fn yaml_string<'a>(map: &'a Mapping, name: &str) -> Option<&'a str> {
     map.get(name).and_then(YamlValue::as_str)
+}
+
+/// Whether `name` matches Cursor's documented lowercase-letter-and-hyphen
+/// identifier format.
+pub(crate) fn is_cursor_agent_identifier(name: &str) -> bool {
+    CURSOR_AGENT_NAME.is_match(name)
+}
+
+/// Recursive, exclusion-filtered, sorted inventory of `.cursor/agents/**/*.md`.
+///
+/// CU014/CU015 and A030 share this discovery so Cursor subagent routing stays
+/// on one walker (issue #303).
+pub(crate) fn discover_cursor_agent_paths(exclude: &ExcludeSet) -> Vec<String> {
+    let root = Path::new(".cursor/agents");
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    let mut paths = Vec::new();
+    for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
+        if entry.path.extension().is_none_or(|ext| ext != "md") {
+            continue;
+        }
+        paths.push(entry.display);
+    }
+    paths.sort();
+    paths
+}
+
+fn optional_nonempty_string(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    yaml: &Mapping,
+    field: &str,
+) {
+    let Some(value) = yaml.get(field) else {
+        return;
+    };
+    match value.as_str() {
+        Some(text) if !text.trim().is_empty() => {}
+        Some(_) => report(
+            diag,
+            LintRule::CursorAgentFrontmatterInvalid,
+            path,
+            &format!("'{field}' must be a non-empty string"),
+        ),
+        None => report(
+            diag,
+            LintRule::CursorAgentFrontmatterInvalid,
+            path,
+            &format!("'{field}' must be a string"),
+        ),
+    }
+}
+
+fn validate_agent_identifier(diag: &mut DiagnosticCollector, path: &str, yaml: &Mapping) {
+    match yaml.get("name") {
+        None => {
+            let stem = Path::new(path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("");
+            if !is_cursor_agent_identifier(stem) {
+                report(
+                    diag,
+                    LintRule::CursorAgentFrontmatterInvalid,
+                    path,
+                    &format!(
+                        "derived name '{stem}' from filename must use lowercase letters and hyphens (e.g. 'code-reviewer')"
+                    ),
+                );
+            }
+        }
+        Some(value) => match value.as_str() {
+            Some(text) if text.trim().is_empty() => report(
+                diag,
+                LintRule::CursorAgentFrontmatterInvalid,
+                path,
+                "'name' must be a non-empty string",
+            ),
+            Some(text) if !is_cursor_agent_identifier(text) => report(
+                diag,
+                LintRule::CursorAgentFrontmatterInvalid,
+                path,
+                "'name' must use lowercase letters and hyphens (e.g. 'code-reviewer')",
+            ),
+            Some(_) => {}
+            None => report(
+                diag,
+                LintRule::CursorAgentFrontmatterInvalid,
+                path,
+                "'name' must be a string",
+            ),
+        },
+    }
+}
+
+fn yaml_parse_constraint(message: &str) -> String {
+    if contains_sensitive_evidence(message) {
+        "invalid syntax".to_string()
+    } else {
+        message.to_string()
+    }
 }
 
 fn validate_legacy_rules(
@@ -459,18 +569,11 @@ fn validate_agents(
     exclude: &ExcludeSet,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let root = Path::new(".cursor/agents");
-    if !root.is_dir() {
-        return;
-    }
-    for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
-        if entry.path.extension().is_none_or(|ext| ext != "md") {
+    for path in discover_cursor_agent_paths(exclude) {
+        let Ok(content) = fs::read_to_string(&path) else {
             continue;
-        }
-        let path = entry.display;
-        if let Ok(content) = fs::read_to_string(&entry.path) {
-            validate_agent_file(diag, &path, &content, prompt_pass);
-        }
+        };
+        validate_agent_file(diag, &path, &content, prompt_pass);
     }
 }
 
@@ -491,48 +594,50 @@ fn validate_agent_file(
             path,
             "missing or malformed YAML frontmatter",
         );
+        // Body boundary is unknowable without valid delimiters, so CU015 does
+        // not run.
         return;
     };
-    let yaml = match crate::yaml::parse(&lines.join("\n")) {
-        Ok(YamlValue::Mapping(map)) => map,
-        _ => {
+
+    match frontmatter::parse_yaml_strict(&lines) {
+        Ok(YamlValue::Mapping(yaml)) => {
+            validate_agent_identifier(diag, path, &yaml);
+            optional_nonempty_string(diag, path, &yaml, "description");
+            optional_nonempty_string(diag, path, &yaml, "model");
+            for field in ["readonly", "is_background"] {
+                if yaml.get(field).is_some_and(|value| !value.is_bool()) {
+                    report(
+                        diag,
+                        LintRule::CursorAgentFrontmatterInvalid,
+                        path,
+                        &format!("'{field}' must be a boolean"),
+                    );
+                }
+            }
+        }
+        Ok(_) => {
             report(
                 diag,
                 LintRule::CursorAgentFrontmatterInvalid,
                 path,
                 "frontmatter must be a YAML object",
             );
-            return;
         }
-    };
-    for field in ["name", "description"] {
-        if yaml_string(&yaml, field).is_none_or(|value| value.trim().is_empty()) {
+        Err(error) => {
             report(
                 diag,
                 LintRule::CursorAgentFrontmatterInvalid,
                 path,
-                &format!("'{field}' must be a non-empty string"),
+                &format!(
+                    "frontmatter is not valid YAML: {}",
+                    yaml_parse_constraint(&error.message)
+                ),
             );
         }
     }
-    if yaml.get("model").is_some_and(|value| !value.is_string()) {
-        report(
-            diag,
-            LintRule::CursorAgentFrontmatterInvalid,
-            path,
-            "'model' must be a string",
-        );
-    }
-    for field in ["readonly", "is_background"] {
-        if yaml.get(field).is_some_and(|value| !value.is_bool()) {
-            report(
-                diag,
-                LintRule::CursorAgentFrontmatterInvalid,
-                path,
-                &format!("'{field}' must be a boolean"),
-            );
-        }
-    }
+
+    // Delimiters were valid, so the body boundary is known even when field
+    // checks or YAML parsing failed.
     if frontmatter::extract_body(content).trim().is_empty() {
         report(
             diag,
@@ -909,6 +1014,274 @@ mod tests {
             assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
         }
         assert_eq!(codes.iter().filter(|code| **code == "CR-SK-001").count(), 3);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_agent_omission_and_full_frontmatter_are_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor/agents/review")).unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/agents/reviewer.md"),
+            "---\nreadonly: false\nis_background: true\n---\n\nReview the requested change and return concise evidence.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/agents/review/security-auditor.md"),
+            "---\nname: security-auditor\ndescription: Security specialist for auth and payments.\nmodel: inherit\nreadonly: true\nis_background: false\n---\nAudit the change.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/agents/review/planner.md"),
+            "---\nname: planner\ndescription: Plans complex changes before implementation.\nmodel: claude-opus-4-8[effort=high]\n---\nPlan the change.\n",
+        )
+        .unwrap();
+        let codes = codes_for(tmp.path());
+        assert!(
+            !codes
+                .iter()
+                .any(|code| *code == "CU014" || *code == "CU015"),
+            "unexpected agent diagnostics: {codes:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_agent_field_and_delimiter_contract() {
+        let cases = [
+            (
+                "bad.md",
+                "name: reviewer\ndescription: ok\n",
+                true,
+                false,
+                "unclosed frontmatter",
+            ),
+            (
+                "seq.md",
+                "---\n- just a list\n---\nBody\n",
+                true,
+                false,
+                "non-object YAML",
+            ),
+            (
+                "parse.md",
+                "---\nname: [unclosed\n---\nBody\n",
+                true,
+                false,
+                "parse error",
+            ),
+            (
+                "name-type.md",
+                "---\nname: [not, a, string]\n---\nBody\n",
+                true,
+                false,
+                "non-string name",
+            ),
+            (
+                "empty-name.md",
+                "---\nname: \"\"\ndescription: present description text\n---\nBody\n",
+                true,
+                false,
+                "empty name",
+            ),
+            (
+                "ws-name.md",
+                "---\nname: \"   \"\ndescription: present description text\n---\nBody\n",
+                true,
+                false,
+                "whitespace name",
+            ),
+            (
+                "bad-name.md",
+                "---\nname: Reviewer\ndescription: present description text\n---\nBody\n",
+                true,
+                false,
+                "uppercase name",
+            ),
+            (
+                "digit-name.md",
+                "---\nname: reviewer2\ndescription: present description text\n---\nBody\n",
+                true,
+                false,
+                "digit in name",
+            ),
+            (
+                "empty-desc.md",
+                "---\nname: reviewer\ndescription: \"\"\n---\nBody\n",
+                true,
+                false,
+                "empty description",
+            ),
+            (
+                "ws-desc.md",
+                "---\nname: reviewer\ndescription: \"  \"\n---\nBody\n",
+                true,
+                false,
+                "whitespace description",
+            ),
+            (
+                "desc-type.md",
+                "---\nname: reviewer\ndescription: [not, a, string]\n---\nBody\n",
+                true,
+                false,
+                "non-string description",
+            ),
+            (
+                "empty-model.md",
+                "---\nname: reviewer\nmodel: \"\"\n---\nBody\n",
+                true,
+                false,
+                "empty model",
+            ),
+            (
+                "ws-model.md",
+                "---\nname: reviewer\nmodel: \"   \"\n---\nBody\n",
+                true,
+                false,
+                "whitespace model",
+            ),
+            (
+                "model-type.md",
+                "---\nname: reviewer\nmodel: 1\n---\nBody\n",
+                true,
+                false,
+                "non-string model",
+            ),
+            (
+                "readonly-type.md",
+                "---\nname: reviewer\nreadonly: \"true\"\n---\nBody\n",
+                true,
+                false,
+                "non-bool readonly",
+            ),
+            (
+                "bg-type.md",
+                "---\nname: reviewer\nis_background: \"yes\"\n---\nBody\n",
+                true,
+                false,
+                "non-bool is_background",
+            ),
+            (
+                "empty-body.md",
+                "---\nname: reviewer\n---\n   \n",
+                false,
+                true,
+                "empty body only",
+            ),
+            (
+                "field-and-body.md",
+                "---\nname: Reviewer\n---\n",
+                true,
+                true,
+                "field error keeps CU015",
+            ),
+        ];
+        for (file, content, expect_cu014, expect_cu015, label) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".cursor/agents")).unwrap();
+            std::fs::write(tmp.path().join(".cursor/agents").join(file), content).unwrap();
+            let codes = codes_for(tmp.path());
+            assert_eq!(
+                codes.contains(&"CU014"),
+                expect_cu014,
+                "{label}: CU014 mismatch in {codes:?}"
+            );
+            assert_eq!(
+                codes.contains(&"CU015"),
+                expect_cu015,
+                "{label}: CU015 mismatch in {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_agent_derived_name_boundaries() {
+        let cases = [
+            ("reviewer.md", false),
+            ("code-reviewer.md", false),
+            ("a.md", false),
+            ("Reviewer.md", true),
+            ("reviewer2.md", true),
+            ("review_er.md", true),
+            ("-reviewer.md", true),
+            ("reviewer-.md", true),
+            ("code--reviewer.md", true),
+        ];
+        for (file, expect_cu014) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".cursor/agents")).unwrap();
+            std::fs::write(
+                tmp.path().join(".cursor/agents").join(file),
+                "---\nreadonly: false\n---\nBody\n",
+            )
+            .unwrap();
+            let codes = codes_for(tmp.path());
+            assert_eq!(
+                codes.contains(&"CU014"),
+                expect_cu014,
+                "{file}: CU014 mismatch in {codes:?}"
+            );
+            assert!(!codes.contains(&"CU015"), "{file}: unexpected CU015");
+        }
+    }
+
+    #[test]
+    fn yaml_parse_constraint_masks_sensitive_evidence() {
+        assert_eq!(
+            yaml_parse_constraint("expected ',' or ']' in flow sequence"),
+            "expected ',' or ']' in flow sequence"
+        );
+        assert_eq!(
+            yaml_parse_constraint("token: 'this-is-a-sensitive-value'"),
+            "invalid syntax"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_agent_yaml_parse_error_keeps_nonsensitive_constraint() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor/agents")).unwrap();
+        std::fs::write(
+            tmp.path().join(".cursor/agents/parse.md"),
+            "---\nname: [unclosed\n---\nBody\n",
+        )
+        .unwrap();
+        let _guard = CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        let messages: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::CursorAgentFrontmatterInvalid)
+            .map(|item| item.message.as_str())
+            .collect();
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].contains("not valid YAML:"),
+            "missing parser constraint: {}",
+            messages[0]
+        );
+        assert!(
+            !messages[0].ends_with("not valid YAML: invalid syntax"),
+            "nonsensitive parse errors must keep the real constraint: {}",
+            messages[0]
+        );
+    }
+
+    #[test]
+    fn cursor_agent_identifier_format_matches_documented_contract() {
+        assert!(is_cursor_agent_identifier("reviewer"));
+        assert!(is_cursor_agent_identifier("code-reviewer"));
+        assert!(!is_cursor_agent_identifier(""));
+        assert!(!is_cursor_agent_identifier("Reviewer"));
+        assert!(!is_cursor_agent_identifier("reviewer2"));
+        assert!(!is_cursor_agent_identifier("review_er"));
+        assert!(!is_cursor_agent_identifier("-reviewer"));
+        assert!(!is_cursor_agent_identifier("reviewer-"));
+        assert!(!is_cursor_agent_identifier("code--reviewer"));
     }
 
     #[test]
