@@ -929,7 +929,9 @@ precedence ([supported file types](https://docs.github.com/en/communities/settin
 retrieved 2026-07-21). A directory, a wrong-case name, or a symlink does not
 satisfy the rule. An organization default served from a public `.github`
 repository cannot be observed locally, so G005 stays a warning and normal
-suppression is the escape hatch for that inherited policy.
+suppression is the escape hatch for that inherited policy. The pre-rename name
+`security-md-missing` is accepted as a legacy alias for selectors and
+configuration.
 
 G009-G011 share one shell/awk lexical layer (`validators/shell.rs`) rather than
 matching regexes against raw lines: a scanner masks comments, single-quoted
