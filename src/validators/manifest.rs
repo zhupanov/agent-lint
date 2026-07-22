@@ -208,14 +208,12 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             LintRule::MarketplaceFieldMissing,
             &format!("{f} missing required field: name"),
         );
-    } else {
-        let trimmed = mp_name.trim();
-        if !trimmed.is_empty() && !RE_MARKETPLACE_KEBAB.is_match(trimmed) {
-            diag.report(
-                LintRule::MarketplaceNameFormat,
-                &format!("{f} name '{mp_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
-            );
-        }
+    } else if !RE_MARKETPLACE_KEBAB.is_match(mp_name) {
+        // Match the raw value: upstream kebab-case checks do not trim first.
+        diag.report(
+            LintRule::MarketplaceNameFormat,
+            &format!("{f} name '{mp_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
+        );
     }
     if mp_owner.trim().is_empty() {
         diag.report(
@@ -258,19 +256,18 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             let mut name_indexes: HashMap<String, Vec<usize>> = HashMap::new();
 
             for (i, plugin) in arr.iter().enumerate() {
-                let pname = plugin
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
+                let pname_raw = plugin.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let pname = pname_raw.trim();
                 let name_missing = pname.is_empty();
                 if !name_missing {
+                    // Duplicate detection keeps trimmed-key semantics (M009).
                     name_indexes.entry(pname.to_string()).or_default().push(i);
-                    if !RE_MARKETPLACE_KEBAB.is_match(pname) {
+                    // Match the raw value: upstream kebab-case checks do not trim first.
+                    if !RE_MARKETPLACE_KEBAB.is_match(pname_raw) {
                         diag.report(
                             LintRule::MarketplaceNameFormat,
                             &format!(
-                                "{f} plugins[{i}] name '{pname}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"
+                                "{f} plugins[{i}] name '{pname_raw}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"
                             ),
                         );
                     }
@@ -1088,6 +1085,11 @@ mod tests {
                 false,
             ),
             (
+                "top_ok_my_plugin",
+                json!({"name": "my-plugin", "owner": {"name": "o"}, "plugins": [{"name": "my-plugin", "source": "./p"}]}),
+                false,
+            ),
+            (
                 "top_bad",
                 json!({"name": "My_Plugin", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
                 true,
@@ -1102,6 +1104,21 @@ mod tests {
                 json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "a--b", "source": "./p"}]}),
                 true,
             ),
+            (
+                "top_padded",
+                json!({"name": " my-market ", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
+                true,
+            ),
+            (
+                "entry_padded",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": " my-plugin ", "source": "./p"}]}),
+                true,
+            ),
+            (
+                "entry_internal_space",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "my plugin", "source": "./p"}]}),
+                true,
+            ),
         ];
         for (label, val, expect_warn) in cases {
             let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val.clone()));
@@ -1113,6 +1130,60 @@ mod tests {
                 .any(|d| d.rule == LintRule::MarketplaceNameFormat);
             assert_eq!(has, *expect_warn, "{label}");
         }
+
+        // Padded names must quote the raw value (including spaces) in the message.
+        let padded = json!({
+            "name": " my-market ",
+            "owner": {"name": "o"},
+            "plugins": [{"name": " my-plugin ", "source": "./p"}]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(padded));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        let m021: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::MarketplaceNameFormat)
+            .collect();
+        assert_eq!(m021.len(), 2, "{:?}", m021);
+        assert!(
+            m021.iter().any(|d| d.message.contains("' my-market '")),
+            "{:?}",
+            m021
+        );
+        assert!(
+            m021.iter().any(|d| d.message.contains("' my-plugin '")),
+            "{:?}",
+            m021
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|d| d.rule == LintRule::MarketplaceNameFormat),
+            "evidence manifest must produce only M021: {:?}",
+            diag.diagnostics()
+        );
+
+        // Whitespace-only entry name stays M009 only (no M021).
+        let blank_entry = json!({
+            "name": "mp",
+            "owner": {"name": "o"},
+            "plugins": [{"name": "   ", "source": "./p"}]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(blank_entry));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        let diags = diag.diagnostics();
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        assert_eq!(
+            diags[0].rule,
+            LintRule::MarketplacePluginInvalid,
+            "{diags:?}"
+        );
+        assert!(
+            diags[0].message.contains("missing/invalid name or source"),
+            "{diags:?}"
+        );
     }
 
     // V12: validate_marketplace_enriched
