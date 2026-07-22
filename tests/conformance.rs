@@ -14,6 +14,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "claude-skill-prompt",
     "codex",
     "codex-plugin",
+    "codex-profiles",
     "cursor-legacy",
     "cursor-mdc",
     "cursor-hooks-basic",

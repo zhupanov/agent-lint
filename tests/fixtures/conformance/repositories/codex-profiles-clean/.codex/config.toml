@@ -1,0 +1,8 @@
+[profiles.work]
+approval_policy = "on-failure"
+sandbox_mode = "danger-full-access"
+model = "gpt-5"
+model_reasoning_effort = "ultra"
+
+[profiles.docs_only]
+chatgpt_base_url = "https://example.test"

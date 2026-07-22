@@ -1,6 +1,12 @@
 //! Codex configuration allowlists, rechecked with codex-cli 0.144.6 on 2026-07-21.
 //!
 //! Keep these values together so schema updates are a localized maintenance change.
+//!
+//! The same 2026-07-21 recheck confirmed that codex validates inline
+//! `[profiles.<name>]` tables with these same per-key contracts (errors surface
+//! under the `profiles.<name>.<key>` path even when the profile is unselected);
+//! `validators::codex_config::validate_profiles` reuses the enum/type checks
+//! below for both the document root and every profile table (issue #388).
 
 pub const APPROVAL_POLICIES: &[&str] = &["untrusted", "on-request", "on-failure", "never"];
 pub const SANDBOX_MODES: &[&str] = &["read-only", "workspace-write", "danger-full-access"];

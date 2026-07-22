@@ -736,6 +736,16 @@ schema and are covered by the unknown-key rules.
 CX023 and CX024 are advisory positivity checks; they are not claims about a
 Codex parser rejection.
 
+The scalar-enum and type rows above (CX005–CX009, CX014, CX016–CX024, CX026,
+CX027, and CX031) also validate the same keys inside every `[profiles.<name>]`
+table, since Codex applies the identical per-key contracts there; those messages
+carry a `.codex/config.toml [profiles.<name>]:` prefix but keep the
+`.codex/config.toml` subject. `profile` (CX032) stays root-only — a profile
+cannot select a profile — and a non-table `profiles` or `[profiles.<name>]`
+entry is reported as CX062. Codex 0.144.6 validates a subset of these keys in a
+profile; the rest remain checked as defects (an unsupported key or a wrong
+value) rather than being silently accepted.
+
 ### Codex Instruction, Plugin, and Skill Rules (CX)
 
 These optional rules run in Basic and Plugin modes whenever the corresponding

@@ -206,6 +206,7 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         Err(_) => return,
     };
     let Some(root) = value.as_table() else { return };
+    let root_scope = ValueScope::root(root);
     validate_unknown_keys(
         diag,
         &source,
@@ -216,9 +217,47 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         &[],
     );
     validate_project_docs(diag, root, &source);
-    validate_scalar_enums(diag, root, &source);
-    validate_types(diag, root, &source);
+    validate_scalar_enums(diag, &root_scope, &source);
+    validate_types(diag, &root_scope, &source);
     validate_nested(diag, root, &source);
+    validate_profiles(diag, root, &source);
+}
+
+/// Identifies a table whose scalar/typed values are validated with the shared
+/// root Codex per-key rules, plus how each finding is labelled and located.
+/// Codex applies identical per-key contracts at the document root and inside
+/// every `[profiles.<name>]` table (issue #388), so both flow through one
+/// `ValueScope` rather than a duplicated per-profile validator.
+struct ValueScope<'a> {
+    table: &'a Table,
+    /// Message prefix before ": '<key>' …": `CONFIG_PATH` at the document root,
+    /// `"CONFIG_PATH [profiles.<name>]"` inside a profile.
+    label: &'a str,
+    /// Structural path from the document root to `table`; empty at the root.
+    prefix: &'a [&'a str],
+}
+
+impl<'a> ValueScope<'a> {
+    fn root(table: &'a Table) -> Self {
+        Self {
+            table,
+            label: CONFIG_PATH,
+            prefix: &[],
+        }
+    }
+
+    /// True only for the document root, where `profile` (CX032) is validated; a
+    /// profile cannot itself select a profile (#388 decision 1).
+    fn is_root(&self) -> bool {
+        self.prefix.is_empty()
+    }
+
+    /// Document-root path to `key` within this scope, used for span resolution.
+    fn path(&self, key: &'a str) -> Vec<&'a str> {
+        let mut path = self.prefix.to_vec();
+        path.push(key);
+        path
+    }
 }
 
 fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
@@ -257,7 +296,11 @@ fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table, source: &
     }
 }
 
-fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
+fn validate_scalar_enums(
+    diag: &mut DiagnosticCollector,
+    scope: &ValueScope<'_>,
+    source: &SourceMap<'_>,
+) {
     for (key, allowed, rule) in [
         (
             "approval_policy",
@@ -292,7 +335,7 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &
             LintRule::CodexApprovalsReviewer,
         ),
     ] {
-        if let Some(value) = root.get(key)
+        if let Some(value) = scope.table.get(key)
             && !(key == "approval_policy" && value.is_table())
             && !value.as_str().is_some_and(|value| allowed.contains(&value))
         {
@@ -301,39 +344,43 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &
                 source,
                 rule,
                 &format!(
-                    "{CONFIG_PATH}: '{key}' must be one of: {}",
+                    "{}: '{key}' must be one of: {}",
+                    scope.label,
                     allowed.join(", ")
                 ),
-                &[key],
+                &scope.path(key),
                 false,
                 value.as_str(),
                 "select one of the supported values",
             );
         }
     }
-    if let Some(value) = root.get("model_reasoning_effort")
+    if let Some(value) = scope.table.get("model_reasoning_effort")
         && value.as_str().is_none_or(str::is_empty)
     {
         report_config(
             diag,
             source,
             LintRule::CodexReasoningEffort,
-            &format!("{CONFIG_PATH}: 'model_reasoning_effort' must be a non-empty string"),
-            &["model_reasoning_effort"],
+            &format!(
+                "{}: 'model_reasoning_effort' must be a non-empty string",
+                scope.label
+            ),
+            &scope.path("model_reasoning_effort"),
             false,
             value.as_str(),
             "use a non-empty string",
         );
     }
-    if let Some(value) = root.get("service_tier")
+    if let Some(value) = scope.table.get("service_tier")
         && !value.is_str()
     {
         report_config(
             diag,
             source,
             LintRule::CodexServiceTier,
-            &format!("{CONFIG_PATH}: 'service_tier' must be a string"),
-            &["service_tier"],
+            &format!("{}: 'service_tier' must be a string", scope.label),
+            &scope.path("service_tier"),
             false,
             value.as_str(),
             "use a string",
@@ -341,22 +388,27 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &
     }
 }
 
-fn validate_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
+fn validate_types(diag: &mut DiagnosticCollector, scope: &ValueScope<'_>, source: &SourceMap<'_>) {
     for (key, rule) in [
         ("model", LintRule::CodexModelType),
         ("model_provider", LintRule::CodexModelProviderType),
         ("file_opener", LintRule::CodexFileOpenerType),
         ("profile", LintRule::CodexProfileType),
     ] {
-        if let Some(value) = root.get(key)
+        // CX032 stays root-only: a profile cannot itself select a profile
+        // (#388 decision 1). Every other string type applies in both scopes.
+        if key == "profile" && !scope.is_root() {
+            continue;
+        }
+        if let Some(value) = scope.table.get(key)
             && !value.is_str()
         {
             report_config(
                 diag,
                 source,
                 rule,
-                &format!("{CONFIG_PATH}: '{key}' must be a string"),
-                &[key],
+                &format!("{}: '{key}' must be a string", scope.label),
+                &scope.path(key),
                 false,
                 value.as_str(),
                 "use a string",
@@ -368,15 +420,15 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceM
         ("tui", LintRule::CodexTuiType),
         ("skills", LintRule::CodexSkillsType),
     ] {
-        if let Some(value) = root.get(key)
+        if let Some(value) = scope.table.get(key)
             && !value.is_table()
         {
             report_config(
                 diag,
                 source,
                 rule,
-                &format!("{CONFIG_PATH}: '{key}' must be a TOML table"),
-                &[key],
+                &format!("{}: '{key}' must be a TOML table", scope.label),
+                &scope.path(key),
                 false,
                 None,
                 "use a TOML table",
@@ -390,15 +442,15 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceM
             LintRule::CodexAutoCompactLimit,
         ),
     ] {
-        if let Some(value) = root.get(key)
+        if let Some(value) = scope.table.get(key)
             && (!value.is_integer() || value.as_integer().is_none_or(|number| number <= 0))
         {
             report_config(
                 diag,
                 source,
                 rule,
-                &format!("{CONFIG_PATH}: '{key}' must be a positive integer"),
-                &[key],
+                &format!("{}: '{key}' must be a positive integer", scope.label),
+                &scope.path(key),
                 false,
                 value.as_str(),
                 "use a positive integer",
@@ -529,6 +581,7 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table, source
         "apps",
         "features",
         "permissions",
+        "profiles",
         "windows",
         "shell_environment_policy",
         "sandbox_workspace_write",
@@ -563,6 +616,56 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table, source
             None,
             "use a TOML table",
         );
+    }
+}
+
+/// Validate `[profiles.<name>]` tables. Codex applies the same per-key value
+/// contracts inside a profile as at the document root, so each profile table
+/// reuses the shared [`validate_scalar_enums`]/[`validate_types`] with a
+/// profile-labelled [`ValueScope`] (issue #388, decision 1). A non-table
+/// `profiles` is reported by [`validate_container_types`]; a non-table
+/// `profiles.<name>` entry is reported here — both through CX062 and both
+/// skipping child validation, matching the container no-cascade policy
+/// (#388 decision 5). Structured profile sub-sections (`mcp_servers`,
+/// `sandbox_workspace_write`, …) are deliberately not recursed into
+/// (#388 decision 4), and `profiles` are never cross-referenced against a
+/// top-level `profile` selector (#388 decision 6).
+///
+/// Decision-8 recheck, codex-cli 0.144.6, 2026-07-21: codex parses and
+/// validates inline `[profiles.<name>]` values under the
+/// `profiles.<name>.<key>` error path even when the profile is unselected,
+/// confirming the false-negative gap this closes. Its profile struct is a
+/// subset of the root schema, so some root keys (e.g. `file_opener`,
+/// `history`, `skills`, both credential stores) are accepted-and-ignored
+/// inside a profile; per decision 3 those remain defects — an unsupported key
+/// or a wrong value — and are still reported with the root rule identity.
+fn validate_profiles(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
+    let Some(profiles) = root.get("profiles").and_then(Value::as_table) else {
+        return;
+    };
+    for (name, value) in profiles {
+        let Some(profile) = value.as_table() else {
+            report_config(
+                diag,
+                source,
+                LintRule::CodexConfigContainerType,
+                &format!("{CONFIG_PATH}: 'profiles.{name}' must be a TOML table"),
+                &["profiles", name],
+                false,
+                None,
+                "use a TOML table",
+            );
+            continue;
+        };
+        let label = format!("{CONFIG_PATH} [profiles.{name}]");
+        let prefix = ["profiles", name.as_str()];
+        let scope = ValueScope {
+            table: profile,
+            label: &label,
+            prefix: &prefix,
+        };
+        validate_scalar_enums(diag, &scope, source);
+        validate_types(diag, &scope, source);
     }
 }
 
@@ -1473,6 +1576,7 @@ mod tests {
             "apps = 'bad'",
             "features = 'bad'",
             "permissions = 'bad'",
+            "profiles = 'bad'",
             "windows = 'bad'",
             "shell_environment_policy = 'bad'",
             "sandbox_workspace_write = 'bad'",
@@ -1506,5 +1610,173 @@ mod tests {
                 LintRule::CodexWindowsSandbox
             ]
         );
+    }
+
+    /// Every scalar-enum, string/typed, and integer key group fires inside a
+    /// profile with the identical root rule identity and a
+    /// `[profiles.<name>]`-prefixed message on the `.codex/config.toml` subject
+    /// (issue #388, decisions 1 and 2).
+    #[test]
+    #[serial_test::serial]
+    fn profile_values_reuse_root_rule_identities_and_labels() {
+        for (body, rule) in [
+            ("approval_policy = 'yolo'", LintRule::CodexApprovalPolicy),
+            ("sandbox_mode = 'yolo'", LintRule::CodexSandboxMode),
+            ("model_verbosity = 'extreme'", LintRule::CodexModelVerbosity),
+            (
+                "cli_auth_credentials_store = 'plaintext'",
+                LintRule::CodexCliCredentialsStore,
+            ),
+            ("model = 5", LintRule::CodexModelType),
+            ("model_provider = 1", LintRule::CodexModelProviderType),
+            ("file_opener = 2", LintRule::CodexFileOpenerType),
+            ("history = 5", LintRule::CodexHistoryType),
+            ("tui = 5", LintRule::CodexTuiType),
+            ("skills = 5", LintRule::CodexSkillsType),
+            ("model_context_window = 0", LintRule::CodexContextWindow),
+        ] {
+            let diag = with_config(&format!("[profiles.risky]\n{body}\n"));
+            assert_eq!(rules(&diag), vec![rule], "{body}");
+            let finding = diag
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| diagnostic.rule == rule)
+                .unwrap();
+            assert!(
+                finding
+                    .message
+                    .starts_with(".codex/config.toml [profiles.risky]: "),
+                "{body}: {}",
+                finding.message
+            );
+            assert_eq!(
+                finding.subject_path.as_deref(),
+                Some(std::path::Path::new(CONFIG_PATH)),
+                "{body}"
+            );
+            assert!(finding.location.is_some(), "{body}");
+        }
+    }
+
+    /// A profile-scoped finding keeps its root default severity: CX005 stays an
+    /// error, the advisory CX023 stays a warning, and both carry the profile
+    /// label so per-file overrides on `.codex/config.toml` still match.
+    #[test]
+    #[serial_test::serial]
+    fn profile_findings_keep_root_default_severity() {
+        let diag = with_default_config(
+            "[profiles.risky]\napproval_policy = 'yolo'\nmodel_context_window = 0\n",
+        );
+        let approval = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::CodexApprovalPolicy)
+            .unwrap();
+        assert_eq!(approval.severity, crate::diagnostic::Severity::Error);
+        assert_eq!(
+            approval.message,
+            ".codex/config.toml [profiles.risky]: 'approval_policy' must be one of: untrusted, on-request, on-failure, never"
+        );
+        let window = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::CodexContextWindow)
+            .unwrap();
+        assert_eq!(window.severity, crate::diagnostic::Severity::Warning);
+        assert!(
+            window
+                .message
+                .starts_with(".codex/config.toml [profiles.risky]: 'model_context_window'")
+        );
+    }
+
+    /// Hard negatives: post-#324 accepted values, multiple profiles where only
+    /// one is invalid, an empty profile table, keys the linter does not
+    /// validate, and a profile-scoped `profile` selector all stay silent
+    /// (issue #388, decisions 1 and 3).
+    #[test]
+    #[serial_test::serial]
+    fn valid_and_unvalidated_profiles_stay_silent() {
+        let valid = "[profiles.work]\napproval_policy = 'on-failure'\nsandbox_mode = 'danger-full-access'\nmodel_reasoning_effort = 'ultra'\nmodel = 'gpt-5'\n[profiles.empty]\n";
+        assert_eq!(rules(&with_config(valid)), Vec::<LintRule>::new());
+
+        let one_bad = "[profiles.good]\napproval_policy = 'never'\n[profiles.bad]\napproval_policy = 'yolo'\n";
+        let diag = with_config(one_bad);
+        assert_eq!(rules(&diag), vec![LintRule::CodexApprovalPolicy]);
+        assert!(
+            diag.diagnostics()[0]
+                .message
+                .contains("[profiles.bad]: 'approval_policy'")
+        );
+
+        // Keys outside the validated set and the excluded `profile` selector are
+        // never flagged: no unknown-profile-key check exists (decision 3), and a
+        // profile cannot select a profile (decision 1).
+        for body in ["chatgpt_base_url = 'x'", "profile = 5", "unknown_key = 42"] {
+            assert_eq!(
+                rules(&with_config(&format!("[profiles.p]\n{body}\n"))),
+                Vec::<LintRule>::new(),
+                "{body}"
+            );
+        }
+    }
+
+    /// A non-table `profiles` and a non-table `profiles.<name>` entry each
+    /// report exactly one CX062 with no cascaded child diagnostics
+    /// (issue #388, decision 5).
+    #[test]
+    #[serial_test::serial]
+    fn malformed_profiles_report_cx062_without_cascade() {
+        for content in [
+            "profiles = 5",
+            "profiles = []",
+            "[profiles]\ndirect = 'scalar'",
+            // A scalar entry that mimics a valid value is still just a bad
+            // container: one CX062, never a cascaded value check.
+            "[profiles]\nrisky = 'danger-full-access'",
+        ] {
+            assert_eq!(
+                rules(&with_config(content)),
+                vec![LintRule::CodexConfigContainerType],
+                "{content}"
+            );
+        }
+        // A valid sibling profile keeps validating after a malformed entry.
+        assert_eq!(
+            rules(&with_config(
+                "[profiles]\nbroken = 1\n[profiles.ok]\napproval_policy = 'yolo'\n"
+            )),
+            vec![
+                LintRule::CodexConfigContainerType,
+                LintRule::CodexApprovalPolicy,
+            ]
+        );
+    }
+
+    /// Root and profile findings for one rule appear in a deterministic order:
+    /// root first (validated ahead of profiles), then profiles in sorted-table
+    /// order — `alpha` before `beta` even though the file declares `beta`
+    /// first — and the rendered output is byte-identical across independent
+    /// runs (issue #388, decision 7).
+    #[test]
+    #[serial_test::serial]
+    fn profile_and_root_findings_are_deterministic() {
+        let messages = |diag: &DiagnosticCollector| -> Vec<String> {
+            diag.diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.message.clone())
+                .collect()
+        };
+        let expected = vec![
+            ".codex/config.toml: 'approval_policy' must be one of: untrusted, on-request, on-failure, never".to_string(),
+            ".codex/config.toml [profiles.alpha]: 'approval_policy' must be one of: untrusted, on-request, on-failure, never".to_string(),
+            ".codex/config.toml [profiles.beta]: 'approval_policy' must be one of: untrusted, on-request, on-failure, never".to_string(),
+        ];
+        // `beta` precedes `alpha` in the source, yet sorted-table iteration
+        // still emits alpha before beta with root ahead of both, identically on
+        // every independent parse+validate run.
+        let content = "approval_policy = 'yolo'\n[profiles.beta]\napproval_policy = 'yolo'\n[profiles.alpha]\napproval_policy = 'yolo'\n";
+        assert_eq!(messages(&with_config(content)), expected);
+        assert_eq!(messages(&with_config(content)), expected);
     }
 }

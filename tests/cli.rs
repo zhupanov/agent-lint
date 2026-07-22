@@ -4205,6 +4205,85 @@ fn codex_config_rules_honor_cli_mode_platform_policy_and_autofix_contracts() {
     assert_eq!(std::fs::read_to_string(config_path).unwrap(), config);
 }
 
+/// Profile-scoped Codex findings (#388) are ordinary `.codex/config.toml`
+/// diagnostics: they are selected by their root rule code, carry the
+/// `[profiles.<name>]` label on the config subject, honor a per-file override
+/// aimed at that subject, and survive a byte-for-byte no-op `--autofix` because
+/// no profile rule is autofixable.
+#[test]
+fn codex_profile_values_honor_only_suppression_and_autofix() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    let config = "[profiles.risky]\napproval_policy = \"yolo\"\nmodel = 5\n";
+    let config_path = tmp.path().join(".codex/config.toml");
+    std::fs::write(&config_path, config).unwrap();
+
+    let only = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CX005,CX016", "."],
+    );
+    assert_eq!(only.status.code(), Some(1));
+    assert_eq!(
+        json(&only)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| (
+                diagnostic["code"].as_str().unwrap(),
+                diagnostic["severity"].as_str().unwrap(),
+                diagnostic["subject_path"].as_str().unwrap(),
+                diagnostic["message"].as_str().unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "CX005",
+                "error",
+                ".codex/config.toml",
+                ".codex/config.toml [profiles.risky]: 'approval_policy' must be one of: untrusted, on-request, on-failure, never",
+            ),
+            (
+                "CX016",
+                "error",
+                ".codex/config.toml",
+                ".codex/config.toml [profiles.risky]: 'model' must be a string",
+            ),
+        ]
+    );
+
+    // A per-file override on the config subject suppresses a profile-scoped
+    // finding: profile diagnostics keep the `.codex/config.toml` subject path.
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".codex/config.toml\"]\nsuppress = [\"CX005\"]\nreason = \"profile approval policy tracked elsewhere\"\n",
+    )
+    .unwrap();
+    let suppressed = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CX005,CX016", "."],
+    ));
+    assert_eq!(suppressed["counts"]["suppressed"], 1);
+    assert_eq!(
+        suppressed["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["CX016"]
+    );
+
+    // No profile rule is autofixable, so `--autofix` is a byte-for-byte no-op
+    // across repeated runs and the findings still fail the run.
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    for _ in 0..2 {
+        let fixed = run_in(tmp.path(), &["--autofix", "--only", "CX005,CX016", "."]);
+        assert_eq!(fixed.status.code(), Some(1));
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), config);
+    }
+}
+
 #[test]
 fn cx060_cli_covers_modes_platform_policy_locations_and_autofix() {
     let tmp = tempfile::tempdir().unwrap();

@@ -1,0 +1,5 @@
+[lint]
+[[lint.overrides]]
+files = [".codex/config.toml"]
+suppress = ["CX005"]
+reason = "profile approval policy tracked outside this lint pass"
