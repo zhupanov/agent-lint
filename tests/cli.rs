@@ -2398,8 +2398,40 @@ suppress = ["M001"]
 
     let output = run_in(tmp.path(), &["."]);
     let stderr = stderr(&output);
-    assert_eq!(output.status.code(), Some(1), "stderr: {stderr}");
+    // M001 (plugin-json-missing) is a fixed-path check: its logical subject is
+    // `.claude-plugin/plugin.json` even though the file is absent, so the per-file
+    // override matches and suppresses it. With M001 the only error and no A001
+    // for the agentless plugin (narrowed contract), the run passes cleanly while
+    // still reporting the targeted suppression.
+    assert_eq!(output.status.code(), Some(0), "stderr: {stderr}");
     assert!(!stderr.contains("M001/plugin-json-missing"));
+    assert!(stderr.contains("(1 suppressed)"), "stderr: {stderr}");
+    assert!(!stderr.contains("unused-override"), "stderr: {stderr}");
+}
+
+#[test]
+fn a001_declared_missing_agent_path_honors_per_file_override() {
+    // The narrowed A001 carries the declared path as its subject, so a per-file
+    // override on that path suppresses it (and is therefore not "unused").
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name": "p", "version": "1.0.0", "agents": "./custom-agents"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"custom-agents\"]\nsuppress = [\"A001\"]\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["."]);
+    let stderr = stderr(&output);
+    assert!(
+        !stderr.contains("A001/agents-dir-missing"),
+        "stderr: {stderr}"
+    );
     assert!(stderr.contains("(1 suppressed)"), "stderr: {stderr}");
     assert!(!stderr.contains("unused-override"), "stderr: {stderr}");
 }

@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "desc-overlap-nested-broken",
+  "covers": ["plugin-mode", "normal", "json", "desc-overlap", "related-subjects", "nested-agents"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A030", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A030", "name": "agent-desc-overlap", "severity": "warning", "subject_path": null, "related_subjects": [".claude/agents/private.md", "agents/review/security.md"] }
+  ],
+  "allowed_additional_diagnostics": []
+}

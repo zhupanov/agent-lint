@@ -1,3 +1,4 @@
+mod agent_discovery;
 mod agents;
 mod claude_config;
 mod codex_config;
@@ -76,8 +77,9 @@ fn run_basic(
     agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass, false);
     claude_config::validate_private_config(ctx, diag, exclude);
     validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
-    // A030/S074: overlapping routing descriptions within simultaneously available namespaces
-    desc_overlap::validate_agent_desc_overlap(diag, exclude, false, targets.cursor);
+    // A030/S074: overlapping routing descriptions within simultaneously available namespaces.
+    // Basic mode has no plugin manifest, so no manifest-declared agent roots apply.
+    desc_overlap::validate_agent_desc_overlap(diag, exclude, false, &[], targets.cursor);
     desc_overlap::validate_skill_desc_overlap(
         diag,
         exclude,
@@ -103,6 +105,9 @@ fn run_plugin(
     targets: ValidationTargets,
 ) {
     let mut prompt_pass = prompt_content::PromptContentPass::default();
+    // Repository-safe agent roots declared in plugin.json `agents`, shared by the
+    // per-agent validators and the A030 overlap pool so both see one discovery set.
+    let declared_agent_roots = manifest::declared_agent_roots(ctx);
     // Private .claude/ validators (also run in basic mode)
     skills::validate_private_skill_frontmatter(diag, exclude);
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
@@ -134,8 +139,13 @@ fn run_plugin(
     skills::validate_skills_layout(diag, exclude);
     // V6: SKILL.md frontmatter (public)
     skills::validate_skill_frontmatter(diag, exclude);
-    // V7: agents frontmatter
-    agents::validate_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    // V7: agents frontmatter (default `agents/` plus manifest-declared roots)
+    agents::validate_agents_with_prompt_pass(
+        diag,
+        exclude,
+        &declared_agent_roots,
+        &mut prompt_pass,
+    );
     // V8: PWD hygiene
     hygiene::validate_pwd_hygiene(diag, exclude);
     // V9: script reference integrity
@@ -187,7 +197,13 @@ fn run_plugin(
     // Private skill content checks (both-mode subset)
     skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // A030/S074: overlapping routing descriptions (Claude private∪plugin runtime union)
-    desc_overlap::validate_agent_desc_overlap(diag, exclude, true, targets.cursor);
+    desc_overlap::validate_agent_desc_overlap(
+        diag,
+        exclude,
+        true,
+        &declared_agent_roots,
+        targets.cursor,
+    );
     desc_overlap::validate_skill_desc_overlap(
         diag,
         exclude,

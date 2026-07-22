@@ -403,7 +403,9 @@ pub enum LintRule {
     SkillDescOverlap,
 
     // ── Agents (A) ────────────────────────────────────────────────
-    /// A001: agents/ directory is missing
+    /// A001: a manifest-declared plugin agent path is missing. The implicit
+    /// default `agents/` directory is optional, so its absence is never reported;
+    /// only an explicit plugin.json `agents` path that does not exist fires.
     #[strum(props(code = "A001", name = "agents-dir-missing"))]
     AgentsDirMissing,
     /// A002: agent .md has malformed frontmatter
@@ -412,7 +414,10 @@ pub enum LintRule {
     /// A003: agent .md missing required frontmatter field (name or description)
     #[strum(props(code = "A003", name = "agent-field-missing"))]
     AgentFieldMissing,
-    /// A004: agents/ has no .md files
+    /// A004: a present plugin agent root (default `agents/` or a manifest-declared
+    /// path) holds no agent .md files after recursive discovery. An all-excluded
+    /// root stays silent; an absent root reports nothing (A001 owns declared
+    /// absence).
     #[strum(props(code = "A004", name = "no-agent-files"))]
     NoAgentFiles,
     /// A005: reviewer-templates.md is missing
