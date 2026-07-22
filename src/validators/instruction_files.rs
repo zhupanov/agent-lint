@@ -384,7 +384,7 @@ fn collect_prose_clauses(line_start: usize, line: &str, clauses: &mut Vec<ProseC
         if !evidence.is_empty() {
             let leading = raw.len() - raw.trim_start().len();
             let trailing = raw.len() - raw.trim_end().len();
-            let normalized = normalize_prose(&mask_markdown_links(evidence));
+            let normalized = normalize_generic_prose(&mask_markdown_links(evidence));
             clauses.push(ProseClause {
                 range: (line_start + clause_start + leading)..(line_start + clause_end - trailing),
                 normalized,
@@ -410,29 +410,45 @@ fn is_generic_conjunction(normalized: &str) -> bool {
     if rest.is_empty() {
         return false;
     }
-    let mut matched = false;
-    while !rest.is_empty() {
-        if matched {
-            if let Some(after_and) = rest.strip_prefix("and ") {
-                rest = after_and.trim_start();
-            } else if rest == "and" {
-                return false;
-            }
-        }
-        let Some(phrase) = GENERIC_GUIDANCE_PHRASES
-            .iter()
-            .copied()
-            .find(|phrase| rest == *phrase || rest.starts_with(&format!("{phrase} ")))
-        else {
+    loop {
+        let Some(phrase) = GENERIC_GUIDANCE_PHRASES.iter().copied().find(|phrase| {
+            rest.strip_prefix(phrase).is_some_and(|suffix| {
+                suffix.is_empty()
+                    || suffix.starts_with(',')
+                    || suffix.starts_with(char::is_whitespace)
+            })
+        }) else {
             return false;
         };
-        matched = true;
-        rest = rest[phrase.len()..].trim_start();
+        rest = &rest[phrase.len()..];
+        if rest.is_empty() {
+            return true;
+        }
+        if let Some(after_comma) = rest.strip_prefix(',') {
+            rest = after_comma.trim_start();
+            if let Some(after_and) = rest.strip_prefix("and ") {
+                rest = after_and.trim_start();
+            }
+            if rest.is_empty() {
+                return false;
+            }
+            continue;
+        }
+        let after_space = rest.trim_start();
+        let Some(after_and) = after_space.strip_prefix("and ") else {
+            return false;
+        };
+        rest = after_and.trim_start();
+        if rest.is_empty() {
+            return false;
+        }
     }
-    matched
 }
 
-fn normalize_prose(text: &str) -> String {
+/// Normalize generic-guidance prose while retaining comma separators. I004's
+/// grammar distinguishes `be helpful, be accurate` from unseparated adjacent
+/// phrases, so a punctuation-erasing normalizer is not sufficient here.
+fn normalize_generic_prose(text: &str) -> String {
     let mut normalized = String::new();
     let mut last_was_space = true;
     for character in text.chars() {
@@ -443,6 +459,12 @@ fn normalize_prose(text: &str) -> String {
             for lower in character.to_lowercase() {
                 normalized.push(lower);
             }
+            last_was_space = false;
+        } else if character == ',' {
+            while normalized.ends_with(' ') {
+                normalized.pop();
+            }
+            normalized.push(',');
             last_was_space = false;
         } else if !last_was_space {
             normalized.push(' ');
@@ -1076,6 +1098,7 @@ mod tests {
             "Follow best practices",
             "Be helpful and write good code.",
             "Be helpful, be accurate, and follow best practices.",
+            "Be helpful, be accurate, follow best practices.",
             "# Guidance\nBe helpful.\n",
             "Be helpful.\nBe accurate.\n",
             "- Be helpful\n",
@@ -1109,6 +1132,8 @@ mod tests {
             "Follow best practices when updating Acme billing schema 17; preserve audit event order.",
             "Be helpfully specific about crate boundaries.",
             "Please be helpful about release notes and write changelog entries.",
+            "Be helpful be accurate.",
+            "Write good code follow best practices.",
             "Run cargo test before each commit.\n",
             "```\nBe helpful.\n```\n",
             "> Be helpful.\n",
