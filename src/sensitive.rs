@@ -261,8 +261,12 @@ fn find_markdown_secret(
         }
         let full = captures.get(0).expect("full assignment match");
         let raw_value = parse_assignment_value(&content[full.end()..]);
-        let trimmed = strip_assignment_quotes(raw_value).trim();
-        if trimmed.is_empty() || is_secret_placeholder(trimmed, policy) {
+        // `strip_assignment_quotes` removes source whitespace before deciding
+        // whether one pair of outer quotes is present. Do not trim again here:
+        // whitespace inside those quotes is part of the value and therefore
+        // prevents a command substitution from being the entire placeholder.
+        let value = strip_assignment_quotes(raw_value);
+        if value.trim().is_empty() || is_secret_placeholder(value, policy) {
             continue;
         }
         consider(MarkdownSecretFinding {
@@ -342,8 +346,87 @@ fn is_secret_placeholder(value: &str, policy: MarkdownSecretPolicy) -> bool {
         return true;
     }
     matches!(policy, MarkdownSecretPolicy::Skill)
-        && ((value.starts_with("$(") && value.ends_with(')'))
-            || (value.starts_with('`') && value.ends_with('`')))
+        && (is_complete_command_substitution(value) || is_complete_backtick_substitution(value))
+}
+
+/// Return whether `value` is exactly one `$()` command substitution.
+///
+/// This intentionally recognizes only the structural boundary needed for the
+/// documentation-placeholder exemption. Quotes and backslash escapes keep a
+/// parenthesis from closing the outer substitution; once the outer close is
+/// found, no trailing bytes are permitted.
+fn is_complete_command_substitution(value: &str) -> bool {
+    #[derive(Clone, Copy)]
+    enum Quote {
+        Single,
+        Double,
+    }
+
+    let Some(interior) = value.strip_prefix("$(") else {
+        return false;
+    };
+
+    let mut depth = 1_usize;
+    let mut quote = None;
+    let mut escaped = false;
+
+    for (index, byte) in interior.bytes().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        match quote {
+            Some(Quote::Single) if byte == b'\'' => quote = None,
+            Some(Quote::Single) => {}
+            Some(Quote::Double) if byte == b'"' => quote = None,
+            Some(Quote::Double) if byte == b'\\' => escaped = true,
+            Some(Quote::Double) => {}
+            None => match byte {
+                b'\\' => escaped = true,
+                b'\'' => quote = Some(Quote::Single),
+                b'"' => quote = Some(Quote::Double),
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return index + 1 == interior.len();
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
+    false
+}
+
+/// Return whether `value` is exactly one backtick command substitution.
+///
+/// The chosen escape policy is deliberately small and deterministic: a
+/// backslash escapes the next byte, including a backtick. The first unescaped
+/// backtick closes the substitution, so any following byte makes the value a
+/// literal rather than a placeholder.
+fn is_complete_backtick_substitution(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.first() != Some(&b'`') {
+        return false;
+    }
+
+    let mut escaped = false;
+    for (index, byte) in bytes[1..].iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if *byte == b'\\' {
+            escaped = true;
+        } else if *byte == b'`' {
+            return index + 2 == bytes.len();
+        }
+    }
+
+    false
 }
 
 fn is_repeated_signature_payload(signature: &str, prefix: &str) -> bool {
@@ -612,6 +695,55 @@ mod tests {
             assert!(
                 find_skill_secret(content).is_none(),
                 "expected clean skill content: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn skill_command_substitution_placeholders_must_cover_the_entire_value() {
+        for content in [
+            "API_KEY = $(gh auth token)",
+            "API_KEY = $(outer $(read_secret))",
+            r#"API_KEY = $(printf '%s' "(nested)")"#,
+            r"API_KEY = $(printf \))",
+            "CLIENT_SECRET = `read_secret`",
+            r"CLIENT_SECRET = `read \`escaped\``",
+        ] {
+            assert!(
+                find_skill_secret(content).is_none(),
+                "expected clean: {content}"
+            );
+        }
+
+        for content in [
+            "API_KEY = prefix$(gh auth token)",
+            "API_KEY = $(gh auth token) literal-suffix",
+            "API_KEY = $(gh auth token))",
+            "API_KEY = \" $(gh auth token)\"",
+            "API_KEY = \"$(gh auth token) \"",
+            "API_KEY = $(outer $(read_secret)",
+            "CLIENT_SECRET = prefix`read_secret`",
+            "CLIENT_SECRET = `read_secret` literal-suffix",
+            "CLIENT_SECRET = `first` `second`",
+            r"CLIENT_SECRET = `read \`escaped` literal-suffix",
+            r"CLIENT_SECRET = `read_secret\`",
+        ] {
+            assert!(
+                find_skill_secret(content).is_some(),
+                "expected finding: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn instruction_scanner_does_not_exempt_command_substitutions() {
+        for content in [
+            "API_KEY = $(gh auth token)",
+            "CLIENT_SECRET = `read_secret`",
+        ] {
+            assert!(
+                find_instruction_secret(content).is_some(),
+                "expected finding: {content}"
             );
         }
     }

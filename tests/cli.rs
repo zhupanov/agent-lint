@@ -4535,6 +4535,64 @@ fn s032_scans_complete_skill_source_with_safe_structured_metadata() {
 }
 
 #[test]
+fn s032_rejects_partial_command_substitutions_on_claude_and_cursor_skills() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let literal_suffix = "committed-literal";
+    for (relative, value) in [
+        (
+            ".claude/skills/suffix/SKILL.md",
+            "$(gh auth token) committed-literal)",
+        ),
+        (
+            ".cursor/skills/suffix/SKILL.md",
+            "`read_secret` committed-literal`",
+        ),
+    ] {
+        let skill = tmp.path().join(relative);
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(
+            skill,
+            format!(
+                "---\nname: suffix\ndescription: Use when checking command substitution placeholder boundaries\n---\nTOKEN=\"{value}\"\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S032", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(!rendered.contains(literal_suffix));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    for diagnostic in &diagnostics {
+        assert_eq!(diagnostic["code"], "S032");
+        assert_eq!(diagnostic["evidence"], "TOKEN");
+        assert_eq!(diagnostic["location"]["start"]["line"], 5);
+        assert!(
+            !diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains(literal_suffix)
+        );
+    }
+    let mut subjects: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap())
+        .collect();
+    subjects.sort_unstable();
+    assert_eq!(
+        subjects,
+        [
+            ".claude/skills/suffix/SKILL.md",
+            ".cursor/skills/suffix/SKILL.md",
+        ]
+    );
+}
+
+#[test]
 fn m013_component_prefix_is_structured_and_never_autofixes() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
