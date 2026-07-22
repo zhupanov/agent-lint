@@ -47,11 +47,11 @@ run only when their platform is auto-detected or force-enabled in
 | M006 | `marketplace-json-invalid` | `marketplace.json` is not valid JSON | Plugin | error |
 | M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name`, `owner.name`, or `plugins`) | Plugin | error |
 | M008 | `marketplace-plugins-empty` | `marketplace.json` `plugins` is empty or has the wrong type. Claude Code treats an empty array as a non-blocking warning. | Plugin | warn |
-| M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name`/`source`: missing/empty fields, duplicate names, unknown object source type, missing required per-type subfields, `..` traversal, or absolute paths | Plugin | error |
+| M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name`/effective local `source`: missing/empty fields, duplicate names, unknown object source type, missing required per-type subfields, unsafe `metadata.pluginRoot`, or `git-subdir.path` traversal | Plugin | error |
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | warn |
-| M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a manifest path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) points there | Plugin | error |
-| M013 | `component-path-unsafe` | A manifest component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`) or uses `..` traversal | Plugin | error |
+| M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a plugin/marketplace component path points there | Plugin | error |
+| M013 | `component-path-unsafe` | A plugin or marketplace component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`), uses `..` traversal, or does not start with exact `./` | Plugin | error |
 | M014 | `author-name-missing` | `plugin.json` `author` object present but `author.name` is missing or not a non-empty string | Plugin | warn |
 | M015 | `homepage-url-invalid` | `plugin.json` `homepage` is present but is not a valid http(s) URL | Plugin | warn |
 | M016 | `lsp-server-invalid` | `plugin.json` `lspServers` entry missing `command` or `extensionToLanguage` | Plugin | error |
@@ -62,6 +62,14 @@ run only when their platform is auto-detected or force-enabled in
 | M021 | `marketplace-name-format` | Marketplace or plugin entry `name` is not kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`); claude.ai marketplace sync rejects other forms | Plugin | warn |
 
 M003, M004, and M018 follow the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and its [plugin manifest schema](https://www.schemastore.org/claude-code-plugin-manifest.json). M005, M008, M009, M019, and M021 follow the [Claude Code marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces); M005 remains an agent-lint advisory for repositories that intend to publish a self-hosted marketplace.
+
+M012/M013 apply the same lexical component-path contract to `plugin.json` and
+to every marketplace plugin entry, including `commands.<name>.source`. Paths
+must start with exact `./`; absolute paths and any POSIX or Windows `..`
+segment take precedence over a missing-prefix report. This supersedes #278's
+former bare-path concession: current Claude validation rejects bare component
+paths as load errors. The extractor is shared with manifest-declared discovery,
+which never probes an unsafe declaration.
 
 ## Hooks Rules (H)
 

@@ -45,7 +45,7 @@ pub enum LintRule {
     /// M008: marketplace.json plugins array is empty
     #[strum(props(code = "M008", name = "marketplace-plugins-empty"))]
     MarketplacePluginsEmpty,
-    /// M009: marketplace.json plugin entry has invalid name or source
+    /// M009: marketplace plugin entry has an invalid source or effective local root
     #[strum(props(code = "M009", name = "marketplace-plugin-invalid"))]
     MarketplacePluginInvalid,
     /// M010: marketplace.json enriched metadata missing (owner.email or plugin category)
@@ -54,10 +54,10 @@ pub enum LintRule {
     /// M011: plugin.json enriched metadata missing (description, author.email, or keywords)
     #[strum(props(code = "M011", name = "plugin-enriched-missing"))]
     PluginEnrichedMissing,
-    /// M012: plugin component lives inside or is declared inside .claude-plugin/
+    /// M012: plugin or marketplace component path points inside .claude-plugin/
     #[strum(props(code = "M012", name = "component-path-nested"))]
     ComponentPathNested,
-    /// M013: plugin.json component path is absolute or uses '..' traversal
+    /// M013: plugin or marketplace component path is absolute, traverses, or lacks ./
     #[strum(props(code = "M013", name = "component-path-unsafe"))]
     ComponentPathUnsafe,
     /// M014: plugin.json author object present but author.name missing/invalid

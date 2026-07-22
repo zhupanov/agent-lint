@@ -1150,7 +1150,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             ".claude-plugin/plugin.json",
-            r#"{"name":"declared-hooks","hooks":"config/hooks.json"}"#,
+            r#"{"name":"declared-hooks","hooks":"./config/hooks.json"}"#,
         )
         .unwrap();
         std::fs::write(

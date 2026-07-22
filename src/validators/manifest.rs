@@ -1,5 +1,9 @@
 use crate::context::{LintContext, ManifestState};
-use crate::diagnostic::DiagnosticCollector;
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
+use crate::plugin_paths::{
+    ComponentPathSafety, classify_component_path, declared_component_paths, is_absolute_path,
+    path_segments, plugin_root_is_safe,
+};
 use crate::rules::LintRule;
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
 use regex::Regex;
@@ -17,63 +21,12 @@ static RE_SEMVER: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// Windows drive-letter path prefix, e.g. `C:\` or `c:/`.
-static RE_WIN_DRIVE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z]:[\\/]").unwrap());
-
 /// Marketplace / plugin entry name kebab-case: `[a-z0-9]+(-[a-z0-9]+)*`.
 static RE_MARKETPLACE_KEBAB: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9]+(-[a-z0-9]+)*$").unwrap());
 
 /// The plugin manifest directory. Components must never live under it.
 const PLUGIN_DIR: &str = ".claude-plugin";
-
-/// A path-bearing plugin.json field and its location in the JSON object.
-struct ComponentPathField {
-    label: &'static str,
-    keys: &'static [&'static str],
-}
-
-/// plugin.json fields that may point at plugin components. Inline object forms
-/// are intentionally excluded: they configure a component rather than declare
-/// a component path.
-const COMPONENT_PATH_FIELDS: &[ComponentPathField] = &[
-    ComponentPathField {
-        label: "commands",
-        keys: &["commands"],
-    },
-    ComponentPathField {
-        label: "agents",
-        keys: &["agents"],
-    },
-    ComponentPathField {
-        label: "skills",
-        keys: &["skills"],
-    },
-    ComponentPathField {
-        label: "hooks",
-        keys: &["hooks"],
-    },
-    ComponentPathField {
-        label: "mcpServers",
-        keys: &["mcpServers"],
-    },
-    ComponentPathField {
-        label: "outputStyles",
-        keys: &["outputStyles"],
-    },
-    ComponentPathField {
-        label: "lspServers",
-        keys: &["lspServers"],
-    },
-    ComponentPathField {
-        label: "experimental.themes",
-        keys: &["experimental", "themes"],
-    },
-    ComponentPathField {
-        label: "experimental.monitors",
-        keys: &["experimental", "monitors"],
-    },
-];
 
 /// Directories that Claude Code requires at the plugin root rather than under
 /// the manifest directory.
@@ -95,37 +48,10 @@ const OBJECT_SOURCE_REQUIRED: &[(&str, &[&str])] = &[
     ("npm", &["package"]),
 ];
 
-/// Split a manifest path on POSIX and Windows separators, dropping empty and
-/// `.` segments so `./foo` and `foo` agree.
-fn path_segments(p: &str) -> impl Iterator<Item = &str> {
-    p.split(['/', '\\']).filter(|s| !s.is_empty() && *s != ".")
-}
-
-/// Whether a manifest path is absolute rather than plugin-root-relative.
-fn is_absolute_path(p: &str) -> bool {
-    p.starts_with('/') || p.starts_with('\\') || RE_WIN_DRIVE.is_match(p)
-}
-
 /// Whether an optional JSON value is a string with non-whitespace content.
 fn is_non_empty_string(v: Option<&Value>) -> bool {
     v.and_then(Value::as_str)
         .is_some_and(|s| !s.trim().is_empty())
-}
-
-/// Collect the declared paths of a plugin.json component field, which may hold
-/// a single path or an array of paths. Non-path shapes (such as an inline
-/// `hooks` object) yield nothing.
-fn component_paths<'a>(val: &'a Value, field: &ComponentPathField) -> Vec<&'a str> {
-    let value = field
-        .keys
-        .iter()
-        .try_fold(val, |value, key| value.get(*key));
-
-    match value {
-        Some(Value::String(s)) => vec![s],
-        Some(Value::Array(arr)) => arr.iter().filter_map(Value::as_str).collect(),
-        _ => Vec::new(),
-    }
 }
 
 /// V1: Validate .claude-plugin/plugin.json
@@ -248,11 +174,9 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             let arr = plugins
                 .as_array()
                 .expect("the preceding branch established plugins is an array");
-            let has_plugin_root = val
-                .get("metadata")
-                .and_then(|m| m.get("pluginRoot"))
-                .and_then(|v| v.as_str())
-                .is_some();
+            let plugin_root = val.get("metadata").and_then(|m| m.get("pluginRoot"));
+            let invalid_plugin_root =
+                plugin_root.is_some_and(|root| !root.as_str().is_some_and(plugin_root_is_safe));
             let mut name_indexes: HashMap<String, Vec<usize>> = HashMap::new();
 
             for (i, plugin) in arr.iter().enumerate() {
@@ -294,20 +218,45 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                         if s.is_empty() {
                             // Already reported as missing/invalid above.
                         } else if is_absolute_path(s) {
-                            diag.report(
+                            diag.report_with(
                                 LintRule::MarketplacePluginInvalid,
                                 &format!(
                                     "{f} plugins[{i}].source path '{s}' must be relative, not absolute"
                                 ),
+                                marketplace_value_metadata(
+                                    val.source(),
+                                    &Value::String(s.to_owned()),
+                                    &format!("plugins[{i}].source"),
+                                    "use a repository-relative marketplace source",
+                                ),
                             );
                         } else if path_segments(s).any(|seg| seg == "..") {
-                            diag.report(
+                            diag.report_with(
                                 LintRule::MarketplacePluginInvalid,
                                 &format!(
                                     "{f} plugins[{i}].source path '{s}' must not use '..' traversal"
                                 ),
+                                marketplace_value_metadata(
+                                    val.source(),
+                                    &Value::String(s.to_owned()),
+                                    &format!("plugins[{i}].source"),
+                                    "remove '..' traversal from the marketplace source",
+                                ),
                             );
-                        } else if !s.starts_with("./") && !has_plugin_root {
+                        } else if !s.starts_with("./") && invalid_plugin_root {
+                            diag.report_with(
+                                LintRule::MarketplacePluginInvalid,
+                                &format!(
+                                    "{f} plugins[{i}].source depends on invalid metadata.pluginRoot"
+                                ),
+                                marketplace_value_metadata(
+                                    val.source(),
+                                    plugin_root.expect("invalid_plugin_root requires pluginRoot"),
+                                    "metadata.pluginRoot",
+                                    "use a non-empty plugin-root-relative './' pluginRoot",
+                                ),
+                            );
+                        } else if !s.starts_with("./") && plugin_root.is_none() {
                             diag.report(
                                 LintRule::MarketplaceBarePath,
                                 &format!(
@@ -317,10 +266,16 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                         }
                     }
                     Some(Value::Object(obj)) => {
-                        validate_object_plugin_source(f, i, obj, diag);
+                        validate_object_plugin_source(f, i, obj, val.source(), diag);
                     }
                     _ => {}
                 }
+                validate_declared_component_paths(
+                    plugin,
+                    &format!("{f} plugins[{i}]"),
+                    val.source(),
+                    diag,
+                );
             }
 
             let mut duplicates: Vec<(String, Vec<usize>)> = name_indexes
@@ -348,6 +303,7 @@ fn validate_object_plugin_source(
     f: &str,
     i: usize,
     obj: &serde_json::Map<String, Value>,
+    source: Option<&str>,
     diag: &mut DiagnosticCollector,
 ) {
     let source_type = obj.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -379,6 +335,24 @@ fn validate_object_plugin_source(
                 ),
             );
         }
+    }
+    if source_type == "git-subdir"
+        && obj
+            .get("path")
+            .and_then(Value::as_str)
+            .is_some_and(|path| path_segments(path).any(|segment| segment == ".."))
+    {
+        diag.report_with(
+            LintRule::MarketplacePluginInvalid,
+            &format!("{f} plugins[{i}].source git-subdir path must not use '..' traversal"),
+            marketplace_value_metadata(
+                source,
+                obj.get("path")
+                    .expect("the preceding condition requires path"),
+                &format!("plugins[{i}].source.path"),
+                "remove '..' traversal from the git-subdir path",
+            ),
+        );
     }
 }
 
@@ -482,34 +456,95 @@ pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    for field in COMPONENT_PATH_FIELDS {
-        for p in component_paths(val, field) {
-            // M013: an absolute or escaping path is rejected outright — where it
-            // would land is not meaningful, so M012 is not also evaluated.
-            if is_absolute_path(p) {
-                diag.report(
-                    LintRule::ComponentPathUnsafe,
-                    &format!(
-                        "{f} {} path '{p}' must be relative, not absolute",
-                        field.label
-                    ),
-                );
-            } else if path_segments(p).any(|s| s == "..") {
-                diag.report(
-                    LintRule::ComponentPathUnsafe,
-                    &format!("{f} {} path '{p}' must not use '..' traversal", field.label),
-                );
-            } else if path_segments(p).next() == Some(PLUGIN_DIR) {
-                diag.report(
-                    LintRule::ComponentPathNested,
-                    &format!(
-                        "{f} {} path '{p}' must not point inside {PLUGIN_DIR}/",
-                        field.label
-                    ),
-                );
+    validate_declared_component_paths(val, f, val.source(), diag);
+}
+
+/// Report M012/M013 for every path-bearing component declaration. The shared
+/// extractor is also used by marketplace validation and discovery consumers.
+fn validate_declared_component_paths(
+    value: &Value,
+    owner: &str,
+    source: Option<&str>,
+    diag: &mut DiagnosticCollector,
+) {
+    for path in declared_component_paths(value) {
+        let (rule, requirement) = match classify_component_path(path.raw) {
+            ComponentPathSafety::Safe => continue,
+            ComponentPathSafety::Absolute => (
+                LintRule::ComponentPathUnsafe,
+                "must be relative, not absolute",
+            ),
+            ComponentPathSafety::Traversal => {
+                (LintRule::ComponentPathUnsafe, "must not use '..' traversal")
             }
-        }
+            ComponentPathSafety::MissingPrefix => {
+                (LintRule::ComponentPathUnsafe, "must start with './'")
+            }
+            ComponentPathSafety::NestedPluginDir => (
+                LintRule::ComponentPathNested,
+                "must not point inside .claude-plugin/",
+            ),
+        };
+        report_component_path(
+            diag,
+            rule,
+            owner,
+            &path.label,
+            path.raw,
+            requirement,
+            source,
+        );
     }
+}
+
+fn report_component_path(
+    diag: &mut DiagnosticCollector,
+    rule: LintRule,
+    owner: &str,
+    label: &str,
+    raw: &str,
+    requirement: &str,
+    source: Option<&str>,
+) {
+    let mut metadata = DiagnosticMetadata::default()
+        .with_evidence(label)
+        .with_suggestion("use a plugin-root-relative './' component path");
+    if let Some(location) = source
+        .and_then(|source| json_value_range(source, &Value::String(raw.to_owned())))
+        .and_then(|range| source.and_then(|source| SourceSpan::from_byte_range(source, range)))
+    {
+        metadata = metadata.with_location(location);
+    }
+    diag.report_with(
+        rule,
+        &format!("{owner} {label} path '{raw}' {requirement}"),
+        metadata,
+    );
+}
+
+/// The manifest has already parsed, so this maps an escaped JSON string back
+/// to a source token without executing or probing repository-controlled data.
+fn marketplace_value_metadata(
+    source: Option<&str>,
+    value: &Value,
+    evidence: &str,
+    suggestion: &str,
+) -> DiagnosticMetadata {
+    let mut metadata = DiagnosticMetadata::default()
+        .with_evidence(evidence)
+        .with_suggestion(suggestion);
+    if let Some(location) = source
+        .and_then(|source| json_value_range(source, value))
+        .and_then(|range| source.and_then(|source| SourceSpan::from_byte_range(source, range)))
+    {
+        metadata = metadata.with_location(location);
+    }
+    metadata
+}
+
+fn json_value_range(source: &str, value: &Value) -> Option<std::ops::Range<usize>> {
+    let token = serde_json::to_string(value).expect("JSON values always serialize");
+    source.find(&token).map(|start| start..start + token.len())
 }
 
 /// V30: Validate optional plugin.json metadata (M014, M015, M020).
@@ -628,6 +663,7 @@ pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
 mod tests {
     use super::*;
     use crate::context::LintMode;
+    use crate::plugin_paths::{COMPONENT_PATH_FIELDS, ComponentPathField};
     use serde_json::{Value, json};
 
     fn make_ctx(plugin: ManifestState, marketplace: ManifestState) -> LintContext {
@@ -1422,7 +1458,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        let val = json!({"name": "p", "version": "1.0.0", "agents": ["agents", "/abs", "../up"]});
+        let val = json!({"name": "p", "version": "1.0.0", "agents": ["./agents", "/abs", "../up"]});
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_component_paths(&ctx, &mut diag);
@@ -1439,13 +1475,86 @@ mod tests {
             "name": "p",
             "version": "1.0.0",
             "commands": "./commands",
-            "agents": ["agents", "extra/agents"],
-            "skills": "skills"
+            "agents": ["./agents", "./extra/agents"],
+            "skills": "./skills"
         });
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_component_paths(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    fn component_paths_require_prefix_and_cover_command_object_sources() {
+        let val = json!({
+            "name": "p",
+            "commands": {"unsafe": {"source": "commands/unsafe.md"}},
+            "skills": "skills",
+            "agents": ["./agents", "agents/extra"],
+        });
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_component_paths(&ctx, &mut diag);
+        let labels = diag
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels.len(), 3);
+        assert!(
+            labels
+                .iter()
+                .all(|message| message.contains("must start with './'"))
+        );
+        assert!(
+            labels
+                .iter()
+                .any(|message| message.contains("commands.unsafe.source"))
+        );
+        assert!(labels.iter().any(|message| message.contains("skills")));
+        assert!(labels.iter().any(|message| message.contains("agents[1]")));
+    }
+
+    #[test]
+    fn marketplace_roots_sources_and_components_share_path_policy() {
+        let val = json!({
+            "name": "mp",
+            "owner": {"name": "o"},
+            "metadata": {"pluginRoot": "../outside"},
+            "plugins": [
+                {
+                    "name": "entry",
+                    "source": "plugins/entry",
+                    "commands": {"bad": {"source": "../../outside.md"}},
+                    "skills": "skills"
+                },
+                {
+                    "name": "subdir",
+                    "source": {"source": "git-subdir", "url": "https://example.com/x.git", "path": "packages/../escape"}
+                }
+            ]
+        });
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        let rules = diag
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.rule)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rules,
+            vec![
+                LintRule::MarketplacePluginInvalid,
+                LintRule::ComponentPathUnsafe,
+                LintRule::ComponentPathUnsafe,
+                LintRule::MarketplacePluginInvalid,
+            ]
+        );
+        assert!(diag.errors()[0].contains("invalid metadata.pluginRoot"));
+        assert!(diag.errors()[1].contains("plugins[0] commands.bad.source"));
+        assert!(diag.errors()[2].contains("plugins[0] skills"));
+        assert!(diag.errors()[3].contains("git-subdir path must not use '..' traversal"));
     }
 
     #[test]
@@ -1488,7 +1597,7 @@ mod tests {
             ),
             (
                 "nested manifest directory",
-                ".claude-plugin/components",
+                "./.claude-plugin/components",
                 LintRule::ComponentPathNested,
                 "must not point inside .claude-plugin/",
             ),
@@ -1498,7 +1607,7 @@ mod tests {
             for (case_name, path, rule, expected_message) in cases {
                 for (shape, value) in [
                     ("string", json!(path)),
-                    ("array", json!(["components", path])),
+                    ("array", json!(["./components", path])),
                 ] {
                     let ctx = make_ctx(
                         ManifestState::parsed(manifest_with_component_path(field, value)),
@@ -1509,14 +1618,14 @@ mod tests {
 
                     assert_eq!(diag.error_count(), 1, "{} {shape} {case_name}", field.label);
                     assert_eq!(diag.diagnostics()[0].rule, rule);
-                    assert!(diag.errors()[0].contains(&format!("{} path '{path}'", field.label)));
+                    assert!(diag.errors()[0].contains(path));
                     assert!(diag.errors()[0].contains(expected_message));
                 }
             }
 
             for (shape, value) in [
-                ("string", json!("components")),
-                ("array", json!(["components", "other-components"])),
+                ("string", json!("./components")),
+                ("array", json!(["./components", "./other-components"])),
             ] {
                 let ctx = make_ctx(
                     ManifestState::parsed(manifest_with_component_path(field, value)),
@@ -1555,7 +1664,8 @@ mod tests {
             .flat_map(|field| {
                 ["/first", "../second"]
                     .into_iter()
-                    .map(move |path| format!("{} path '{path}'", field.label))
+                    .enumerate()
+                    .map(move |(index, path)| format!("{}[{index}] path '{path}'", field.label))
             })
             .collect();
         assert_eq!(diag.error_count(), expected.len());
@@ -1572,7 +1682,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        let val = json!({"name": "p", "version": "1.0.0", "skills": ".claude-plugin/skills"});
+        let val = json!({"name": "p", "version": "1.0.0", "skills": "./.claude-plugin/skills"});
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_component_paths(&ctx, &mut diag);
