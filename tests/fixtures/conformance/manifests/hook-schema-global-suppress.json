@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "hook-schema-global-suppress",
+  "covers": ["hook-schema", "basic-mode", "normal", "json", "global-suppression"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "H026", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 1,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

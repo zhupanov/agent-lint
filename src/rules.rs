@@ -92,7 +92,7 @@ pub enum LintRule {
     /// H002: a discovered plugin hook configuration is not valid JSON
     #[strum(props(code = "H002", name = "hooks-json-invalid"))]
     HooksJsonInvalid,
-    /// H003: hook config missing a usable top-level 'hooks' collection
+    /// H003: file-backed hook config missing a top-level 'hooks' key
     #[strum(props(code = "H003", name = "hooks-key-missing"))]
     HooksKeyMissing,
     /// H004: hook command script missing on disk
@@ -104,13 +104,13 @@ pub enum LintRule {
     /// H006: .claude/settings.json is not valid JSON
     #[strum(props(code = "H006", name = "settings-json-invalid"))]
     SettingsJsonInvalid,
-    /// H007: plugin hook config hooks collection is empty
+    /// H007: syntactically valid plugin hook config has no handler entries
     #[strum(props(code = "H007", name = "hooks-array-empty"))]
     HooksArrayEmpty,
     /// H008: hook event name is not a recognized Claude Code event
     #[strum(props(code = "H008", name = "hook-event-invalid"))]
     HookEventInvalid,
-    /// H009: matcher present on an event that takes no matcher
+    /// H009: matcher is non-string or present on an event that takes no matcher
     #[strum(props(code = "H009", name = "hook-matcher-invalid"))]
     HookMatcherInvalid,
     /// H010: hook object missing required 'type' field
@@ -161,6 +161,9 @@ pub enum LintRule {
     /// H025: .claude/settings.local.json is not valid JSON
     #[strum(props(code = "H025", name = "settings-local-invalid"))]
     SettingsLocalInvalid,
+    /// H026: hook configuration does not match the documented nesting
+    #[strum(props(code = "H026", name = "hook-config-malformed"))]
+    HookConfigMalformed,
 
     // ── Markdown structure (X) ────────────────────────────────────
     /// X001: skill/agent frontmatter is not valid YAML
@@ -1252,7 +1255,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            297,
+            298,
             "every enum variant must be registered"
         );
     }
@@ -1535,8 +1538,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            167,
-            "Expected 167 default-error rules, got {}",
+            168,
+            "Expected 168 default-error rules, got {}",
             errors.len()
         );
     }

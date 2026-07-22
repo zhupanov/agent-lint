@@ -1,4 +1,4 @@
-//! Hook object schema validation (H008-H024).
+//! Hook object schema validation (H008-H026).
 //!
 //! One validation engine for a "hook object", applied to every JSON surface
 //! where hooks appear: discovered plugin hook configurations (including
@@ -126,15 +126,52 @@ static DANGEROUS_COMMAND_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 static RE_ENV_INTERP: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*").unwrap());
 
+/// Structural outcome used by plugin-only H007. `None` means the value is
+/// absent or structurally incomplete, so H007 must not infer emptiness from
+/// it. A legacy flat array is represented explicitly because its empty form
+/// remains H007-owned on plugin configuration surfaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct HookSchemaResult {
+    effective_empty: Option<bool>,
+}
+
+impl HookSchemaResult {
+    pub(super) fn is_effectively_empty(self) -> bool {
+        self.effective_empty == Some(true)
+    }
+}
+
 /// Validate every hook object reachable from `val`'s top-level `hooks` key.
 ///
 /// Files whose `hooks` key is a legacy flat array carry no event context, so
 /// event-dependent rules cannot be evaluated; such files are skipped entirely.
-pub(super) fn validate_hook_schema(val: &Value, label: &str, diag: &mut DiagnosticCollector) {
-    let events = match val.get("hooks").and_then(|h| h.as_object()) {
-        Some(e) => e,
-        None => return,
+pub(super) fn validate_hook_schema(
+    val: &Value,
+    label: &str,
+    legacy_flat_array_allowed: bool,
+    diag: &mut DiagnosticCollector,
+) -> HookSchemaResult {
+    let Some(hooks) = val.get("hooks") else {
+        return HookSchemaResult {
+            effective_empty: None,
+        };
     };
+    let Some(events) = hooks.as_object() else {
+        if !hooks.is_array() || !legacy_flat_array_allowed {
+            report_malformed(
+                label,
+                "'hooks' must be an object mapping events to matcher groups",
+                diag,
+            );
+        }
+        return HookSchemaResult {
+            effective_empty: legacy_flat_array_allowed
+                .then_some(hooks.as_array().is_some_and(|entries| entries.is_empty())),
+        };
+    };
+
+    let mut handler_count = 0;
+    let mut h007_eligible = true;
 
     for (event, groups) in events {
         if !VALID_EVENTS.contains(&event.as_str()) {
@@ -144,18 +181,28 @@ pub(super) fn validate_hook_schema(val: &Value, label: &str, diag: &mut Diagnost
             );
         }
 
-        if let Some(groups) = groups.as_array() {
-            for group in groups {
-                validate_matcher_group(group, event, label, diag);
-            }
+        let Some(groups) = groups.as_array() else {
+            // An unknown event with a non-array value deliberately remains an
+            // H008-only finding. It is not a valid empty configuration either.
+            h007_eligible = false;
+            continue;
+        };
+        for group in groups {
+            let group_result = validate_matcher_group(group, event, label, diag);
+            handler_count += group_result.handler_count;
+            h007_eligible &= group_result.h007_eligible;
         }
+    }
+
+    HookSchemaResult {
+        effective_empty: h007_eligible.then_some(handler_count == 0),
     }
 }
 
 /// Validate a skill/agent frontmatter `hooks:` value via the shared engine.
 ///
 /// `hooks_yaml` is the raw YAML value of the `hooks` key. It is wrapped as
-/// `{"hooks": ...}` so the JSON-surface walker can apply H008–H024 unchanged.
+/// `{"hooks": ...}` so the JSON-surface walker can apply H008–H026 unchanged.
 pub(super) fn validate_frontmatter_hooks(
     hooks_yaml: &crate::yaml::Value,
     label: &str,
@@ -168,31 +215,104 @@ pub(super) fn validate_frontmatter_hooks(
         "hooks".to_string(),
         hooks_json,
     )]));
-    validate_hook_schema(&wrapper, label, diag);
+    validate_hook_schema(&wrapper, label, false, diag);
 }
 
 /// Validate one matcher group: its `matcher` against the event, then each hook
 /// object in its nested `hooks` array.
-fn validate_matcher_group(group: &Value, event: &str, label: &str, diag: &mut DiagnosticCollector) {
+struct MatcherGroupResult {
+    handler_count: usize,
+    h007_eligible: bool,
+}
+
+fn validate_matcher_group(
+    group: &Value,
+    event: &str,
+    label: &str,
+    diag: &mut DiagnosticCollector,
+) -> MatcherGroupResult {
     let group = match group.as_object() {
         Some(g) => g,
-        None => return,
+        None => {
+            report_malformed(
+                label,
+                &format!("event '{event}' has a matcher-group entry that must be an object"),
+                diag,
+            );
+            return MatcherGroupResult {
+                handler_count: 0,
+                h007_eligible: false,
+            };
+        }
     };
 
-    if group.contains_key("matcher") && NO_MATCHER_EVENTS.contains(&event) {
-        diag.report(
-            LintRule::HookMatcherInvalid,
-            &format!("{label}: event '{event}' takes no 'matcher'"),
-        );
-    }
-
-    if let Some(hooks) = group.get("hooks").and_then(|h| h.as_array()) {
-        for hook in hooks {
-            if let Some(hook) = hook.as_object() {
-                validate_hook_object(hook, event, label, diag);
-            }
+    if let Some(matcher) = group.get("matcher") {
+        if !matcher.is_string() {
+            diag.report(
+                LintRule::HookMatcherInvalid,
+                &format!("{label}: event '{event}' matcher must be a string"),
+            );
+        } else if NO_MATCHER_EVENTS.contains(&event) {
+            diag.report(
+                LintRule::HookMatcherInvalid,
+                &format!("{label}: event '{event}' takes no 'matcher'"),
+            );
         }
     }
+
+    let Some(hooks) = group.get("hooks").and_then(Value::as_array) else {
+        if is_handler_like(group) {
+            report_malformed(
+                label,
+                &format!(
+                    "event '{event}' handler is missing its enclosing matcher-group 'hooks' array; use event -> matcher group -> hooks -> handler"
+                ),
+                diag,
+            );
+            validate_hook_object(group, event, label, diag);
+        } else {
+            report_malformed(
+                label,
+                &format!("event '{event}' matcher group is missing a 'hooks' array"),
+                diag,
+            );
+        }
+        return MatcherGroupResult {
+            handler_count: 0,
+            h007_eligible: false,
+        };
+    };
+
+    let mut handler_count = 0;
+    let mut h007_eligible = true;
+    for hook in hooks {
+        let Some(hook) = hook.as_object() else {
+            report_malformed(
+                label,
+                &format!("event '{event}' has a handler entry that must be an object"),
+                diag,
+            );
+            h007_eligible = false;
+            continue;
+        };
+        handler_count += 1;
+        validate_hook_object(hook, event, label, diag);
+    }
+
+    MatcherGroupResult {
+        handler_count,
+        h007_eligible,
+    }
+}
+
+fn is_handler_like(group: &Map<String, Value>) -> bool {
+    ["type", "command", "prompt", "url", "server"]
+        .iter()
+        .any(|key| group.contains_key(*key))
+}
+
+fn report_malformed(label: &str, detail: &str, diag: &mut DiagnosticCollector) {
+    diag.report(LintRule::HookConfigMalformed, &format!("{label}: {detail}"));
 }
 
 /// Validate a single hook object (handler) against the schema.
@@ -407,7 +527,7 @@ mod tests {
     /// Run the engine over `val` with every rule promoted to error.
     fn check(val: Value) -> Vec<String> {
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_hook_schema(&val, "test", &mut diag);
+        validate_hook_schema(&val, "test", true, &mut diag);
         diag.errors()
     }
 
@@ -448,10 +568,42 @@ mod tests {
     }
 
     #[test]
-    fn malformed_inner_shapes_do_not_panic() {
+    fn malformed_inner_shapes_report_h026_without_panicking() {
+        // Event values remain intentionally skipped by H026; unknown events
+        // with this shape are H008-only.
         assert!(check(json!({"hooks": {"PreToolUse": "not-an-array"}})).is_empty());
-        assert!(check(json!({"hooks": {"PreToolUse": ["not-an-object"]}})).is_empty());
-        assert!(check(json!({"hooks": {"PreToolUse": [{"hooks": "nope"}]}})).is_empty());
+        for value in [
+            json!({"hooks": {"PreToolUse": ["not-an-object"]}}),
+            json!({"hooks": {"PreToolUse": [{"hooks": "nope"}]}}),
+            json!({"hooks": {"PreToolUse": [{"hooks": ["not-an-object"]}]}}),
+        ] {
+            let errors = check(value);
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert!(
+                errors[0].contains("must be an object")
+                    || errors[0].contains("missing a 'hooks' array")
+            );
+        }
+    }
+
+    #[test]
+    fn h026_handler_looking_flat_group_is_also_validated_as_a_handler() {
+        let errors = check(json!({
+            "hooks": {
+                "PreToolUse": [{"type": "command", "command": "rm -rf /"}]
+            }
+        }));
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("missing its enclosing matcher-group"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("dangerous pattern 'rm -rf'"))
+        );
     }
 
     // ── H008: event names ───────────────────────────────────────────
@@ -570,6 +722,16 @@ mod tests {
     #[test]
     fn h009_absent_matcher_never_fires() {
         assert!(check(json!({"hooks": {"Stop": [{"hooks": []}]}})).is_empty());
+    }
+
+    #[test]
+    fn h009_non_string_matcher_fires_once() {
+        for matcher in [json!(42), json!(["Bash"])] {
+            let errors =
+                check(json!({"hooks": {"PreToolUse": [{"matcher": matcher, "hooks": []}]}}));
+            assert_eq!(errors.len(), 1, "{errors:?}");
+            assert!(errors[0].contains("matcher must be a string"));
+        }
     }
 
     // ── H010/H011: type identity ────────────────────────────────────

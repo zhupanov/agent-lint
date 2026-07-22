@@ -18,6 +18,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "cursor-hooks-basic",
     "cursor-hooks-plugin",
     "global-suppression",
+    "hook-schema",
     "json",
     "mcp",
     "nested-agents-md",

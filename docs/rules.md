@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 298 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -77,13 +77,13 @@ which never probes an unsafe declaration.
 |------|------|-------------|------|---------|
 | H001 | `hooks-json-missing` | A hook-config file declared by `plugin.json` cannot be found. Hook configuration is optional upstream; the conventional `hooks/hooks.json` is validated only when present. | Plugin | error |
 | H002 | `hooks-json-invalid` | A discovered plugin hook-config file is not valid JSON | Plugin | error |
-| H003 | `hooks-key-missing` | A file-backed hook config has no top-level `hooks` key, or that value is not an object or array | Plugin | error |
+| H003 | `hooks-key-missing` | A file-backed hook config has no top-level `hooks` key | Plugin | error |
 | H004 | `hook-command-missing` | Hook command script missing on disk | Always | error |
 | H005 | `hook-not-executable` | Hook command script not executable (Unix only) | Always | error |
 | H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Always | error |
-| H007 | `hooks-array-empty` | A plugin hook config has an empty `hooks` collection | Plugin | error |
+| H007 | `hooks-array-empty` | A syntactically valid plugin hook config has no handler entries | Plugin | error |
 | H008 | `hook-event-invalid` | Hook event name is not a recognized Claude Code event | Always | error |
-| H009 | `hook-matcher-invalid` | `matcher` present on an event that takes no matcher | Always | error |
+| H009 | `hook-matcher-invalid` | `matcher` is non-string or present on an event that takes no matcher | Always | error |
 | H010 | `hook-type-missing` | Hook object missing required `type` field | Always | error |
 | H011 | `hook-type-unknown` | Hook `type` is not `command`/`prompt`/`agent`/`http`/`mcp_tool` | Always | error |
 | H012 | `hook-command-required` | `type: command` hook missing `command` | Always | error |
@@ -100,10 +100,11 @@ which never probes an unsafe declaration.
 | H023 | `hook-command-dangerous` | Dangerous command pattern in hook command (`rm -rf` / split or long-form recursive+force, `git reset --hard`, `curl \| sh`, ...) | Always | warn |
 | H024 | `hook-headers-interpolated` | HTTP hook headers interpolate `$VAR` without `allowedEnvVars` | Always | warn |
 | H025 | `settings-local-invalid` | `.claude/settings.local.json` is not valid JSON | Always | error |
+| H026 | `hook-config-malformed` | A `hooks` configuration value does not match the documented event → matcher-group → handlers shape | Always | error |
 
-### Hook schema validation (H008--H024)
+### Hook schema validation (H008--H026)
 
-H008--H024 share one hook-object validation engine, applied to discovered
+H008--H026 share one hook-object validation engine, applied to discovered
 plugin hook config files (including `hooks/hooks.json` and paths declared by
 `plugin.json`), inline `plugin.json` hooks, `.claude/settings.json`, and
 `.claude/settings.local.json`. The [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference)
@@ -117,7 +118,9 @@ The engine walks the event-keyed shape:
 ```
 
 `hooks` object -> event name key -> matcher groups -> each group's nested
-`hooks` array -> hook objects. A file whose `hooks` key is a flat array carries
+`hooks` array -> hook objects. H026 reports malformed nesting and continues to
+inspect handler-looking flattened objects so handler-specific rules still apply.
+A plugin hook configuration file whose `hooks` key is a flat array carries
 no event context, so the schema engine skips it; only H001--H007 apply there.
 
 The valid event list and handler-type table live in
@@ -125,7 +128,7 @@ The valid event list and handler-type table live in
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks.md);
 expect them to change with Claude Code releases.
 
-H009 uses an explicit list of the events the hooks reference marks "no matcher
+H009 requires a present matcher to be a string, then uses an explicit list of the events the hooks reference marks "no matcher
 support": `UserPromptSubmit`, `PostToolBatch`, `Stop`, `TeammateIdle`,
 `TaskCreated`, `TaskCompleted`, `CwdChanged`, `MessageDisplay`,
 `WorktreeCreate`, and `WorktreeRemove`. Every other event filters on some
@@ -136,7 +139,7 @@ reason) -- so a blanket "non-tool event" check would flag valid configs.
 
 Hook `hooks:` keys in skill and agent frontmatter are validated by the same
 engine once frontmatter parses as YAML (X001); schema findings still use
-H008--H024 codes with a `… frontmatter` path label.
+H008--H026 codes with a `… frontmatter` path label.
 
 ## Markdown Structure Rules (X)
 
@@ -926,7 +929,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 297):**
+**Auto-fixable rules (11 of 298):**
 
 | Rule | Code | Fix |
 |------|------|-----|
