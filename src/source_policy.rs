@@ -5,7 +5,7 @@
 //! deliberately excludes every item that is positively gated on `test`.
 
 use proc_macro2::Span;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use syn::spanned::Spanned;
@@ -40,6 +40,125 @@ const FORBIDDEN_MUTATION_METHODS: &[&str] =
 
 const VALIDATOR_IO_WRITE_IMPORT_EXCEPTIONS: &[(&str, &str)] = &[];
 
+const VALIDATOR_PRIMITIVES: &[(&str, &str)] = &[
+    ("agent_discovery", "canonical runtime-agent inventory"),
+    (
+        "codex_constants",
+        "Codex vocabulary data without validator policy",
+    ),
+    ("common", "format-neutral validator helpers"),
+    ("shared_md_refs", "shared Markdown-reference facts"),
+    ("skill_discovery", "canonical runtime-skill inventory"),
+];
+
+const ALLOWED_VALIDATOR_PEER_EDGES: &[(&str, &str, &str)] = &[
+    (
+        "agents",
+        "hook_schema",
+        "agent frontmatter delegates hook-object semantics to the shared hook-schema engine",
+    ),
+    (
+        "agents",
+        "markdown_structure",
+        "agent Markdown validation delegates its inseparable structure sub-check",
+    ),
+    (
+        "agents",
+        "prompt_content",
+        "agent content feeds the shared prompt-content pass",
+    ),
+    (
+        "codex_surfaces",
+        "prompt_content",
+        "Codex prompt surfaces feed the shared prompt-content pass",
+    ),
+    (
+        "contracts",
+        "npm_scripts",
+        "L006 is dispatched as the npm-script sub-check of the shared contract pass",
+    ),
+    (
+        "contracts",
+        "shell",
+        "shared contract rules consume the shell analyzer rather than a peer platform validator",
+    ),
+    (
+        "cursor",
+        "prompt_content",
+        "Cursor prompt surfaces feed the shared prompt-content pass",
+    ),
+    (
+        "desc_overlap",
+        "cursor",
+        "description overlap consumes Cursor's canonical agent-path discovery",
+    ),
+    (
+        "desc_overlap",
+        "skills",
+        "description overlap consumes parsed skill records",
+    ),
+    (
+        "docs",
+        "markdown_structure",
+        "CLAUDE.md documentation validation delegates its inseparable structure sub-check",
+    ),
+    (
+        "hooks",
+        "hook_schema",
+        "hook surface adapters delegate object semantics to the shared hook-schema engine",
+    ),
+    (
+        "instruction_files",
+        "codex_config",
+        "instruction-file validation consumes typed Codex project-document settings",
+    ),
+    (
+        "instruction_files",
+        "prompt_content",
+        "instruction-file content feeds the shared prompt-content pass",
+    ),
+    (
+        "skill_content",
+        "manifest",
+        "skill-content contract checks consume manifest-declared agent roots",
+    ),
+    (
+        "skill_content",
+        "prompt_content",
+        "skill body content feeds the shared prompt-content pass",
+    ),
+    (
+        "skill_content",
+        "skills",
+        "skill-content rules consume the canonical parsed SkillInfo record",
+    ),
+    (
+        "skill_discovery",
+        "manifest",
+        "skill discovery consumes manifest-declared roots from the manifest owner",
+    ),
+    (
+        "skills",
+        "hook_schema",
+        "skill frontmatter delegates hook-object semantics to the shared hook-schema engine",
+    ),
+    (
+        "skills",
+        "markdown_structure",
+        "skill Markdown validation delegates its inseparable structure sub-check",
+    ),
+    (
+        "skills",
+        "prompt_content",
+        "skill content feeds the shared prompt-content pass",
+    ),
+    (
+        "skills",
+        "skill_content",
+        "skill validation consumes shared skill-content field contracts",
+    ),
+];
+
 struct SourceModule {
     path: String,
     module: Vec<String>,
@@ -68,6 +187,14 @@ struct Finding {
     kind: &'static str,
     rendered_path: String,
     detail: String,
+}
+
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+struct PeerEdge {
+    source: String,
+    target: String,
+    path: String,
+    line: usize,
 }
 
 impl Finding {
@@ -466,6 +593,202 @@ fn location(span: Span) -> usize {
     span.start().line
 }
 
+fn peer_target(path: &[String]) -> Option<&str> {
+    (path.first().is_some_and(|part| part == "validators") && path.len() > 1)
+        .then(|| path[1].as_str())
+}
+
+fn is_validator_primitive(target: &str) -> bool {
+    VALIDATOR_PRIMITIVES
+        .iter()
+        .any(|(primitive, _)| *primitive == target)
+}
+
+struct PeerEdgeCollector<'a> {
+    path: &'a str,
+    module: Vec<String>,
+    aliases: &'a HashMap<String, Alias>,
+    edges: BTreeMap<(String, String), PeerEdge>,
+}
+
+impl PeerEdgeCollector<'_> {
+    fn inspect_path(&mut self, path: &syn::Path, span: Span) {
+        let raw = path_segments(path);
+        self.inspect_raw_path(&raw, span);
+    }
+
+    fn inspect_raw_path(&mut self, raw: &[String], span: Span) {
+        let Some(source) = domain(&self.module) else {
+            return;
+        };
+        let resolved = resolve_path(raw, &self.module, self.aliases);
+        let Some(target) = peer_target(&resolved) else {
+            return;
+        };
+        if source == target || is_validator_primitive(target) {
+            return;
+        }
+        let edge = PeerEdge {
+            source: source.to_string(),
+            target: target.to_string(),
+            path: self.path.to_string(),
+            line: location(span),
+        };
+        self.edges
+            .entry((edge.source.clone(), edge.target.clone()))
+            .or_insert(edge);
+    }
+}
+
+impl<'ast> Visit<'ast> for PeerEdgeCollector<'_> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        if !is_test_only(item_attrs(item)) {
+            visit::visit_item(self, item);
+        }
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast ItemMod) {
+        if is_test_only(&item.attrs) {
+            return;
+        }
+        let Some((_, items)) = &item.content else {
+            return;
+        };
+        self.module.push(item.ident.to_string());
+        for item in items {
+            self.visit_item(item);
+        }
+        self.module.pop();
+    }
+
+    fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
+        if !is_test_only(impl_item_attrs(item)) {
+            visit::visit_impl_item(self, item);
+        }
+    }
+
+    fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
+        if !is_test_only(trait_item_attrs(item)) {
+            visit::visit_trait_item(self, item);
+        }
+    }
+
+    fn visit_foreign_item(&mut self, item: &'ast syn::ForeignItem) {
+        if !is_test_only(foreign_item_attrs(item)) {
+            visit::visit_foreign_item(self, item);
+        }
+    }
+
+    fn visit_item_use(&mut self, _item: &'ast syn::ItemUse) {}
+
+    fn visit_expr_path(&mut self, expression: &'ast syn::ExprPath) {
+        self.inspect_path(&expression.path, expression.span());
+        visit::visit_expr_path(self, expression);
+    }
+
+    fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
+        self.inspect_path(&ty.path, ty.span());
+        visit::visit_type_path(self, ty);
+    }
+
+    fn visit_macro(&mut self, item: &'ast syn::Macro) {
+        self.inspect_path(&item.path, item.path.span());
+        visit::visit_macro(self, item);
+    }
+}
+
+fn peer_edges(source: &SourceModule) -> BTreeMap<(String, String), PeerEdge> {
+    let mut imports = ImportCollector {
+        module: source.module.clone(),
+        imports: Vec::new(),
+    };
+    imports.visit_file(&source.syntax);
+    let aliases = aliases_for(&imports.imports);
+    let mut collector = PeerEdgeCollector {
+        path: &source.path,
+        module: source.module.clone(),
+        aliases: &aliases,
+        edges: BTreeMap::new(),
+    };
+    for import in &imports.imports {
+        collector.module.clone_from(&import.module);
+        collector.inspect_raw_path(&import.raw, import.span);
+    }
+    collector.module.clone_from(&source.module);
+    collector.visit_file(&source.syntax);
+    collector.edges
+}
+
+fn validator_peer_edges(root: &Path) -> Result<BTreeMap<(String, String), PeerEdge>, String> {
+    let mut edges = BTreeMap::new();
+    for source in load_production_modules(root)? {
+        for (key, edge) in peer_edges(&source) {
+            edges.entry(key).or_insert(edge);
+        }
+    }
+    Ok(edges)
+}
+
+fn inventory_errors(edges: &BTreeMap<(String, String), PeerEdge>) -> Vec<String> {
+    inventory_errors_for(edges, VALIDATOR_PRIMITIVES, ALLOWED_VALIDATOR_PEER_EDGES)
+}
+
+fn inventory_errors_for(
+    edges: &BTreeMap<(String, String), PeerEdge>,
+    primitives: &[(&str, &str)],
+    allowed_rows: &[(&str, &str, &str)],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut allowed = BTreeSet::new();
+    let mut primitive_names = BTreeSet::new();
+    for (primitive, reason) in primitives {
+        if !primitive_names.insert(*primitive) {
+            errors.push(format!("duplicate validator primitive: {primitive}"));
+        }
+        if reason.trim().is_empty() {
+            errors.push(format!("validator primitive {primitive} needs a reason"));
+        }
+    }
+    for (source, target, reason) in allowed_rows {
+        if !allowed.insert((*source, *target)) {
+            errors.push(format!(
+                "duplicate validator peer edge: {source} -> {target}"
+            ));
+        }
+        if reason.trim().is_empty() {
+            errors.push(format!(
+                "validator peer edge {source} -> {target} needs a reason"
+            ));
+        }
+        if source == target {
+            errors.push(format!(
+                "validator peer edge cannot be self-referential: {source}"
+            ));
+        }
+        if primitive_names.contains(target) {
+            errors.push(format!(
+                "validator peer edge {source} -> {target} targets a shared primitive"
+            ));
+        }
+    }
+    for ((source, target), edge) in edges {
+        if !allowed.contains(&(source.as_str(), target.as_str())) {
+            errors.push(format!(
+                "new validator peer edge: {source} -> {target} (first seen at {}:{}); route through validators/mod.rs or add a narrowly justified edge",
+                edge.path, edge.line
+            ));
+        }
+    }
+    for (source, target) in allowed {
+        if !edges.contains_key(&(source.to_string(), target.to_string())) {
+            errors.push(format!(
+                "stale validator peer edge: {source} -> {target}; remove its allowlist row"
+            ));
+        }
+    }
+    errors
+}
+
 struct PolicyVisitor<'a> {
     path: &'a str,
     module: Vec<String>,
@@ -736,6 +1059,13 @@ fn walkdir_is_owned_only_by_shared_traversal() {
 }
 
 #[test]
+fn validator_peer_dependencies_match_the_reasoned_inventory() {
+    let edges = validator_peer_edges(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let errors = inventory_errors(&edges);
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+#[test]
 fn purity_fixture_rejects_every_forbidden_spelling_and_ignores_test_code() {
     let source = r#"
         use std::env::remove_var;
@@ -836,6 +1166,82 @@ fn walkdir_fixture_covers_import_alias_path_and_owner() {
         &["traversal"],
     );
     assert!(owner.is_empty(), "{owner:#?}");
+}
+
+#[test]
+fn peer_dependency_fixture_resolves_import_aliases_and_super_paths() {
+    let source = SourceModule {
+        path: "src/validators/source.rs".to_string(),
+        module: vec!["validators".to_string(), "source".to_string()],
+        syntax: syn::parse_file(
+            r#"
+                use crate::validators::target::Thing as Alias;
+                use crate::validators::common::Helper;
+                fn production(_: Alias) {
+                    super::sibling::check();
+                    let _ = Helper::default();
+                }
+                #[cfg(test)] fn test_only() { crate::validators::ignored::check(); }
+            "#,
+        )
+        .unwrap(),
+    };
+    let edges = peer_edges(&source);
+    assert_eq!(
+        edges
+            .keys()
+            .map(|(source, target)| (source.as_str(), target.as_str()))
+            .collect::<Vec<_>>(),
+        [("source", "sibling"), ("source", "target")]
+    );
+    assert_eq!(
+        edges
+            .get(&("source".to_string(), "target".to_string()))
+            .unwrap()
+            .line,
+        2
+    );
+}
+
+#[test]
+fn peer_dependency_inventory_reports_new_stale_and_invalid_rows() {
+    let edges = BTreeMap::from([(
+        ("source".to_string(), "target".to_string()),
+        PeerEdge {
+            source: "source".to_string(),
+            target: "target".to_string(),
+            path: "src/validators/source.rs".to_string(),
+            line: 42,
+        },
+    )]);
+    let errors = inventory_errors_for(
+        &edges,
+        &[("common", ""), ("common", "duplicate")],
+        &[
+            ("source", "source", ""),
+            ("source", "common", "must be primitive"),
+            ("source", "common", "duplicate row"),
+        ],
+    );
+    assert!(
+        errors.iter().any(|error| error == "new validator peer edge: source -> target (first seen at src/validators/source.rs:42); route through validators/mod.rs or add a narrowly justified edge"),
+        "{errors:#?}"
+    );
+    assert!(
+        errors.iter().any(|error| error
+            == "stale validator peer edge: source -> common; remove its allowlist row"),
+        "{errors:#?}"
+    );
+    for expected in [
+        "duplicate validator primitive: common",
+        "validator primitive common needs a reason",
+        "validator peer edge source -> source needs a reason",
+        "validator peer edge cannot be self-referential: source",
+        "validator peer edge source -> common targets a shared primitive",
+        "duplicate validator peer edge: source -> common",
+    ] {
+        assert!(errors.iter().any(|error| error == expected), "{errors:#?}");
+    }
 }
 
 #[test]
