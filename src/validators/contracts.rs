@@ -595,13 +595,182 @@ fn shell_lex(command: &str) -> Vec<String> {
     tokens
 }
 
+/// Command basenames recognized as awk-family interpreters in skill fences.
+const AWK_COMMAND_NAMES: &[&str] = &["awk", "nawk", "mawk", "gawk"];
+/// Command basenames recognized as grep-family probes in skill fences.
+const GREP_COMMAND_NAMES: &[&str] = &["grep", "egrep", "fgrep", "rg", "ripgrep"];
+
+/// Shell options whose following token is a value, not a path candidate.
+const GREP_VALUE_OPTIONS: &[&str] = &[
+    "-e",
+    "--regexp",
+    "-f",
+    "--file",
+    "-g",
+    "--glob",
+    "--iglob",
+    "-t",
+    "--type",
+    "-A",
+    "-B",
+    "-C",
+    "-m",
+    "--max-count",
+    "--max-depth",
+    "--include",
+    "--exclude",
+];
+
+/// Classify a shell token's command basename after removing only a recognized
+/// command-position prefix (assignment+`$(`, leading `$(`, leading backtick, or
+/// leading subshell parentheses), then taking the final `/` component.
+fn command_basename(token: &str) -> &str {
+    let command = strip_command_position_prefix(token);
+    command
+        .rsplit('/')
+        .next()
+        .filter(|part| !part.is_empty())
+        .unwrap_or(command)
+}
+
+fn strip_command_position_prefix(token: &str) -> &str {
+    if let Some((name, rest)) = token.split_once("=$(") {
+        if is_shell_identifier(name) {
+            return rest;
+        }
+    }
+    if let Some((name, rest)) = token.split_once("=`") {
+        if is_shell_identifier(name) {
+            return rest;
+        }
+    }
+    if let Some(rest) = token.strip_prefix("$(") {
+        return rest;
+    }
+    if let Some(rest) = token.strip_prefix('`') {
+        return rest;
+    }
+    token.trim_start_matches('(')
+}
+
+fn is_shell_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(ch) if ch.is_ascii_alphabetic() || ch == '_' => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+/// When `token` begins with a redirection operator (optionally digit-prefixed),
+/// returns the remainder after that operator. An empty remainder means the
+/// operator is standalone and consumes the following token as its target.
+fn redirection_remainder(token: &str) -> Option<&str> {
+    let bytes = token.as_bytes();
+    let mut digits = 0usize;
+    while digits < bytes.len() && bytes[digits].is_ascii_digit() {
+        digits += 1;
+    }
+    let rest = &token[digits..];
+    let operators: &[&str] = if digits > 0 {
+        &[">>", ">|", ">&", ">", "<"]
+    } else {
+        &[">>", ">|", "&>", ">", "<"]
+    };
+    for operator in operators {
+        if let Some(after) = rest.strip_prefix(operator) {
+            return Some(after);
+        }
+    }
+    None
+}
+
+fn is_input_redirection(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    let mut digits = 0usize;
+    while digits < bytes.len() && bytes[digits].is_ascii_digit() {
+        digits += 1;
+    }
+    token[digits..].starts_with('<')
+}
+
+struct GrepArgAnalysis {
+    has_explicit_path: bool,
+    stdin_redirected: bool,
+    path_has_parent_dir: bool,
+}
+
+fn analyze_grep_args(args: &[String]) -> GrepArgAnalysis {
+    let mut skip_value = false;
+    let mut explicit_pattern = false;
+    let mut positional_count = 0usize;
+    let mut stdin_redirected = false;
+    let mut path_has_parent_dir = false;
+    let mut index = 0usize;
+    while index < args.len() {
+        let arg = &args[index];
+        if skip_value {
+            skip_value = false;
+            index += 1;
+            continue;
+        }
+        if let Some(remainder) = redirection_remainder(arg) {
+            if is_input_redirection(arg) {
+                stdin_redirected = true;
+            }
+            if remainder.is_empty() {
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if matches!(arg.as_str(), "-e" | "--regexp" | "-f" | "--file") {
+            explicit_pattern = true;
+            skip_value = true;
+            index += 1;
+            continue;
+        }
+        if arg.starts_with("-e")
+            || arg.starts_with("--regexp=")
+            || arg.starts_with("-f")
+            || arg.starts_with("--file=")
+        {
+            explicit_pattern = true;
+            index += 1;
+            continue;
+        }
+        if GREP_VALUE_OPTIONS.contains(&arg.as_str()) {
+            skip_value = true;
+            index += 1;
+            continue;
+        }
+        if arg.starts_with('-') || matches!(arg.as_str(), "|" | "||" | "&&" | ";") {
+            index += 1;
+            continue;
+        }
+        positional_count += 1;
+        if Path::new(arg)
+            .components()
+            .any(|part| part == Component::ParentDir)
+        {
+            path_has_parent_dir = true;
+        }
+        index += 1;
+    }
+    GrepArgAnalysis {
+        has_explicit_path: positional_count >= if explicit_pattern { 1 } else { 2 },
+        stdin_redirected,
+        path_has_parent_dir,
+    }
+}
+
 fn awk_programs(command: &str) -> Vec<String> {
     let tokens = shell_lex(command);
     let mut programs = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
-        let token = tokens[index].trim_matches(|ch: char| "();".contains(ch));
-        if token != "awk" && !token.ends_with("/awk") {
+        if !AWK_COMMAND_NAMES.contains(&command_basename(&tokens[index])) {
             index += 1;
             continue;
         }
@@ -609,9 +778,12 @@ fn awk_programs(command: &str) -> Vec<String> {
         let mut source_from_file = false;
         while index < tokens.len() && !matches!(tokens[index].as_str(), "|" | ";" | "&") {
             let token = &tokens[index];
-            if matches!(token.as_str(), "-F" | "-v") {
+            if matches!(token.as_str(), "-F" | "-v" | "-W") {
                 index += 2;
-            } else if token.starts_with("-F") || token.starts_with("-v") {
+            } else if token.starts_with("-F")
+                || token.starts_with("-v")
+                || token.starts_with("-W")
+            {
                 index += 1;
             } else if token == "-f" {
                 source_from_file = true;
@@ -639,13 +811,16 @@ fn validate_awk_fields(skill: &Path, line: usize, command: &str, diag: &mut Diag
         .iter()
         .any(|program| AWK_FIELD.is_match(program))
     {
-        diag.report_at(
+        diag.report_at_with(
             LintRule::AwkFieldRef,
             skill,
             &format!(
                 "{}:{line}: bare awk positional field in a skill shell fence; move parsing into a shipped script",
                 skill.display()
             ),
+            DiagnosticMetadata::default()
+                .with_location(SourceSpan::line(line))
+                .with_suggestion("move the awk parsing into a shipped script"),
         );
     }
 }
@@ -658,7 +833,7 @@ fn validate_grep_probe(skill: &Path, line: usize, command: &str, diag: &mut Diag
     }
     let words = shell_lex(command);
     for (index, word) in words.iter().enumerate() {
-        if !matches!(word.as_str(), "grep" | "egrep" | "fgrep" | "rg" | "ripgrep") {
+        if !GREP_COMMAND_NAMES.contains(&command_basename(word)) {
             continue;
         }
         let prefix = &words[..index];
@@ -670,98 +845,64 @@ fn validate_grep_probe(skill: &Path, line: usize, command: &str, diag: &mut Diag
         let pipe_fed = prefix
             .last()
             .is_some_and(|value| value == "|" || value == "|&");
-        if args.iter().any(|value| {
-            Path::new(value)
-                .components()
-                .any(|part| part == Component::ParentDir)
-        }) {
-            diag.report_at(
+        let analysis = analyze_grep_args(args);
+        let metadata = |suggestion: &str| {
+            DiagnosticMetadata::default()
+                .with_location(SourceSpan::line(line))
+                .with_suggestion(suggestion)
+        };
+        if analysis.path_has_parent_dir {
+            diag.report_at_with(
                 LintRule::UnsafeGrepProbe,
                 skill,
                 &format!(
                     "{}:{line}: grep-family path ascends through a parent directory",
                     skill.display()
                 ),
+                metadata("use a repository-contained path"),
             );
             continue;
         }
-        let clause_prefix = prefix
+        let clause_prefix: Vec<_> = prefix
             .iter()
             .rev()
-            .take_while(|value| !matches!(value.as_str(), "|" | "|&" | "||" | "&&" | ";" | "&"));
+            .take_while(|value| !matches!(value.as_str(), "|" | "|&" | "||" | "&&" | ";" | "&"))
+            .collect();
         let conditional = clause_prefix
-            .clone()
-            .any(|value| value == "if" || value == "elif");
-        let wrapped = clause_prefix.clone().any(|value| value == "command");
+            .iter()
+            .any(|value| *value == "if" || *value == "elif");
+        let wrapped = clause_prefix.iter().any(|value| *value == "command");
+        let arg_fed = clause_prefix
+            .iter()
+            .any(|value| *value == "xargs" || *value == "parallel");
+        // Bare-top-level arm stays limited to a literal unqualified `grep` token.
         let bare_grep = word == "grep" && !wrapped && (index == 0 || conditional);
-        let dev_null = command.contains("< /dev/null") || command.contains("</dev/null");
-        let has_path = grep_has_explicit_path(args);
         if bare_grep {
-            diag.report_at(
+            diag.report_at_with(
                 LintRule::UnsafeGrepProbe,
                 skill,
                 &format!(
                     "{}:{line}: bare top-level grep in a shell fence; wrap it or use command grep",
                     skill.display()
                 ),
+                metadata("prefix top-level grep with command or feed it through a pipe"),
             );
-        } else if !pipe_fed && !dev_null && !has_path {
-            diag.report_at(
+        } else if !pipe_fed
+            && !analysis.stdin_redirected
+            && !analysis.has_explicit_path
+            && !arg_fed
+        {
+            diag.report_at_with(
                 LintRule::UnsafeGrepProbe,
                 skill,
                 &format!(
                     "{}:{line}: grep-family probe has no explicit path and may block on stdin",
                     skill.display()
                 ),
+                metadata("add an explicit search path or pipe/redirect input"),
             );
         }
     }
-}
-
-fn grep_has_explicit_path(args: &[String]) -> bool {
-    let value_options = [
-        "-e",
-        "--regexp",
-        "-f",
-        "--file",
-        "-g",
-        "--glob",
-        "--iglob",
-        "-t",
-        "--type",
-        "-A",
-        "-B",
-        "-C",
-        "-m",
-        "--max-count",
-        "--max-depth",
-        "--include",
-        "--exclude",
-    ];
-    let mut skip = false;
-    let mut explicit_pattern = false;
-    let mut count = 0;
-    for arg in args {
-        if skip {
-            skip = false;
-            continue;
-        }
-        if matches!(arg.as_str(), "-e" | "--regexp" | "-f" | "--file") {
-            explicit_pattern = true;
-            skip = true;
-        } else if arg.starts_with("-e")
-            || arg.starts_with("--regexp=")
-            || arg.starts_with("-f")
-            || arg.starts_with("--file=")
-        {
-            explicit_pattern = true;
-        } else if value_options.contains(&arg.as_str()) {
-            skip = true;
-        } else if !arg.starts_with('-') && !matches!(arg.as_str(), "|" | "||" | "&&" | ";") {
-            count += 1;
-        }
-    }
-    count >= if explicit_pattern { 1 } else { 2 }
 }
 
 /// Repository-relative `references/*.md` paths (never `SKILL.md`) that S021
@@ -3227,6 +3368,207 @@ mod tests {
         );
     }
 
+    fn s060_findings(command: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_awk_fields(Path::new("skills/demo/SKILL.md"), 7, command, &mut diag);
+        diag.diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::AwkFieldRef)
+            .cloned()
+            .collect()
+    }
+
+    fn s061_findings(command: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_grep_probe(Path::new("skills/demo/SKILL.md"), 7, command, &mut diag);
+        diag.diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::UnsafeGrepProbe)
+            .cloned()
+            .collect()
+    }
+
+    fn assert_s060(command: &str) {
+        let findings = s060_findings(command);
+        assert_eq!(findings.len(), 1, "expected S060 for {command:?}");
+        assert_eq!(findings[0].location, Some(SourceSpan::line(7)));
+        assert_eq!(
+            findings[0].suggestion.as_deref(),
+            Some("move the awk parsing into a shipped script")
+        );
+        assert!(findings[0].message.contains("bare awk positional field"));
+    }
+
+    fn assert_no_s060(command: &str) {
+        assert!(
+            s060_findings(command).is_empty(),
+            "unexpected S060 for {command:?}"
+        );
+    }
+
+    fn assert_s061(command: &str, message_fragment: &str, suggestion: &str) {
+        let findings = s061_findings(command);
+        assert_eq!(findings.len(), 1, "expected S061 for {command:?}");
+        assert_eq!(findings[0].location, Some(SourceSpan::line(7)));
+        assert!(
+            findings[0].message.contains(message_fragment),
+            "message {:?} missing {message_fragment:?} for {command:?}",
+            findings[0].message
+        );
+        assert_eq!(findings[0].suggestion.as_deref(), Some(suggestion));
+    }
+
+    fn assert_no_s061(command: &str) {
+        assert!(
+            s061_findings(command).is_empty(),
+            "unexpected S061 for {command:?}: {:?}",
+            s061_findings(command)
+                .iter()
+                .map(|item| &item.message)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn awk_field_ref_covers_substitution_variants_and_families() {
+        assert_s060("first=$(awk '{print $1}' data.txt)");
+        assert_s060("first=`awk '{print $1}' f`");
+        assert_s060("gawk '{print $1}' data.txt");
+        assert_s060("awk -W posix '{print $1}' data.txt");
+        assert_s060("awk -Wposix '{print $1}' data.txt");
+        assert_s060("/usr/bin/awk '{print $1}' data.txt");
+        assert_s060("(awk '{print $1}' data.txt)");
+
+        assert_no_s060("first=$(awk 'BEGIN { print v }' f)");
+        assert_no_s060("echo $1");
+        assert_no_s060("notawk '{print $1}' data.txt");
+        assert_no_s060(r#"cmd="$awk"; $cmd '{print $1}' data.txt"#);
+    }
+
+    #[test]
+    fn grep_probe_arg_feeders_and_wrappers() {
+        assert_no_s061("git ls-files | xargs grep -l pattern");
+        assert_no_s061("git ls-files | parallel grep pat");
+        assert_s061(
+            "timeout 5 grep pat",
+            "grep-family probe has no explicit path and may block on stdin",
+            "add an explicit search path or pipe/redirect input",
+        );
+        assert_s061(
+            "xargs grep -l pat ../up",
+            "grep-family path ascends through a parent directory",
+            "use a repository-contained path",
+        );
+    }
+
+    #[test]
+    fn grep_probe_option_values_are_not_paths() {
+        assert_no_s061("command grep -e '../escape' log.txt");
+        assert_no_s061("command grep --regexp=../x f");
+        assert_s061(
+            "grep needle ../shared/config",
+            "grep-family path ascends through a parent directory",
+            "use a repository-contained path",
+        );
+    }
+
+    #[test]
+    fn grep_probe_redirection_aware_path_and_stdin() {
+        assert_s061(
+            "rg pattern > out.txt",
+            "grep-family probe has no explicit path and may block on stdin",
+            "add an explicit search path or pipe/redirect input",
+        );
+        assert_s061(
+            "rg needle 2>&1",
+            "grep-family probe has no explicit path and may block on stdin",
+            "add an explicit search path or pipe/redirect input",
+        );
+        assert_no_s061("command grep pat < input.txt");
+        assert_no_s061("command grep pat </dev/null");
+        assert_no_s061("command grep pat file > out");
+        // Output redirections do not feed stdin; bare `grep` still uses the bare arm.
+        assert_s061(
+            "grep pat file > out",
+            "bare top-level grep in a shell fence",
+            "prefix top-level grep with command or feed it through a pipe",
+        );
+    }
+
+    #[test]
+    fn grep_probe_recognizes_path_and_command_position_forms() {
+        assert_s061(
+            "matches=$(rg needle)",
+            "grep-family probe has no explicit path and may block on stdin",
+            "add an explicit search path or pipe/redirect input",
+        );
+        assert_s061(
+            "(rg needle)",
+            "grep-family probe has no explicit path and may block on stdin",
+            "add an explicit search path or pipe/redirect input",
+        );
+        assert_s061(
+            "/usr/bin/grep needle",
+            "grep-family probe has no explicit path and may block on stdin",
+            "add an explicit search path or pipe/redirect input",
+        );
+        assert_no_s061("/usr/bin/grep needle file.txt");
+        assert_no_s061("mygrep needle");
+        assert_no_s061(r#"cmd=grep; $cmd needle"#);
+        assert_s061(
+            "grep needle",
+            "bare top-level grep in a shell fence",
+            "prefix top-level grep with command or feed it through a pipe",
+        );
+    }
+
+    #[test]
+    fn awk_and_grep_waivers_require_reasons() {
+        assert_no_s060(
+            "awk '{print $1}' data.txt # lint-skill-awk-field-ref: ok reviewed exception",
+        );
+        assert_s060("awk '{print $1}' data.txt # lint-skill-awk-field-ref: ok");
+        assert_no_s061("grep needle # lint-bare-grep-probe: ok reviewed exception");
+        assert_s061(
+            "grep needle # lint-bare-grep-probe: ok",
+            "bare top-level grep in a shell fence",
+            "prefix top-level grep with command or feed it through a pipe",
+        );
+        // Each marker suppresses only its own rule.
+        assert_s061(
+            "grep needle # lint-skill-awk-field-ref: ok reviewed",
+            "bare top-level grep in a shell fence",
+            "prefix top-level grep with command or feed it through a pipe",
+        );
+        assert_s060("awk '{print $1}' f # lint-bare-grep-probe: ok reviewed");
+    }
+
+    #[test]
+    fn awk_parser_distinguishes_programs_from_option_values() {
+        assert_eq!(awk_programs("echo $1"), Vec::<String>::new());
+        assert_eq!(
+            awk_programs("awk -F ',' '{print $1}' input"),
+            ["{print $1}"]
+        );
+        assert_eq!(
+            awk_programs("awk -v value='$1' 'BEGIN { print value }'"),
+            ["BEGIN { print value }"]
+        );
+        assert_eq!(
+            awk_programs("awk -W posix '{print $1}' data.txt"),
+            ["{print $1}"]
+        );
+        assert_eq!(
+            awk_programs("awk -Wposix '{print $1}' data.txt"),
+            ["{print $1}"]
+        );
+        assert_eq!(
+            awk_programs("first=$(awk '{print $1}' data.txt)"),
+            ["{print $1}"]
+        );
+        assert_eq!(awk_programs("notawk '{print $1}' data.txt"), Vec::<String>::new());
+    }
+
     #[test]
     #[serial_test::serial]
     fn reference_bash_scope_excludes_script_documentation() {
@@ -3273,19 +3615,6 @@ mod tests {
         assert_eq!(findings.len(), 2);
         assert!(findings[0].contains("skills/alpha/"));
         assert!(findings[1].contains("skills/zeta/"));
-    }
-
-    #[test]
-    fn awk_parser_distinguishes_programs_from_option_values() {
-        assert_eq!(awk_programs("echo $1"), Vec::<String>::new());
-        assert_eq!(
-            awk_programs("awk -F ',' '{print $1}' input"),
-            ["{print $1}"]
-        );
-        assert_eq!(
-            awk_programs("awk -v value='$1' 'BEGIN { print value }'"),
-            ["BEGIN { print value }"]
-        );
     }
 
     #[test]
