@@ -1,0 +1,1 @@
+{"mcpServers":{"sub":{"type":"http","url":"http://foo.localhost:3000/mcp"},"nested":{"type":"ws","url":"ws://a.b.localhost"}}}

@@ -798,24 +798,34 @@ default value.
 
 MCP input is adapted by platform before P rules run. Claude standalone inputs
 are repository `.mcp.json` files (at the project or plugin root); Claude plugin
-manifests may provide an inline `.claude-plugin/plugin.json#mcpServers` object;
-and Cursor project input is `.cursor/mcp.json`. Invalid JSON in an inline
-plugin manifest remains M002-owned. Claude settings files and Codex TOML are
-not MCP P-rule inputs: settings retain their Claude-validator diagnostics, and
-`.codex/config.toml` remains CX-owned. These rules run in both Basic and Plugin
-modes. The Claude transport matrix follows Claude Code's [remote HTTP](https://code.claude.com/docs/en/mcp#option-1-add-a-remote-http-server),
+manifests may provide `.claude-plugin/plugin.json#mcpServers` as an inline
+server-map object, a string path to an MCP config file, or an array of string
+paths and inline server-map objects; and Cursor project input is
+`.cursor/mcp.json`. Path-referenced plugin MCP configs (after substituting a
+leading `${CLAUDE_PLUGIN_ROOT}/` with the plugin root) receive the same Claude
+standalone P-rule walk when the file exists; missing paths stay M-owned.
+Invalid JSON in an inline plugin manifest remains M002-owned. Claude settings
+files and Codex TOML are not MCP P-rule inputs: settings retain their
+Claude-validator diagnostics, and `.codex/config.toml` remains CX-owned. These
+rules run in both Basic and Plugin modes. The Claude transport matrix follows
+Claude Code's [remote HTTP](https://code.claude.com/docs/en/mcp#option-1-add-a-remote-http-server),
 [WebSocket](https://code.claude.com/docs/en/mcp#option-4-add-a-remote-websocket-server),
 and [legacy SSE](https://code.claude.com/docs/en/mcp#option-2-add-a-remote-sse-server)
 documentation: `streamable-http` is the HTTP alias, `ws` uses WebSocket URLs,
-and legacy `sse` remains supported but deprecated.
+and legacy `sse` remains supported but deprecated. A Claude entry that has a
+`url` member but no `type` is a documented configuration error owned by P027
+(Claude Code skips that server); P009 remains for url-less stdio entries.
 
 P027 owns MCP document and entry shape failures. Standalone Claude and Cursor
-MCP documents require a top-level object-valued `mcpServers`; an inline plugin
-manifest may omit it, but a present value must be an object. P024 is reserved
-for an entry that is exactly `{}`; scalar, null, and array entries are P027.
-Duplicate top-level `mcpServers` keys are P027, while P023 remains limited to
-duplicate names in a valid server map. P027 is diagnostic-only and has no
-autofix.
+MCP documents require a top-level object-valued `mcpServers`. An inline plugin
+manifest may omit `mcpServers`; a present value must be an object, a string
+config path, or an array whose elements are string paths or inline server-map
+objects (other element types are P027). Cursor selector presence still requires
+exactly one of `command` or `url`, and the selected value must be a non-empty,
+non-blank string. P024 is reserved for an entry that is exactly `{}`; scalar,
+null, and array server entries are P027. Duplicate top-level `mcpServers` keys
+are P027, while P023 remains limited to duplicate names in a valid server map.
+P027 is diagnostic-only and has no autofix.
 
 P018 treats only exact Claude expansion forms `${NAME}` and `${NAME:-DEFAULT}`
 (with `NAME` matching `[A-Za-z_][A-Za-z0-9_]*`) as references on Claude MCP
@@ -834,6 +844,11 @@ payload is present. Direct `rm`/`sudo rm` recursive+force against `/`, and
 Windows `rd`/`rmdir /s /q` against a drive root, are detected from argv.
 Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn.
 
+P026 reserved names follow Claude Code's documented built-in server list
+(https://code.claude.com/docs/en/mcp, retrieved 2026-07-21): `workspace`,
+`claude-in-chrome`, `computer-use`, `Claude Preview`, and `Claude Browser`
+(exact, case-sensitive). Cursor MCP is unaffected.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | P001 | `mcp-json-invalid` | MCP configuration is not valid JSON | Always | error |
@@ -841,15 +856,15 @@ Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn
 | P010 | `mcp-http-url` | Remote server has no syntactically valid URL for its selected transport (`http`/`streamable-http`/`sse`: `http(s)`; `ws`: `ws(s)`) | Always | error |
 | P011 | `mcp-type-invalid` | Server `type` is not `stdio`, `http`, `streamable-http`, `sse`, or `ws` | Always | error |
 | P012 | `mcp-sse-deprecated` | `sse` transport is deprecated; use Streamable HTTP | Always | warn |
-| P017 | `mcp-insecure-url` | Non-local `http://` or `ws://` server URL is insecure (use `https://` or `wss://`) | Always | error |
+| P017 | `mcp-insecure-url` | Non-local `http://` or `ws://` server URL is insecure (use `https://` or `wss://`). `localhost` and `*.localhost` (RFC 6761) are local | Always | error |
 | P018 | `mcp-env-secret` | Secret-like environment variable contains a literal plaintext value | Always | warn |
 | P019 | `mcp-command-dangerous` | Server command contains a dangerous shell pattern | Always | warn |
 | P022 | `mcp-args-invalid` | `args` is not an array of strings | Always | error |
 | P023 | `mcp-duplicate-server` | `mcpServers` contains a duplicate server name | Always | error |
 | P024 | `mcp-server-empty` | Server configuration is an empty object | Always | error |
 | P025 | `mcp-alwaysload-invalid` | `alwaysLoad` is not a boolean | Always | warn |
-| P026 | `mcp-server-reserved` | Server name is reserved by Claude Code | Always | error |
-| P027 | `mcp-structure-invalid` | Required standalone server map is missing or invalid; an inline map, server entry, duplicate top-level map key, or adapter selector has an invalid shape | Always | error |
+| P026 | `mcp-server-reserved` | Server name is one of Claude Code's reserved built-ins (`workspace`, `claude-in-chrome`, `computer-use`, `Claude Preview`, `Claude Browser`) | Always | error |
+| P027 | `mcp-structure-invalid` | Required standalone server map is missing or invalid; an inline map, path/array form, server entry, duplicate top-level map key, url-without-type Claude entry, or adapter selector has an invalid shape | Always | error |
 
 ## Docs Rules (D)
 

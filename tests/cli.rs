@@ -667,6 +667,109 @@ fn platform_aware_mcp_adapters_preserve_cli_ownership_and_subject_paths() {
 }
 
 #[test]
+fn mcp_contract_sync_json_diagnostics_cover_path_form_url_type_reserved_and_cursor() {
+    // Issue #422: path-form plugin mcpServers, Claude url-without-type, five
+    // reserved names, and Cursor selector value shapes.
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::create_dir(tmp.path().join(".cursor")).unwrap();
+    std::fs::write(
+        tmp.path().join("servers.json"),
+        r#"{"mcpServers":{"from-path":{"command":"ok"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"example","mcpServers":"./servers.json"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".mcp.json"),
+        r#"{"mcpServers":{"url-only":{"url":"https://mcp.example.com/mcp"},"claude-in-chrome":{"command":"ok"},"Workspace":{"command":"ok"}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".cursor/mcp.json"),
+        r#"{"mcpServers":{"empty":{"command":""},"blank":{"url":"   "},"ok":{"command":"server"}}}"#,
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "P009,P026,P027", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let identities = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["code"].as_str().unwrap().to_string(),
+                diagnostic["name"].as_str().unwrap().to_string(),
+                diagnostic["severity"].as_str().unwrap().to_string(),
+                diagnostic["subject_path"].as_str().unwrap().to_string(),
+                diagnostic["message"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        identities
+            .iter()
+            .map(|(code, name, severity, path, _)| {
+                (
+                    code.as_str(),
+                    name.as_str(),
+                    severity.as_str(),
+                    path.as_str(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            ("P026", "mcp-server-reserved", "error", ".mcp.json"),
+            ("P027", "mcp-structure-invalid", "error", ".mcp.json"),
+            ("P027", "mcp-structure-invalid", "error", ".cursor/mcp.json"),
+            ("P027", "mcp-structure-invalid", "error", ".cursor/mcp.json"),
+        ],
+        "{report:#}"
+    );
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| diagnostic["code"] != "P009"),
+        "url-without-type must not emit P009: {report:#}"
+    );
+    let messages: Vec<_> = identities
+        .iter()
+        .map(|(_, _, _, _, message)| message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("has a \"url\" but no \"type\""))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("claude-in-chrome"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains(".command must be a non-empty string"))
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains(".url must be a non-empty string"))
+    );
+}
+
+#[test]
 fn mcp_p018_p019_json_diagnostics_cover_modes_focus_and_suppression() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
