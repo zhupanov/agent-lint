@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
+use crate::json_locate::{JsonScanner, Seg};
 use crate::platforms::ValidationTargets;
 use crate::rules::LintRule;
 use crate::sensitive::{
@@ -8,7 +9,6 @@ use crate::sensitive::{
 };
 use crate::traversal;
 use crate::validators::common::is_nonlocal_url_with_scheme;
-use crate::validators::json_locate::{JsonScanner, Seg};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -677,7 +677,10 @@ fn normalize_under_base(base: &Path, relative: &str) -> std::path::PathBuf {
 /// Raw source context for span recovery. `keys` carries the raw top-level
 /// `mcpServers` occurrence scan that drives the duplicate/shape pass for
 /// standalone map documents; token-recovery-only surfaces (the inline plugin
-/// manifest, whose parse M002 owns) supply `tokens` without `keys`.
+/// manifest, whose parse M002 owns) supply `tokens` without `keys`. Both raw
+/// duplicate passes — the P027 occurrence checks and the P023 duplicate
+/// server names — are gated on `keys` so token recovery alone never adds
+/// parse-derived diagnostics to a surface another rule owns.
 #[derive(Clone, Copy)]
 struct RawDocument<'a> {
     source: &'a str,
@@ -4275,15 +4278,21 @@ mod tests {
                 .iter()
                 .all(|item| item.location.is_some() && item.suggestion.is_some())
         );
-        assert!(
+        assert_eq!(
             structures
                 .iter()
-                .any(|item| item.suggestion.as_deref() == Some("use a non-empty string for url"))
+                .filter(|item| item.evidence.as_deref() == Some("url")
+                    && item.suggestion.as_deref() == Some("use a non-empty string for url"))
+                .count(),
+            2
         );
-        assert!(
-            structures.iter().any(
-                |item| item.suggestion.as_deref() == Some("use a non-empty string for command")
-            )
+        assert_eq!(
+            structures
+                .iter()
+                .filter(|item| item.evidence.as_deref() == Some("command")
+                    && item.suggestion.as_deref() == Some("use a non-empty string for command"))
+                .count(),
+            1
         );
     }
 

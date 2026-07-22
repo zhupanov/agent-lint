@@ -25,12 +25,12 @@
 use crate::config::{ExcludeSet, normalize_path};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::frontmatter;
+use crate::json_locate::{JsonScanner, Seg};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::plugin_paths::safe_component_path;
 use crate::rules::LintRule;
 use crate::traversal;
-use crate::validators::json_locate::{JsonScanner, Seg};
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;

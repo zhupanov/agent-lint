@@ -3,10 +3,10 @@ use crate::context::{
 };
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::hook_commands::extract_hook_command_paths;
+use crate::json_locate::{JsonScanner, Seg};
 use crate::plugin_paths::{has_normalized_path_segment, is_absolute_path, path_segments};
 use crate::rules::LintRule;
 use crate::script_paths::Invocation;
-use crate::validators::json_locate::{JsonScanner, Seg};
 use crate::validators::{common::manifest_error_metadata, hook_schema};
 use serde_json::Value;
 use std::path::Path;

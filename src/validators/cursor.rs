@@ -14,13 +14,13 @@ use serde_json::json;
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::frontmatter;
+use crate::json_locate::{JsonScanner, Seg};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::platforms;
 use crate::rules::LintRule;
 use crate::sensitive::contains_sensitive_evidence;
 use crate::traversal;
-use crate::validators::json_locate::{JsonScanner, Seg};
 use crate::yaml::{Mapping, Value as YamlValue};
 
 /// Cursor subagent identifiers: lowercase letters with single hyphens between
@@ -654,6 +654,16 @@ fn analyze_globs(
     }
 }
 
+/// Parser point for invalid JSON: serde's line/column, line-only when the
+/// error carries no column.
+fn json_parse_error_location(error: &serde_json::Error) -> SourceSpan {
+    if error.column() > 0 {
+        SourceSpan::point(error.line().max(1), error.column())
+    } else {
+        SourceSpan::line(error.line().max(1))
+    }
+}
+
 /// Structured metadata for a hooks.json finding: bounded structural-path
 /// evidence plus the source span of the named token. `key_token` anchors at
 /// the key spelling (unknown event names); otherwise the value at `path` is
@@ -693,18 +703,13 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let value = match serde_json::from_str::<JsonValue>(&content) {
         Ok(value) => value,
         Err(error) => {
-            let location = if error.column() > 0 {
-                SourceSpan::point(error.line().max(1), error.column())
-            } else {
-                SourceSpan::line(error.line().max(1))
-            };
             report_meta(
                 diag,
                 LintRule::CursorHooksSchemaInvalid,
                 PATH,
                 &format!("invalid JSON: {error}"),
                 DiagnosticMetadata::default()
-                    .with_location(location)
+                    .with_location(json_parse_error_location(&error))
                     .with_evidence("JSON syntax"),
             );
             return;
@@ -998,18 +1003,13 @@ fn validate_environment(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let value = match serde_json::from_str::<JsonValue>(&content) {
         Ok(value) => value,
         Err(error) => {
-            let location = if error.column() > 0 {
-                SourceSpan::point(error.line().max(1), error.column())
-            } else {
-                SourceSpan::line(error.line().max(1))
-            };
             report_meta(
                 diag,
                 LintRule::CursorEnvironmentInvalid,
                 PATH,
                 &format!("invalid JSON: {error}"),
                 DiagnosticMetadata::default()
-                    .with_location(location)
+                    .with_location(json_parse_error_location(&error))
                     .with_evidence("JSON syntax"),
             );
             return;
@@ -1152,27 +1152,40 @@ fn branch_is_type_mismatch(
 /// Drop an `unevaluatedProperties` finding when every property it names is
 /// already owned by a more specific finding underneath it. Failing subschemas
 /// discard their annotations, so a defective known property re-surfaces as
-/// "unevaluated" at the union parent; the leaf finding is the actionable one.
-/// Findings naming any genuinely unknown property are kept unchanged.
+/// "unevaluated" at its parent; the deeper finding is the actionable one.
+/// Findings naming any genuinely unknown property are kept, reordered so the
+/// first named property (the location anchor) is a genuinely unknown one.
 fn suppress_unevaluated_cascades(findings: Vec<EnvironmentFinding>) -> Vec<EnvironmentFinding> {
-    let owned: Vec<Vec<EnvSeg>> = findings
+    // Any finding can own a flagged property, including a deeper unevaluated
+    // finding (an unknown key inside `build` also cascades to the root). An
+    // owning prefix is strictly longer than the flagging finding's own path,
+    // so no finding suppresses itself, and two unevaluated findings cannot
+    // suppress each other cyclically.
+    let all_paths: Vec<Vec<EnvSeg>> = findings
         .iter()
-        .filter(|finding| finding.unevaluated.is_none())
         .map(|finding| finding.segments.clone())
         .collect();
     findings
         .into_iter()
-        .filter(|finding| {
+        .filter_map(|mut finding| {
             let Some(unexpected) = &finding.unevaluated else {
-                return true;
+                return Some(finding);
             };
-            !unexpected.iter().all(|property| {
-                let mut prefix = finding.segments.clone();
-                prefix.push(EnvSeg::Key(property.clone()));
-                owned.iter().any(|segments| {
-                    segments.len() >= prefix.len() && segments[..prefix.len()] == prefix
-                })
-            })
+            let (genuine, cascaded): (Vec<String>, Vec<String>) =
+                unexpected.iter().cloned().partition(|property| {
+                    let mut prefix = finding.segments.clone();
+                    prefix.push(EnvSeg::Key(property.clone()));
+                    !all_paths.iter().any(|segments| {
+                        segments.len() >= prefix.len() && segments[..prefix.len()] == prefix
+                    })
+                });
+            if genuine.is_empty() {
+                return None;
+            }
+            let mut anchored = genuine;
+            anchored.extend(cascaded);
+            finding.unevaluated = Some(anchored);
+            Some(finding)
         })
         .collect()
 }
@@ -2542,6 +2555,20 @@ mod tests {
                 "{name} has an unstable subject: {messages:?}"
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_environment_unknown_nested_key_reports_once_without_cascade() {
+        // The unknown key inside `build` is owned by the build-level finding;
+        // the root-level unevaluated cascade naming `build` is dropped even
+        // though the owning finding is itself an unevaluated finding.
+        let messages = environment_messages_for(r#"{"build":{"dockerfile":"D","extra":1}}"#);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].starts_with(".cursor/environment.json: build: "),
+            "{messages:?}"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! discovery consumers use [`safe_component_path`] so they cannot probe a
 //! declaration that the safety layer rejects.
 
-use crate::validators::json_locate::Seg;
+use crate::json_locate::Seg;
 use regex::Regex;
 use serde_json::Value;
 use std::path::PathBuf;

@@ -527,9 +527,7 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
         case.name
     );
 
-    assert_expected_suggestions(case, report);
-    assert_expected_evidence(case, report);
-    assert_expected_locations(case, report);
+    assert_expected_metadata(case, report);
 
     let diagnostics: Vec<_> = report
         .diagnostics
@@ -592,127 +590,83 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
     }
 }
 
-fn assert_expected_locations(case: &LoadedCase, report: &OutputReport) {
-    let mut matched_diagnostics = vec![false; report.diagnostics.len()];
-    for expected in case
-        .manifest
-        .expected_diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.expected_location.is_some())
-    {
-        let (index, actual) = report
+/// Bind every metadata assertion (suggestion, evidence, location) of one
+/// expected diagnostic to the same output diagnostic: the n-th expected entry
+/// with a given identity tuple asserts against the n-th output diagnostic
+/// with that identity, matching the ordered identity comparison. A single
+/// binding cannot silently validate different diagnostics per field.
+fn assert_expected_metadata(case: &LoadedCase, report: &OutputReport) {
+    let matches = |actual: &OutputDiagnostic, expected: &DiagnosticIdentity| {
+        actual.code == expected.code
+            && actual.name == expected.name
+            && actual.severity == expected.severity
+            && actual.subject_path == expected.subject_path
+            && actual.related_subjects == expected.related_subjects
+    };
+    for (position, expected) in case.manifest.expected_diagnostics.iter().enumerate() {
+        if expected.suggestion.is_none()
+            && expected.evidence.is_none()
+            && expected.expected_location.is_none()
+        {
+            continue;
+        }
+        let rank = case.manifest.expected_diagnostics[..position]
+            .iter()
+            .filter(|other| {
+                other.code == expected.code
+                    && other.name == expected.name
+                    && other.severity == expected.severity
+                    && other.subject_path == expected.subject_path
+                    && other.related_subjects == expected.related_subjects
+            })
+            .count();
+        let actual = report
             .diagnostics
             .iter()
-            .enumerate()
-            .find(|actual| {
-                !matched_diagnostics[actual.0]
-                    && actual.1.code == expected.code
-                    && actual.1.name == expected.name
-                    && actual.1.severity == expected.severity
-                    && actual.1.subject_path == expected.subject_path
-                    && actual.1.related_subjects == expected.related_subjects
-            })
+            .filter(|actual| matches(actual, expected))
+            .nth(rank)
             .unwrap_or_else(|| {
                 panic!(
-                    "{}: cannot find diagnostic for expected location {:?}",
+                    "{}: cannot find diagnostic for expected metadata {:?}",
                     case.name, expected
                 )
             });
-        matched_diagnostics[index] = true;
-        assert_eq!(
-            actual.location.as_ref().map(|location| location.start.line),
-            expected
-                .expected_location
-                .as_ref()
-                .map(|location| location.line),
-            "{}: diagnostic source line changed",
-            case.name
-        );
-        if let Some(column) = expected
-            .expected_location
-            .as_ref()
-            .and_then(|location| location.column)
-        {
+        if expected.suggestion.is_some() {
+            assert_eq!(
+                actual.suggestion, expected.suggestion,
+                "{}: diagnostic suggestion changed",
+                case.name
+            );
+        }
+        if expected.evidence.is_some() {
+            assert_eq!(
+                actual.evidence, expected.evidence,
+                "{}: diagnostic evidence changed",
+                case.name
+            );
+        }
+        if let Some(location) = &expected.expected_location {
             assert_eq!(
                 actual
                     .location
                     .as_ref()
-                    .and_then(|location| location.start.column),
-                Some(column),
-                "{}: diagnostic source column changed",
+                    .map(|actual_location| actual_location.start.line),
+                Some(location.line),
+                "{}: diagnostic source line changed",
                 case.name
             );
+            if let Some(column) = location.column {
+                assert_eq!(
+                    actual
+                        .location
+                        .as_ref()
+                        .and_then(|actual_location| actual_location.start.column),
+                    Some(column),
+                    "{}: diagnostic source column changed",
+                    case.name
+                );
+            }
         }
-    }
-}
-
-fn assert_expected_suggestions(case: &LoadedCase, report: &OutputReport) {
-    let mut matched_diagnostics = vec![false; report.diagnostics.len()];
-    for expected in case
-        .manifest
-        .expected_diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.suggestion.is_some())
-    {
-        let (index, actual) = report
-            .diagnostics
-            .iter()
-            .enumerate()
-            .find(|actual| {
-                !matched_diagnostics[actual.0]
-                    && actual.1.code == expected.code
-                    && actual.1.name == expected.name
-                    && actual.1.severity == expected.severity
-                    && actual.1.subject_path == expected.subject_path
-                    && actual.1.related_subjects == expected.related_subjects
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "{}: cannot find diagnostic for expected suggestion {:?}",
-                    case.name, expected
-                )
-            });
-        matched_diagnostics[index] = true;
-        assert_eq!(
-            actual.suggestion, expected.suggestion,
-            "{}: diagnostic suggestion changed",
-            case.name
-        );
-    }
-}
-
-fn assert_expected_evidence(case: &LoadedCase, report: &OutputReport) {
-    let mut matched_diagnostics = vec![false; report.diagnostics.len()];
-    for expected in case
-        .manifest
-        .expected_diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.evidence.is_some())
-    {
-        let (index, actual) = report
-            .diagnostics
-            .iter()
-            .enumerate()
-            .find(|actual| {
-                !matched_diagnostics[actual.0]
-                    && actual.1.code == expected.code
-                    && actual.1.name == expected.name
-                    && actual.1.severity == expected.severity
-                    && actual.1.subject_path == expected.subject_path
-                    && actual.1.related_subjects == expected.related_subjects
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "{}: cannot find diagnostic for expected evidence {:?}",
-                    case.name, expected
-                )
-            });
-        matched_diagnostics[index] = true;
-        assert_eq!(
-            actual.evidence, expected.evidence,
-            "{}: diagnostic evidence changed",
-            case.name
-        );
     }
 }
 

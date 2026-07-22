@@ -1,6 +1,7 @@
 use crate::config::normalize_path;
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
+use crate::json_locate::{JsonScanner, Seg};
 use crate::plugin_paths::{
     ComponentPathSafety, classify_component_path, declared_component_paths,
     has_normalized_path_segment, is_absolute_path, path_segments, plugin_root_is_safe,
@@ -8,7 +9,6 @@ use crate::plugin_paths::{
 };
 use crate::rules::LintRule;
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
-use crate::validators::json_locate::{JsonScanner, Seg};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};

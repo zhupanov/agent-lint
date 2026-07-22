@@ -1,4 +1,4 @@
-//! Path-aware JSON source locator shared by validator domains.
+//! Path-aware JSON source locator shared across the crate.
 //!
 //! Validators that already hold a parsed `serde_json::Value` use this scanner
 //! to recover the byte range of the value (or key token) at a structural path
@@ -213,10 +213,25 @@ impl<'a> JsonScanner<'a> {
                         b'r' => out.push(b'\r'),
                         b't' => out.push(b'\t'),
                         b'u' => {
-                            let hex = self.bytes.get(self.pos..self.pos + 4)?;
-                            self.pos += 4;
-                            let code =
-                                u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?;
+                            let unit = self.parse_hex_unit()?;
+                            // A high surrogate combines with the immediately
+                            // following escaped low surrogate; an unpaired
+                            // surrogate spelling cannot name a decoded key.
+                            let code = if (0xD800..=0xDBFF).contains(&unit) {
+                                if self.bytes.get(self.pos) != Some(&b'\\')
+                                    || self.bytes.get(self.pos + 1) != Some(&b'u')
+                                {
+                                    return None;
+                                }
+                                self.pos += 2;
+                                let low = self.parse_hex_unit()?;
+                                if !(0xDC00..=0xDFFF).contains(&low) {
+                                    return None;
+                                }
+                                0x10000 + ((unit - 0xD800) << 10) + (low - 0xDC00)
+                            } else {
+                                unit
+                            };
                             let mut buffer = [0u8; 4];
                             let encoded = char::from_u32(code)
                                 .unwrap_or('\u{fffd}')
@@ -229,6 +244,12 @@ impl<'a> JsonScanner<'a> {
                 _ => out.push(byte),
             }
         }
+    }
+
+    fn parse_hex_unit(&mut self) -> Option<u32> {
+        let hex = self.bytes.get(self.pos..self.pos + 4)?;
+        self.pos += 4;
+        u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()
     }
 
     fn skip_ws(&mut self) {
@@ -299,6 +320,16 @@ mod tests {
         let escaped = "{\"\\u0068ooks\": 1}";
         let decoded = JsonScanner::locate_key(escaped, &[Seg::Key("hooks")]).unwrap();
         assert_eq!(&escaped[decoded], "\"\\u0068ooks\"");
+
+        // Surrogate-pair escapes decode to their supplementary character.
+        let surrogate = "{\"\\ud83d\\ude00evt\": []}";
+        let paired = JsonScanner::locate_key(surrogate, &[Seg::Key("😀evt")]).unwrap();
+        assert_eq!(&surrogate[paired], "\"\\ud83d\\ude00evt\"");
+        // An unpaired surrogate never matches; the location is omitted, not
+        // fabricated.
+        assert!(
+            JsonScanner::locate_key("{\"\\ud83devt\": []}", &[Seg::Key("\u{fffd}evt")]).is_none()
+        );
 
         assert!(JsonScanner::locate_key(source, &[]).is_none());
         assert!(JsonScanner::locate_key(source, &[Seg::Index(0)]).is_none());

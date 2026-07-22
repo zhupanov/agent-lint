@@ -14,7 +14,6 @@ mod hook_schema;
 mod hooks;
 pub mod hygiene;
 mod instruction_files;
-pub(crate) mod json_locate;
 mod manifest;
 mod markdown_structure;
 mod mcp;
