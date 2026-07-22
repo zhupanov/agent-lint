@@ -1005,6 +1005,64 @@ suppress = ["P018", "P019"]
     );
 }
 
+#[test]
+fn p018_cli_json_covers_claude_plugin_and_cursor_credential_surfaces() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join(".mcp.json"),
+        r#"{"mcpServers":{"claude":{"type":"http","url":"https://example.com/mcp","headers":{"Authorization":"claude-header-literal"}}}}"#,
+    )
+    .unwrap();
+    let plugin = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+    std::fs::write(
+        plugin,
+        r#"{"name":"p018-fixture","version":"1.0.0","description":"P018 fixture","mcpServers":{"plugin":{"type":"http","url":"https://example.com/mcp","env":{"BOT_TOKEN":"${user_config.bot_token}"},"headers":{"Authorization":"plugin-header-literal"}}}}"#,
+    )
+    .unwrap();
+    let cursor = tmp.path().join(".cursor/mcp.json");
+    std::fs::create_dir_all(cursor.parent().unwrap()).unwrap();
+    std::fs::write(
+        cursor,
+        r#"{"mcpServers":{"cursor":{"url":"https://example.com/mcp","env":{"API_KEY":"${env:api-key}"},"auth":{"CLIENT_ID":"client-id","CLIENT_SECRET":"cursor-auth-literal"}}}}"#,
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "P018", "."]);
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    let identities: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["severity"].as_str().unwrap(),
+                diagnostic["subject_path"].as_str().unwrap(),
+                diagnostic["evidence"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        identities,
+        [
+            ("warning", ".mcp.json", "Authorization"),
+            ("warning", ".cursor/mcp.json", "CLIENT_SECRET"),
+            ("warning", ".claude-plugin/plugin.json", "Authorization"),
+        ]
+    );
+    for diagnostic in diagnostics {
+        let rendered = diagnostic.to_string();
+        for literal in [
+            "claude-header-literal",
+            "plugin-header-literal",
+            "cursor-auth-literal",
+        ] {
+            assert!(!rendered.contains(literal), "credential leaked: {rendered}");
+        }
+    }
+}
+
 fn write_cursor_activation_fixture(root: &std::path::Path) {
     init_git(root);
     let rules = root.join(".cursor/rules");

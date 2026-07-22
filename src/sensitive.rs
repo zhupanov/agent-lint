@@ -10,6 +10,17 @@ const SENSITIVE_SEGMENT_PAIRS: &[&[&str]] = &[
     &["CLIENT", "SECRET"],
 ];
 
+/// Header names whose values conventionally carry credentials.
+///
+/// P018 and CX013 share this vocabulary so equivalent MCP credential maps do
+/// not drift by platform.
+pub(crate) const SENSITIVE_HTTP_HEADERS: &[&str] = &[
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+];
+
 static SECRET_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     vec![
         Regex::new(r"sk-[a-zA-Z0-9]{20,}").unwrap(),

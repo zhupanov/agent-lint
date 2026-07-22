@@ -4,7 +4,8 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::rules::LintRule;
 use crate::sensitive::{
-    contains_codex_mcp_token_signature, is_safe_env_placeholder, is_sensitive_key,
+    SENSITIVE_HTTP_HEADERS, contains_codex_mcp_token_signature, is_safe_env_placeholder,
+    is_sensitive_key,
 };
 use crate::validators::codex_constants::*;
 use toml::Value;
@@ -1057,12 +1058,6 @@ fn validate_suppressed_windows(
 }
 
 const ENV_NAME_FIELDS: &[&str] = &["env_vars", "bearer_token_env_var", "env_http_headers"];
-const SENSITIVE_HTTP_HEADERS: &[&str] = &[
-    "authorization",
-    "proxy-authorization",
-    "cookie",
-    "set-cookie",
-];
 
 /// CX013 owns only literal credential facts in known Codex MCP locations. It
 /// intentionally parses the original TOML again so locations and ordering come
