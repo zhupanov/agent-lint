@@ -323,10 +323,20 @@ fn is_anchor_alias_error(raw_message: &str) -> bool {
 }
 
 /// Mechanical fix for an unquoted glob that strict YAML reads as an alias.
-/// Withheld when the raw value looks sensitive, so the suggestion never echoes
-/// a possible secret.
+/// A trailing YAML comment is not part of what Cursor reads, so it stays
+/// outside the quotes. Withheld when the raw value looks sensitive, so the
+/// suggestion never echoes a possible secret.
 fn quote_globs_suggestion(globs_line: &str) -> Option<String> {
-    let value = globs_line.trim_start().strip_prefix("globs:")?.trim();
+    let raw = globs_line.trim_start().strip_prefix("globs:")?;
+    // A YAML comment starts at a `#` that opens the value or follows
+    // whitespace.
+    let value = raw
+        .char_indices()
+        .find(|(index, character)| {
+            *character == '#' && raw[..*index].chars().last().is_none_or(char::is_whitespace)
+        })
+        .map_or(raw, |(index, _)| &raw[..index])
+        .trim();
     if value.is_empty() || contains_sensitive_evidence(value) {
         return None;
     }
@@ -338,15 +348,13 @@ fn quote_globs_suggestion(globs_line: &str) -> Option<String> {
 /// Reduce a YAML parser failure to its constraint: parser-relative coordinates
 /// are stripped (the diagnostic carries a structured file location instead)
 /// and messages that embed a possible secret collapse to a stable constraint.
+/// The wrapper-form strip is owned by `frontmatter::strip_parser_location_prefix`;
+/// only the colon-less trailing form of anchor/alias errors is Cursor-local.
 fn cursor_rule_yaml_constraint(raw_message: &str) -> String {
-    static LEADING_LOCATION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"^(?:YAML parse error|deserialization error)(?: at line \d+, column \d+)?:\s*")
-            .expect("cursor yaml leading-location regex")
-    });
     static TRAILING_LOCATION: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"\s+at line \d+, column \d+$").expect("cursor yaml trailing-location regex")
     });
-    let unwrapped = LEADING_LOCATION.replace(raw_message, "");
+    let unwrapped = frontmatter::strip_parser_location_prefix(raw_message);
     let unwrapped = TRAILING_LOCATION.replace(&unwrapped, "");
     yaml_parse_constraint(unwrapped.trim())
 }
@@ -365,14 +373,14 @@ fn report_rule_yaml_error(
     yaml_line: Option<usize>,
     yaml_column: Option<usize>,
 ) {
-    let mut metadata = DiagnosticMetadata::default();
-    if let Some(line) = yaml_line {
-        let file_line = line.saturating_add(1);
-        metadata = metadata.with_location(match yaml_column {
-            Some(column) => SourceSpan::point(file_line, column),
-            None => SourceSpan::line(file_line),
+    // Position-less failures such as duplicate keys anchor at the opening
+    // delimiter, keeping every CU003 located.
+    let mut metadata =
+        DiagnosticMetadata::default().with_location(match (yaml_line, yaml_column) {
+            (Some(line), Some(column)) => SourceSpan::point(line.saturating_add(1), column),
+            (Some(line), None) => SourceSpan::line(line.saturating_add(1)),
+            (None, _) => SourceSpan::line(1),
         });
-    }
     if is_anchor_alias_error(raw_message)
         && let Some(offending) = yaml_line
             .and_then(|line| line.checked_sub(1))
@@ -409,7 +417,10 @@ fn validate_rule_file(
     // malformed, so structural failures must not exempt that live prose.
     prompt_pass.validate(&document, diag);
     // A UTF-8 BOM is an encoding signature, not content; it must not displace
-    // the first logical line the delimiter check sees.
+    // the first logical line the delimiter check sees. Sibling frontmatter
+    // surfaces (skills, agents, `frontmatter::extract_frontmatter` itself)
+    // intentionally keep their existing byte-exact contract: issue #308 binds
+    // only the Cursor `.mdc` delimiter model.
     let scanned = content.strip_prefix('\u{feff}').unwrap_or(content);
     if scanned.trim().is_empty() {
         report(
@@ -617,15 +628,25 @@ fn analyze_globs(
     for pattern in effective {
         match GlobBuilder::new(pattern).build() {
             Ok(_) => effective_valid += 1,
-            Err(error) => report_meta(
-                diag,
-                LintRule::CursorRuleGlobInvalid,
-                path,
-                &format!("invalid glob '{pattern}': {error}"),
-                rule_key_metadata(lines, "globs")
-                    .with_evidence(pattern)
-                    .with_suggestion("write the pattern with valid globset syntax"),
-            ),
+            Err(error) => {
+                // The globset error embeds the pattern; a secret-shaped
+                // pattern collapses to the field name (its evidence is
+                // redacted by the same shared heuristic).
+                let message = if contains_sensitive_evidence(pattern) {
+                    "'globs' contains an invalid pattern".to_string()
+                } else {
+                    format!("invalid glob '{pattern}': {error}")
+                };
+                report_meta(
+                    diag,
+                    LintRule::CursorRuleGlobInvalid,
+                    path,
+                    &message,
+                    rule_key_metadata(lines, "globs")
+                        .with_evidence(pattern)
+                        .with_suggestion("write the pattern with valid globset syntax"),
+                );
+            }
         }
     }
     GlobsAnalysis {
@@ -1449,6 +1470,22 @@ mod tests {
             assert!(location.start().column_number().is_some(), "{globs}");
         }
 
+        // A trailing YAML comment stays outside the quoted pattern so the
+        // suggestion never changes what Cursor reads.
+        let content =
+            "---\ndescription:\nglobs: *.ts # attach TS files\nalwaysApply: false\n---\nBody.\n";
+        let diagnostics = rule_cu_diagnostics(content);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        let suggestion = diagnostics[0].suggestion.as_deref().unwrap_or_default();
+        assert!(
+            suggestion.contains("globs: \"*.ts\""),
+            "comment must not enter the quoted pattern: {suggestion}"
+        );
+        assert!(
+            !suggestion.contains('#'),
+            "comment must stay outside the suggestion: {suggestion}"
+        );
+
         // The same anchor class on a non-globs line keeps the generic message.
         let content = "---\ndescription: *routing\nalwaysApply: false\n---\nBody.\n";
         let diagnostics = rule_cu_diagnostics(content);
@@ -1509,6 +1546,14 @@ mod tests {
         assert_eq!(missing[0].rule, LintRule::CursorRuleFrontmatterMissing);
         assert_eq!(missing[0].location.unwrap().start().line_number(), 1);
         assert!(missing[0].suggestion.is_some());
+
+        // Position-less parser failures (duplicate keys) anchor at the
+        // opening delimiter instead of shipping without a location.
+        let duplicate =
+            rule_cu_diagnostics("---\ndescription: One\ndescription: Two\n---\nBody.\n");
+        assert_eq!(duplicate.len(), 1, "{duplicate:?}");
+        assert_eq!(duplicate[0].rule, LintRule::CursorRuleFrontmatterInvalid);
+        assert_eq!(duplicate[0].location.unwrap().start().line_number(), 1);
     }
 
     #[test]
@@ -1519,7 +1564,9 @@ mod tests {
             format!("---\ndescription: Documented behavior\ntoken: {secret}\n---\nBody.\n");
         let anchored_secret =
             format!("---\ndescription:\nglobs: *{secret}\nalwaysApply: false\n---\nBody.\n");
-        for content in [with_unknown_key, anchored_secret] {
+        let malformed_secret_pattern =
+            format!("---\nglobs: \"[{secret}\"\nalwaysApply: false\n---\nBody.\n");
+        for content in [with_unknown_key, anchored_secret, malformed_secret_pattern] {
             let diagnostics = rule_cu_diagnostics(&content);
             assert!(!diagnostics.is_empty(), "{content}");
             for diagnostic in &diagnostics {

@@ -1335,6 +1335,49 @@ fn mcp_p019_threat_matrix_extensions_json_identity_and_all_mode() {
 }
 
 #[test]
+fn cursor_mdc_field_rules_report_owning_key_locations_via_real_cli() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let rules = tmp.path().join(".cursor/rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("field-shapes.mdc"),
+        "---\ndescription: Documented behavior\nglobs: 42\nalwaysApply: \"yes\"\nunknown: value\n---\nUse the repository's established conventions.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rules.join("no-frontmatter.mdc"),
+        "Use the repository's established conventions.\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CU002,CU004,CU005,CU008", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    let expectations = [
+        ("CU002", "warning", ".cursor/rules/no-frontmatter.mdc", 1),
+        ("CU004", "error", ".cursor/rules/field-shapes.mdc", 3),
+        ("CU005", "warning", ".cursor/rules/field-shapes.mdc", 5),
+        ("CU008", "error", ".cursor/rules/field-shapes.mdc", 4),
+    ];
+    assert_eq!(diagnostics.len(), expectations.len(), "{diagnostics:#?}");
+    for (diagnostic, (code, severity, subject, line)) in diagnostics.iter().zip(expectations) {
+        assert_eq!(diagnostic["code"], code, "{diagnostic:#}");
+        assert_eq!(diagnostic["severity"], severity, "{diagnostic:#}");
+        assert_eq!(diagnostic["subject_path"], subject, "{diagnostic:#}");
+        assert_eq!(
+            diagnostic["location"]["start"]["line"], line,
+            "{diagnostic:#}"
+        );
+        assert!(diagnostic["suggestion"].is_string(), "{diagnostic:#}");
+    }
+}
+
+#[test]
 fn help_succeeds_and_lists_supported_options() {
     let output = run(&["--help"]);
     assert!(output.status.success());

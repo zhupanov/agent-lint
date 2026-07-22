@@ -255,7 +255,9 @@ pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, Yaml
 
 /// Strip parser location (and the redundant `YAML parse error` wrapper) so X001
 /// keeps a single file-relative line authority in the rendered diagnostic.
-fn strip_parser_location_prefix(message: &str) -> String {
+/// Shared with the Cursor rule validator, which additionally strips the
+/// colon-less trailing `at line N, column M` form of anchor/alias errors.
+pub fn strip_parser_location_prefix(message: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(
             r"^(?:YAML parse error|deserialization error)(?: at line \d+, column \d+)?:\s*",
