@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "s065-agent-resolution-clean",
+  "covers": ["s065-agent-resolution", "basic-mode", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S065", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

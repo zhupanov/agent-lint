@@ -272,7 +272,7 @@ values — every frontmatter field except the free-prose `description`,
 | S027 | `skill-unreachable` | Skill unreachable: `disable-model-invocation: true` AND `user-invocable: false` | Always | error |
 | S063 | `model-invalid` | `model` must be a recognized alias (`sonnet`/`opus`/`haiku`/`inherit`/…) or `claude-…` ID | Always | error |
 | S064 | `agent-no-fork` | `agent` is set without `context: fork` | Always | error |
-| S065 | `agent-unknown` | `agent` is not a built-in (`Explore`/`Plan`/`general-purpose`) or existing custom agent | Always | error |
+| S065 | `agent-unknown` | `agent` is not a built-in (`Explore`/`Plan`/`general-purpose`) or an existing custom agent by declared name or filename across the active runtime roots; colon-containing cross-plugin IDs are intentionally skipped | Always | error |
 | S066 | `side-effect-auto` | Side-effect-named skill lacks `disable-model-invocation: true` | Always | warn |
 | S070 | `unknown-fm-field` | Unknown skill frontmatter field (typo catcher) | Always | warn |
 | S071 | `paths-empty` | `paths` field is present but empty | Always | warn |

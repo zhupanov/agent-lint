@@ -154,8 +154,9 @@ pub(crate) fn validate_skill_content_with_prompt_pass(
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
     let skills = collect_skills("skills", exclude);
+    let agents = super::agent_discovery::runtime_inventory(true, &[], exclude);
     for info in &skills {
-        run_content_checks(info, true, diag, exclude, prompt_pass);
+        run_content_checks(info, true, &agents, diag, exclude, prompt_pass);
     }
     // Cross-skill checks (plugin-only: S029, S036; both-mode: S030, S048)
     cross_skill::validate_nested_references("skills", &skills, diag);
@@ -174,8 +175,10 @@ pub(crate) fn validate_discovered_skill_content_with_prompt_pass(
         super::skill_discovery::SkillDiscovery::from_context(ctx, exclude).exported_skill_files,
         exclude,
     );
+    let declared_agents = super::manifest::declared_agent_roots(ctx);
+    let agents = super::agent_discovery::runtime_inventory(true, &declared_agents, exclude);
     for info in &skills {
-        run_content_checks(info, true, diag, exclude, prompt_pass);
+        run_content_checks(info, true, &agents, diag, exclude, prompt_pass);
     }
     let conventional = collect_skills("skills", exclude);
     cross_skill::validate_nested_references("skills", &conventional, diag);
@@ -190,17 +193,23 @@ pub(crate) fn validate_discovered_skill_content_with_prompt_pass(
 #[cfg(test)]
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let mut prompt_pass = super::prompt_content::PromptContentPass::default();
-    validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    validate_private_skill_content_with_prompt_pass(diag, exclude, false, &[], &mut prompt_pass);
 }
 
 pub(crate) fn validate_private_skill_content_with_prompt_pass(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
+    plugin_runtime: bool,
+    declared_agents: &[String],
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
     let skills = collect_skills_including_shared(".claude/skills", exclude);
+    let agents =
+        super::agent_discovery::runtime_inventory(plugin_runtime, declared_agents, exclude);
     for info in &skills {
-        run_content_checks(info, false, diag, exclude, prompt_pass);
+        // The runtime namespace is Plugin-wide, but private skills retain their
+        // established both-mode validation scope.
+        run_content_checks(info, false, &agents, diag, exclude, prompt_pass);
     }
     cross_skill::validate_orphaned_skill_files(".claude/skills", diag, exclude);
     cross_skill::validate_generic_ref_names(".claude/skills", diag, exclude);
@@ -286,6 +295,7 @@ pub(crate) fn validate_cursor_runtime_skills_content_security(
 fn run_content_checks(
     info: &SkillInfo,
     plugin_mode: bool,
+    agents: &super::agent_discovery::RuntimeAgentInventory,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
@@ -300,7 +310,7 @@ fn run_content_checks(
             &info.document,
         );
         prompt_pass.validate(&prompt_document, diag);
-        frontmatter_fields::check_frontmatter_fields(info, diag);
+        frontmatter_fields::check_frontmatter_fields(info, agents, diag);
         frontmatter_extended::check_frontmatter_extended(info, diag);
         cross_field::check_cross_field(info, plugin_mode, diag);
         security::check_content_security(info, diag);
@@ -7042,6 +7052,217 @@ suppress = ["S055"]
         assert!(
             !diag.errors().iter().any(|e| e.contains("not found")),
             "S065 should not fire when custom agent exists"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s065_resolves_nested_declared_names_stems_and_private_plugin_union() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents/review").unwrap();
+        std::fs::create_dir_all(".claude/agents/review").unwrap();
+        for (skill, agent) in [
+            ("by-name", "code-reviewer"),
+            ("by-stem", "reviewer-v2"),
+            ("private", "helper"),
+            ("excluded", "excluded-helper"),
+        ] {
+            std::fs::create_dir_all(format!("skills/{skill}")).unwrap();
+            std::fs::write(
+                format!("skills/{skill}/SKILL.md"),
+                format!(
+                    "---\nname: {skill}\ndescription: A valid skill description\ncontext: fork\nagent: {agent}\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            "agents/review/reviewer-v2.md",
+            "---\nname: code-reviewer\ndescription: Review code thoroughly\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/review/helper.md",
+            "---\nname: helper\ndescription: Help with reviews\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/review/excluded.md",
+            "---\nname: excluded-helper\ndescription: Help without linting\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        let exclude =
+            crate::config::ExcludeSet::new(&[".claude/agents/review/excluded.md".to_string()])
+                .unwrap();
+        validate_skill_content(&mut diag, &exclude);
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|error| error.contains("custom agent")),
+            "nested name, stem fallback, private union, and excluded agents must resolve: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s065_uses_canonical_shapes_skips_namespaced_ids_and_keeps_basic_roots_private() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/by-comment").unwrap();
+        std::fs::create_dir_all(".claude/skills/by-colon").unwrap();
+        std::fs::create_dir_all(".claude/skills/by-plugin-only").unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/plugin-only.md",
+            "---\nname: plugin-only\ndescription: Plugin-only agent\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/skills/by-comment/SKILL.md",
+            "---\nname: by-comment\ndescription: A valid skill description\ncontext: fork\nagent: Explore # builtin note\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/skills/by-colon/SKILL.md",
+            "---\nname: by-colon\ndescription: A valid skill description\ncontext: fork\nagent: plugin:review:security\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/skills/by-plugin-only/SKILL.md",
+            "---\nname: by-plugin-only\ndescription: A valid skill description\ncontext: fork\nagent: plugin-only\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let errors = diag.errors();
+        let s065 = errors
+            .iter()
+            .filter(|error| error.contains("custom agent") || error.contains("'agent' must"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            s065.len(),
+            1,
+            "only Basic's plugin-root reference must fail: {s065:?}"
+        );
+        assert!(s065[0].contains("plugin-only"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s065_resolves_manifest_declared_direct_and_nested_agent_roots() {
+        use crate::context::{LintContext, LintMode};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude-plugin").unwrap();
+        std::fs::create_dir_all("skills/declared-name").unwrap();
+        std::fs::create_dir_all("skills/declared-stem").unwrap();
+        std::fs::create_dir_all("skills/declared-direct").unwrap();
+        std::fs::create_dir_all("custom-agents/deep").unwrap();
+        std::fs::write(
+            ".claude-plugin/plugin.json",
+            r#"{"name":"test-plugin","version":"1.0.0","agents":["./custom-agents","./direct.md","./custom-agents/deep"]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            "custom-agents/deep/reviewer-v2.md",
+            "---\nname: declared-reviewer\ndescription: Review code thoroughly\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "direct.md",
+            "---\nname: direct-reviewer\ndescription: Review direct requests\n---\nBody\n",
+        )
+        .unwrap();
+        for (skill, agent) in [
+            ("declared-name", "declared-reviewer"),
+            ("declared-stem", "reviewer-v2"),
+            ("declared-direct", "direct-reviewer"),
+        ] {
+            std::fs::write(
+                format!("skills/{skill}/SKILL.md"),
+                format!(
+                    "---\nname: {skill}\ndescription: A valid skill description\ncontext: fork\nagent: {agent}\n---\nProvide an actionable review.\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let ctx = LintContext::new(std::path::Path::new("."), LintMode::Plugin);
+        let mut prompt_pass = crate::validators::prompt_content::PromptContentPass::default();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_discovered_skill_content_with_prompt_pass(
+            &ctx,
+            &mut diag,
+            &crate::config::ExcludeSet::default(),
+            &mut prompt_pass,
+        );
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|error| error.contains("custom agent")),
+            "manifest roots, including a direct file and overlap, must resolve: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s065_reports_each_non_string_shape_and_skips_invalid_yaml() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for (name, agent) in [
+            ("boolean", "true"),
+            ("number", "7"),
+            ("sequence", "[Explore]"),
+            ("mapping", "{name: Explore}"),
+            ("tagged", "!custom Explore"),
+        ] {
+            std::fs::create_dir_all(format!("skills/{name}")).unwrap();
+            std::fs::write(
+                format!("skills/{name}/SKILL.md"),
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description\ncontext: fork\nagent: {agent}\n---\nProvide an actionable review.\n"
+                ),
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all("skills/invalid-yaml").unwrap();
+        std::fs::write(
+            "skills/invalid-yaml/SKILL.md",
+            "---\nname: invalid-yaml\n\tagent: missing-reviewer\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let errors = diag.errors();
+        let invalid_shapes = errors
+            .iter()
+            .filter(|error| error.contains("'agent' must be a non-empty string"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            invalid_shapes.len(),
+            5,
+            "each non-string shape needs one S065: {errors:?}"
+        );
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.contains("invalid-yaml/SKILL.md") && error.contains("agent")),
+            "invalid YAML is owned by X001 and must not cascade into S065: {errors:?}"
         );
     }
 

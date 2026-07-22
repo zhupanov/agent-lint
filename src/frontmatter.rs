@@ -92,6 +92,7 @@ pub fn extract_frontmatter(content: &str) -> Option<Vec<String>> {
 }
 
 /// Three-state result for frontmatter field lookup.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldState {
     /// Key not present in frontmatter.
@@ -131,6 +132,7 @@ fn extract_raw_value<'a>(fm_lines: &'a [String], key: &str) -> Option<&'a str> {
 }
 
 /// Get the three-state value of a frontmatter field: Missing, Empty, or Value.
+#[cfg(test)]
 pub fn get_field_state(fm_lines: &[String], key: &str) -> FieldState {
     match extract_raw_value(fm_lines, key) {
         None => FieldState::Missing,
