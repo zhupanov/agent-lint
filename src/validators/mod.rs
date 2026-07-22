@@ -243,7 +243,7 @@ fn validate_optional_surfaces(
     if targets.agent_skills {
         skills::validate_agent_skill_frontmatter_with_prompt_pass(diag, exclude, prompt_pass);
         if !targets.cursor {
-            skill_content::validate_agent_skills_name_contract(".agents/skills", diag, exclude);
+            skill_content::validate_agent_skills_contract(".agents/skills", diag, exclude);
             skill_content::validate_agent_skills_content_security(".agents/skills", diag, exclude);
         }
     }
@@ -254,7 +254,7 @@ fn validate_optional_surfaces(
         codex_surfaces::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
     if targets.cursor {
-        skill_content::validate_cursor_runtime_skills_name_contract(diag, exclude);
+        skill_content::validate_cursor_runtime_skills_contract(diag, exclude);
         skill_content::validate_cursor_runtime_skills_content_security(diag, exclude);
         cursor::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
@@ -665,12 +665,15 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
         let nested_cursor = "packages/api/.cursor/skills/group/Invalid/SKILL.md";
         let shared = "packages/api/.agents/skills/shared/SKILL.md";
-        for (path, name) in [(nested_cursor, "Invalid"), (shared, "Shared")] {
+        for (path, name, description) in [
+            (nested_cursor, "Invalid", "x".repeat(1025)),
+            (shared, "Shared", "x".repeat(19)),
+        ] {
             std::fs::create_dir_all(Path::new(path).parent().unwrap()).unwrap();
             std::fs::write(
                 path,
                 format!(
-                    "---\nname: {name}\ndescription: A valid skill description here\nuser-invocable: false\n---\nBody\n"
+                    "---\nname: {name}\ndescription: {description}\nuser-invocable: false\n---\nBody\n"
                 ),
             )
             .unwrap();
@@ -699,6 +702,14 @@ mod tests {
             item.rule == crate::rules::LintRule::NameInvalidChars
                 && item.subject_path.as_deref() == Some(Path::new(nested_cursor))
         }));
+        for (path, rule) in [
+            (nested_cursor, crate::rules::LintRule::DescTooLong),
+            (shared, crate::rules::LintRule::DescTooShort),
+        ] {
+            assert!(enabled.diagnostics().iter().any(|item| {
+                item.rule == rule && item.subject_path.as_deref() == Some(Path::new(path))
+            }));
+        }
 
         let mut disabled = DiagnosticCollector::new_all_enabled();
         run_all_with_targets(
@@ -723,6 +734,17 @@ mod tests {
             item.rule == crate::rules::LintRule::NameInvalidChars
                 && item.subject_path.as_deref() == Some(Path::new(shared))
         }));
+        assert!(disabled.diagnostics().iter().any(|item| {
+            item.rule == crate::rules::LintRule::DescTooShort
+                && item.subject_path.as_deref() == Some(Path::new(shared))
+        }));
+        assert!(
+            !disabled.diagnostics().iter().any(|item| {
+                item.rule == crate::rules::LintRule::DescTooLong
+                    && item.subject_path.as_deref() == Some(Path::new(nested_cursor))
+            }),
+            "Cursor-only skills must not leak into the Agent Skills contract when Cursor is inactive"
+        );
     }
 
     #[test]

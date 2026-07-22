@@ -703,7 +703,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         let mut prompt_pass = super::super::prompt_content::PromptContentPass::default();
         validate_agent_skill_frontmatter_with_prompt_pass(&mut diag, &exclude, &mut prompt_pass);
-        crate::validators::skill_content::validate_agent_skills_name_contract(
+        crate::validators::skill_content::validate_agent_skills_contract(
             ".agents/skills",
             &mut diag,
             &exclude,
