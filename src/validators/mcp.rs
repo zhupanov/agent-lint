@@ -3,7 +3,9 @@ use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::platforms::ValidationTargets;
 use crate::rules::LintRule;
-use crate::sensitive::{is_safe_env_placeholder, is_sensitive_key};
+use crate::sensitive::{
+    SENSITIVE_HTTP_HEADERS, contains_codex_mcp_token_signature, is_sensitive_key,
+};
 use crate::traversal;
 use crate::validators::common::is_nonlocal_url_with_scheme;
 use regex::Regex;
@@ -132,6 +134,7 @@ impl DangerousThreat {
 enum McpAdapter {
     ClaudeStandalone,
     ClaudeInlinePlugin,
+    ClaudePluginReferenced,
     Cursor,
 }
 
@@ -141,12 +144,32 @@ impl McpAdapter {
     }
 
     fn allows_claude_transport_rules(self) -> bool {
-        matches!(self, Self::ClaudeStandalone | Self::ClaudeInlinePlugin)
+        matches!(
+            self,
+            Self::ClaudeStandalone | Self::ClaudeInlinePlugin | Self::ClaudePluginReferenced
+        )
     }
 
     fn allows_claude_only_rules(self) -> bool {
         self.allows_claude_transport_rules()
     }
+
+    fn reference_grammar(self) -> ReferenceGrammar {
+        match self {
+            Self::ClaudeStandalone => ReferenceGrammar::ClaudeStandalone,
+            Self::ClaudeInlinePlugin | Self::ClaudePluginReferenced => {
+                ReferenceGrammar::ClaudePlugin
+            }
+            Self::Cursor => ReferenceGrammar::Cursor,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ReferenceGrammar {
+    ClaudeStandalone,
+    ClaudePlugin,
+    Cursor,
 }
 
 /// Validate MCP configuration through explicit adapters for the supported
@@ -263,7 +286,7 @@ fn display_path(base: &Path, path: &Path) -> String {
 
 /// Inline plugin `mcpServers` accepts object maps, string config paths, and
 /// arrays of those (plus inline server-map objects). Path existence/escape is
-/// M-owned; present readable files receive ClaudeStandalone P-rule coverage.
+/// M-owned; present readable files receive plugin-reference P-rule coverage.
 fn validate_inline_plugin_mcp(
     display: &str,
     value: &Value,
@@ -371,7 +394,7 @@ fn validate_referenced_claude_mcp(
     validated.push(path.clone());
     validate_json_document(
         &path,
-        McpAdapter::ClaudeStandalone,
+        McpAdapter::ClaudePluginReferenced,
         base_path,
         diag,
         exclude,
@@ -572,16 +595,7 @@ fn validate_server_map(
                 "use a JSON boolean",
             );
         }
-        let allow_claude_expansion = adapter.allows_claude_transport_rules();
-        for env_key in offending_secret_keys(config.get("env"), allow_claude_expansion) {
-            let suggestion = if allow_claude_expansion {
-                format!(
-                    "use ${{{env_key}}} environment expansion; never store the secret value in MCP config"
-                )
-            } else {
-                "set the secret in the process environment instead of storing it in MCP config"
-                    .to_string()
-            };
+        for env_key in offending_secret_keys(config.get("env"), adapter.reference_grammar()) {
             report(
                 diag,
                 LintRule::McpEnvSecretLiteral,
@@ -591,8 +605,17 @@ fn validate_server_map(
                     .and_then(|token| token.env_key(env_key))
                     .or(server_key),
                 env_key,
-                &suggestion,
+                &env_secret_suggestion(adapter, env_key),
             );
+        }
+        if (adapter.allows_claude_transport_rules()
+            && McpTransport::parse(config.get("type")).is_some_and(McpTransport::is_remote))
+            || matches!(adapter, McpAdapter::Cursor)
+        {
+            report_header_secrets(&label, config, adapter, source, token, server_key, diag);
+        }
+        if matches!(adapter, McpAdapter::Cursor) {
+            report_cursor_auth_secrets(&label, config, source, token, server_key, diag);
         }
         if let Some((threat, locate_headers_helper)) = dangerous_server_threat(config, adapter) {
             let location = if locate_headers_helper {
@@ -801,7 +824,7 @@ fn has_nonempty_string(value: Option<&Value>) -> bool {
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-fn offending_secret_keys(env: Option<&Value>, allow_claude_expansion: bool) -> Vec<&str> {
+fn offending_secret_keys(env: Option<&Value>, grammar: ReferenceGrammar) -> Vec<&str> {
     let Some(env) = env.and_then(Value::as_object) else {
         return Vec::new();
     };
@@ -816,7 +839,7 @@ fn offending_secret_keys(env: Option<&Value>, allow_claude_expansion: bool) -> V
         if raw.trim().is_empty() {
             continue;
         }
-        if allow_claude_expansion && is_safe_claude_env_reference(raw) {
+        if is_safe_mcp_reference(raw, grammar) {
             continue;
         }
         keys.push(key.as_str());
@@ -824,8 +847,181 @@ fn offending_secret_keys(env: Option<&Value>, allow_claude_expansion: bool) -> V
     keys
 }
 
-fn is_safe_claude_env_reference(value: &str) -> bool {
-    is_safe_env_placeholder(value, false)
+fn env_secret_suggestion(adapter: McpAdapter, key: &str) -> String {
+    match adapter {
+        McpAdapter::Cursor => {
+            "set the secret in the process environment via a documented Cursor ${env:NAME} variable reference instead of storing it in MCP config"
+                .to_string()
+        }
+        McpAdapter::ClaudeStandalone
+        | McpAdapter::ClaudeInlinePlugin
+        | McpAdapter::ClaudePluginReferenced => {
+            format!(
+                "use ${{{key}}} environment expansion; never store the secret value in MCP config"
+            )
+        }
+    }
+}
+
+fn credential_secret_suggestion(adapter: McpAdapter) -> &'static str {
+    match adapter {
+        McpAdapter::Cursor => {
+            "set the secret in the process environment via a documented Cursor ${env:NAME} variable reference instead of storing it in MCP config"
+        }
+        McpAdapter::ClaudeStandalone
+        | McpAdapter::ClaudeInlinePlugin
+        | McpAdapter::ClaudePluginReferenced => {
+            "use ${VAR} environment expansion or a documented plugin reference instead of storing the secret value in MCP config"
+        }
+    }
+}
+
+fn report_header_secrets(
+    label: &str,
+    config: &serde_json::Map<String, Value>,
+    adapter: McpAdapter,
+    source: Option<&str>,
+    token: Option<&ServerTokens>,
+    server_key: Option<&Range<usize>>,
+    diag: &mut DiagnosticCollector,
+) {
+    for key in offending_header_keys(config.get("headers"), adapter.reference_grammar()) {
+        report(
+            diag,
+            LintRule::McpEnvSecretLiteral,
+            &format!("{label}.headers.{key} contains a literal secret-like value"),
+            source,
+            token
+                .and_then(|token| token.object_key("headers", key))
+                .or(server_key),
+            key,
+            credential_secret_suggestion(adapter),
+        );
+    }
+}
+
+fn offending_header_keys(headers: Option<&Value>, grammar: ReferenceGrammar) -> Vec<&str> {
+    let Some(headers) = headers.and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    headers
+        .iter()
+        .filter_map(|(key, value)| {
+            let raw = value.as_str()?;
+            let sensitive_header = SENSITIVE_HTTP_HEADERS
+                .iter()
+                .any(|name| key.eq_ignore_ascii_case(name));
+            let literal = !raw.trim().is_empty() && !is_safe_mcp_reference(raw, grammar);
+            (contains_codex_mcp_token_signature(raw)
+                || ((sensitive_header || is_sensitive_key(key)) && literal))
+                .then_some(key.as_str())
+        })
+        .collect()
+}
+
+fn report_cursor_auth_secrets(
+    label: &str,
+    config: &serde_json::Map<String, Value>,
+    source: Option<&str>,
+    token: Option<&ServerTokens>,
+    server_key: Option<&Range<usize>>,
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(auth) = config.get("auth").and_then(Value::as_object) else {
+        return;
+    };
+    for (key, value) in auth {
+        let Some(raw) = value.as_str() else {
+            continue;
+        };
+        if raw.trim().is_empty()
+            || (!key.eq_ignore_ascii_case("CLIENT_SECRET") && !is_sensitive_key(key))
+            || is_safe_mcp_reference(raw, ReferenceGrammar::Cursor)
+        {
+            continue;
+        }
+        report(
+            diag,
+            LintRule::McpEnvSecretLiteral,
+            &format!("{label}.auth.{key} contains a literal secret-like value"),
+            source,
+            token
+                .and_then(|token| token.object_key("auth", key))
+                .or(server_key),
+            key,
+            credential_secret_suggestion(McpAdapter::Cursor),
+        );
+    }
+}
+
+fn is_safe_mcp_reference(value: &str, grammar: ReferenceGrammar) -> bool {
+    let tokens = reference_tokens(value, grammar);
+    !tokens.is_empty()
+        && !has_nonempty_claude_default(value)
+        && !contains_codex_mcp_token_signature(remove_reference_tokens(value, &tokens).as_str())
+}
+
+fn has_nonempty_claude_default(value: &str) -> bool {
+    static CLAUDE_DEFAULT: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\$\{[A-Za-z_][A-Za-z0-9_]*:-[^}]+\}")
+            .expect("valid non-empty Claude default regex")
+    });
+    CLAUDE_DEFAULT.is_match(value)
+}
+
+#[derive(Clone)]
+struct ReferenceToken {
+    range: Range<usize>,
+}
+
+fn reference_tokens(value: &str, grammar: ReferenceGrammar) -> Vec<ReferenceToken> {
+    static CLAUDE_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+            .expect("valid Claude MCP reference regex")
+    });
+    static PLUGIN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\$\{user_config\.[A-Za-z_][A-Za-z0-9_]*\}")
+            .expect("valid Claude plugin reference regex")
+    });
+    static CURSOR_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"\$\{(?:env:[^}]+|userHome|workspaceFolder|workspaceFolderBasename|pathSeparator|/)\}",
+        )
+        .expect("valid Cursor MCP reference regex")
+    });
+
+    let mut tokens: Vec<_> = match grammar {
+        ReferenceGrammar::ClaudeStandalone | ReferenceGrammar::ClaudePlugin => CLAUDE_TOKEN
+            .captures_iter(value)
+            .map(|captures| ReferenceToken {
+                range: captures.get(0).expect("complete Claude reference").range(),
+            })
+            .collect(),
+        ReferenceGrammar::Cursor => CURSOR_TOKEN
+            .find_iter(value)
+            .map(|found| ReferenceToken {
+                range: found.range(),
+            })
+            .collect(),
+    };
+    if matches!(grammar, ReferenceGrammar::ClaudePlugin) {
+        tokens.extend(PLUGIN_TOKEN.find_iter(value).map(|found| ReferenceToken {
+            range: found.range(),
+        }));
+        tokens.sort_by_key(|token| token.range.start);
+    }
+    tokens
+}
+
+fn remove_reference_tokens(value: &str, tokens: &[ReferenceToken]) -> String {
+    let mut remainder = String::with_capacity(value.len());
+    let mut start = 0;
+    for token in tokens {
+        remainder.push_str(&value[start..token.range.start]);
+        start = token.range.end;
+    }
+    remainder.push_str(&value[start..]);
+    remainder
 }
 
 /// Returns `(threat, locate_at_headers_helper)`. Location prefers `headersHelper`
@@ -1301,8 +1497,12 @@ struct ServerTokens {
 
 impl ServerTokens {
     fn env_key(&self, name: &str) -> Option<&Range<usize>> {
+        self.object_key("env", name)
+    }
+
+    fn object_key(&self, field: &str, name: &str) -> Option<&Range<usize>> {
         self.fields
-            .get("env")
+            .get(field)
             .and_then(|field| field.env.get(name))
             .map(|token| &token.key)
     }
@@ -1431,7 +1631,7 @@ impl<'a> TokenScanner<'a> {
                 "args" if self.input.get(self.pos) == Some(&b'[') => {
                     (self.scan_array_elements(), BTreeMap::new())
                 }
-                "env" if self.input.get(self.pos) == Some(&b'{') => {
+                "env" | "headers" | "auth" if self.input.get(self.pos) == Some(&b'{') => {
                     (Vec::new(), self.scan_env_object())
                 }
                 _ => {
@@ -2434,8 +2634,14 @@ mod tests {
         assert!(is_sensitive_key("PASSWD"));
         assert!(is_sensitive_key("my-private-key"));
         assert!(!is_sensitive_key("TOKENIZER_MODEL"));
-        assert!(!is_safe_claude_env_reference("$TOKEN"));
-        assert!(is_safe_claude_env_reference("${TOKEN}"));
+        assert!(!is_safe_mcp_reference(
+            "$TOKEN",
+            ReferenceGrammar::ClaudeStandalone
+        ));
+        assert!(is_safe_mcp_reference(
+            "${TOKEN}",
+            ReferenceGrammar::ClaudeStandalone
+        ));
         let diagnostics = collected(
             r#"{"mcpServers":{"a":{"command":"ok","env":{"TOKEN":"$TOKEN","PRIVATE_KEY":"pk"}}}}"#,
         );
@@ -2445,6 +2651,121 @@ mod tests {
             .map(|diagnostic| diagnostic.evidence.as_deref().unwrap())
             .collect();
         assert_eq!(keys, ["PRIVATE_KEY", "TOKEN"]);
+    }
+
+    #[test]
+    fn p018_uses_surface_reference_grammars_and_scans_credential_fields() {
+        assert!(is_safe_mcp_reference(
+            "Bearer ${API_KEY}",
+            ReferenceGrammar::ClaudeStandalone
+        ));
+        assert!(!is_safe_mcp_reference(
+            "${API_KEY:-literal}",
+            ReferenceGrammar::ClaudeStandalone
+        ));
+        assert!(is_safe_mcp_reference(
+            "${env:api-key}",
+            ReferenceGrammar::Cursor
+        ));
+        assert!(!is_safe_mcp_reference("${TOKEN}", ReferenceGrammar::Cursor));
+        assert!(!is_safe_mcp_reference(
+            "${env:api-key}${TOKEN:-literal}",
+            ReferenceGrammar::Cursor
+        ));
+        for value in [
+            "${user_config.bot_token}",
+            "${CLAUDE_PLUGIN_ROOT}/bin/server",
+            "Bearer ${TOKEN}",
+        ] {
+            assert!(is_safe_mcp_reference(value, ReferenceGrammar::ClaudePlugin));
+        }
+        assert!(!is_safe_mcp_reference(
+            "${user_config.bot_token:-literal}",
+            ReferenceGrammar::ClaudePlugin
+        ));
+        assert!(!is_safe_mcp_reference(
+            "sk-abcdefghijklmnopqrstuvwxyz${TOKEN}",
+            ReferenceGrammar::ClaudeStandalone
+        ));
+
+        let standalone = collected(
+            r#"{"mcpServers":{"remote":{"type":"http","url":"https://example.com/mcp","env":{"TOKEN":"Bearer ${TOKEN}"},"headers":{"Authorization":"Bearer ${API_KEY}","X-Custom":"sk-abcdefghijklmnopqrstuvwxyz"}}}}"#,
+        );
+        let standalone_hits: Vec<_> = standalone
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::McpEnvSecretLiteral)
+            .collect();
+        assert_eq!(standalone_hits.len(), 1, "{standalone:#?}");
+        assert_eq!(standalone_hits[0].evidence.as_deref(), Some("X-Custom"));
+
+        let temp = tempfile::tempdir().unwrap();
+        let referenced = temp.path().join("servers.json");
+        std::fs::write(
+            &referenced,
+            r#"{"mcpServers":{"referenced":{"command":"ok","env":{"BOT_TOKEN":"${user_config.bot_token}"}}}}"#,
+        )
+        .unwrap();
+        let mut plugin_context = context(temp.path());
+        plugin_context.mode = LintMode::Plugin;
+        plugin_context.plugin_json = ManifestState::parsed(serde_json::json!({
+            "mcpServers": [
+                {"inline": {"command": "ok", "env": {"BOT_TOKEN": "${user_config.bot_token}"}}},
+                "${CLAUDE_PLUGIN_ROOT}/servers.json"
+            ]
+        }));
+        let mut plugin_diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &plugin_context,
+            &mut plugin_diag,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert!(
+            plugin_diag
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.rule != LintRule::McpEnvSecretLiteral),
+            "{:#?}",
+            plugin_diag.diagnostics()
+        );
+
+        let cursor = tempfile::tempdir().unwrap();
+        let cursor_path = cursor.path().join(".cursor/mcp.json");
+        std::fs::create_dir_all(cursor_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &cursor_path,
+            r#"{"mcpServers":{"remote":{"url":"https://example.com/mcp","env":{"API_KEY":"${env:api-key}","TOKEN":"${TOKEN}"},"headers":{"Authorization":"Bearer ${env:api-key}","X-Custom":"xoxb-1abcdefghij"},"auth":{"CLIENT_ID":"client","CLIENT_SECRET":"literal-client-secret"}}}}"#,
+        )
+        .unwrap();
+        let mut cursor_diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(cursor.path()),
+            &mut cursor_diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                ..ValidationTargets::default()
+            },
+        );
+        let cursor_hits: Vec<_> = cursor_diag
+            .diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::McpEnvSecretLiteral)
+            .collect();
+        let evidence: Vec<_> = cursor_hits
+            .iter()
+            .map(|diagnostic| diagnostic.evidence.as_deref().unwrap())
+            .collect();
+        assert_eq!(evidence, ["TOKEN", "X-Custom", "CLIENT_SECRET"]);
+        for diagnostic in cursor_hits {
+            let rendered = format!("{diagnostic:#?}");
+            for leaked in ["literal-client-secret", "xoxb-1abcdefghij"] {
+                assert!(
+                    !rendered.contains(leaked),
+                    "credential leaked in diagnostic: {rendered}"
+                );
+            }
+        }
     }
 
     #[test]

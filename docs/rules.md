@@ -1127,15 +1127,38 @@ null, and array server entries are P027. Duplicate top-level `mcpServers` keys
 are P027, while P023 remains limited to duplicate names in a valid server map.
 P027 is diagnostic-only and has no autofix.
 
-P018 treats only exact Claude expansion forms `${NAME}` and `${NAME:-DEFAULT}`
-(with `NAME` matching `[A-Za-z_][A-Za-z0-9_]*`) as references on Claude MCP
-surfaces. Cursor MCP has no documented expansion grammar here, so sensitive
-values there are treated as literals. Unsupported `$...` / `{{...}}` strings and
-non-empty defaults on sensitive keys are literals. Sensitive keys are matched by
-ASCII identifier segments (`SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, plus
-`PRIVATE_KEY` / `ACCESS_KEY` / `API_KEY` / `CLIENT_SECRET`), so names like
-`TOKENIZER_MODEL` stay clean. Diagnostics name the env key and never echo the
-value.
+P018 recognizes documented reference tokens per MCP surface. Claude standalone
+`.mcp.json` supports `${NAME}` and `${NAME:-DEFAULT}` (`NAME` matches
+`[A-Za-z_][A-Za-z0-9_]*`). Inline and plugin-referenced Claude MCP configs also
+support `${user_config.KEY}` (`KEY` uses that same identifier grammar) and
+`${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, and `${CLAUDE_PROJECT_DIR}`.
+Cursor `.cursor/mcp.json` supports `${env:NAME}` (one or more non-`}`
+characters) plus `${userHome}`, `${workspaceFolder}`,
+`${workspaceFolderBasename}`, `${pathSeparator}`, and `${/}`. These grammars
+are from the [Cursor MCP documentation](https://cursor.com/docs/context/mcp)
+and the [Claude plugin reference](https://code.claude.com/docs/en/plugins-reference)
+(retrieved 2026-07-21).
+
+A sensitive value is clean when it contains one of that surface's tokens, all
+Claude `${NAME:-DEFAULT}` tokens have empty defaults, and its remaining literal
+text has no `sk-`, `ghp_`, or `xox[bp]-` token signature. Thus `Bearer
+${TOKEN}` is clean on Claude, while a non-empty default, unsupported `$...` /
+`{{...}}` syntax, Cursor's undocumented `${NAME}` spelling, or a signature
+beside a reference still warns. Sensitive keys are matched by ASCII identifier
+segments (`SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, plus `PRIVATE_KEY` /
+`ACCESS_KEY` / `API_KEY` / `CLIENT_SECRET`), so names like `TOKENIZER_MODEL`
+stay clean.
+
+P018 scans sensitive `env` keys on every MCP surface. It also scans `headers`
+for remote Claude servers and Cursor servers: `Authorization`,
+`Proxy-Authorization`, `Cookie`, `Set-Cookie` (case-insensitive), or any
+sensitive header name must not have a literal value; a token signature warns
+under any header name. Cursor `auth` similarly scans `CLIENT_SECRET`
+(case-insensitive) and other sensitive names, while `CLIENT_ID` alone is clean.
+`headersHelper` remains P019's command surface. Diagnostics name only the env,
+header, or auth key and never echo the value. Claude header support follows the
+[Claude MCP documentation](https://code.claude.com/docs/en/mcp#environment-variable-expansion-in-mcpjson)
+(retrieved 2026-07-21).
 
 P019 preserves command/argv boundaries. Shell and Windows-interpreter payloads
 are inspected only when the selected executable is a known shell/`cmd`/
@@ -1164,7 +1187,7 @@ P026 reserved names follow Claude Code's documented built-in server list
 | P011 | `mcp-type-invalid` | Server `type` is not `stdio`, `http`, `streamable-http`, `sse`, or `ws` | Always | error |
 | P012 | `mcp-sse-deprecated` | `sse` transport is deprecated; use Streamable HTTP | Always | warn |
 | P017 | `mcp-insecure-url` | Non-local `http://` or `ws://` server URL is insecure (use `https://` or `wss://`). `localhost` and `*.localhost` (RFC 6761) are local | Always | error |
-| P018 | `mcp-env-secret` | Secret-like environment variable contains a literal plaintext value | Always | warn |
+| P018 | `mcp-env-secret` | Secret-like MCP credential field contains a literal plaintext value | Always | warn |
 | P019 | `mcp-command-dangerous` | Server command contains a dangerous shell pattern | Always | warn |
 | P022 | `mcp-args-invalid` | `args` is not an array of strings | Always | error |
 | P023 | `mcp-duplicate-server` | `mcpServers` contains a duplicate server name | Always | error |
