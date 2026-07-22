@@ -416,8 +416,7 @@ fn add_character_ranges(
     }
     let mut range_start = None;
     let mut previous = None;
-    for index in start..end {
-        let (line, column) = positions[index];
+    for &(line, column) in positions.iter().take(end).skip(start) {
         if previous.is_some_and(|(previous_line, previous_column)| {
             line != previous_line || column != previous_column + 1
         }) {
