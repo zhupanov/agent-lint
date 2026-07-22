@@ -97,7 +97,7 @@ which never probes an unsafe declaration.
 | H020 | `hook-once-invalid` | Hook `once` is not a boolean | Always | error |
 | H021 | `hook-if-invalid` | Hook `if` is not a non-empty string or is used outside a tool event | Always | warn |
 | H022 | `hook-shell-invalid` | Hook `shell` is not `bash`/`powershell` | Always | warn |
-| H023 | `hook-command-dangerous` | Dangerous command pattern in hook command (`rm -rf` / split or long-form recursive+force, `git reset --hard`, `curl \| sh`, ...) | Always | warn |
+| H023 | `hook-command-dangerous` | Dangerous hook command category: recursive+force `rm`, Git hard reset/forced clean (including `-C`/`-c` global options), or `curl`/`wget` piped through common wrappers to a shell | Always | warn |
 | H024 | `hook-headers-interpolated` | HTTP hook headers interpolate `$VAR` without `allowedEnvVars` | Always | warn |
 | H025 | `settings-local-invalid` | `.claude/settings.local.json` is not valid JSON | Always | error |
 | H026 | `hook-config-malformed` | A `hooks` configuration value does not match the documented event → matcher-group → handlers shape | Always | error |
@@ -127,6 +127,16 @@ The valid event list and handler-type table live in
 `src/validators/hook_schema.rs` and track the
 [Claude Code hooks reference](https://code.claude.com/docs/en/hooks.md);
 expect them to change with Claude Code releases.
+
+H023 classifies only `command` fields, in this priority order:
+`recursive-force-rm`, `git-reset-hard`, `git-clean-force`, and
+`download-piped-to-shell`. The Git categories accept repeated `-C <path>` and
+`-c <name=value>` global-option pairs; the download category recognizes
+`curl`/`wget` pipelines through `env`, `command`, and `sudo` wrappers to
+`sh`, `bash`, `dash`, `zsh`, or `ksh` (including absolute executable paths).
+Its message, evidence, and suggestion contain only the fixed category and
+remediation text—never the hook command, URL, arguments, assignments, or
+header values.
 
 H009 requires a present matcher to be a string, then uses an explicit list of the events the hooks reference marks "no matcher
 support": `UserPromptSubmit`, `PostToolBatch`, `Stop`, `TeammateIdle`,
