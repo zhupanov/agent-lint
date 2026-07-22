@@ -261,7 +261,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | S029 | `nested-ref-deep` | Referenced shared `.md` itself references other shared `.md` files | Plugin | warn |
 | S030 | `orphaned-skill-files` | Files in skill `scripts/` not referenced from any skill-local `.md` (with name-boundary matching) | Always | error |
 | S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content. XML-namespace/DOCTYPE/`schemaLocation`/`targetNamespace` identifiers and reserved-name hosts (`www.w3.org`, RFC 2606/6761 `*.test`/`*.example`/`*.invalid`/`*.localhost`, `example.com`/`.org`/`.net`, loopback) are opaque identifiers, not fetchable links, and are exempt | All skill surfaces | error |
-| S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected | All skill surfaces | error |
+| S032 | `hardcoded-secret` | Potential hardcoded secret/API key detected; scans the full `SKILL.md` source and reports only safe key/category evidence | All skill surfaces | error |
 | S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no headings (levels 1–6, outside fences) | Plugin | warn |
 | S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Always | warn |
 | S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin | warn |
@@ -525,6 +525,20 @@ Message, evidence, suggestion, and rendered output never include the credential
 value or surrounding source line. Suggestion:
 `replace the literal with an environment-variable or secret-store reference`.
 Read failures stay outside I002; I001 remains the exclusive empty-file rule.
+
+S032 uses that same source-positioned scanner for every `SKILL.md` surface,
+including frontmatter, fences, and inline code, and emits the earliest match
+once per file with line metadata. It has the same sensitive-key vocabulary and
+signature families as I002, but intentionally accepts additional safe skill
+documentation forms: `$(...)`, backtick command substitution, and angle
+placeholders with hyphens or spaces (such as `<your-api-key>`). A signature
+whose entire post-prefix payload is one repeated character is also clean for
+S032 (for example `sk-xxxxxxxxxxxxxxxxxxxxxxxx`), while I002 deliberately
+continues to report it. This is an intentional S032-vs-I002 divergence: I002
+is a stricter instruction-file policy, whereas S032 must not reject examples
+of safe credential indirection. Literal remainders and non-empty defaults
+remain findings. S032 evidence is only the assignment key token or a fixed
+signature category; it never includes a candidate value or its source line.
 
 I003 scans paired backticks on individual prose lines; fence delimiters and
 fence interiors are ignored. It treats explicit relative paths (for example

@@ -50,10 +50,16 @@ static RE_MUSTACHE_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
 static RE_ANGLE_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^<([A-Za-z_][A-Za-z0-9_]*)>$").expect("valid <NAME> placeholder regex")
 });
+static RE_SKILL_ANGLE_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^<[A-Za-z_][A-Za-z0-9_ -]*>$").expect("valid skill <NAME> placeholder regex")
+});
 
 struct SignaturePattern {
     regex: Regex,
     evidence: &'static str,
+    /// Prefix omitted when deciding whether this signature is an intentionally
+    /// repeated-character documentation placeholder on a skill surface.
+    placeholder_prefixes: &'static [&'static str],
     /// When set, reject matches whose following source byte is in this class so
     /// exact-length signatures do not accept a longer near-miss prefix.
     reject_if_next: Option<fn(char) -> bool>,
@@ -64,38 +70,45 @@ static SIGNATURE_PATTERNS: LazyLock<Vec<SignaturePattern>> = LazyLock::new(|| {
         SignaturePattern {
             regex: Regex::new(r"sk-[a-zA-Z0-9]{20,}").expect("valid sk- signature"),
             evidence: "openai-api-key-signature",
+            placeholder_prefixes: &["sk-"],
             reject_if_next: None,
         },
         SignaturePattern {
             regex: Regex::new(r"ghp_[a-zA-Z0-9]{36}").expect("valid ghp_ signature"),
             evidence: "github-token-signature",
+            placeholder_prefixes: &["ghp_"],
             reject_if_next: Some(|ch| ch.is_ascii_alphanumeric()),
         },
         SignaturePattern {
             regex: Regex::new(r"github_pat_[a-zA-Z0-9_]{20,}")
                 .expect("valid github_pat_ signature"),
             evidence: "github-fine-grained-token-signature",
+            placeholder_prefixes: &["github_pat_"],
             reject_if_next: None,
         },
         SignaturePattern {
             regex: Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}").expect("valid slack signature"),
             evidence: "slack-token-signature",
+            placeholder_prefixes: &["xoxb-", "xoxp-"],
             reject_if_next: None,
         },
         SignaturePattern {
             regex: Regex::new(r"(?:AKIA|ASIA)[A-Z0-9]{16}").expect("valid aws signature"),
             evidence: "aws-access-key-signature",
+            placeholder_prefixes: &["AKIA", "ASIA"],
             reject_if_next: Some(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit()),
         },
         SignaturePattern {
             regex: Regex::new(r"glpat-[a-zA-Z0-9_\-]{20,}").expect("valid glpat- signature"),
             evidence: "gitlab-token-signature",
+            placeholder_prefixes: &["glpat-"],
             reject_if_next: None,
         },
         SignaturePattern {
             regex: Regex::new(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")
                 .expect("valid PEM signature"),
             evidence: "private-key-block",
+            placeholder_prefixes: &[],
             reject_if_next: None,
         },
     ]
@@ -177,10 +190,11 @@ pub(crate) fn contains_codex_mcp_token_signature(value: &str) -> bool {
         .any(|pattern| pattern.is_match(value))
 }
 
-/// First I002 hit in byte order: either a sensitive assignment key or a fixed
-/// signature category label. Evidence never includes credential value bytes.
+/// First Markdown credential hit in byte order: either a sensitive assignment
+/// key or a fixed signature category label. Evidence never includes credential
+/// value bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InstructionSecretFinding {
+pub(crate) struct MarkdownSecretFinding {
     pub evidence: String,
     /// Byte range used only for `SourceSpan` location. For assignments this is
     /// the key token; for signatures it is a zero-width point at the match
@@ -188,10 +202,28 @@ pub(crate) struct InstructionSecretFinding {
     pub location_range: Range<usize>,
 }
 
-/// Scan Markdown/instruction source for the first credential fact in byte order.
-pub(crate) fn find_instruction_secret(content: &str) -> Option<InstructionSecretFinding> {
-    let mut best: Option<InstructionSecretFinding> = None;
-    let mut consider = |candidate: InstructionSecretFinding| match &best {
+#[derive(Clone, Copy)]
+enum MarkdownSecretPolicy {
+    /// I002's existing contract: placeholder-looking token signatures still
+    /// count, and command substitutions are not special syntax.
+    Instruction,
+    /// S032's skill-document contract: common documentation placeholders are
+    /// clean, including command substitutions and repeated-character tokens.
+    Skill,
+}
+
+/// Scan Markdown/instruction source for the first credential fact in byte
+/// order, applying only the surface-specific placeholder policy.
+///
+/// The assignment vocabulary, source ordering, signature families, and safe
+/// evidence categories are deliberately owned here so I002 and S032 cannot
+/// drift in their lexical recognition.
+fn find_markdown_secret(
+    content: &str,
+    policy: MarkdownSecretPolicy,
+) -> Option<MarkdownSecretFinding> {
+    let mut best: Option<MarkdownSecretFinding> = None;
+    let mut consider = |candidate: MarkdownSecretFinding| match &best {
         None => best = Some(candidate),
         Some(current) if candidate.location_range.start < current.location_range.start => {
             best = Some(candidate);
@@ -219,10 +251,10 @@ pub(crate) fn find_instruction_secret(content: &str) -> Option<InstructionSecret
         let full = captures.get(0).expect("full assignment match");
         let raw_value = parse_assignment_value(&content[full.end()..]);
         let trimmed = strip_assignment_quotes(raw_value).trim();
-        if trimmed.is_empty() || is_instruction_secret_placeholder(trimmed) {
+        if trimmed.is_empty() || is_secret_placeholder(trimmed, policy) {
             continue;
         }
-        consider(InstructionSecretFinding {
+        consider(MarkdownSecretFinding {
             evidence: key.as_str().to_string(),
             location_range: key.start()..key.end(),
         });
@@ -239,7 +271,15 @@ pub(crate) fn find_instruction_secret(content: &str) -> Option<InstructionSecret
                     continue;
                 }
             }
-            consider(InstructionSecretFinding {
+            if matches!(policy, MarkdownSecretPolicy::Skill)
+                && pattern
+                    .placeholder_prefixes
+                    .iter()
+                    .any(|prefix| is_repeated_signature_payload(found.as_str(), prefix))
+            {
+                continue;
+            }
+            consider(MarkdownSecretFinding {
                 evidence: pattern.evidence.to_string(),
                 location_range: found.start()..found.start(),
             });
@@ -248,6 +288,16 @@ pub(crate) fn find_instruction_secret(content: &str) -> Option<InstructionSecret
     }
 
     best
+}
+
+/// Scan AGENTS.md source under I002's intentionally strict placeholder policy.
+pub(crate) fn find_instruction_secret(content: &str) -> Option<MarkdownSecretFinding> {
+    find_markdown_secret(content, MarkdownSecretPolicy::Instruction)
+}
+
+/// Scan complete SKILL.md source under S032's documentation-aware policy.
+pub(crate) fn find_skill_secret(content: &str) -> Option<MarkdownSecretFinding> {
+    find_markdown_secret(content, MarkdownSecretPolicy::Skill)
 }
 
 fn parse_assignment_value(after_separator: &str) -> &str {
@@ -270,14 +320,30 @@ fn strip_assignment_quotes(value: &str) -> &str {
     trimmed
 }
 
-fn is_instruction_secret_placeholder(value: &str) -> bool {
+fn is_secret_placeholder(value: &str, policy: MarkdownSecretPolicy) -> bool {
     if is_safe_env_placeholder(value, true)
         || RE_MUSTACHE_PLACEHOLDER.is_match(value)
-        || RE_ANGLE_PLACEHOLDER.is_match(value)
+        || match policy {
+            MarkdownSecretPolicy::Instruction => RE_ANGLE_PLACEHOLDER.is_match(value),
+            MarkdownSecretPolicy::Skill => RE_SKILL_ANGLE_PLACEHOLDER.is_match(value),
+        }
     {
         return true;
     }
-    false
+    matches!(policy, MarkdownSecretPolicy::Skill)
+        && ((value.starts_with("$(") && value.ends_with(')'))
+            || (value.starts_with('`') && value.ends_with('`')))
+}
+
+fn is_repeated_signature_payload(signature: &str, prefix: &str) -> bool {
+    let Some(payload) = signature.strip_prefix(prefix) else {
+        return false;
+    };
+    let mut payload = payload.chars();
+    let Some(first) = payload.next() else {
+        return false;
+    };
+    payload.all(|ch| ch == first)
 }
 
 #[cfg(test)]
@@ -511,5 +577,102 @@ mod tests {
             find_instruction_secret(inline).unwrap().evidence,
             "openai-api-key-signature"
         );
+    }
+
+    #[test]
+    fn skill_scanner_accepts_documented_placeholder_forms() {
+        for content in [
+            "password = $DB_PASSWORD",
+            "token = ${GITHUB_TOKEN}",
+            "secret = ${TOKEN:-}",
+            "API_KEY = $(gh auth token)",
+            "CLIENT_SECRET = `read_secret`",
+            "access_key = {{SERVICE_TOKEN}}",
+            "private_key = <your-api-key>",
+            "password = <your api key>",
+            "sk-xxxxxxxxxxxxxxxxxxxxxxxx",
+            "ghp_000000000000000000000000000000000000",
+        ] {
+            assert!(
+                find_skill_secret(content).is_none(),
+                "expected clean skill content: {content}"
+            );
+        }
+    }
+
+    #[test]
+    fn skill_scanner_reports_all_key_forms_literal_remainders_and_signatures() {
+        for key in [
+            "SECRET",
+            "TOKEN",
+            "PASSWORD",
+            "PASSWD",
+            "PRIVATE_KEY",
+            "ACCESS_KEY",
+            "API_KEY",
+            "CLIENT_SECRET",
+        ] {
+            let content = format!("{key}: committed-literal");
+            assert_eq!(find_skill_secret(&content).unwrap().evidence, key, "{key}");
+        }
+        for content in [
+            "password = prefix${DB_PASSWORD}",
+            "token = ${TOKEN:-committed-default}",
+            "secret = `read_secret` suffix",
+            "api_key = $(read_secret) suffix",
+        ] {
+            assert!(find_skill_secret(content).is_some(), "{content}");
+        }
+        for (content, evidence) in [
+            ("sk-aBcDeFgHiJkLmNoPqRsT1234", "openai-api-key-signature"),
+            (
+                "ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789",
+                "github-token-signature",
+            ),
+            (
+                "github_pat_aBcDeFgHiJkLmNoPqRsT",
+                "github-fine-grained-token-signature",
+            ),
+            ("xoxb-1aBcDeFgHi", "slack-token-signature"),
+            ("AKIAIOSFODNN7EXAMPLE", "aws-access-key-signature"),
+            ("ASIAT3STK3Y12EXAMPLE", "aws-access-key-signature"),
+            ("glpat-aBcDeFgHiJkLmNoPqRsT", "gitlab-token-signature"),
+            ("-----BEGIN PRIVATE KEY-----", "private-key-block"),
+        ] {
+            assert_eq!(
+                find_skill_secret(content).unwrap().evidence,
+                evidence,
+                "{content}"
+            );
+        }
+    }
+
+    #[test]
+    fn skill_scanner_covers_full_source_and_keeps_i002_strict() {
+        let frontmatter = "---\ntoken: committed\n---\nBody\n";
+        assert_eq!(find_skill_secret(frontmatter).unwrap().evidence, "token");
+        assert_eq!(
+            find_skill_secret("```bash\npassword = committed\n```\n")
+                .unwrap()
+                .evidence,
+            "password"
+        );
+        assert_eq!(
+            find_skill_secret("Use `sk-aBcDeFgHiJkLmNoPqRsT1234` in docs.\n")
+                .unwrap()
+                .evidence,
+            "openai-api-key-signature"
+        );
+        assert!(find_instruction_secret("sk-xxxxxxxxxxxxxxxxxxxxxxxx").is_some());
+        assert!(find_instruction_secret("TOKEN = $(gh auth token)").is_some());
+    }
+
+    #[test]
+    fn legacy_possible_secret_helpers_retain_their_existing_contract() {
+        assert!(contains_possible_secret(
+            "token = 'this-is-a-sensitive-value'"
+        ));
+        assert!(!contains_possible_secret("token = '$TOKEN'"));
+        assert!(contains_sensitive_evidence("token = '$TOKEN'"));
     }
 }

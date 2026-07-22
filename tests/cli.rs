@@ -2901,6 +2901,57 @@ fn s031_json_carries_line_metadata_and_url_evidence() {
 }
 
 #[test]
+fn s032_scans_complete_skill_source_with_safe_structured_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/leaky/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let committed_value = "committed-super-secret-value";
+    std::fs::write(
+        &skill,
+        format!(
+            "---\nname: leaky\ndescription: Use when testing source-positioned secret handling\ndeployment_token: {committed_value}\n---\nUse `sk-aBcDeFgHiJkLmNoPqRsT1234` only after replacing it.\n"
+        ),
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S032", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(!rendered.contains(committed_value));
+    assert!(!rendered.contains("deployment_token: committed"));
+    let report = json_document(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{report:#}");
+    let finding = &diagnostics[0];
+    assert_eq!(finding["code"], "S032");
+    assert_eq!(finding["location"]["start"]["line"], 4);
+    assert_eq!(finding["evidence"], "deployment_token");
+    assert_eq!(
+        finding["suggestion"],
+        "replace the literal with an environment-variable or secret-store reference"
+    );
+    assert!(
+        !finding["message"]
+            .as_str()
+            .unwrap()
+            .contains(committed_value)
+    );
+
+    let clean = tmp.path().join(".claude/skills/clean/SKILL.md");
+    std::fs::create_dir_all(clean.parent().unwrap()).unwrap();
+    std::fs::write(
+        clean,
+        "---\nname: clean\ndescription: Use when documenting safe secret references\n---\npassword: \"${DB_PASSWORD}\"\nTOKEN=\"$(gh auth token)\"\nExample: `sk-xxxxxxxxxxxxxxxxxxxxxxxx`\n",
+    )
+    .unwrap();
+    std::fs::remove_file(&skill).unwrap();
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S032", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn t001_t002_cli_preserve_fixed_path_policy_metadata_and_strictness() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
