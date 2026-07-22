@@ -143,8 +143,9 @@ fn fix_executability_hooks(_mode: LintMode, _config: &LintConfig) -> bool {
 
 #[cfg(unix)]
 fn fix_executability_scripts(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
+    let ctx = LintContext::new(Path::new("."), mode);
     let mut fixed = false;
-    for path in crate::validators::hygiene::scripts::direct_script_paths(mode, exclude) {
+    for path in crate::validators::hygiene::scripts::direct_script_paths(&ctx, exclude) {
         let display = path.display().to_string();
         if is_suppressed(config, LintRule::ScriptNotExecutable, &path) {
             continue;
@@ -192,88 +193,85 @@ fn fix_frontmatter_name_mismatch(
     exclude: &ExcludeSet,
     config: &LintConfig,
 ) -> bool {
+    let ctx = LintContext::new(Path::new("."), mode);
     let mut fixed = false;
-    let mut base_dirs = Vec::new();
+    let discovery = crate::validators::skill_discovery::SkillDiscovery::from_context(&ctx, exclude);
+    let mut paths = discovery.private_skill_files;
     if mode == LintMode::Plugin {
-        base_dirs.push("skills");
+        paths.extend(discovery.exported_skill_files);
     }
-    base_dirs.push(".claude/skills");
     if targets.agent_skills {
-        base_dirs.push(".agents/skills");
+        paths.extend(
+            crate::platforms::agent_skill_candidates(exclude)
+                .into_iter()
+                .map(|entry| entry.path),
+        );
     }
+    paths.sort();
+    paths.dedup();
 
-    for base_dir in base_dirs {
-        let dir = Path::new(base_dir);
-        if !dir.is_dir() {
+    for skill_md in paths {
+        let Some(path) = skill_md.parent() else {
+            continue;
+        };
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        // Root fallback has no directory-name contract, and the discovery
+        // inventory has already excluded exported documentation trees.
+        if path == Path::new(".") {
             continue;
         }
-        for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
-            let path = entry.path;
-            let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-            if dir_name == "shared" && base_dir != ".agents/skills" {
-                continue;
-            }
-            let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
-            if exclude.is_excluded(&skill_path)
-                || is_suppressed(config, LintRule::FrontmatterNameMismatch, &skill_path)
-            {
-                continue;
-            }
-            let skill_md = path.join("SKILL.md");
-            if !skill_md.is_file() {
-                continue;
-            }
+        let skill_path = skill_md.to_string_lossy().replace('\\', "/");
+        if is_suppressed(config, LintRule::FrontmatterNameMismatch, &skill_path) {
+            continue;
+        }
 
-            // Validate dir_name against naming rules before using it
-            if RE_NAME_INVALID.is_match(&dir_name)
-                || dir_name.starts_with('-')
-                || dir_name.ends_with('-')
-                || dir_name.contains("--")
-            {
-                continue; // Dir name is invalid, skip (FINDING_9)
-            }
+        // Validate dir_name against naming rules before using it.
+        if RE_NAME_INVALID.is_match(&dir_name)
+            || dir_name.starts_with('-')
+            || dir_name.ends_with('-')
+            || dir_name.contains("--")
+        {
+            continue;
+        }
 
-            let content = match fs::read_to_string(&skill_md) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            let fm_lines = match frontmatter::extract_frontmatter(&content) {
-                Some(lines) => lines,
-                None => continue,
-            };
-            let parsed_frontmatter = match frontmatter::parse_yaml_strict(&fm_lines) {
-                Ok(yaml) => yaml,
-                Err(_) => continue,
-            };
-            let name =
-                match frontmatter::canonical_nonempty_string_field(&parsed_frontmatter, "name") {
-                    Some(name) => name,
-                    None => continue,
-                };
-            if name == dir_name {
-                continue;
-            }
+        let content = match fs::read_to_string(&skill_md) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let fm_lines = match frontmatter::extract_frontmatter(&content) {
+            Some(lines) => lines,
+            None => continue,
+        };
+        let parsed_frontmatter = match frontmatter::parse_yaml_strict(&fm_lines) {
+            Ok(yaml) => yaml,
+            Err(_) => continue,
+        };
+        let name = match frontmatter::canonical_nonempty_string_field(&parsed_frontmatter, "name") {
+            Some(name) => name,
+            None => continue,
+        };
+        if name == dir_name {
+            continue;
+        }
 
-            let Some(raw_name_index) = single_line_frontmatter_field_index(&fm_lines, "name")
-            else {
-                continue;
-            };
-            let raw_name_line = &fm_lines[raw_name_index];
-            if raw_name_line["name:".len()..].trim().is_empty() {
-                continue;
-            }
-            let new_line = format!("name: {dir_name}");
-            if let Some(new_content) = replace_in_frontmatter(&content, raw_name_line, &new_line) {
-                if fs::write(&skill_md, new_content).is_ok() {
-                    log_fix(
-                        LintRule::FrontmatterNameMismatch,
-                        &format!("{skill_path}: renamed '{name}' to '{dir_name}'"),
-                    );
-                    fixed = true;
-                }
+        let Some(raw_name_index) = single_line_frontmatter_field_index(&fm_lines, "name") else {
+            continue;
+        };
+        let raw_name_line = &fm_lines[raw_name_index];
+        if raw_name_line["name:".len()..].trim().is_empty() {
+            continue;
+        }
+        let new_line = format!("name: {dir_name}");
+        if let Some(new_content) = replace_in_frontmatter(&content, raw_name_line, &new_line) {
+            if fs::write(&skill_md, new_content).is_ok() {
+                log_fix(
+                    LintRule::FrontmatterNameMismatch,
+                    &format!("{skill_path}: renamed '{name}' to '{dir_name}'"),
+                );
+                fixed = true;
             }
         }
     }
@@ -283,66 +281,67 @@ fn fix_frontmatter_name_mismatch(
 // ── S007: empty frontmatter field ───────────────────────────────────────
 
 fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
+    let ctx = LintContext::new(Path::new("."), mode);
     let mut fixed = false;
-    let base_dirs: &[&str] = match mode {
-        LintMode::Plugin => &["skills", ".claude/skills"],
-        LintMode::Basic => &[".claude/skills"],
-    };
-    for base_dir in base_dirs {
-        let skills = collect_skills(base_dir, exclude);
-        for info in &skills {
-            let skill_md = format!("{base_dir}/{}/SKILL.md", info.dir_name);
-            if is_suppressed(config, LintRule::FrontmatterFieldEmpty, &skill_md) {
+    let discovery = crate::validators::skill_discovery::SkillDiscovery::from_context(&ctx, exclude);
+    let mut paths = discovery.private_skill_files;
+    if mode == LintMode::Plugin {
+        paths.extend(discovery.exported_skill_files);
+    }
+    paths.sort();
+    paths.dedup();
+    for skill_path in paths {
+        let skill_md = skill_path.to_string_lossy().replace('\\', "/");
+        if is_suppressed(config, LintRule::FrontmatterFieldEmpty, &skill_md) {
+            continue;
+        }
+        let content = match fs::read_to_string(&skill_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let Some(fm_lines) = frontmatter::extract_frontmatter(&content) else {
+            continue;
+        };
+        let body = frontmatter::extract_body(&content);
+
+        for field in crate::validators::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
+            let parsed_frontmatter = frontmatter::parse_yaml_strict(&fm_lines).ok();
+            if !frontmatter::optional_field_is_present(
+                &fm_lines,
+                parsed_frontmatter.as_ref(),
+                field,
+            ) {
                 continue;
             }
-            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
-            let content = match fs::read_to_string(&skill_path) {
-                Ok(c) => c,
-                Err(_) => continue,
+            if !frontmatter::optional_field_is_empty(&fm_lines, parsed_frontmatter.as_ref(), field)
+            {
+                continue; // Not empty
+            }
+
+            // FINDING_8: skip removing argument-hint if body uses $ARGUMENTS
+            if *field == "argument-hint" && body.contains("$ARGUMENTS") {
+                continue;
+            }
+
+            // A bare field line with no indented continuation is the only
+            // unambiguous removal. In particular, never orphan a YAML
+            // continuation or child block.
+            let Some(index) = single_line_frontmatter_field_index(&fm_lines, field) else {
+                continue;
             };
+            let prefix = format!("{field}:");
+            if fm_lines[index].trim_end() != prefix {
+                continue;
+            }
 
-            for field in crate::validators::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
-                let parsed_frontmatter = frontmatter::parse_yaml_strict(&info.fm_lines).ok();
-                if !frontmatter::optional_field_is_present(
-                    &info.fm_lines,
-                    parsed_frontmatter.as_ref(),
-                    field,
-                ) {
-                    continue;
-                }
-                if !frontmatter::optional_field_is_empty(
-                    &info.fm_lines,
-                    parsed_frontmatter.as_ref(),
-                    field,
-                ) {
-                    continue; // Not empty
-                }
-
-                // FINDING_8: skip removing argument-hint if body uses $ARGUMENTS
-                if *field == "argument-hint" && info.body.contains("$ARGUMENTS") {
-                    continue;
-                }
-
-                // A bare field line with no indented continuation is the only
-                // unambiguous removal. In particular, never orphan a YAML
-                // continuation or child block.
-                let Some(index) = single_line_frontmatter_field_index(&info.fm_lines, field) else {
-                    continue;
-                };
-                let prefix = format!("{field}:");
-                if info.fm_lines[index].trim_end() != prefix {
-                    continue;
-                }
-
-                if let Some(new_content) = remove_frontmatter_line(&content, &prefix) {
-                    if fs::write(&skill_path, &new_content).is_ok() {
-                        log_fix(
-                            LintRule::FrontmatterFieldEmpty,
-                            &format!("{skill_md}: removed empty '{field}'"),
-                        );
-                        fixed = true;
-                        break; // One fix per file, re-validate
-                    }
+            if let Some(new_content) = remove_frontmatter_line(&content, &prefix) {
+                if fs::write(&skill_path, &new_content).is_ok() {
+                    log_fix(
+                        LintRule::FrontmatterFieldEmpty,
+                        &format!("{skill_md}: removed empty '{field}'"),
+                    );
+                    fixed = true;
+                    break; // One fix per file, re-validate
                 }
             }
         }

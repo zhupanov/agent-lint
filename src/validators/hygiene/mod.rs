@@ -9,7 +9,9 @@ pub use pwd::validate_pwd_hygiene;
 pub use scripts::collect_script_paths;
 #[cfg(test)]
 pub use scripts::validate_executability;
+#[cfg(test)]
 pub use scripts::validate_private_executability;
+#[cfg(test)]
 pub use scripts::validate_private_script_references;
 #[cfg(test)]
 pub use scripts::validate_script_references;

@@ -86,6 +86,124 @@ fn write_public_path_hygiene_fixture(root: &std::path::Path) -> std::path::PathB
     skill
 }
 
+#[cfg(unix)]
+#[test]
+fn manifest_declared_skill_sources_feed_g002_g003_and_g004_once() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"declared-audit","version":"1.0.0","skills":"./custom"}"#,
+    )
+    .unwrap();
+    let skill = tmp.path().join("custom/demo/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: demo\ndescription: Use when checking declared skill script references\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/live.sh.\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh.\n",
+    )
+    .unwrap();
+    let live = tmp.path().join("scripts/live.sh");
+    std::fs::create_dir_all(live.parent().unwrap()).unwrap();
+    std::fs::write(&live, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&live, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "G002,G003,G004", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 2, "diagnostics: {diagnostics:#?}");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "G002" && diagnostic["subject_path"] == "custom/demo/SKILL.md"
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "G003" && diagnostic["subject_path"] == "scripts/live.sh"
+    }));
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["code"] != "G004")
+    );
+}
+
+#[test]
+fn s006_s007_autofix_cover_manifest_and_root_fallback_skills() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"declared-fix","version":"1.0.0","skills":"./custom"}"#,
+    )
+    .unwrap();
+    let declared = tmp.path().join("custom/wanted/SKILL.md");
+    std::fs::create_dir_all(declared.parent().unwrap()).unwrap();
+    std::fs::write(
+        &declared,
+        "---\nname: wrong\ndescription: Use when testing manifest skill autofix coverage\nargument-hint:\n---\nBody.\n",
+    )
+    .unwrap();
+    let output = run_in(tmp.path(), &["--autofix", "--only", "S006,S007", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(
+        std::fs::read_to_string(&declared).unwrap(),
+        "---\nname: wanted\ndescription: Use when testing manifest skill autofix coverage\n---\nBody.\n"
+    );
+
+    std::fs::remove_dir_all(tmp.path().join("custom")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"root-fix","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    let root = tmp.path().join("SKILL.md");
+    std::fs::write(
+        &root,
+        "---\nname: root\ndescription: Use when testing root fallback autofix coverage\nargument-hint:\n---\nBody.\n",
+    )
+    .unwrap();
+    let output = run_in(tmp.path(), &["--autofix", "--only", "S007", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(
+        std::fs::read_to_string(&root).unwrap(),
+        "---\nname: root\ndescription: Use when testing root fallback autofix coverage\n---\nBody.\n"
+    );
+}
+
+#[test]
+fn excluding_the_only_plugin_command_does_not_create_s003() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"excluded-command","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("skills/shared")).unwrap();
+    let command = tmp.path().join("commands/only.md");
+    std::fs::create_dir_all(command.parent().unwrap()).unwrap();
+    std::fs::write(
+        command,
+        "---\ndescription: Use when verifying excluded export accounting behavior\n---\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\"commands/only.md\"]\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--only", "S003", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(stderr(&output).is_empty());
+}
+
 #[test]
 fn s037_cli_accepts_repository_relative_json_reference() {
     let tmp = tempfile::tempdir().unwrap();

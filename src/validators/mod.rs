@@ -70,9 +70,9 @@ fn run_basic(
     // V6-adapted: private SKILL.md frontmatter for .claude/skills/
     skills::validate_private_skill_frontmatter(diag, exclude);
     // V9-adapted: script ref integrity for $PWD/.claude/skills/ refs
-    hygiene::validate_private_script_references(diag, exclude);
+    hygiene::scripts::validate_script_references_for_context(ctx, diag, exclude);
     // V10-adapted: executability for .claude/skills/*/scripts/*.sh
-    hygiene::validate_private_executability(diag, exclude);
+    hygiene::scripts::validate_executability_for_context(ctx, diag, exclude);
     // Skill content checks (both-mode subset: excludes S016, S017, S029, S033)
     skill_content::validate_private_skill_content_with_prompt_pass(
         diag,
@@ -169,9 +169,9 @@ fn run_plugin(
     // V8: PWD hygiene
     hygiene::validate_pwd_hygiene(diag, exclude);
     // V9: script reference integrity
-    hygiene::scripts::validate_script_references_for_mode(LintMode::Plugin, diag, exclude);
+    hygiene::scripts::validate_script_references_for_context(ctx, diag, exclude);
     // V10: executability (generic, no hardcoded block-submodule-edit.sh)
-    hygiene::scripts::validate_executability_for_mode(LintMode::Plugin, diag, exclude);
+    hygiene::scripts::validate_executability_for_context(ctx, diag, exclude);
     // V11: dead-script detection
     hygiene::validate_dead_scripts(ctx, diag, exclude);
     // V12: marketplace enriched metadata

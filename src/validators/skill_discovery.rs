@@ -5,9 +5,8 @@
 
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, LintMode, ManifestState};
-use crate::plugin_paths::safe_component_path;
+use crate::plugin_paths::{declared_component_paths, safe_component_path};
 use crate::traversal;
-use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,6 +17,15 @@ pub(crate) struct SkillDiscovery {
     pub private_skill_files: Vec<PathBuf>,
     pub active_command_files: Vec<PathBuf>,
     pub declared_skill_dirs: Vec<PathBuf>,
+    /// A plugin command selected by the effective manifest/default command
+    /// surface existed but was removed by `[lint].exclude`. S003 needs this
+    /// provenance so exclusions cannot manufacture a no-exports error.
+    pub has_excluded_plugin_command: bool,
+    /// Every active instruction/configuration file that can contain an
+    /// executable script invocation. This is deliberately broader than the
+    /// Markdown-only skill and command inventories: runtime component roots
+    /// may contain scripts, YAML, or other command-bearing files.
+    pub hygiene_source_files: Vec<PathBuf>,
 }
 
 impl SkillDiscovery {
@@ -25,25 +33,38 @@ impl SkillDiscovery {
         let private_skill_files = skill_files_in_dir(Path::new(".claude/skills"), false, exclude);
         let mut active_command_files =
             markdown_files_in_dir(Path::new(".claude/commands"), exclude);
+        let mut hygiene_roots = vec![
+            PathBuf::from(".claude/skills"),
+            PathBuf::from(".claude/agents"),
+            PathBuf::from(".claude/commands"),
+        ];
         if ctx.mode != LintMode::Plugin {
             return Self {
                 exported_skill_files: Vec::new(),
                 private_skill_files,
                 active_command_files,
                 declared_skill_dirs: Vec::new(),
+                has_excluded_plugin_command: false,
+                hygiene_source_files: collect_hygiene_source_files(&hygiene_roots, &[], exclude),
             };
         }
 
         let (skills_declared, commands_declared, has_skills_field) = match &ctx.plugin_json {
             ManifestState::Parsed(manifest) => (
-                declared_string_paths(manifest, "skills"),
-                declared_string_paths(manifest, "commands"),
+                declared_component_field_paths(manifest, "skills"),
+                declared_component_field_paths(manifest, "commands"),
                 manifest.get("skills").is_some(),
             ),
             _ => (Vec::new(), Vec::new(), false),
         };
 
         let mut exported = BTreeSet::new();
+        hygiene_roots.extend([
+            PathBuf::from("skills"),
+            PathBuf::from("agents"),
+            PathBuf::from("scripts"),
+            PathBuf::from(".github/workflows"),
+        ]);
         for path in skill_files_in_dir(Path::new("skills"), true, exclude) {
             exported.insert(path);
         }
@@ -56,16 +77,31 @@ impl SkillDiscovery {
                 continue;
             }
             declared_skill_dirs.insert(dir.clone());
+            hygiene_roots.push(dir.clone());
             for path in skill_files_in_dir(&dir, true, exclude) {
                 exported.insert(path);
             }
         }
+        let mut direct_sources = Vec::new();
         // Claude only treats a root SKILL.md as a fallback when neither the
         // conventional directory nor a skills declaration is present.
         if !Path::new("skills").is_dir() && !has_skills_field {
             let root = PathBuf::from("SKILL.md");
             if safe_regular_file(&root) && !exclude.is_excluded("SKILL.md") {
+                direct_sources.push(root.clone());
                 exported.insert(root);
+            }
+        }
+
+        // Agent declarations use the shared manifest path normalizer, rather
+        // than a second local parser. A declared agent may be a directory or a
+        // direct Markdown file, so keep direct files separate from roots.
+        for root in super::manifest::declared_agent_roots(ctx) {
+            let path = PathBuf::from(root);
+            if safe_existing_dir(&path) {
+                hygiene_roots.push(path);
+            } else if safe_regular_file(&path) {
+                direct_sources.push(path);
             }
         }
 
@@ -79,15 +115,26 @@ impl SkillDiscovery {
                     .collect()
             };
         let mut commands = BTreeSet::new();
+        let mut has_excluded_plugin_command = false;
         for root in command_roots {
             if safe_regular_file(&root) {
-                if root.extension().and_then(|value| value.to_str()) == Some("md")
-                    && !exclude.is_excluded(&root.to_string_lossy())
-                {
-                    commands.insert(root);
+                direct_sources.push(root.clone());
+                if root.extension().and_then(|value| value.to_str()) == Some("md") {
+                    if exclude.is_excluded(&root.to_string_lossy()) {
+                        has_excluded_plugin_command = true;
+                    } else {
+                        commands.insert(root);
+                    }
                 }
             } else if safe_existing_dir(&root) {
-                commands.extend(markdown_files_in_dir(&root, exclude));
+                hygiene_roots.push(root.clone());
+                for command in markdown_files_in_dir(&root, &ExcludeSet::default()) {
+                    if exclude.is_excluded(&command.to_string_lossy()) {
+                        has_excluded_plugin_command = true;
+                    } else {
+                        commands.insert(command);
+                    }
+                }
             }
         }
         active_command_files.extend(commands);
@@ -99,24 +146,56 @@ impl SkillDiscovery {
             private_skill_files,
             active_command_files,
             declared_skill_dirs: declared_skill_dirs.into_iter().collect(),
+            has_excluded_plugin_command,
+            hygiene_source_files: collect_hygiene_source_files(
+                &hygiene_roots,
+                &direct_sources,
+                exclude,
+            ),
         }
     }
+}
+
+fn collect_hygiene_source_files(
+    roots: &[PathBuf],
+    direct_files: &[PathBuf],
+    exclude: &ExcludeSet,
+) -> Vec<PathBuf> {
+    let mut files = BTreeSet::new();
+    for root in roots {
+        if !safe_existing_dir(root) {
+            continue;
+        }
+        for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
+            if !exclude.is_excluded(&entry.display) {
+                files.insert(entry.path);
+            }
+        }
+    }
+    for path in direct_files {
+        if safe_regular_file(path) && !exclude.is_excluded(&path.to_string_lossy()) {
+            files.insert(path.clone());
+        }
+    }
+    files.into_iter().collect()
 }
 
 fn manifest_has_field(state: &ManifestState, field: &str) -> bool {
     matches!(state, ManifestState::Parsed(value) if value.get(field).is_some())
 }
 
-fn declared_string_paths(value: &Value, field: &str) -> Vec<String> {
-    match value.get(field) {
-        Some(Value::String(path)) => vec![path.clone()],
-        Some(Value::Array(values)) => values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect(),
-        _ => Vec::new(),
-    }
+fn declared_component_field_paths(value: &serde_json::Value, field: &str) -> Vec<String> {
+    let array_prefix = format!("{field}[");
+    let object_prefix = format!("{field}.");
+    declared_component_paths(value)
+        .into_iter()
+        .filter(|declared| {
+            declared.label == field
+                || declared.label.starts_with(&array_prefix)
+                || declared.label.starts_with(&object_prefix)
+        })
+        .map(|declared| declared.raw.to_string())
+        .collect()
 }
 
 fn safe_existing_dir(path: &Path) -> bool {
