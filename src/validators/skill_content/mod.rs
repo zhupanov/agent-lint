@@ -2710,6 +2710,41 @@ suppress = ["S033"]
 
     #[test]
     #[serial_test::serial]
+    fn test_s038_masks_inline_code_and_link_destinations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let path = "skills/my-skill/SKILL.md";
+        for (body, expected) in [
+            ("Format dates as `2025-01-01`.\n", false),
+            (
+                "Read [the guide](https://example.test/archive/2030).\n",
+                false,
+            ),
+            ("This expires after 2030.\n", true),
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: my-skill\ndescription: Use when this skill is needed\n---\n{body}"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::TimeSensitive),
+                expected,
+                "unexpected S038 result for {body}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s038_private_mode_skips() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -5232,6 +5267,47 @@ warn = ["name-not-gerund"]
 
     #[test]
     #[serial_test::serial]
+    fn test_s053_masks_inline_code_and_link_destinations_but_keeps_labels() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let path = "skills/my-skill/SKILL.md";
+        for (body, expected) in [
+            (
+                "Run `git fetch` and `git pull`, then retrieve the changes.\n",
+                false,
+            ),
+            (
+                "Read [the documentation](https://example.test/endpoint/route/url).\n",
+                false,
+            ),
+            (
+                "Read [endpoint route URL](https://example.test/docs).\n",
+                true,
+            ),
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: my-skill\ndescription: Use when this skill is needed\n---\n{body}"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::TerminologyInconsistent),
+                expected,
+                "unexpected S053 result for {body}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s053_case_insensitive() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -6231,6 +6307,46 @@ suppress = ["S055"]
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s056_masks_inline_code_and_link_destinations_and_uses_paragraph_suppressors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let path = "skills/my-skill/SKILL.md";
+        for body in [
+            "The build failed, rerun the tests or check the logs.\n",
+            "`Choose tool A or tool B or tool C.`\n",
+            "Read [documentation](https://example.test/use/tool/a/or/b/or/c).\n",
+            "Choose parser A, parser B, or parser C.\nUse parser A by default.\n",
+            "Choose parser A, parser B, or parser C.\n\nUse parser A by default.\n",
+            "- Choose parser A, parser B, or parser C.\n- Use parser A by default.\n",
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: my-skill\ndescription: A valid skill description here\n---\n{body}"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            let fires = diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::BodyNoDefault);
+            if body.contains("\n\n") || body.starts_with("- ") {
+                assert!(
+                    fires,
+                    "S056 should retain paragraph and list boundaries: {body}"
+                );
+            } else {
+                assert!(!fires, "S056 should ignore or suppress: {body}");
+            }
+        }
+    }
+
     // ── S057: magic-number-undoc ───────────────────────────────────
 
     #[test]
@@ -6439,6 +6555,42 @@ suppress = ["S055"]
                 .any(|e| e.contains("undocumented magic number")),
             "S057 should NOT fire on comment lines containing assignment patterns"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s057_skips_flag_values_and_checks_every_assignment_in_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let path = "skills/my-skill/SKILL.md";
+        for (line, expected) in [
+            ("grep -r pattern --max-count=50 src/", None),
+            ("java -Dprop=8", None),
+            ("enabled=1 timeout=47", Some("timeout=47")),
+            ("--max-count=50 timeout=47", Some("timeout=47")),
+            ("enabled=1 timeout=60", None),
+        ] {
+            std::fs::write(
+                path,
+                format!("---\nname: my-skill\ndescription: A valid skill description here\n---\n```bash\n{line}\n```\n"),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            let finding = diag
+                .diagnostics()
+                .iter()
+                .find(|d| d.rule == LintRule::MagicNumberUndoc);
+            match expected {
+                Some(expected) => assert!(
+                    finding.is_some_and(|d| d.message.contains(expected)),
+                    "S057 should report {expected}: {finding:?}"
+                ),
+                None => assert!(finding.is_none(), "S057 should ignore: {line}"),
+            }
+        }
     }
 
     // ── S063: model-invalid ──────────────────────────────────────────
