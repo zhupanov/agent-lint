@@ -5,6 +5,7 @@
 //! discovery consumers use [`safe_component_path`] so they cannot probe a
 //! declaration that the safety layer rejects.
 
+use crate::validators::json_locate::Seg;
 use regex::Regex;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -64,6 +65,10 @@ pub(crate) const COMPONENT_PATH_FIELDS: &[ComponentPathField] = &[
 pub(crate) struct DeclaredComponentPath<'a> {
     pub label: String,
     pub raw: &'a str,
+    /// Structural JSON path of the declared string inside its owning manifest
+    /// value, so span recovery follows the owning field rather than searching
+    /// the document for an equal value.
+    pub path: Vec<Seg<'a>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +86,7 @@ pub(crate) enum ComponentPathSafety {
 pub(crate) fn declared_component_paths(value: &Value) -> Vec<DeclaredComponentPath<'_>> {
     let mut paths = Vec::new();
     for field in COMPONENT_PATH_FIELDS {
+        let field_path = || field.keys.iter().map(|key| Seg::Key(key)).collect::<Vec<_>>();
         let value = field
             .keys
             .iter()
@@ -89,13 +95,17 @@ pub(crate) fn declared_component_paths(value: &Value) -> Vec<DeclaredComponentPa
             Some(Value::String(raw)) => paths.push(DeclaredComponentPath {
                 label: field.label.to_string(),
                 raw,
+                path: field_path(),
             }),
             Some(Value::Array(items)) => {
                 for (index, value) in items.iter().enumerate() {
                     if let Some(raw) = value.as_str() {
+                        let mut path = field_path();
+                        path.push(Seg::Index(index));
                         paths.push(DeclaredComponentPath {
                             label: format!("{}[{index}]", field.label),
                             raw,
+                            path,
                         });
                     }
                 }
@@ -103,9 +113,13 @@ pub(crate) fn declared_component_paths(value: &Value) -> Vec<DeclaredComponentPa
             Some(Value::Object(commands)) if field.label == "commands" => {
                 for (name, command) in commands {
                     if let Some(raw) = command.get("source").and_then(Value::as_str) {
+                        let mut path = field_path();
+                        path.push(Seg::Key(name));
+                        path.push(Seg::Key("source"));
                         paths.push(DeclaredComponentPath {
                             label: format!("commands.{name}.source"),
                             raw,
+                            path,
                         });
                     }
                 }

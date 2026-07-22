@@ -6,6 +6,7 @@ use crate::hook_commands::extract_hook_command_paths;
 use crate::plugin_paths::{has_normalized_path_segment, is_absolute_path, path_segments};
 use crate::rules::LintRule;
 use crate::script_paths::Invocation;
+use crate::validators::json_locate::{JsonScanner, Seg};
 use crate::validators::{common::manifest_error_metadata, hook_schema};
 use serde_json::Value;
 use std::path::Path;
@@ -218,19 +219,20 @@ fn validate_plugin_hook_declarations(ctx: &LintContext, diag: &mut DiagnosticCol
 
     match hooks {
         Value::String(path) => {
-            validate_hook_declaration_path(path, "hooks field", hooks, plugin, diag)
+            validate_hook_declaration_path(path, "hooks field", &[Seg::Key("hooks")], plugin, diag)
         }
         Value::Array(paths) => {
             for (index, value) in paths.iter().enumerate() {
                 let label = format!("hooks array entry {}", index + 1);
+                let value_path = [Seg::Key("hooks"), Seg::Index(index)];
                 match value {
                     Value::String(path) => {
-                        validate_hook_declaration_path(path, &label, value, plugin, diag)
+                        validate_hook_declaration_path(path, &label, &value_path, plugin, diag)
                     }
                     value => report_plugin_declaration_malformed(
                         &format!("{label} must be a string (found {})", json_type(value)),
                         &label,
-                        value,
+                        &value_path,
                         plugin,
                         diag,
                     ),
@@ -244,7 +246,7 @@ fn validate_plugin_hook_declarations(ctx: &LintContext, diag: &mut DiagnosticCol
                 json_type(value)
             ),
             "hooks field",
-            value,
+            &[Seg::Key("hooks")],
             plugin,
             diag,
         ),
@@ -254,7 +256,7 @@ fn validate_plugin_hook_declarations(ctx: &LintContext, diag: &mut DiagnosticCol
 fn validate_hook_declaration_path(
     path: &str,
     label: &str,
-    value: &Value,
+    value_path: &[Seg<'_>],
     plugin: &ParsedManifest,
     diag: &mut DiagnosticCollector,
 ) {
@@ -267,30 +269,27 @@ fn validate_hook_declaration_path(
         report_plugin_declaration_malformed(
             &format!("{label} must contain at least one normalized path segment"),
             label,
-            value,
+            value_path,
             plugin,
             diag,
         );
     }
 }
 
+/// The declared value's span follows its owning JSON path so a repeated equal
+/// value elsewhere in the manifest never captures the location.
 fn report_plugin_declaration_malformed(
     detail: &str,
     label: &str,
-    value: &Value,
+    value_path: &[Seg<'_>],
     plugin: &ParsedManifest,
     diag: &mut DiagnosticCollector,
 ) {
     let mut metadata = DiagnosticMetadata::default().with_evidence(label);
-    if let Some(location) = plugin
-        .source()
-        .and_then(|source| json_value_range(source, value))
-        .and_then(|range| {
-            plugin
-                .source()
-                .and_then(|source| SourceSpan::from_byte_range(source, range))
-        })
-    {
+    if let Some(location) = plugin.source().and_then(|source| {
+        JsonScanner::locate(source, value_path)
+            .and_then(|range| SourceSpan::from_byte_range(source, range))
+    }) {
         metadata = metadata.with_location(location);
     }
     diag.report_at_with(
@@ -299,11 +298,6 @@ fn report_plugin_declaration_malformed(
         &format!(".claude-plugin/plugin.json {detail}"),
         metadata,
     );
-}
-
-fn json_value_range(source: &str, value: &Value) -> Option<std::ops::Range<usize>> {
-    let token = serde_json::to_string(value).expect("JSON values always serialize");
-    source.find(&token).map(|start| start..start + token.len())
 }
 
 /// V4: Validate .claude/settings.json hook command paths

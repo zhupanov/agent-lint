@@ -7,7 +7,7 @@ use crate::plugin_paths::{
     safe_component_path,
 };
 use crate::rules::LintRule;
-use crate::validators::codex_surfaces::{JsonScanner, Seg};
+use crate::validators::json_locate::{JsonScanner, Seg};
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
 use regex::Regex;
 use serde_json::Value;
@@ -488,11 +488,12 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                                 &format!(
                                     "{f} plugins[{i}].source path '{s}' must be relative, not absolute"
                                 ),
-                                marketplace_value_metadata(
+                                metadata_at(
                                     val.source(),
-                                    &Value::String(s.to_owned()),
+                                    &[Seg::Key("plugins"), Seg::Index(i), Seg::Key("source")],
                                     &format!("plugins[{i}].source"),
                                     "use a repository-relative marketplace source",
+                                    false,
                                 ),
                             );
                         } else if path_segments(s).any(|seg| seg == "..") {
@@ -501,11 +502,12 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                                 &format!(
                                     "{f} plugins[{i}].source path '{s}' must not use '..' traversal"
                                 ),
-                                marketplace_value_metadata(
+                                metadata_at(
                                     val.source(),
-                                    &Value::String(s.to_owned()),
+                                    &[Seg::Key("plugins"), Seg::Index(i), Seg::Key("source")],
                                     &format!("plugins[{i}].source"),
                                     "remove '..' traversal from the marketplace source",
+                                    false,
                                 ),
                             );
                         } else if !s.starts_with("./") && invalid_plugin_root {
@@ -514,11 +516,12 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                                 &format!(
                                     "{f} plugins[{i}].source depends on invalid metadata.pluginRoot"
                                 ),
-                                marketplace_value_metadata(
+                                metadata_at(
                                     val.source(),
-                                    plugin_root.expect("invalid_plugin_root requires pluginRoot"),
+                                    &[Seg::Key("metadata"), Seg::Key("pluginRoot")],
                                     "metadata.pluginRoot",
                                     "use a non-empty plugin-root-relative './' pluginRoot",
+                                    false,
                                 ),
                             );
                         } else if !s.starts_with("./") && plugin_root.is_none() {
@@ -539,6 +542,7 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                     plugin,
                     &format!("{f} plugins[{i}]"),
                     val.source(),
+                    &[Seg::Key("plugins"), Seg::Index(i)],
                     diag,
                 );
             }
@@ -610,12 +614,17 @@ fn validate_object_plugin_source(
         diag.report_with(
             LintRule::MarketplacePluginInvalid,
             &format!("{f} plugins[{i}].source git-subdir path must not use '..' traversal"),
-            marketplace_value_metadata(
+            metadata_at(
                 source,
-                obj.get("path")
-                    .expect("the preceding condition requires path"),
+                &[
+                    Seg::Key("plugins"),
+                    Seg::Index(i),
+                    Seg::Key("source"),
+                    Seg::Key("path"),
+                ],
                 &format!("plugins[{i}].source.path"),
                 "remove '..' traversal from the git-subdir path",
+                false,
             ),
         );
     }
@@ -897,15 +906,18 @@ pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_declared_component_paths(val, f, val.source(), diag);
+    validate_declared_component_paths(val, f, val.source(), &[], diag);
 }
 
 /// Report M012/M013 for every path-bearing component declaration. The shared
 /// extractor is also used by marketplace validation and discovery consumers.
+/// `path_prefix` locates the declaring object inside `source` (empty for
+/// plugin.json, `plugins[i]` for a marketplace entry).
 fn validate_declared_component_paths(
     value: &Value,
     owner: &str,
     source: Option<&str>,
+    path_prefix: &[Seg<'_>],
     diag: &mut DiagnosticCollector,
 ) {
     for path in declared_component_paths(value) {
@@ -944,10 +956,12 @@ fn validate_declared_component_paths(
             path.raw,
             requirement,
             source,
+            &extend_path(path_prefix, &path.path),
         );
     }
 }
 
+#[allow(clippy::too_many_arguments)] // keeps the rule, display label, and span path explicit at the call site.
 fn report_component_path(
     diag: &mut DiagnosticCollector,
     rule: LintRule,
@@ -956,44 +970,22 @@ fn report_component_path(
     raw: &str,
     requirement: &str,
     source: Option<&str>,
+    path: &[Seg<'_>],
 ) {
-    let mut metadata = DiagnosticMetadata::default()
-        .with_evidence(label)
-        .with_suggestion("use a plugin-root-relative './' component path");
-    if let Some(location) = source
-        .and_then(|source| json_value_range(source, &Value::String(raw.to_owned())))
-        .and_then(|range| source.and_then(|source| SourceSpan::from_byte_range(source, range)))
-    {
-        metadata = metadata.with_location(location);
-    }
     diag.report_with(
         rule,
         &format!("{owner} {label} path '{raw}' {requirement}"),
-        metadata,
+        metadata_at(
+            source,
+            path,
+            label,
+            "use a plugin-root-relative './' component path",
+            false,
+        ),
     );
 }
 
-/// The manifest has already parsed, so this maps an escaped JSON string back
-/// to a source token without executing or probing repository-controlled data.
-fn marketplace_value_metadata(
-    source: Option<&str>,
-    value: &Value,
-    evidence: &str,
-    suggestion: &str,
-) -> DiagnosticMetadata {
-    let mut metadata = DiagnosticMetadata::default()
-        .with_evidence(evidence)
-        .with_suggestion(suggestion);
-    if let Some(location) = source
-        .and_then(|source| json_value_range(source, value))
-        .and_then(|range| source.and_then(|source| SourceSpan::from_byte_range(source, range)))
-    {
-        metadata = metadata.with_location(location);
-    }
-    metadata
-}
-
-/// Metadata for a marketplace name value. Unlike generic value lookup, this
+/// Metadata for a marketplace name value. The shared path-aware scanner
 /// follows the owning JSON path so repeated string values retain their exact
 /// source token span.
 fn marketplace_name_metadata(
@@ -1001,171 +993,17 @@ fn marketplace_name_metadata(
     plugin_index: Option<usize>,
     evidence: &str,
 ) -> DiagnosticMetadata {
-    let mut metadata = DiagnosticMetadata::default()
-        .with_evidence(evidence)
-        .with_suggestion("replace whitespace with hyphens and use a whitespace-free identifier");
-    if let Some(location) = source.and_then(|source| {
-        marketplace_name_value_range(source, plugin_index)
-            .and_then(|range| SourceSpan::from_byte_range(source, range))
-    }) {
-        metadata = metadata.with_location(location);
-    }
-    metadata
-}
-
-/// Finds the source token for either the marketplace `name` or a particular
-/// `plugins[index].name`. The manifest has already parsed as JSON, so this
-/// small cursor only maps semantic ownership back to the original bytes; it
-/// never accepts or executes repository-controlled input.
-fn marketplace_name_value_range(
-    source: &str,
-    plugin_index: Option<usize>,
-) -> Option<std::ops::Range<usize>> {
-    let root = skip_json_whitespace(source, 0);
-    let root_name = |object_start| json_object_field_value_range(source, object_start, "name");
-    match plugin_index {
-        None => root_name(root),
-        Some(index) => {
-            let plugins = json_object_field_value_range(source, root, "plugins")?;
-            let plugin = json_array_item_value_range(source, plugins.start, index)?;
-            root_name(plugin.start)
-        }
-    }
-}
-
-fn skip_json_whitespace(source: &str, mut offset: usize) -> usize {
-    while source
-        .as_bytes()
-        .get(offset)
-        .is_some_and(u8::is_ascii_whitespace)
-    {
-        offset += 1;
-    }
-    offset
-}
-
-fn json_object_field_value_range(
-    source: &str,
-    object_start: usize,
-    wanted_key: &str,
-) -> Option<std::ops::Range<usize>> {
-    if source.as_bytes().get(object_start) != Some(&b'{') {
-        return None;
-    }
-    let mut offset = skip_json_whitespace(source, object_start + 1);
-    while source.as_bytes().get(offset) != Some(&b'}') {
-        let key_start = offset;
-        let key_end = json_string_end(source, key_start)?;
-        let key: String = serde_json::from_str(&source[key_start..key_end]).ok()?;
-        offset = skip_json_whitespace(source, key_end);
-        if source.as_bytes().get(offset) != Some(&b':') {
-            return None;
-        }
-        let value_start = skip_json_whitespace(source, offset + 1);
-        let value_end = json_value_end(source, value_start)?;
-        if key == wanted_key {
-            return Some(value_start..value_end);
-        }
-        offset = skip_json_whitespace(source, value_end);
-        match source.as_bytes().get(offset) {
-            Some(b',') => offset = skip_json_whitespace(source, offset + 1),
-            Some(b'}') => break,
-            _ => return None,
-        }
-    }
-    None
-}
-
-fn json_array_item_value_range(
-    source: &str,
-    array_start: usize,
-    wanted_index: usize,
-) -> Option<std::ops::Range<usize>> {
-    if source.as_bytes().get(array_start) != Some(&b'[') {
-        return None;
-    }
-    let mut offset = skip_json_whitespace(source, array_start + 1);
-    let mut index = 0;
-    while source.as_bytes().get(offset) != Some(&b']') {
-        let value_start = offset;
-        let value_end = json_value_end(source, value_start)?;
-        if index == wanted_index {
-            return Some(value_start..value_end);
-        }
-        index += 1;
-        offset = skip_json_whitespace(source, value_end);
-        match source.as_bytes().get(offset) {
-            Some(b',') => offset = skip_json_whitespace(source, offset + 1),
-            Some(b']') => break,
-            _ => return None,
-        }
-    }
-    None
-}
-
-fn json_value_end(source: &str, offset: usize) -> Option<usize> {
-    match source.as_bytes().get(offset)? {
-        b'"' => json_string_end(source, offset),
-        b'{' => {
-            let mut cursor = skip_json_whitespace(source, offset + 1);
-            while source.as_bytes().get(cursor) != Some(&b'}') {
-                cursor = json_string_end(source, cursor)?;
-                cursor = skip_json_whitespace(source, cursor);
-                if source.as_bytes().get(cursor) != Some(&b':') {
-                    return None;
-                }
-                cursor = json_value_end(source, skip_json_whitespace(source, cursor + 1))?;
-                cursor = skip_json_whitespace(source, cursor);
-                match source.as_bytes().get(cursor) {
-                    Some(b',') => cursor = skip_json_whitespace(source, cursor + 1),
-                    Some(b'}') => break,
-                    _ => return None,
-                }
-            }
-            Some(cursor + 1)
-        }
-        b'[' => {
-            let mut cursor = skip_json_whitespace(source, offset + 1);
-            while source.as_bytes().get(cursor) != Some(&b']') {
-                cursor = json_value_end(source, cursor)?;
-                cursor = skip_json_whitespace(source, cursor);
-                match source.as_bytes().get(cursor) {
-                    Some(b',') => cursor = skip_json_whitespace(source, cursor + 1),
-                    Some(b']') => break,
-                    _ => return None,
-                }
-            }
-            Some(cursor + 1)
-        }
-        _ => {
-            let end = source[offset..]
-                .find(|character: char| {
-                    character.is_whitespace() || matches!(character, ',' | ']' | '}')
-                })
-                .map_or(source.len(), |relative| offset + relative);
-            (end > offset).then_some(end)
-        }
-    }
-}
-
-fn json_string_end(source: &str, start: usize) -> Option<usize> {
-    if source.as_bytes().get(start) != Some(&b'"') {
-        return None;
-    }
-    let mut offset = start + 1;
-    while let Some(byte) = source.as_bytes().get(offset) {
-        match byte {
-            b'"' => return Some(offset + 1),
-            b'\\' => offset += 2,
-            _ => offset += 1,
-        }
-    }
-    None
-}
-
-fn json_value_range(source: &str, value: &Value) -> Option<std::ops::Range<usize>> {
-    let token = serde_json::to_string(value).expect("JSON values always serialize");
-    source.find(&token).map(|start| start..start + token.len())
+    let path: Vec<Seg<'_>> = match plugin_index {
+        None => vec![Seg::Key("name")],
+        Some(index) => vec![Seg::Key("plugins"), Seg::Index(index), Seg::Key("name")],
+    };
+    metadata_at(
+        source,
+        &path,
+        evidence,
+        "replace whitespace with hyphens and use a whitespace-free identifier",
+        false,
+    )
 }
 
 /// V30–V32: validate plugin-manifest fields on both directly lintable surfaces.
