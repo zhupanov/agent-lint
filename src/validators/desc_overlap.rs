@@ -11,6 +11,7 @@
 //! use global `suppress` instead.
 
 use crate::config::ExcludeSet;
+use crate::context::LintContext;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
 use crate::rules::LintRule;
@@ -97,6 +98,7 @@ pub fn validate_agent_desc_overlap(
 /// one namespace. When Cursor is active, its complete `.cursor/skills/` and
 /// `.agents/skills/` runtime inventory is compared as one namespace. Otherwise
 /// `.agents/skills/` is compared only within itself when that surface is active.
+#[cfg(test)]
 pub fn validate_skill_desc_overlap(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
@@ -132,6 +134,66 @@ pub fn validate_skill_desc_overlap(
 
 fn collect_cursor_runtime_skill_candidates(exclude: &ExcludeSet) -> Vec<DescCandidate> {
     collect_skill_candidates_from_infos(collect_cursor_runtime_skills(exclude))
+}
+
+pub fn validate_discovered_skill_desc_overlap(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    include_agent_skills: bool,
+    include_cursor: bool,
+) {
+    let found = super::skill_discovery::SkillDiscovery::from_context(ctx, exclude);
+    let mut paths = found.private_skill_files;
+    paths.extend(found.active_command_files);
+    if ctx.mode == crate::context::LintMode::Plugin {
+        paths.extend(found.exported_skill_files);
+    }
+    paths.sort();
+    paths.dedup();
+    let infos = crate::validators::skills::collect_plugin_skill_files(
+        paths
+            .into_iter()
+            .filter(|path| path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md"))
+            .collect(),
+        exclude,
+    );
+    let mut candidates = collect_skill_candidates_from_infos(infos);
+    // Commands have description-only routing contracts and intentionally do not
+    // enter the broader SKILL content pipeline.
+    for path in
+        super::skill_discovery::SkillDiscovery::from_context(ctx, exclude).active_command_files
+    {
+        let display = path.to_string_lossy().replace('\\', "/");
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Some(lines) = frontmatter_lines(&content) else {
+            continue;
+        };
+        let Some(description) = frontmatter::get_strict_string_field(&lines, "description") else {
+            continue;
+        };
+        if let Some(candidate) = candidate_from_description(display, &description) {
+            candidates.push(candidate);
+        }
+    }
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    candidates.dedup_by(|left, right| left.path == right.path);
+    report_overlaps(diag, candidates, LintRule::SkillDescOverlap);
+    if include_cursor {
+        report_overlaps(
+            diag,
+            collect_cursor_runtime_skill_candidates(exclude),
+            LintRule::SkillDescOverlap,
+        );
+    } else if include_agent_skills {
+        report_overlaps(
+            diag,
+            collect_skill_candidates(&[".agents/skills"], exclude),
+            LintRule::SkillDescOverlap,
+        );
+    }
 }
 
 fn collect_agent_candidates(dirs: &[&str], exclude: &ExcludeSet) -> Vec<DescCandidate> {

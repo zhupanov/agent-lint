@@ -1,4 +1,5 @@
 use crate::config::ExcludeSet;
+use crate::context::LintContext;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
@@ -8,7 +9,7 @@ use crate::traversal;
 use crate::validators::shared_md_refs;
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 const SKILL_DIR_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
 
 /// Pre-parsed data for a single SKILL.md file.
@@ -65,18 +66,48 @@ pub(crate) fn collect_agent_skills(exclude: &ExcludeSet) -> Vec<SkillInfo> {
     collect_skill_files(crate::platforms::agent_skill_candidates(exclude))
 }
 
+pub(crate) fn collect_plugin_skill_files(
+    paths: Vec<PathBuf>,
+    exclude: &ExcludeSet,
+) -> Vec<SkillInfo> {
+    let entries = paths
+        .into_iter()
+        .filter(|path| !exclude.is_excluded(&path.to_string_lossy()))
+        .map(|path| traversal::WalkEntry {
+            display: path.to_string_lossy().replace('\\', "/"),
+            path,
+        });
+    collect_skill_files(entries)
+}
+
+pub(crate) fn collect_skills_including_shared(
+    base_dir: &str,
+    exclude: &ExcludeSet,
+) -> Vec<SkillInfo> {
+    let entries = traversal::shallow_directories(Path::new(base_dir), Path::new("."), None)
+        .entries
+        .into_iter()
+        .map(|entry| traversal::WalkEntry {
+            display: format!(
+                "{base_dir}/{}/SKILL.md",
+                entry.path.file_name().unwrap().to_string_lossy()
+            ),
+            path: entry.path.join("SKILL.md"),
+        })
+        .filter(|entry| !exclude.is_excluded(&entry.display));
+    collect_skill_files(entries)
+}
+
 fn collect_skill_files(entries: impl IntoIterator<Item = traversal::WalkEntry>) -> Vec<SkillInfo> {
     let mut skills = Vec::new();
     for entry in entries {
-        let Some(dir_name) = entry
+        let dir_name = entry
             .path
             .parent()
             .and_then(|parent| parent.file_name())
             .and_then(|name| name.to_str())
             .map(str::to_owned)
-        else {
-            continue;
-        };
+            .unwrap_or_default();
         let content = match fs::read_to_string(&entry.path) {
             Ok(content) => content,
             Err(_) => continue,
@@ -85,10 +116,20 @@ fn collect_skill_files(entries: impl IntoIterator<Item = traversal::WalkEntry>) 
         let Some(fm_lines) = document.frontmatter().map(|lines| lines.to_vec()) else {
             continue; // S004 fires from existing validators where applicable.
         };
-        let scripts_dir = entry.path.parent().unwrap().join("scripts");
-        let has_scripts_dir = !traversal::shallow_entries(&scripts_dir, Path::new("."), None)
-            .entries
-            .is_empty();
+        let root_skill = entry
+            .path
+            .parent()
+            .is_some_and(|parent| parent.as_os_str().is_empty());
+        let scripts_dir = entry
+            .path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
+            .join("scripts");
+        let has_scripts_dir = !root_skill
+            && !traversal::shallow_entries(&scripts_dir, Path::new("."), None)
+                .entries
+                .is_empty();
         skills.push(SkillInfo {
             path: entry.display,
             dir_name,
@@ -102,6 +143,7 @@ fn collect_skill_files(entries: impl IntoIterator<Item = traversal::WalkEntry>) 
 }
 
 /// V5: Validate skills/* layout — every skills/*/ (except shared/) must contain SKILL.md.
+#[cfg(test)]
 pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
@@ -145,9 +187,117 @@ pub fn validate_skills_layout(diag: &mut DiagnosticCollector, exclude: &ExcludeS
     }
 }
 
+pub fn validate_discovered_skills_layout(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    let discovery = super::skill_discovery::SkillDiscovery::from_context(ctx, exclude);
+    let mut excluded = 0;
+    let mut dirs = vec![PathBuf::from("skills")];
+    dirs.extend(discovery.declared_skill_dirs.clone());
+    dirs.sort();
+    dirs.dedup();
+    for dir in dirs {
+        let base = dir.to_string_lossy().replace('\\', "/");
+        for entry in traversal::shallow_directories(&dir, Path::new("."), None).entries {
+            let Some(name) = entry.path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name == "shared" {
+                continue;
+            }
+            let subject = format!("{base}/{name}/SKILL.md");
+            if exclude.is_excluded(&subject) {
+                excluded += 1;
+                continue;
+            }
+            if !entry.path.join("SKILL.md").is_file() {
+                diag.report_at(
+                    LintRule::SkillMdMissing,
+                    &subject,
+                    &format!("{base}/{name}/ missing SKILL.md"),
+                );
+            }
+        }
+    }
+    if Path::new("skills").is_dir()
+        && discovery.exported_skill_files.is_empty()
+        && discovery
+            .active_command_files
+            .iter()
+            .all(|path| path.starts_with(".claude"))
+        && excluded == 0
+    {
+        diag.report_at(
+            LintRule::NoExportedSkills,
+            "skills",
+            "no plugin-exported skills found",
+        );
+    }
+}
+
 /// V6: Validate SKILL.md frontmatter for public skills (skills/*/SKILL.md).
 pub fn validate_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     validate_skill_frontmatter_in_dir("skills", true, false, diag, exclude, None);
+}
+
+pub fn validate_discovered_skill_frontmatter(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    let discovery = super::skill_discovery::SkillDiscovery::from_context(ctx, exclude);
+    for dir in discovery.declared_skill_dirs {
+        if let Some(dir) = dir.to_str() {
+            validate_skill_frontmatter_in_dir(dir, true, false, diag, exclude, None);
+        }
+    }
+    if discovery
+        .exported_skill_files
+        .iter()
+        .any(|path| path == Path::new("SKILL.md"))
+    {
+        validate_root_skill_frontmatter(diag, exclude);
+    }
+}
+
+fn validate_root_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    if exclude.is_excluded("SKILL.md") {
+        return;
+    }
+    let Ok(content) = fs::read_to_string("SKILL.md") else {
+        return;
+    };
+    let document = MarkdownDocument::parse(content);
+    let Some(lines) = document.frontmatter() else {
+        diag.report_at_with(LintRule::FrontmatterMalformed, "SKILL.md", "SKILL.md: malformed frontmatter (must start with '---' on line 1, must have closing '---')", DiagnosticMetadata::at_line(1));
+        super::markdown_structure::check_markdown_document("SKILL.md", &document, diag);
+        return;
+    };
+    let parsed = match frontmatter::parse_yaml_strict(lines) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            diag.report_at_with(
+                LintRule::FrontmatterYamlInvalid,
+                "SKILL.md",
+                &format!(
+                    "SKILL.md:{}: frontmatter is not valid YAML: {}",
+                    error.file_line, error.message
+                ),
+                DiagnosticMetadata::at_line(error.file_line),
+            );
+            None
+        }
+    };
+    super::markdown_structure::check_markdown_document("SKILL.md", &document, diag);
+    for field in ["name", "description"] {
+        if !parsed.as_ref().is_some_and(|value| {
+            frontmatter::canonical_nonempty_string_field(value, field).is_some()
+        }) {
+            diag.report_at(LintRule::FrontmatterFieldMissing, "SKILL.md", &format!("SKILL.md: required frontmatter field '{field}' is missing or not a non-empty string"));
+        }
+    }
 }
 
 /// V6-adapted: Validate SKILL.md frontmatter for private skills (.claude/skills/*/SKILL.md).
@@ -489,6 +639,7 @@ fn has_uri_scheme(target: &str) -> bool {
 /// V15: Validate shared markdown reference integrity.
 /// Every `$CLAUDE_PLUGIN_ROOT/skills/shared/**/*.md` path referenced from
 /// `skills/*/SKILL.md` must exist on disk.
+#[cfg(test)]
 pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let skills_dir = Path::new("skills");
     if !skills_dir.is_dir() {
@@ -534,6 +685,37 @@ pub fn validate_shared_md_references(diag: &mut DiagnosticCollector, exclude: &E
                         shared_ref.reference, shared_ref.relative_path
                     ),
                     DiagnosticMetadata::at_line(shared_ref.line),
+                );
+            }
+        }
+    }
+}
+
+pub fn validate_discovered_shared_md_references(
+    ctx: &LintContext,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    for path in
+        super::skill_discovery::SkillDiscovery::from_context(ctx, exclude).exported_skill_files
+    {
+        let display = path.to_string_lossy().replace('\\', "/");
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut seen = HashSet::new();
+        for reference in shared_md_refs::find_shared_md_refs(&content, "skills") {
+            if seen.insert(reference.relative_path.clone())
+                && !Path::new(&reference.relative_path).is_file()
+            {
+                diag.report_at_with(
+                    LintRule::SharedMdMissing,
+                    &display,
+                    &format!(
+                        "shared markdown reference missing on disk: {} (in {display}, expected {})",
+                        reference.reference, reference.relative_path
+                    ),
+                    DiagnosticMetadata::at_line(reference.line),
                 );
             }
         }

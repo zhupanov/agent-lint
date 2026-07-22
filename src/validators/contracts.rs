@@ -1,6 +1,7 @@
 //! Prompt, reference, and shipped-script contracts shared by public and private skills.
 
 use crate::config::{ExcludeSet, PromptMetricCaps, PromptSourceBudget};
+use crate::context::LintContext;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs};
 use crate::frontmatter;
@@ -48,11 +49,19 @@ static FORWARDED_ARRAY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^[^#\n]*(?:exec\s+)?[^\n]*"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}""#).unwrap()
 });
 pub fn validate_contracts(
+    ctx: &LintContext,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     include_public: bool,
 ) {
-    validate_skill_contracts(diag, exclude, include_public);
+    let discovery = super::skill_discovery::SkillDiscovery::from_context(ctx, exclude);
+    let mut skill_files = discovery.private_skill_files;
+    if include_public {
+        skill_files.extend(discovery.exported_skill_files);
+    }
+    skill_files.sort();
+    skill_files.dedup();
+    validate_skill_contracts_paths(diag, exclude, skill_files);
     validate_reference_consecutive_bash(diag, exclude, include_public);
     validate_script_contracts(diag, exclude, include_public);
     let import_graph = InstructionImportGraph::build(&diag.config().instruction_files, exclude);
@@ -64,6 +73,7 @@ pub fn validate_contracts(
     super::npm_scripts::validate_npm_scripts(diag, exclude);
 }
 
+#[cfg(test)]
 fn scoped_skill_files(include_public: bool) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if include_public {
@@ -74,6 +84,7 @@ fn scoped_skill_files(include_public: bool) -> Vec<PathBuf> {
     paths
 }
 
+#[cfg(test)]
 fn one_level_files(root: &str, filename: &str) -> Vec<PathBuf> {
     crate::traversal::shallow_directories(Path::new(root), Path::new("."), None)
         .entries
@@ -139,12 +150,21 @@ fn has_reasoned_marker(content: &str, marker: &str) -> bool {
     })
 }
 
+#[cfg(test)]
 fn validate_skill_contracts(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     include_public: bool,
 ) {
-    for path in scoped_skill_files(include_public) {
+    validate_skill_contracts_paths(diag, exclude, scoped_skill_files(include_public));
+}
+
+fn validate_skill_contracts_paths(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    paths: Vec<PathBuf>,
+) {
+    for path in paths {
         let Some(content) = read_text(&path, exclude) else {
             continue;
         };
