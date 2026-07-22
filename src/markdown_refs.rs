@@ -22,6 +22,9 @@ pub struct MarkdownReference {
     pub kind: MarkdownRefKind,
     /// Original authored token or destination spelling.
     pub raw: String,
+    /// CommonMark-decoded token or destination for classification and path
+    /// resolution. `raw` remains the source evidence shown to users.
+    pub decoded: String,
     /// Byte range of `raw` in the source document.
     pub byte_range: Range<usize>,
     /// Containing live prose clause, when the reference sits in live prose.
@@ -55,6 +58,7 @@ fn collect_references(document: &MarkdownDocument) -> Vec<MarkdownReference> {
         refs.push(MarkdownReference {
             kind: MarkdownRefKind::InlineCode,
             raw: code.raw_literal.clone(),
+            decoded: code.literal.clone(),
             byte_range: code.literal_byte_range.clone(),
             clause,
             excluded_from_always_load: excluded,
@@ -73,6 +77,7 @@ fn collect_references(document: &MarkdownDocument) -> Vec<MarkdownReference> {
         refs.push(MarkdownReference {
             kind: MarkdownRefKind::Link,
             raw: link.raw_destination.clone(),
+            decoded: link.destination.clone(),
             byte_range: link.destination_byte_range.clone(),
             clause,
             excluded_from_always_load: excluded,
@@ -445,6 +450,8 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].raw, "docs/a.md");
         assert_eq!(refs[1].raw, "docs/%20b.md");
+        assert_eq!(refs[0].decoded, "docs/a.md");
+        assert_eq!(refs[1].decoded, "docs/%20b.md");
         assert_eq!(percent_decode_once(&refs[1].raw), "docs/ b.md");
     }
 
@@ -456,7 +463,15 @@ mod tests {
         assert_eq!(refs[0].raw, "docs/a.md");
         assert_eq!(refs[0].kind, MarkdownRefKind::InlineCode);
         assert_eq!(refs[1].raw, "docs/b.md");
+        assert_eq!(refs[1].decoded, "docs/b.md");
         assert_eq!(refs[1].kind, MarkdownRefKind::Link);
+    }
+
+    #[test]
+    fn link_references_preserve_authored_and_decoded_destinations() {
+        let refs = markdown_references("[nested](<docs/a\\(b\\).md> \"title\")\n");
+        assert_eq!(refs[0].raw, "docs/a\\(b\\).md");
+        assert_eq!(refs[0].decoded, "docs/a(b).md");
     }
 
     #[test]

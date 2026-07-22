@@ -40,18 +40,14 @@ pub fn markdown_fences(content: &str) -> Vec<MarkdownFence> {
     let mut result = Vec::new();
     let mut index = 0;
     while index < lines.len() {
-        let trimmed = lines[index].trim_start();
-        let Some(marker) = trimmed.chars().next().filter(|ch| *ch == '`' || *ch == '~') else {
+        let Some(opener) = classify_fence_opener(lines[index]) else {
             index += 1;
             continue;
         };
-        let count = trimmed.chars().take_while(|ch| *ch == marker).count();
-        let opener_indent = lines[index].len() - trimmed.len();
-        if count < 3 || !has_valid_opener_indent(lines[index]) {
-            index += 1;
-            continue;
-        }
-        let info = trimmed[count..].trim().to_string();
+        let marker = opener.marker;
+        let count = opener.count;
+        let opener_indent = opener.indent;
+        let info = opener.info;
         let mut cursor = index + 1;
         let mut body = Vec::new();
         let mut closed = false;
@@ -302,16 +298,42 @@ impl CodeFenceTracker {
             LineClass::Inside
         } else {
             // Not inside a fence — check for opening
-            if has_valid_opener_indent(line)
-                && let Some((ch, count)) = fence_start(trimmed)
-            {
-                self.fence_char = Some(ch);
-                self.fence_len = count;
+            if let Some(opener) = classify_fence_opener(line) {
+                self.fence_char = Some(opener.marker);
+                self.fence_len = opener.count;
                 return LineClass::Delimiter;
             }
             LineClass::Outside
         }
     }
+}
+
+/// A CommonMark-compatible fence opener shared by fence discovery and the
+/// streaming tracker. Backtick fences may not contain a backtick in their
+/// info string; tilde fences retain their unrestricted info-string behavior.
+struct FenceOpener {
+    marker: char,
+    count: usize,
+    indent: usize,
+    info: String,
+}
+
+fn classify_fence_opener(line: &str) -> Option<FenceOpener> {
+    if !has_valid_opener_indent(line) {
+        return None;
+    }
+    let trimmed = line.trim_start();
+    let (marker, count) = fence_start(trimmed)?;
+    let info = trimmed[marker.len_utf8() * count..].trim();
+    if marker == '`' && info.contains('`') {
+        return None;
+    }
+    Some(FenceOpener {
+        marker,
+        count,
+        indent: line.len() - trimmed.len(),
+        info: info.to_string(),
+    })
 }
 
 /// Whether `line` has CommonMark-compatible indentation for a fence opener.
@@ -476,6 +498,22 @@ mod tests {
             lines_outside_fences(text).collect::<Vec<_>>(),
             vec!["before"]
         );
+    }
+
+    #[test]
+    fn backtick_info_strings_cannot_contain_backticks() {
+        let invalid = "```lang`invalid\n<div>\n";
+        assert_eq!(find_unclosed_fence_line(invalid), None);
+        assert!(markdown_fences(invalid).is_empty());
+        assert_eq!(
+            lines_outside_fences(invalid).collect::<Vec<_>>(),
+            invalid.lines().collect::<Vec<_>>()
+        );
+
+        let tilde = "~~~lang`valid\n<body>\n~~~\n";
+        let fences = markdown_fences(tilde);
+        assert_eq!(fences.len(), 1);
+        assert_eq!(fences[0].info, "lang`valid");
     }
 
     #[test]

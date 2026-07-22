@@ -4,11 +4,8 @@
 //! - X003/X004/X005: XML tag balance (fence-aware, skips inline code)
 
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
-use crate::fence::LineClass;
-use crate::markdown::{MarkdownDocument, mask_html_comments};
+use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
-use regex::Regex;
-use std::sync::LazyLock;
 
 /// HTML void elements that never take a closing tag.
 const VOID_ELEMENTS: &[&str] = &[
@@ -16,13 +13,13 @@ const VOID_ELEMENTS: &[&str] = &[
     "track", "wbr",
 ];
 
-/// Opening/closing/self-closing tags. Requires a letter after `<` so comparisons
-/// (`a < b`) and numeric placeholders (`<1`) are ignored.
-static RE_XML_TAG: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"<(/)?([A-Za-z][A-Za-z0-9:_-]*)(?:\s[^<>]*?)?(/)?>").unwrap());
-
-/// Inline code span: single backtick run (not a fence).
-static RE_INLINE_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"`+[^`]*`+").unwrap());
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct XmlTag {
+    name: String,
+    line: usize,
+    is_close: bool,
+    self_closing: bool,
+}
 
 /// Run X002–X005 against a markdown file.
 ///
@@ -54,65 +51,49 @@ pub(crate) fn check_markdown_document(
 /// 1-based line number of the first body line. Files without frontmatter start
 /// at line 1. When an opening `---` has no closer, scan the whole file.
 fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut DiagnosticCollector) {
-    let body_start = document.body_start_line();
-    let mut tracker = crate::fence::CodeFenceTracker::new();
-    let mut in_html_comment = false;
     let mut stack: Vec<(String, usize)> = Vec::new();
 
-    for (idx, raw_line) in document.content().lines().enumerate() {
-        let line_no = idx + 1;
-        if line_no < body_start {
+    for tag in scan_xml_tags(document) {
+        let line_no = tag.line;
+        if tag.self_closing {
             continue;
         }
-        let class = tracker.process_line(raw_line);
-        if class != LineClass::Outside {
+        let lower = tag.name.to_ascii_lowercase();
+        if VOID_ELEMENTS.contains(&lower.as_str()) {
             continue;
         }
 
-        let inline_masked = RE_INLINE_CODE.replace_all(raw_line, "");
-        let scanned = mask_html_comments(&inline_masked, &mut in_html_comment);
-        for caps in RE_XML_TAG.captures_iter(&scanned) {
-            let is_close = caps.get(1).is_some();
-            let name = caps.get(2).map(|m| m.as_str()).unwrap_or("");
-            let self_closing = caps.get(3).is_some();
-            if name.is_empty() || self_closing {
-                continue;
-            }
-            let lower = name.to_ascii_lowercase();
-            if VOID_ELEMENTS.contains(&lower.as_str()) {
-                continue;
-            }
-
-            if is_close {
-                match stack.last() {
-                    Some((open_name, _)) if open_name.eq_ignore_ascii_case(name) => {
-                        stack.pop();
-                    }
-                    Some((open_name, open_line)) => {
-                        diag.report_at_with(
-                            LintRule::XmlTagMismatched,
-                            path,
-                            &format!(
-                                "{path}:{line_no}: mismatched closing tag '</{name}>' (open '<{open_name}>' at line {open_line})"
-                            ),
-                            DiagnosticMetadata::at_line(line_no),
-                        );
-                        stack.pop();
-                    }
-                    None => {
-                        diag.report_at_with(
-                            LintRule::XmlTagOrphan,
-                            path,
-                            &format!(
-                                "{path}:{line_no}: closing tag '</{name}>' has no opening tag"
-                            ),
-                            DiagnosticMetadata::at_line(line_no),
-                        );
-                    }
+        if tag.is_close {
+            match stack.last() {
+                Some((open_name, _)) if open_name.eq_ignore_ascii_case(&tag.name) => {
+                    stack.pop();
                 }
-            } else {
-                stack.push((name.to_string(), line_no));
+                Some((open_name, open_line)) => {
+                    diag.report_at_with(
+                        LintRule::XmlTagMismatched,
+                        path,
+                        &format!(
+                            "{path}:{line_no}: mismatched closing tag '</{}>' (open '<{open_name}>' at line {open_line})",
+                            tag.name
+                        ),
+                        DiagnosticMetadata::at_line(line_no),
+                    );
+                    stack.pop();
+                }
+                None => {
+                    diag.report_at_with(
+                        LintRule::XmlTagOrphan,
+                        path,
+                        &format!(
+                            "{path}:{line_no}: closing tag '</{}>' has no opening tag",
+                            tag.name
+                        ),
+                        DiagnosticMetadata::at_line(line_no),
+                    );
+                }
             }
+        } else {
+            stack.push((tag.name, line_no));
         }
     }
 
@@ -124,6 +105,144 @@ fn check_xml_balance(path: &str, document: &MarkdownDocument, diag: &mut Diagnos
             DiagnosticMetadata::at_line(line),
         );
     }
+}
+
+/// Scan structural prose into XML-like tag tokens. This intentionally accepts
+/// only a letter-led tag name, carries one candidate across physical lines,
+/// and discards unfinished candidates rather than fabricating tokens.
+fn scan_xml_tags(document: &MarkdownDocument) -> Vec<XmlTag> {
+    let mut tags = Vec::new();
+    let mut pending: Option<PendingTag> = None;
+    let mut previous_line = None;
+    for prose in document.structural_prose() {
+        if previous_line.is_some_and(|line| line + 1 != prose.line) {
+            pending = None;
+        }
+        scan_xml_line(&prose.text, prose.line, &mut pending, &mut tags);
+        previous_line = Some(prose.line);
+    }
+    tags
+}
+
+#[derive(Debug, Clone)]
+struct PendingTag {
+    name: String,
+    line: usize,
+    is_close: bool,
+    quote: Option<char>,
+    last_non_whitespace: char,
+}
+
+fn scan_xml_line(
+    line: &str,
+    line_no: usize,
+    pending: &mut Option<PendingTag>,
+    tags: &mut Vec<XmlTag>,
+) {
+    let chars: Vec<char> = line.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        if let Some(tag) = pending.as_mut() {
+            let ch = chars[index];
+            if let Some(quote) = tag.quote {
+                if ch == quote {
+                    tag.quote = None;
+                }
+                index += 1;
+                continue;
+            }
+            match ch {
+                '\'' | '"' => {
+                    tag.quote = Some(ch);
+                    index += 1;
+                }
+                '>' => {
+                    let tag = pending.take().expect("pending tag exists");
+                    tags.push(XmlTag {
+                        self_closing: tag.last_non_whitespace == '/',
+                        name: tag.name,
+                        line: tag.line,
+                        is_close: tag.is_close,
+                    });
+                    index += 1;
+                }
+                '<' => {
+                    *pending = None;
+                }
+                ch => {
+                    if !ch.is_whitespace() {
+                        tag.last_non_whitespace = ch;
+                    }
+                    index += 1;
+                }
+            }
+            continue;
+        }
+
+        if chars[index] != '<' || escaped_by_odd_backslashes(&chars, index) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        let is_close = chars.get(index) == Some(&'/');
+        if is_close {
+            index += 1;
+        }
+        let name_start = index;
+        if !chars.get(index).is_some_and(|ch| ch.is_ascii_alphabetic()) {
+            index = start + 1;
+            continue;
+        }
+        index += 1;
+        while chars
+            .get(index)
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ':' | '_' | '-'))
+        {
+            index += 1;
+        }
+        let name: String = chars[name_start..index].iter().collect();
+        match chars.get(index) {
+            Some('>') => {
+                tags.push(XmlTag {
+                    name,
+                    line: line_no,
+                    is_close,
+                    self_closing: false,
+                });
+                index += 1;
+            }
+            Some(ch) if *ch == '/' || ch.is_whitespace() => {
+                *pending = Some(PendingTag {
+                    last_non_whitespace: *chars.get(index).unwrap_or(&' '),
+                    name,
+                    line: line_no,
+                    is_close,
+                    quote: None,
+                });
+                index += 1;
+            }
+            None => {
+                *pending = Some(PendingTag {
+                    last_non_whitespace: ' ',
+                    name,
+                    line: line_no,
+                    is_close,
+                    quote: None,
+                });
+            }
+            _ => index = start + 1,
+        }
+    }
+}
+
+fn escaped_by_odd_backslashes(chars: &[char], index: usize) -> bool {
+    let count = chars[..index]
+        .iter()
+        .rev()
+        .take_while(|ch| **ch == '\\')
+        .count();
+    count % 2 == 1
 }
 
 #[cfg(test)]
@@ -176,6 +295,37 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         check_markdown_structure("f.md", "Use `<div>` as an example.\n", &mut diag);
         assert!(codes(&diag).is_empty());
+    }
+
+    #[test]
+    fn commonmark_boundaries_preserve_real_multiline_tags() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(
+            "f.md",
+            "```lang`invalid\n<after-invalid-info>\n\n`` `<inline-literal>` ``\n\\<escaped-literal>\n<example\n  kind=\">\">\n</example>\n",
+            &mut diag,
+        );
+        let reported = diag.diagnostics();
+        assert_eq!(codes(&diag), vec!["X003"]);
+        assert_eq!(
+            reported[0].location.map(|location| location.start()),
+            Some(crate::diagnostic::SourcePosition::line(2))
+        );
+    }
+
+    #[test]
+    fn xml_scanner_handles_delimiters_escapes_and_unterminated_syntax() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(
+            "f.md",
+            "`<one>`\n``<two ` inside>``\n```<three `` inside>```\n``<multiline\nliteral>``\n\\<escaped>\n\\\\<active>\n</active>\n<root\n note=\"a < b > c\">\n<child\n />\n</root\n>\n<unterminated\n",
+            &mut diag,
+        );
+        assert!(codes(&diag).is_empty(), "{:?}", diag.diagnostics());
+
+        let mut unmatched = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure("f.md", "`<literal>\n", &mut unmatched);
+        assert_eq!(codes(&unmatched), vec!["X003"]);
     }
 
     #[test]

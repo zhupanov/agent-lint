@@ -3,8 +3,8 @@
 use crate::config::{PromptMetricCaps, PromptSourceBudget};
 use crate::fence::lines_outside_fences;
 use crate::markdown_refs::{
-    clause_is_mandatory_load, is_root_plain_md_prefix, markdown_references as structured_refs,
-    prompt_resolution_base,
+    MarkdownRefKind, clause_is_mandatory_load, is_root_plain_md_prefix,
+    markdown_references as structured_refs, percent_decode_once, prompt_resolution_base,
 };
 use crate::repo_path::{PathProbe, ResolutionBase, normalize_separators, resolve_repo_path};
 use regex::Regex;
@@ -74,16 +74,17 @@ pub fn markdown_references(source_path: &Path, content: &str) -> Vec<PathBuf> {
         if !clause_is_mandatory_load(clause) {
             continue;
         }
-        let raw = reference
-            .raw
-            .split(['#', ':'])
-            .next()
-            .unwrap_or(&reference.raw);
-        if !raw.ends_with(".md") || raw.contains(['$', '{', '}', '<', '>', '*']) {
+        let decoded = if reference.kind == MarkdownRefKind::Link {
+            percent_decode_once(&reference.decoded)
+        } else {
+            reference.decoded.clone()
+        };
+        let path = decoded.split(['#', ':']).next().unwrap_or(&decoded);
+        if !path.ends_with(".md") || path.contains(['$', '{', '}', '<', '>', '*']) {
             continue;
         }
-        let base = prompt_resolution_base(reference.kind, raw);
-        add_resolved_reference(source_path, raw, base, &mut refs);
+        let base = prompt_resolution_base(reference.kind, path);
+        add_resolved_reference(source_path, path, base, &mut refs);
     }
     for line in lines_outside_fences(content) {
         for capture in PLAIN_MD_PATH.captures_iter(line) {
@@ -335,6 +336,21 @@ mod tests {
             refs,
             vec![PathBuf::from(".claude/skills/s062/references/shared.md")]
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn decoded_link_destinations_contribute_to_prompt_closure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/references").unwrap();
+        fs::write("skills/demo/references/a(b).md", "child\n").unwrap();
+        let refs = markdown_references(
+            Path::new("skills/demo/SKILL.md"),
+            "Read [the nested guide](references/a\\(b\\).md) completely.\n",
+        );
+        assert_eq!(refs, vec![PathBuf::from("skills/demo/references/a(b).md")]);
     }
 
     #[test]

@@ -415,6 +415,52 @@ impl MarkdownDocument {
         &self.body_prose
     }
 
+    /// Body lines suitable for structural scanners. Inline code and HTML
+    /// comments are masked from their source-positioned CommonMark facts, but
+    /// ordinary quoted prose is retained because it can be part of a tag's
+    /// attribute syntax.
+    pub(crate) fn structural_prose(&self) -> Vec<MarkdownProseLine> {
+        let inline_exclusions: Vec<_> = self
+            .inline_code
+            .iter()
+            .map(|code| {
+                (
+                    code.start_line,
+                    code.start_column,
+                    code.end_line,
+                    code.end_column,
+                )
+            })
+            .collect();
+        let mut tracker = CodeFenceTracker::new();
+        let mut in_html_comment = false;
+        self.content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                let line_number = index + 1;
+                if line_number < self.body_start_line()
+                    || tracker.process_line(line) != LineClass::Outside
+                {
+                    return None;
+                }
+                let text = mask_html_comments(
+                    &mask_column_ranges(line, line_number, &inline_exclusions),
+                    &mut in_html_comment,
+                );
+                Some(MarkdownProseLine {
+                    line: line_number,
+                    text,
+                    masked_inline_code_columns: masked_ranges_for_line(
+                        line,
+                        line_number,
+                        &inline_exclusions,
+                    ),
+                })
+            })
+            .collect()
+    }
+
     /// Lines eligible for unfinished-work marker classification.
     ///
     /// Unlike [`body_prose`], HTML comments remain visible so
