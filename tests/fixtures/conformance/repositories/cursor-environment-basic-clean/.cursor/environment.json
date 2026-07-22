@@ -1,0 +1,6 @@
+{
+  "snapshot": "snapshot-20260212-00000000-0000-0000-0000-000000000000",
+  "build": { "dockerfile": "Dockerfile" },
+  "terminals": [[{ "command": "npm start" }]],
+  "ports": [{ "port": 1 }, { "port": 65535, "name": "web" }]
+}

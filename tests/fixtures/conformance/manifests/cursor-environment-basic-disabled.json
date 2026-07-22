@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "cursor-environment-basic-disabled",
+  "covers": ["cursor-environment-basic", "platform-disabled", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CU016", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

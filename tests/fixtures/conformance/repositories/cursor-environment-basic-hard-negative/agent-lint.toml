@@ -1,0 +1,4 @@
+[lint]
+[[lint.overrides]]
+files = [".cursor/environment.json"]
+suppress = ["CU016"]

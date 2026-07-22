@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "cursor-environment-plugin-clean",
+  "covers": ["cursor-environment", "cursor-environment-plugin", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "CU016", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

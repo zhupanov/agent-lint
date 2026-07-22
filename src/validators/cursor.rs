@@ -6,7 +6,9 @@ use std::sync::LazyLock;
 
 use globset::GlobBuilder;
 use jsonschema::error::ValidationErrorKind;
-use serde_json::{Value as JsonValue, json};
+use serde_json::Value as JsonValue;
+#[cfg(test)]
+use serde_json::json;
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
@@ -49,39 +51,12 @@ const HOOK_EVENTS: &[&str] = &[
     "workspaceOpen",
 ];
 
-/// Local-only schema for Cursor's cloud development environment file. Keep
-/// external `$ref` values out of this schema: the dependency is built without
-/// file or HTTP resolution, so validation cannot read from or fetch a network
-/// resource.
+/// Vendored Cursor cloud-environment schema. It is compiled from the checked-in
+/// snapshot, so linting neither reads a local schema path nor fetches a network
+/// resource. See `schemas/cursor-environment.schema.md` for provenance.
 static CURSOR_ENVIRONMENT_VALIDATOR: LazyLock<jsonschema::Validator> = LazyLock::new(|| {
-    let schema = json!({
-        "type": "object",
-        "properties": {
-            "install": { "type": "string" },
-            "start": { "type": "string" },
-            "update": { "type": "string" },
-            "build": {
-                "type": "object",
-                "properties": {
-                    "dockerfile": { "type": "string" },
-                    "context": { "type": "string" }
-                },
-                "required": ["dockerfile", "context"]
-            },
-            "terminals": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": { "type": "string" },
-                        "command": { "type": "string" }
-                    },
-                    "required": ["name", "command"]
-                }
-            }
-        },
-        "required": ["install"]
-    });
+    let schema = serde_json::from_str(include_str!("../../schemas/cursor-environment.schema.json"))
+        .expect("checked-in Cursor environment schema parses");
     jsonschema::validator_for(&schema).expect("embedded Cursor environment schema is valid")
 });
 
@@ -699,6 +674,22 @@ mod tests {
             .collect()
     }
 
+    fn environment_messages_for(content: &str) -> Vec<String> {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
+        std::fs::write(tmp.path().join(".cursor/environment.json"), content).unwrap();
+
+        let _guard = CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        diag.diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::CursorEnvironmentInvalid)
+            .map(|item| item.message.clone())
+            .collect()
+    }
+
     #[test]
     #[serial_test::serial]
     fn no_cursor_files_produce_no_cursor_diagnostics() {
@@ -922,127 +913,210 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn environment_schema_reports_each_invalid_property_path() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
-        std::fs::write(
-            tmp.path().join(".cursor/environment.json"),
-            r#"{"install":1,"build":{"dockerfile":1},"terminals":[{"name":1}]}"#,
-        )
-        .unwrap();
+    fn cursor_environment_schema_is_checked_in_and_compiles() {
+        let schema: JsonValue =
+            serde_json::from_str(include_str!("../../schemas/cursor-environment.schema.json"))
+                .expect("checked-in Cursor environment schema parses");
+        assert!(schema.get("allOf").is_some());
+        assert!(jsonschema::validator_for(&schema).is_ok());
 
-        let _guard = CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate(&mut diag, &ExcludeSet::default());
-        let messages: Vec<_> = diag
-            .diagnostics()
-            .iter()
-            .filter(|item| item.rule == LintRule::CursorEnvironmentInvalid)
-            .map(|item| item.message.as_str())
-            .collect();
+        let provenance = include_str!("../../schemas/cursor-environment.schema.md");
+        assert!(provenance.contains("https://www.cursor.com/schemas/environment.schema.json"));
+        assert!(provenance.contains("Retrieved: 2026-07-21"));
+        assert!(
+            provenance.contains("62b13994164f4186198b1f002ff957605df37ba5eee803e6afe69c981af001d6")
+        );
+        assert!(provenance.contains("curl --fail"));
+    }
 
-        assert_eq!(messages.len(), 5, "unexpected diagnostics: {messages:?}");
-        for expected_path in [
-            "install:",
-            "build.dockerfile:",
-            "build.context:",
-            "terminals[1].name:",
-            "terminals[1].command:",
-        ] {
+    #[test]
+    #[serial_test::serial]
+    fn cursor_environment_schema_accepts_every_current_shape() {
+        let valid = [
+            ("empty", r#"{}"#),
+            (
+                "snapshot only",
+                r#"{"snapshot":"snapshot-20260212-00000000"}"#,
+            ),
+            ("install only", r#"{"install":"npm ci"}"#),
+            (
+                "dockerfile without context",
+                r#"{"build":{"dockerfile":"Dockerfile"}}"#,
+            ),
+            (
+                "terminal object",
+                r#"{"terminals":[{"command":"npm start"}]}"#,
+            ),
+            (
+                "terminal array",
+                r#"{"terminals":[[{"command":"npm start","name":"web","description":"serve"}]]}"#,
+            ),
+            ("lowest port", r#"{"ports":[{"port":1}]}"#),
+            ("highest port", r#"{"ports":[{"port":65535,"name":"web"}]}"#),
+            (
+                "all common and container properties",
+                r#"{"name":"development","user":"agent","install":"npm ci","start":"npm start","repositoryDependencies":["github.com/acme/api"],"ports":[{"port":3000,"name":"web"}],"terminals":[{"command":"npm start","name":"web","description":"serve"}],"build":{"dockerfile":"Dockerfile","context":"."},"snapshot":"snapshot-20260212-00000000","agentCanUpdateSnapshot":true}"#,
+            ),
+        ];
+
+        for (name, content) in valid {
+            let messages = environment_messages_for(content);
+            assert!(messages.is_empty(), "{name}: {messages:?}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_environment_schema_rejects_every_current_constraint() {
+        let invalid = [
+            (
+                "invalid JSON",
+                r#"{"install":"unterminated"#,
+                "invalid JSON:",
+            ),
+            ("root type", r#"[]"#, "top level:"),
+            (
+                "obsolete update",
+                r#"{"update":"npm update"}"#,
+                "top level:",
+            ),
+            ("unknown top level", r#"{"futureField":true}"#, "top level:"),
+            ("name type", r#"{"name":false}"#, "name:"),
+            ("user type", r#"{"user":false}"#, "user:"),
+            ("install type", r#"{"install":false}"#, "install:"),
+            ("start type", r#"{"start":false}"#, "start:"),
+            (
+                "repository dependency type",
+                r#"{"repositoryDependencies":[false]}"#,
+                "repositoryDependencies[1]:",
+            ),
+            (
+                "repository dependencies type",
+                r#"{"repositoryDependencies":false}"#,
+                "repositoryDependencies:",
+            ),
+            ("ports type", r#"{"ports":false}"#, "ports:"),
+            ("port entry type", r#"{"ports":[false]}"#, "ports[1]:"),
+            ("port required", r#"{"ports":[{}]}"#, "ports[1].port:"),
+            (
+                "port name type",
+                r#"{"ports":[{"port":1,"name":false}]}"#,
+                "ports[1].name:",
+            ),
+            ("port zero", r#"{"ports":[{"port":0}]}"#, "ports[1].port:"),
+            (
+                "port too high",
+                r#"{"ports":[{"port":65536}]}"#,
+                "ports[1].port:",
+            ),
+            ("terminal type", r#"{"terminals":false}"#, "terminals:"),
+            (
+                "terminal command required",
+                r#"{"terminals":[{}]}"#,
+                "terminals[1]:",
+            ),
+            (
+                "terminal command type",
+                r#"{"terminals":[{"command":false}]}"#,
+                "terminals[1]:",
+            ),
+            (
+                "terminal name type",
+                r#"{"terminals":[{"command":"run","name":false}]}"#,
+                "terminals[1]:",
+            ),
+            (
+                "terminal description type",
+                r#"{"terminals":[{"command":"run","description":false}]}"#,
+                "terminals[1]:",
+            ),
+            (
+                "nested terminal command required",
+                r#"{"terminals":[[{}]]}"#,
+                "terminals[1]:",
+            ),
+            (
+                "nested terminal field type",
+                r#"{"terminals":[[{"command":"run","name":false,"description":false}]]}"#,
+                "terminals[1]:",
+            ),
+            ("build type", r#"{"build":false}"#, "build:"),
+            (
+                "dockerfile required",
+                r#"{"build":{}}"#,
+                "build.dockerfile:",
+            ),
+            (
+                "dockerfile type",
+                r#"{"build":{"dockerfile":false}}"#,
+                "build.dockerfile:",
+            ),
+            (
+                "context type",
+                r#"{"build":{"dockerfile":"Dockerfile","context":false}}"#,
+                "build.context:",
+            ),
+            (
+                "unknown build property",
+                r#"{"build":{"dockerfile":"Dockerfile","image":"base"}}"#,
+                "build:",
+            ),
+            (
+                "agent can update snapshot type",
+                r#"{"agentCanUpdateSnapshot":"yes"}"#,
+                "agentCanUpdateSnapshot:",
+            ),
+            ("snapshot type", r#"{"snapshot":false}"#, "snapshot:"),
+        ];
+
+        for (name, content, path) in invalid {
+            let messages = environment_messages_for(content);
+            assert!(!messages.is_empty(), "{name} produced no CU016 diagnostic");
+            assert!(
+                messages.iter().any(|message| message.contains(path)),
+                "{name} did not report {path}: {messages:?}"
+            );
             assert!(
                 messages
                     .iter()
-                    .any(|message| message.contains(expected_path)),
-                "missing {expected_path}: {messages:?}"
+                    .all(|message| message.starts_with(".cursor/environment.json: ")),
+                "{name} has an unstable subject: {messages:?}"
             );
         }
     }
 
     #[test]
     #[serial_test::serial]
-    fn environment_schema_accepts_existing_valid_shapes() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
-        std::fs::write(
-            tmp.path().join(".cursor/environment.json"),
-            r#"{"install":"npm ci","start":"npm start","update":"npm update","build":{"dockerfile":"Dockerfile","context":"."},"terminals":[{"name":"app","command":"npm start"}],"futureField":true}"#,
-        )
-        .unwrap();
-
-        assert!(
-            !codes_for(tmp.path()).contains(&"CU016"),
-            "valid Cursor environment must not produce CU016"
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn environment_schema_preserves_the_previous_structural_contract() {
-        let valid = [
-            r#"{"install":""}"#,
-            r#"{"install":"setup","build":{"dockerfile":"Dockerfile","context":"."}}"#,
-            r#"{"install":"setup","terminals":[{"name":"app","command":"run"}]}"#,
-            r#"{"install":"setup","unrecognized":true}"#,
-        ];
+    fn cursor_environment_schema_never_echoes_invalid_instance_values() {
         let invalid = [
-            r#"null"#,
-            r#"[]"#,
-            r#"{}"#,
-            r#"{"install":false}"#,
-            r#"{"install":"setup","start":false}"#,
-            r#"{"install":"setup","update":false}"#,
-            r#"{"install":"setup","build":false}"#,
-            r#"{"install":"setup","build":{"dockerfile":false}}"#,
-            r#"{"install":"setup","terminals":false}"#,
-            r#"{"install":"setup","terminals":[false]}"#,
-            r#"{"install":"setup","terminals":[{"name":false}]}"#,
+            (r#"{"install":"unclosed-secret"#, "unclosed-secret"),
+            (r#"{"install":["type-secret"]}"#, "type-secret"),
+            (
+                r#"{"build":{"context":"required-secret"}}"#,
+                "required-secret",
+            ),
+            (
+                r#"{"ports":[{"port":0,"name":"range-secret"}]}"#,
+                "range-secret",
+            ),
+            (
+                r#"{"terminals":[{"command":["one-of-secret"]}]}"#,
+                "one-of-secret",
+            ),
+            (r#"{"build":"object-secret"}"#, "object-secret"),
+            (r#"{"unknown":"unevaluated-secret"}"#, "unevaluated-secret"),
         ];
 
-        for content in valid {
-            let tmp = tempfile::tempdir().unwrap();
-            std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
-            std::fs::write(tmp.path().join(".cursor/environment.json"), content).unwrap();
+        for (content, secret) in invalid {
+            let messages = environment_messages_for(content);
             assert!(
-                !codes_for(tmp.path()).contains(&"CU016"),
-                "expected valid environment: {content}"
+                !messages.is_empty(),
+                "{secret} produced no CU016 diagnostic"
+            );
+            assert!(
+                messages.iter().all(|message| !message.contains(secret)),
+                "a diagnostic exposed {secret}: {messages:?}"
             );
         }
-        for content in invalid {
-            let tmp = tempfile::tempdir().unwrap();
-            std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
-            std::fs::write(tmp.path().join(".cursor/environment.json"), content).unwrap();
-            assert!(
-                codes_for(tmp.path()).contains(&"CU016"),
-                "expected invalid environment: {content}"
-            );
-        }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn environment_schema_does_not_echo_invalid_values() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
-        std::fs::write(
-            tmp.path().join(".cursor/environment.json"),
-            r#"{"install":"setup","build":"untrusted-secret"}"#,
-        )
-        .unwrap();
-
-        let _guard = CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate(&mut diag, &ExcludeSet::default());
-        let messages: Vec<_> = diag
-            .diagnostics()
-            .iter()
-            .filter(|item| item.rule == LintRule::CursorEnvironmentInvalid)
-            .map(|item| item.message.as_str())
-            .collect();
-
-        assert_eq!(messages.len(), 1, "unexpected diagnostics: {messages:?}");
-        assert!(messages[0].contains("build:"));
-        assert!(!messages[0].contains("untrusted-secret"));
     }
 }
