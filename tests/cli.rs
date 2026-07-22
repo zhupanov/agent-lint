@@ -228,6 +228,41 @@ fn s022_autofix_converts_complete_runs_preserves_escapes_and_is_idempotent() {
 }
 
 #[test]
+fn a031_autofix_preserves_duplicate_private_agents_byte_for_byte() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let alpha = tmp.path().join(".claude/agents/alpha.md");
+    let beta = tmp.path().join(".claude/agents/beta.md");
+    std::fs::create_dir_all(alpha.parent().unwrap()).unwrap();
+    std::fs::write(
+        &alpha,
+        "---\nname: reviewer\ndescription: Reviews backend pull requests for correctness and regressions\n---\nBody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &beta,
+        "---\nname: reviewer\ndescription: Audits frontend accessibility and design-system conformance\n---\nBody\n",
+    )
+    .unwrap();
+    let before = [
+        std::fs::read(&alpha).unwrap(),
+        std::fs::read(&beta).unwrap(),
+    ];
+
+    let output = run_in(
+        tmp.path(),
+        &["--autofix", "--format", "json", "--only", "A031", "."],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    assert_eq!(report["diagnostics"][0]["code"], "A031");
+    assert_eq!(report["diagnostics"][0]["severity"], "warning");
+    assert_eq!(std::fs::read(&alpha).unwrap(), before[0]);
+    assert_eq!(std::fs::read(&beta).unwrap(), before[1]);
+    assert!(!stderr(&output).contains("fixed[A031/"));
+}
+
+#[test]
 fn s021_autofix_follows_shared_policy_across_skill_and_reference_files() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

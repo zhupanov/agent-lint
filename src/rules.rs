@@ -508,6 +508,9 @@ pub enum LintRule {
     /// A030: agent routing descriptions overlap within a shared namespace
     #[strum(props(code = "A030", name = "agent-desc-overlap"))]
     AgentDescOverlap,
+    /// A031: private Claude agents declare the same name-based identity
+    #[strum(props(code = "A031", name = "agent-name-duplicate"))]
+    AgentNameDuplicate,
 
     // ── Prompt content (Q) ───────────────────────────────────────
     /// Q001: generic filler instruction that provides no actionable guidance
@@ -1099,7 +1102,7 @@ impl LintRule {
             Self::AgentBypassPermissions | Self::AgentSkillKebab |
             Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
             Self::AgentFieldUnsupported | Self::AgentStopMissing |
-            Self::AgentDescOverlap |
+            Self::AgentDescOverlap | Self::AgentNameDuplicate |
 
             // ── Default-warning: skill routing overlap ───────────────
             Self::SkillDescOverlap |
@@ -1302,7 +1305,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            299,
+            300,
             "every enum variant must be registered"
         );
     }
@@ -1506,8 +1509,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            120,
-            "Expected 120 active default-warning rules, got {}",
+            121,
+            "Expected 121 active default-warning rules, got {}",
             warnings.len()
         );
     }

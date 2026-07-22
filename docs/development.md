@@ -55,7 +55,7 @@ src/
     +-- skill_content/   # S009-S057, S063-S071: name, description, body, MCP, execution fields, security
     +-- contracts.rs     # S058-S062, G008-G011, D004-D005, L001-L005
     +-- npm_scripts.rs   # L006
-    +-- agents.rs        # A001-A030: agent frontmatter, live-prose contracts, templates, description quality
+    +-- agents.rs        # A001-A031: agent frontmatter, live-prose contracts, templates, description quality
     +-- prompt_content.rs # Q001-Q004: shared CLAUDE.md, skill-body, and agent-body prompt checks
     +-- hygiene.rs       # G001-G007: PWD hygiene, scripts, executability, TODO detection
     +-- docs.rs          # D001-D003: docs file references, CLAUDE.md size, TODO detection

@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 298 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 299 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -341,6 +341,7 @@ values — every frontmatter field except the free-prose `description`,
 | A028 | `agent-field-unsupported` | Agent frontmatter uses `hooks`, `mcpServers`, or `permissionMode`, which are unsupported for plugin agents | Plugin | warn |
 | A029 | `agent-stop-missing` | Tool-using agent has no explicit stop control or failure outcome | Always | warn |
 | A030 | `agent-desc-overlap` | Two agent routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
+| A031 | `agent-name-duplicate` | Two or more `.claude/agents/**` files declare the same name-based agent identity; plugin `agents/**` files are deliberately excluded because their registered IDs are path-derived | Always | warn |
 
 > **Agent frontmatter structure and canonical values (A002, A003, A008–A029).**
 > A002 owns a missing line-1 `---` opener or an opener without a closing `---`;
@@ -397,7 +398,16 @@ values — every frontmatter field except the free-prose `description`,
 > multi-source diagnostics that name both repository-relative paths in
 > `related_subjects` and the score in the message; global `suppress` works, but per-file overrides
 > cannot match them.
-> **Agent discovery (A002-A004, A008-A030).** Every agent rule except the larch
+> **Duplicate private agent names (A031).** A031 groups the canonical strict-YAML
+> `name` values in `.claude/agents/**` only, because that Claude Code tree has
+> name-only identity. Plugin `agents/**` and manifest-declared plugin roots are
+> deliberately excluded: their registered IDs are path-derived, so equal names
+> are not a proven collision. Invalid, missing, blank, or non-string names stay
+> with A002/A003/X001. Each duplicate name yields one deterministic diagnostic:
+> the lexicographically first file is `subject_path`, every remaining sorted
+> participant is in `related_subjects`, and a per-file override on the primary
+> file can suppress the group.
+> **Agent discovery (A002-A004, A008-A031).** Every agent rule except the larch
 > template convention discovers agent files recursively, matching Claude Code:
 > `.claude/agents/`, the plugin `agents/` default, and every repository-safe
 > `plugin.json` `agents` root (string or array) are scanned into their

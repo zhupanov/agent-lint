@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "agent-name-duplicate-basic-pedantic",
+  "covers": ["basic-mode", "pedantic", "json", "agent-name-duplicate", "nested-agents-md"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--pedantic", "--only", "A031", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A031", "name": "agent-name-duplicate", "severity": "error", "subject_path": ".claude/agents/alpha.md", "related_subjects": [".claude/agents/review/beta.md"], "suggestion": "rename or remove the duplicate agent definitions" }
+  ],
+  "allowed_additional_diagnostics": []
+}
