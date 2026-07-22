@@ -407,98 +407,96 @@ fn validate_rule_file(
     content: &str,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let markdown = MarkdownDocument::parse(content);
-    let document = LiveInstructionDocument::new(
-        Path::new(path),
-        InstructionSurfaceKind::CursorRule,
-        &markdown,
-    );
-    // Cursor still loads a rule body when its frontmatter is absent or
-    // malformed, so structural failures must not exempt that live prose.
-    prompt_pass.validate(&document, diag);
-    // A UTF-8 BOM is an encoding signature, not content; it must not displace
-    // the first logical line the delimiter check sees. Sibling frontmatter
-    // surfaces (skills, agents, `frontmatter::extract_frontmatter` itself)
-    // intentionally keep their existing byte-exact contract: issue #308 binds
-    // only the Cursor `.mdc` delimiter model.
-    let scanned = content.strip_prefix('\u{feff}').unwrap_or(content);
-    if scanned.trim().is_empty() {
-        report(
-            diag,
-            LintRule::CursorRuleEmpty,
-            path,
-            "rule file has no instructions",
+    // Classify recovery before prompt dispatch with the shared optional-BOM /
+    // exact-delimiter boundary so CU002/CU003 and Q rules cannot disagree.
+    let recovery = frontmatter::exact_leading_frontmatter(content);
+    if let Some(markdown) = MarkdownDocument::parse_for_prompt_content(content) {
+        let document = LiveInstructionDocument::new(
+            Path::new(path),
+            InstructionSurfaceKind::CursorRule,
+            &markdown,
         );
-        return;
+        prompt_pass.validate(&document, diag);
     }
-    // The opening delimiter is the exact first logical line `---`. Prefixes
-    // such as `----` or `---suffix` are missing openers (CU002), not malformed
-    // closed frontmatter (CU003).
-    if scanned.lines().next() != Some("---") {
-        report_meta(
-            diag,
-            LintRule::CursorRuleFrontmatterMissing,
-            path,
-            "missing YAML frontmatter",
-            DiagnosticMetadata::at_line(1)
-                .with_suggestion("open the file with a first line containing exactly '---'"),
-        );
-        return;
-    }
-    // The opener above is exact, so extraction fails only on a missing close.
-    let Some(lines) = frontmatter::extract_frontmatter(scanned) else {
-        report_meta(
-            diag,
-            LintRule::CursorRuleFrontmatterInvalid,
-            path,
-            "frontmatter must have a closing '---' delimiter",
-            DiagnosticMetadata::at_line(1).with_suggestion(
-                "add a line containing exactly '---' after the frontmatter fields",
-            ),
-        );
-        return;
-    };
-    if frontmatter::extract_body(scanned).trim().is_empty() {
-        report(
-            diag,
-            LintRule::CursorRuleEmpty,
-            path,
-            "rule file has no instructions after frontmatter",
-        );
-    }
-    // Reconstruct the document with its trailing newline so a final bare
-    // `key:` line keeps the mapping shape it has in the file.
-    let mut source = lines.join("\n");
-    source.push('\n');
-    let yaml = match crate::yaml::parse(&source) {
-        Ok(YamlValue::Mapping(map)) => map,
-        // Empty frontmatter has no targeting fields: a valid Manual rule.
-        Ok(YamlValue::Null) => Mapping::new(),
-        Ok(_) => {
+    match recovery {
+        frontmatter::LeadingFrontmatterState::Absent { .. } => {
+            let scanned = content.strip_prefix('\u{feff}').unwrap_or(content);
+            if scanned.trim().is_empty() {
+                report(
+                    diag,
+                    LintRule::CursorRuleEmpty,
+                    path,
+                    "rule file has no instructions",
+                );
+                return;
+            }
+            // Prefixes such as `----` or `---suffix` are missing openers (CU002),
+            // not malformed closed frontmatter (CU003).
+            report_meta(
+                diag,
+                LintRule::CursorRuleFrontmatterMissing,
+                path,
+                "missing YAML frontmatter",
+                DiagnosticMetadata::at_line(1)
+                    .with_suggestion("open the file with a first line containing exactly '---'"),
+            );
+        }
+        frontmatter::LeadingFrontmatterState::Unterminated { .. } => {
             report_meta(
                 diag,
                 LintRule::CursorRuleFrontmatterInvalid,
                 path,
-                "frontmatter must be a YAML object",
+                "frontmatter must have a closing '---' delimiter",
                 DiagnosticMetadata::at_line(1).with_suggestion(
-                    "use `key: value` mappings for description, globs, and alwaysApply",
+                    "add a line containing exactly '---' after the frontmatter fields",
                 ),
             );
-            return;
         }
-        Err(error) => {
-            report_rule_yaml_error(
-                diag,
-                path,
-                &lines,
-                &error.to_string(),
-                crate::yaml::error_line(&error),
-                crate::yaml::error_column(&error),
-            );
-            return;
+        frontmatter::LeadingFrontmatterState::Complete(block) => {
+            if block.body.trim().is_empty() {
+                report(
+                    diag,
+                    LintRule::CursorRuleEmpty,
+                    path,
+                    "rule file has no instructions after frontmatter",
+                );
+            }
+            let lines: Vec<String> = block.yaml.lines().map(str::to_owned).collect();
+            // Reconstruct the document with its trailing newline so a final bare
+            // `key:` line keeps the mapping shape it has in the file.
+            let mut source = lines.join("\n");
+            source.push('\n');
+            let yaml = match crate::yaml::parse(&source) {
+                Ok(YamlValue::Mapping(map)) => map,
+                // Empty frontmatter has no targeting fields: a valid Manual rule.
+                Ok(YamlValue::Null) => Mapping::new(),
+                Ok(_) => {
+                    report_meta(
+                        diag,
+                        LintRule::CursorRuleFrontmatterInvalid,
+                        path,
+                        "frontmatter must be a YAML object",
+                        DiagnosticMetadata::at_line(1).with_suggestion(
+                            "use `key: value` mappings for description, globs, and alwaysApply",
+                        ),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    report_rule_yaml_error(
+                        diag,
+                        path,
+                        &lines,
+                        &error.to_string(),
+                        crate::yaml::error_line(&error),
+                        crate::yaml::error_column(&error),
+                    );
+                    return;
+                }
+            };
+            validate_rule_frontmatter(diag, path, &yaml, &lines);
         }
-    };
-    validate_rule_frontmatter(diag, path, &yaml, &lines);
+    }
 }
 
 /// Validate a strictly parsed rule frontmatter mapping and derive its one
@@ -835,10 +833,11 @@ fn validate_agent_file(
     content: &str,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let markdown = MarkdownDocument::parse(content);
-    let document =
-        LiveInstructionDocument::new(Path::new(path), InstructionSurfaceKind::Agent, &markdown);
-    prompt_pass.validate(&document, diag);
+    if let Some(markdown) = MarkdownDocument::parse_for_prompt_content(content) {
+        let document =
+            LiveInstructionDocument::new(Path::new(path), InstructionSurfaceKind::Agent, &markdown);
+        prompt_pass.validate(&document, diag);
+    }
     let Some(lines) = frontmatter::extract_frontmatter(content) else {
         report(
             diag,
@@ -979,8 +978,9 @@ fn validate_skills(
         let Ok(content) = fs::read_to_string(&entry.path) else {
             continue;
         };
-        let markdown = MarkdownDocument::parse(&content);
-        if crate::platforms::is_cursor_skill_path(&entry.path) {
+        if crate::platforms::is_cursor_skill_path(&entry.path)
+            && let Some(markdown) = MarkdownDocument::parse_for_prompt_content(&content)
+        {
             let document = LiveInstructionDocument::new(
                 Path::new(&entry.display),
                 InstructionSurfaceKind::CursorSkill,
@@ -1162,6 +1162,72 @@ mod tests {
         ];
         for (content, expected, label) in cases {
             assert_eq!(rule_cu_codes(&content), expected, "{label}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn prompt_recovery_skips_unterminated_and_bom_metadata() {
+        let cases = [
+            (
+                "---\ndescription: malformed.\n\nRetry until success.\n",
+                vec!["CU003"],
+                "unterminated after punctuated metadata",
+            ),
+            (
+                "---\ndescription: malformed\n\nRetry until success.\n",
+                vec!["CU003"],
+                "unterminated after blank line",
+            ),
+            (
+                "\u{feff}---\ndescription: Metadata.\nRetry until success.: true\nalwaysApply: true\n---\nSafe body.\n",
+                vec!["CU005"],
+                "BOM-prefixed complete metadata must not emit Q005",
+            ),
+            (
+                "\u{feff}---\n- not: mapping\n---\nRetry until success.\n",
+                vec!["CU003", "Q005"],
+                "BOM-prefixed non-object still analyzes body prose",
+            ),
+            (
+                "---\ndescription: [unclosed\n---\nRetry until success.\n",
+                vec!["CU003", "Q005"],
+                "complete invalid frontmatter keeps body prose",
+            ),
+            (
+                "Retry until success.\n",
+                vec!["CU002", "Q005"],
+                "missing frontmatter keeps full-file prose",
+            ),
+        ];
+        for (content, expected, label) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(tmp.path().join(".cursor/rules")).unwrap();
+            std::fs::write(tmp.path().join(".cursor/rules/case.mdc"), content).unwrap();
+            let mut codes: Vec<_> = codes_for(tmp.path())
+                .into_iter()
+                .filter(|code| matches!(*code, "CU002" | "CU003" | "CU005" | "Q005"))
+                .collect();
+            codes.sort_unstable();
+            let mut expected = expected;
+            expected.sort_unstable();
+            assert_eq!(codes, expected, "{label}");
+            if label.contains("BOM-prefixed complete") {
+                let diagnostics = diagnostics_for(tmp.path());
+                let q005 = diagnostics
+                    .iter()
+                    .find(|item| item.rule.code() == "Q005")
+                    .map(|item| item.location.unwrap().start().line_number());
+                assert_eq!(q005, None, "{label}: metadata must not emit Q005");
+            }
+            if label.contains("non-object") {
+                let diagnostics = diagnostics_for(tmp.path());
+                let q005_line = diagnostics
+                    .iter()
+                    .find(|item| item.rule.code() == "Q005")
+                    .map(|item| item.location.unwrap().start().line_number());
+                assert_eq!(q005_line, Some(4), "{label}: body keeps original lines");
+            }
         }
     }
 

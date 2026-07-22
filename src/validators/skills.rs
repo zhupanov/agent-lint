@@ -401,11 +401,14 @@ fn validate_skill_frontmatter_in_dir(
         };
         let bom_before_delimiter = has_utf8_bom_before_opening_delimiter(&content);
         let document = MarkdownDocument::parse(content);
-        if let Some(prompt_pass) = prompt_pass.as_deref_mut() {
+        if let Some(prompt_pass) = prompt_pass.as_deref_mut()
+            && let Some(prompt_markdown) =
+                MarkdownDocument::parse_for_prompt_content(document.content())
+        {
             let prompt_document = LiveInstructionDocument::new(
                 Path::new(&skill_path),
                 InstructionSurfaceKind::Skill,
-                &document,
+                &prompt_markdown,
             );
             prompt_pass.validate(&prompt_document, diag);
         }

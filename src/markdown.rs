@@ -112,21 +112,47 @@ pub struct MarkdownDocument {
 impl MarkdownDocument {
     /// Parse `content` once and retain only the owned facts used by validators.
     pub fn parse(content: impl Into<String>) -> Self {
-        Self::parse_with_frontmatter(content.into(), true)
+        Self::parse_with_mode(content.into(), FrontmatterMode::Structural)
     }
 
     /// Parse already-isolated Markdown prose. This deliberately does not
     /// interpret a leading `---` as frontmatter: callers that already removed
     /// frontmatter must retain the original body semantics.
     pub fn parse_body(content: impl Into<String>) -> Self {
-        Self::parse_with_frontmatter(content.into(), false)
+        Self::parse_with_mode(content.into(), FrontmatterMode::None)
     }
 
-    fn parse_with_frontmatter(content: String, parse_frontmatter: bool) -> Self {
-        let (frontmatter, body_start) = if parse_frontmatter {
-            frontmatter_and_body_start(&content)
-        } else {
-            (None, None)
+    /// Parse live instruction prose under the shared frontmatter recovery policy.
+    ///
+    /// Returns `None` when an exact opener has no closer, matching the
+    /// documented Q-rule skip for unterminated frontmatter. Complete blocks
+    /// (valid, invalid, or non-object YAML) expose only the body after the
+    /// closer, including BOM-prefixed openers, while preserving original
+    /// source line numbers.
+    pub fn parse_for_prompt_content(content: impl Into<String>) -> Option<Self> {
+        let content = content.into();
+        match crate::frontmatter::exact_leading_frontmatter(&content) {
+            crate::frontmatter::LeadingFrontmatterState::Unterminated { .. } => None,
+            crate::frontmatter::LeadingFrontmatterState::Absent { .. } => {
+                Some(Self::parse_with_mode(content, FrontmatterMode::None))
+            }
+            crate::frontmatter::LeadingFrontmatterState::Complete(_) => Some(
+                Self::parse_with_mode(content, FrontmatterMode::PromptRecovery),
+            ),
+        }
+    }
+
+    fn parse_with_mode(content: String, mode: FrontmatterMode) -> Self {
+        let (frontmatter, body_start, parse_frontmatter) = match mode {
+            FrontmatterMode::None => (None, None, false),
+            FrontmatterMode::Structural => {
+                let (frontmatter, body_start) = frontmatter_and_body_start(&content);
+                (frontmatter, body_start, true)
+            }
+            FrontmatterMode::PromptRecovery => {
+                let (frontmatter, body_start) = frontmatter_and_body_start_for_prompt(&content);
+                (frontmatter, body_start, true)
+            }
         };
         let (fences, unclosed_fence_line) = fence_facts(&content);
 
@@ -649,6 +675,31 @@ fn frontmatter_and_body_start(content: &str) -> (Option<Vec<String>>, Option<usi
         frontmatter.push(text.to_string());
     }
     (None, None)
+}
+
+enum FrontmatterMode {
+    None,
+    Structural,
+    PromptRecovery,
+}
+
+fn frontmatter_and_body_start_for_prompt(content: &str) -> (Option<Vec<String>>, Option<usize>) {
+    // Prompt recovery shares Cursor CU002/CU003's optional-BOM and exact
+    // delimiter grammar. Structural `parse` keeps its byte-exact opener so
+    // sibling surfaces (skills, agents) retain their own BOM contracts.
+    match crate::frontmatter::exact_leading_frontmatter(content) {
+        crate::frontmatter::LeadingFrontmatterState::Complete(block) => {
+            let frontmatter = block
+                .yaml
+                .lines()
+                .map(|line| line.trim_end_matches('\r').to_string())
+                .collect();
+            let body_start = content.len() - block.body.len();
+            (Some(frontmatter), Some(body_start))
+        }
+        crate::frontmatter::LeadingFrontmatterState::Absent { .. }
+        | crate::frontmatter::LeadingFrontmatterState::Unterminated { .. } => (None, None),
+    }
 }
 
 fn fence_facts(content: &str) -> (Vec<MarkdownFence>, Option<usize>) {
