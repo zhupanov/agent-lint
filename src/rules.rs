@@ -1082,6 +1082,9 @@ impl LintRule {
             Self::TemplateFileMissing | Self::TemplateMarkerMissing |
             Self::TemplateCountMismatch |
 
+            // ── Default-warning: agent description quality ───────────
+            Self::AgentDescShort | Self::AgentDescRedundant |
+
             // ── Default-warning: agent field-value (advisory) ────────
             Self::AgentBypassPermissions | Self::AgentSkillKebab |
             Self::AgentBackgroundInvalid | Self::AgentFieldUnknown |
@@ -1487,8 +1490,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            120,
-            "Expected 120 active default-warning rules, got {}",
+            122,
+            "Expected 122 active default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1614,6 +1617,18 @@ mod tests {
     }
 
     #[test]
+    fn issue_374_agent_description_heuristics_are_default_warnings() {
+        assert_eq!(
+            LintRule::AgentDescShort.default_severity(),
+            DefaultSeverity::Warning
+        );
+        assert_eq!(
+            LintRule::AgentDescRedundant.default_severity(),
+            DefaultSeverity::Warning
+        );
+    }
+
+    #[test]
     fn default_error_count() {
         let errors: Vec<_> = ACTIVE_RULES
             .iter()
@@ -1621,8 +1636,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            173,
-            "Expected 173 default-error rules, got {}",
+            171,
+            "Expected 171 default-error rules, got {}",
             errors.len()
         );
     }

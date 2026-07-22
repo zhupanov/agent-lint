@@ -292,16 +292,16 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | A001 | `agents-dir-missing` | A manifest-declared plugin agent path (a `plugin.json` `agents` string or array entry) does not exist. The implicit default `agents/` directory is optional, so its absence is never reported | Plugin | error |
-| A002 | `agent-frontmatter-malformed` | Agent `.md` has malformed frontmatter | Always | error |
-| A003 | `agent-field-missing` | Agent `.md` missing required field (`name` or `description`) | Always | error |
+| A002 | `agent-frontmatter-malformed` | Agent `.md` frontmatter has no line-1 opener or no closing delimiter | Always | error |
+| A003 | `agent-field-missing` | Agent `.md` frontmatter must be a mapping with nonblank string `name` and `description` fields | Always | error |
 | A004 | `no-agent-files` | A present plugin agent root (default `agents/` or a manifest-declared path) has no agent `.md` files after recursive discovery. An all-excluded root stays silent; an absent root reports nothing (A001 owns declared absence) | Plugin | error |
 | A005 | `template-file-missing` | An opted-in larch agent derives from a missing or unreadable `skills/shared/reviewer-templates.md` | Plugin | warn |
 | A006 | `template-marker-missing` | An opted-in top-level agent lacks the larch derivation marker | Plugin | warn |
 | A007 | `template-count-mismatch` | Opted-in larch agent count differs from semantic reviewer-section count | Plugin | warn |
 | A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Always | error |
-| A009 | `agent-desc-short` | Agent description under 20 characters | Always | error |
+| A009 | `agent-desc-short` | Agent description routing-quality advisory is under 20 trimmed Unicode scalars | Always | warn |
 | A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Always | error |
-| A011 | `agent-desc-redundant` | Agent description too similar to agent name | Always | error |
+| A011 | `agent-desc-redundant` | Agent description substantially restates the name | Always | warn |
 | A012 | `agent-read-mismatch` | Explicit agent tools omit `Read` while live prose explicitly requires the `Read` tool | Always | error |
 | A013 | `agent-output-unsafe` | Machine-only evidence output lacks both an unreadable-evidence outcome and never-invent language | Always | error |
 | A014 | `agent-model-invalid` | Agent `model` must be a recognized alias (`sonnet`/`opus`/`haiku`/`fable`/`inherit`/…) or `claude-…` ID (same vocabulary as S063) | Always | error |
@@ -322,9 +322,19 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | A029 | `agent-stop-missing` | Tool-using agent has no explicit stop control or failure outcome | Always | warn |
 | A030 | `agent-desc-overlap` | Two agent routing descriptions in the same simultaneously available namespace are exact duplicates or conservatively high Jaccard overlap (≥ 0.85 after normalization) | Always | warn |
 
-> **Agent field input (A012–A029).** These rules consume the single strict,
+> **Agent frontmatter structure and canonical values (A002, A003, A008–A029).**
+> A002 owns a missing line-1 `---` opener or an opener without a closing `---`;
+> invalid or duplicate-key YAML is owned solely by X001; and a valid non-mapping
+> YAML document emits exactly one A003. In a mapping, A003 owns missing, blank,
+> and non-string `name`/`description` fields. A008–A011 run only after those
+> fields are usable strings. These rules consume the single strict,
 > canonical YAML mapping for the agent frontmatter; comments, quoted keys, flow
-> syntax, and folded scalars therefore have their YAML meaning. `model`,
+> syntax, aliases, and folded/literal/plain multiline scalars therefore have
+> their YAML meaning. A008 counts the complete resolved `description` in Unicode
+> scalars (1,024 is allowed); A009 counts its trimmed value and is a routing-
+> quality advisory rather than a platform-load constraint. A011 uses conservative
+> deterministic suffix normalization before its existing overlap gates. Neither
+> A009 nor A011 is autofixable: adding routing context is not mechanical. `model`,
 > `permissionMode`, `memory`, `effort`, and `isolation` require strings;
 > `background` requires a YAML boolean; and `maxTurns` requires a positive YAML
 > integer. `tools`, `disallowedTools`, and `skills` accept either a string or a

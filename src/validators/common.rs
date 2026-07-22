@@ -22,6 +22,32 @@ pub(crate) fn manifest_error_metadata(error: &ManifestError) -> DiagnosticMetada
 pub(crate) static RE_NAME_INVALID: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
 
+/// Deterministic light suffix normalization shared by description-quality
+/// comparisons. This intentionally recognizes only common English inflection
+/// endings; it is not a general stemmer or a semantic similarity model.
+pub(crate) fn normalize_description_suffix(token: &str) -> String {
+    let len = token.len();
+    if len > 4 && token.ends_with("ies") {
+        return format!("{}y", &token[..len - 3]);
+    }
+    if len > 5 && token.ends_with("ing") {
+        return token[..len - 3].to_string();
+    }
+    if len > 4 && token.ends_with("ed") {
+        return token[..len - 2].to_string();
+    }
+    if len > 4 && token.ends_with("es") {
+        let before_es = token.as_bytes()[len - 3];
+        if matches!(before_es, b's' | b'x' | b'z' | b'h') {
+            return token[..len - 2].to_string();
+        }
+    }
+    if len > 3 && token.ends_with('s') && !token.ends_with("ss") {
+        return token[..len - 1].to_string();
+    }
+    token.to_string()
+}
+
 /// Evidence-integrity prohibition required by A013 and exempted by Q002.
 /// Keeping the accepted verbs here prevents the two rule contracts from
 /// drifting into contradictory diagnostics.
