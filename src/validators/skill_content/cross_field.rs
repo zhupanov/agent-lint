@@ -13,6 +13,15 @@ use super::description::{RE_TRIGGER, STOPWORDS};
 static RE_ARGS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$ARGUMENTS|\$\{ARGUMENTS\}").unwrap());
 
+// S069: positional argument references `$1`–`$9` or `${1}`–`${9}`. The digit
+// must not be followed by an ASCII alphanumeric or `_`, so `$10` (argument 10)
+// and `$1x` (identifier-shaped) are not treated as positional references while
+// `#$1`, `($1)`, and `$1.` are. The Rust regex crate has no look-around, so the
+// trailing boundary is matched (and consumed) as a character class or line end;
+// this is sound for `is_match`, which only asks whether any reference exists.
+static RE_POSITIONAL_ARG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$(?:[1-9]|\{[1-9]\})(?:[^A-Za-z0-9_]|$)").unwrap());
+
 // S068: inline dynamic injections — !`cmd` at line start or after whitespace
 static RE_INLINE_INJECT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)(?:^|[ \t])!`[^`]+`").unwrap());
@@ -28,7 +37,10 @@ pub(super) fn check_cross_field(
     plugin_mode: bool,
     diag: &mut DiagnosticCollector,
 ) {
-    // S028: $ARGUMENTS in body without argument-hint (only outside code fences)
+    // S028: $ARGUMENTS in body without argument-hint (only outside code fences).
+    // The trigger set is $ARGUMENTS forms only — bare positional `$1` refs
+    // deliberately do NOT trigger S028, so currency-shaped prose such as
+    // "costs $1" cannot manufacture a diagnostic on the emitting side.
     let body_has_args =
         crate::fence::lines_outside_fences(&info.body).any(|line| RE_ARGS.is_match(line));
 
@@ -49,17 +61,25 @@ pub(super) fn check_cross_field(
                 ),
             );
         }
-        // S069: argument-hint set but body never references $ARGUMENTS (smell;
-        // args also auto-append). Count $ARGUMENTS anywhere in the body (even
-        // inside fences) — presence anywhere is enough.
-        if hint_set && !body_has_args && !RE_ARGS.is_match(&info.body) {
-            diag.report(
-                LintRule::HintNoArgs,
-                &format!(
-                    "{}: 'argument-hint' is set but body never references $ARGUMENTS",
-                    info.path
-                ),
-            );
+        // S069: argument-hint set but body never references its arguments
+        // (smell; args also auto-append). The body references arguments when
+        // $ARGUMENTS appears anywhere (including fences — presence is enough),
+        // or a positional reference `$1`–`$9` / `${1}`–`${9}` appears on a line
+        // outside code fences. Fenced positional refs (e.g. awk '{print $1}')
+        // are excluded so S060's territory cannot silently mask hint/body drift.
+        if hint_set {
+            let references_args = RE_ARGS.is_match(&info.body)
+                || crate::fence::lines_outside_fences(&info.body)
+                    .any(|line| RE_POSITIONAL_ARG.is_match(line));
+            if !references_args {
+                diag.report(
+                    LintRule::HintNoArgs,
+                    &format!(
+                        "{}: 'argument-hint' is set but body never references $ARGUMENTS",
+                        info.path
+                    ),
+                );
+            }
         }
     }
 
@@ -171,5 +191,36 @@ mod stem_tests {
     fn ss_guard_keeps_final_s() {
         assert_eq!(normalize_description_suffix("class"), "class");
         assert_eq!(normalize_description_suffix("process"), "process");
+    }
+}
+
+#[cfg(test)]
+mod positional_arg_tests {
+    use super::RE_POSITIONAL_ARG;
+
+    #[test]
+    fn recognizes_positional_references() {
+        // Bare `$1`–`$9`, at end of line or bounded by non-word characters.
+        assert!(RE_POSITIONAL_ARG.is_match("Review PR #$1"));
+        assert!(RE_POSITIONAL_ARG.is_match("wrap ($1) here"));
+        assert!(RE_POSITIONAL_ARG.is_match("end with $1."));
+        assert!(RE_POSITIONAL_ARG.is_match("priority $2 next"));
+        assert!(RE_POSITIONAL_ARG.is_match("uses $9"));
+        // Braced `${1}`–`${9}`.
+        assert!(RE_POSITIONAL_ARG.is_match("apply ${2} carefully"));
+        assert!(RE_POSITIONAL_ARG.is_match("trailing ${1}"));
+    }
+
+    #[test]
+    fn rejects_non_positional_shapes() {
+        // `$10`-style: the digit is followed by another ASCII alphanumeric.
+        assert!(!RE_POSITIONAL_ARG.is_match("argument $10 here"));
+        assert!(!RE_POSITIONAL_ARG.is_match("token $1x here"));
+        assert!(!RE_POSITIONAL_ARG.is_match("var $1_name"));
+        assert!(!RE_POSITIONAL_ARG.is_match("braced ${10} here"));
+        // `$0` is not a positional argument.
+        assert!(!RE_POSITIONAL_ARG.is_match("script $0 name"));
+        // Plain prose without any reference.
+        assert!(!RE_POSITIONAL_ARG.is_match("no references at all"));
     }
 }

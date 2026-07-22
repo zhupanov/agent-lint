@@ -393,7 +393,7 @@ pub enum LintRule {
     /// S068: more than 3 dynamic context injections in skill body
     #[strum(props(code = "S068", name = "injection-overflow"))]
     InjectionOverflow,
-    /// S069: argument-hint set but body never references $ARGUMENTS
+    /// S069: argument-hint set but body never references $ARGUMENTS or positional $1–$9
     #[strum(props(code = "S069", name = "hint-no-args"))]
     HintNoArgs,
     /// S070: unknown skill frontmatter field
@@ -1082,7 +1082,7 @@ impl LintRule {
             Self::TimeSensitive | Self::ToolsUnknown |
             Self::McpToolUnqualified | Self::ToolsListSyntax |
             Self::SideEffectAuto | Self::BashUnscoped |
-            Self::InjectionOverflow | Self::HintNoArgs |
+            Self::InjectionOverflow | Self::ArgsNoHint | Self::HintNoArgs |
             Self::UnknownFmField | Self::PathsEmpty |
 
             // ── Default-warning: template rules (agents) ─────────────
@@ -1503,8 +1503,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            119,
-            "Expected 119 active default-warning rules, got {}",
+            120,
+            "Expected 120 active default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1556,6 +1556,20 @@ mod tests {
     fn issue_360_q004_is_a_default_warning() {
         assert_eq!(
             LintRule::ClaudeReadmeDuplicate.default_severity(),
+            DefaultSeverity::Warning
+        );
+    }
+
+    #[test]
+    fn issue_355_s028_is_a_default_warning() {
+        // S028 (args-no-hint) is advisory UX metadata guidance, matching its
+        // inverse smell S069 (hint-no-args); both default to warning.
+        assert_eq!(
+            LintRule::ArgsNoHint.default_severity(),
+            DefaultSeverity::Warning
+        );
+        assert_eq!(
+            LintRule::HintNoArgs.default_severity(),
             DefaultSeverity::Warning
         );
     }
@@ -1649,8 +1663,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            175,
-            "Expected 175 default-error rules, got {}",
+            174,
+            "Expected 174 default-error rules, got {}",
             errors.len()
         );
     }
