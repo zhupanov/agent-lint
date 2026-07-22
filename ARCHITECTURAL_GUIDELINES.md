@@ -59,6 +59,19 @@ validation path again.
 - Deviate when: the change cannot affect rule disposition, such as an internal
   parser refactor with byte-for-byte equivalent diagnostics.
 
+### G-Close-1: Verify binding comments before closing a work issue
+
+- Why: acceptance criteria added as issue comments were repeatedly not
+  implemented by the PR authored from the body: #508, #537, #525, #509,
+  #521, #546. One binding extension was orphaned entirely when its host
+  issue closed (#387).
+- Guidance: before closing a work issue, re-read its comments. For each
+  binding addendum, either verify the implementation covers it or merge it
+  into a follow-up issue body. Combined issues should fold binding comments
+  into the body before implementation starts.
+- Deviate when: a comment is explicitly informational or superseded; note
+  that in the closing comment.
+
 ## Ownership and layering
 
 ### G-Own-1: Keep one canonical owner for each concept
@@ -136,6 +149,20 @@ validation path again.
 - Deviate when: the rule is repository-wide and no single path owns the
   violation.
 
+### G-Sev-1: Derive default severity from platform impact
+
+- Why: severity drifted both ways. Load-blocking Codex failures defaulted to
+  warning (#325) while conventions and heuristics defaulted to error (#289,
+  #333, #319, #355, #360, #276, #384), failing valid repositories in CI.
+- Guidance: default to error only when the platform rejects or ignores the
+  configuration at load or run time, or the defect is a security exposure.
+  Default heuristics, conventions, and style checks to warning. Record the
+  platform behavior that justifies each error-severity default in
+  docs/rules.md next to the rule's provenance.
+- Deviate when: an agent-lint-specific convention is deliberately strict;
+  say so explicitly in the rule's documentation instead of implying a
+  platform requirement.
+
 ## Input and filesystem handling
 
 ### G-Parse-1: Preserve missing, invalid, and valid as distinct states
@@ -167,6 +194,20 @@ validation path again.
   and do not echo likely secret values in diagnostics.
 - Deviate when: none for executing linted content. A test fixture may invoke a
   controlled helper that is part of the test itself.
+
+### G-Classify-1: Classify prose by positive grammar, not substring or denylist
+
+- Why: substring gates and negation denylists misclassify open-ended text.
+  'Because' contains 'use' (#345), descriptive history repaired a negative
+  directive (#536, #557), a denial passed as a provenance marker (#528), and
+  denylist families stayed incomplete (#377). Fixed keyword lists also missed
+  ordinary inputs (#328, #390, #300, #424).
+- Guidance: state what the classifier accepts as a positive grammar over
+  word-boundary tokens, and treat everything else as non-matching. Prefer
+  parsed structure (canonical YAML, MarkdownDocument masked prose, argv
+  roles) over raw text. Ship hard-negative cases with every classifier.
+- Deviate when: the vocabulary is genuinely closed and exact-match, such as a
+  platform enum; then an exact allowlist is the positive grammar.
 
 ## Autofix
 
@@ -220,6 +261,19 @@ validation path again.
   that change the current directory. Restore environment variables and other
   process-global state through drop guards even when assertions panic.
 - Deviate when: the test never mutates process-global state.
+
+### G-Test-3: Put regression defects in the second occurrence
+
+- Why: first-only defects passed every existing test: only the first raw map
+  was shape-checked (#546), repeated values took the first span (#510), late
+  array defects were skipped (#539), and only the first violation in a
+  document was reported (#359, #335).
+- Guidance: when testing collection or multi-occurrence behavior, place the
+  defect in the second element, second occurrence, or second file, and assert
+  every expected diagnostic, not just one. Pair with a first-element case
+  only when ordering matters.
+- Deviate when: the contract is genuinely first-match-only; cite that
+  contract in the test.
 
 ## Documentation and enforcement
 
