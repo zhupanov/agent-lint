@@ -80,6 +80,117 @@ impl McpTransport {
         scheme_is_appropriate && url.host().is_some()
     }
 
+    fn scheme_prefixes(self) -> &'static [&'static str] {
+        // Scheme-colon prefixes: WHATWG parses special-scheme URLs with zero,
+        // one, or two separator slashes identically, so `https:${HOST}/mcp`
+        // carries an authority exactly like `https://${HOST}/mcp`.
+        match self {
+            Self::Http | Self::StreamableHttp | Self::Sse => &["http:", "https:"],
+            Self::WebSocket => &["ws:", "wss:"],
+            Self::Stdio => &[],
+        }
+    }
+
+    fn has_literal_scheme_prefix(self, value: &str) -> bool {
+        self.scheme_prefixes().iter().any(|prefix| {
+            value
+                .get(..prefix.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        })
+    }
+
+    /// Classify a non-empty Claude remote `url` value as a concrete URL, a
+    /// documented `${VAR}` / `${VAR:-default}` template, or invalid. Templates
+    /// are recognized before concrete URL parsing and are judged only on facts
+    /// decidable from the source text; environment values are never read.
+    ///
+    /// The template grammar is exactly the documented `${NAME}` /
+    /// `${NAME:-DEFAULT}` environment expansion for `.mcp.json` fields, on all
+    /// three Claude adapters. Plugin `${user_config.KEY}` references are not
+    /// part of that documented URL expansion contract and keep concrete-URL
+    /// treatment here (their credential-field handling stays with P018).
+    fn classify_url(self, value: &str) -> UrlAcceptance {
+        let tokens = claude_url_tokens(value);
+        // Values with no documented tokens — or with stray `${` fragments
+        // outside every well-formed token — get no template treatment: they
+        // are valid exactly when they parse as a concrete URL, as before.
+        if tokens.is_empty() || has_unrecognized_reference(value, &tokens) {
+            return if self.accepts_url(value) {
+                UrlAcceptance::Valid {
+                    security_probe: Some(value.to_string()),
+                }
+            } else {
+                UrlAcceptance::Invalid
+            };
+        }
+        // Judge the decidable unset-environment expansion: every
+        // `${NAME:-DEFAULT}` becomes its literal DEFAULT, while `${NAME}`
+        // stays runtime-supplied.
+        let (expanded, surviving) = expand_template_defaults(value, &tokens);
+        self.classify_expanded_template(&expanded, &surviving)
+    }
+
+    fn classify_expanded_template(
+        self,
+        expanded: &str,
+        surviving: &[Range<usize>],
+    ) -> UrlAcceptance {
+        let Some(first) = surviving.first() else {
+            // Defaults resolved every reference: fully decidable.
+            return if expanded.is_empty() {
+                // e.g. `${URL:-}`: expands to the documented exact-empty
+                // disabled placeholder when the variable is unset.
+                UrlAcceptance::Valid {
+                    security_probe: None,
+                }
+            } else if self.accepts_url(expanded) {
+                UrlAcceptance::Valid {
+                    security_probe: Some(expanded.to_string()),
+                }
+            } else {
+                UrlAcceptance::Invalid
+            };
+        };
+        if first.start == 0 {
+            // A leading reference supplies the URL or base URL at runtime.
+            return UrlAcceptance::Valid {
+                security_probe: None,
+            };
+        }
+        if !self.has_literal_scheme_prefix(expanded) {
+            // Junk literal prefix or transport-inappropriate literal scheme.
+            return UrlAcceptance::Invalid;
+        }
+        // Literal transport-appropriate scheme with tokens in later URL
+        // components: accept when the URL syntax around the tokens holds. `0`
+        // covers domain, port, path, and query positions; `::1` covers
+        // bracketed IPv6 host templates such as `https://[${V6}]/mcp`.
+        let Some(neutralized) = ["0", "::1"]
+            .into_iter()
+            .map(|placeholder| neutralize_template_tokens(expanded, surviving, placeholder))
+            .find(|candidate| self.accepts_url(candidate))
+        else {
+            return UrlAcceptance::Invalid;
+        };
+        let authority_is_runtime_supplied = authority_region(expanded).is_some_and(|region| {
+            surviving
+                .iter()
+                .any(|token| token.start < region.end && token.end > region.start)
+        });
+        if authority_is_runtime_supplied {
+            // Expansion may rewrite the effective host (a reference can inject
+            // `@`, `:`, or `.` into the authority), so locality is unknown and
+            // no speculative P017 applies.
+            UrlAcceptance::Valid {
+                security_probe: None,
+            }
+        } else {
+            UrlAcceptance::Valid {
+                security_probe: Some(neutralized),
+            }
+        }
+    }
+
     fn url_scheme_description(self) -> &'static str {
         match self {
             Self::Http | Self::StreamableHttp | Self::Sse => "http:// or https://",
@@ -88,6 +199,109 @@ impl McpTransport {
         }
     }
 }
+
+/// P010 verdict for a Claude remote `url` value.
+enum UrlAcceptance {
+    /// The concrete URL or documented template is valid for the transport.
+    /// `security_probe` carries the concrete URL whose scheme and authority
+    /// are decidable from the source (P017 input); `None` means locality is
+    /// runtime-dependent and no speculative P017 applies.
+    Valid { security_probe: Option<String> },
+    /// The value is neither a concrete transport-appropriate URL nor a valid
+    /// documented template.
+    Invalid,
+}
+
+/// One documented `${NAME}` / `${NAME:-DEFAULT}` token inside a URL template.
+struct UrlTemplateToken {
+    range: Range<usize>,
+    /// Byte range of the literal DEFAULT text, when the token declares one.
+    default: Option<Range<usize>>,
+}
+
+fn claude_url_tokens(value: &str) -> Vec<UrlTemplateToken> {
+    CLAUDE_ENV_TOKEN
+        .captures_iter(value)
+        .map(|captures| UrlTemplateToken {
+            range: captures.get(0).expect("complete Claude reference").range(),
+            default: captures.get(2).map(|default| default.range()),
+        })
+        .collect()
+}
+
+/// Whether `value` contains a `${` opener outside every well-formed token.
+fn has_unrecognized_reference(value: &str, tokens: &[UrlTemplateToken]) -> bool {
+    value.match_indices("${").any(|(start, _)| {
+        !tokens
+            .iter()
+            .any(|token| token.range.start <= start && start + 2 <= token.range.end)
+    })
+}
+
+/// Replace every `${NAME:-DEFAULT}` with its literal DEFAULT — the single-pass
+/// expansion Claude applies when NAME is unset — and return the surviving
+/// `${NAME}` token ranges remapped to the expanded string. Text contributed by
+/// a DEFAULT is never rescanned for references: runtime expansion is single
+/// pass, so replacement output is literal URL text, not new template source.
+fn expand_template_defaults(
+    value: &str,
+    tokens: &[UrlTemplateToken],
+) -> (String, Vec<Range<usize>>) {
+    let mut expanded = String::with_capacity(value.len());
+    let mut surviving = Vec::new();
+    let mut cursor = 0;
+    for token in tokens {
+        expanded.push_str(&value[cursor..token.range.start]);
+        match &token.default {
+            Some(default) => expanded.push_str(&value[default.clone()]),
+            None => {
+                let start = expanded.len();
+                expanded.push_str(&value[token.range.clone()]);
+                surviving.push(start..expanded.len());
+            }
+        }
+        cursor = token.range.end;
+    }
+    expanded.push_str(&value[cursor..]);
+    (expanded, surviving)
+}
+
+/// Replace every surviving token with a syntax-neutral placeholder so the URL
+/// grammar around the tokens can be checked without reading the environment.
+fn neutralize_template_tokens(value: &str, tokens: &[Range<usize>], placeholder: &str) -> String {
+    let mut neutralized = String::with_capacity(value.len());
+    let mut cursor = 0;
+    for token in tokens {
+        neutralized.push_str(&value[cursor..token.start]);
+        neutralized.push_str(placeholder);
+        cursor = token.end;
+    }
+    neutralized.push_str(&value[cursor..]);
+    neutralized
+}
+
+/// Byte range of the authority component in a `scheme:`-prefixed template.
+/// WHATWG special-scheme parsing skips any run of `/` or `\` separators after
+/// the scheme colon; the authority then runs to the next `/`, `\`, `?`, or `#`.
+fn authority_region(value: &str) -> Option<Range<usize>> {
+    let colon = value.find(':')?;
+    let mut start = colon + 1;
+    while value[start..].starts_with(['/', '\\']) {
+        start += 1;
+    }
+    let end = value[start..]
+        .find(['/', '\\', '?', '#'])
+        .map_or(value.len(), |offset| start + offset);
+    Some(start..end)
+}
+
+/// Documented Claude `${NAME}` / `${NAME:-DEFAULT}` environment-expansion
+/// token grammar, shared by P018 reference checks and P010/P017 URL templates.
+/// Source: https://code.claude.com/docs/en/mcp (retrieved 2026-07-22).
+static CLAUDE_ENV_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+        .expect("valid Claude MCP reference regex")
+});
 
 static RE_PAYLOAD_DOWNLOAD_PIPE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
@@ -704,29 +918,27 @@ fn validate_claude_transport(
     }
     if transport.is_remote() {
         match config.get("url").and_then(Value::as_str) {
-            Some(url) if transport.accepts_url(url) => validate_url_security(
-                label,
-                url,
-                source,
-                field_value(token, "url").or(server_key),
-                diag,
-            ),
-            _ => report(
-                diag,
-                LintRule::McpHttpUrlMissing,
-                &format!(
-                    "{label}: {} server requires a valid non-empty URL using {}",
-                    transport.name(),
-                    transport.url_scheme_description(),
-                ),
-                source,
-                field_value(token, "url").or(server_key),
-                "url",
-                &format!(
-                    "use a valid URL with {}",
-                    transport.url_scheme_description()
-                ),
-            ),
+            // An explicit exact empty URL is the documented (Claude Code
+            // v2.1.208+) disabled/not-configured connector placeholder, not a
+            // configuration error: neither P010 nor P017 applies.
+            Some("") => {}
+            Some(url) => match transport.classify_url(url) {
+                UrlAcceptance::Valid { security_probe } => {
+                    if let Some(probe) = security_probe {
+                        validate_url_security(
+                            label,
+                            &probe,
+                            source,
+                            field_value(token, "url").or(server_key),
+                            diag,
+                        );
+                    }
+                }
+                UrlAcceptance::Invalid => {
+                    report_url_invalid(diag, transport, label, source, token, server_key);
+                }
+            },
+            None => report_url_invalid(diag, transport, label, source, token, server_key),
         }
     }
     if transport == McpTransport::Sse {
@@ -794,6 +1006,32 @@ fn validate_cursor_selector(
             }
         }
     }
+}
+
+fn report_url_invalid(
+    diag: &mut DiagnosticCollector,
+    transport: McpTransport,
+    label: &str,
+    source: Option<&str>,
+    token: Option<&ServerTokens>,
+    server_key: Option<&Range<usize>>,
+) {
+    report(
+        diag,
+        LintRule::McpHttpUrlMissing,
+        &format!(
+            "{label}: {} server requires a valid non-empty URL using {}",
+            transport.name(),
+            transport.url_scheme_description(),
+        ),
+        source,
+        field_value(token, "url").or(server_key),
+        "url",
+        &format!(
+            "use a valid URL with {}",
+            transport.url_scheme_description()
+        ),
+    );
 }
 
 fn validate_url_security(
@@ -975,10 +1213,6 @@ struct ReferenceToken {
 }
 
 fn reference_tokens(value: &str, grammar: ReferenceGrammar) -> Vec<ReferenceToken> {
-    static CLAUDE_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
-            .expect("valid Claude MCP reference regex")
-    });
     static PLUGIN_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"\$\{user_config\.[A-Za-z_][A-Za-z0-9_]*\}")
             .expect("valid Claude plugin reference regex")
@@ -991,7 +1225,7 @@ fn reference_tokens(value: &str, grammar: ReferenceGrammar) -> Vec<ReferenceToke
     });
 
     let mut tokens: Vec<_> = match grammar {
-        ReferenceGrammar::ClaudeStandalone | ReferenceGrammar::ClaudePlugin => CLAUDE_TOKEN
+        ReferenceGrammar::ClaudeStandalone | ReferenceGrammar::ClaudePlugin => CLAUDE_ENV_TOKEN
             .captures_iter(value)
             .map(|captures| ReferenceToken {
                 range: captures.get(0).expect("complete Claude reference").range(),
@@ -2677,6 +2911,14 @@ mod tests {
                 serde_json::json!({"type": transport, "url": "  "}),
             );
             servers.insert(
+                format!("{transport}-null"),
+                serde_json::json!({"type": transport, "url": null}),
+            );
+            servers.insert(
+                format!("{transport}-numeric"),
+                serde_json::json!({"type": transport, "url": 5}),
+            );
+            servers.insert(
                 format!("{transport}-wrong-scheme"),
                 serde_json::json!({"type": transport, "url": wrong_scheme}),
             );
@@ -2692,7 +2934,7 @@ mod tests {
                 .iter()
                 .filter(|rule| **rule == LintRule::McpHttpUrlMissing)
                 .count(),
-            16,
+            24,
             "{rules:?}"
         );
         assert_eq!(
@@ -2700,10 +2942,212 @@ mod tests {
                 .iter()
                 .filter(|rule| **rule == LintRule::McpSseDeprecated)
                 .count(),
-            4,
+            6,
             "{rules:?}"
         );
-        assert_eq!(rules.len(), 20, "{rules:?}");
+        assert_eq!(rules.len(), 30, "{rules:?}");
+    }
+
+    #[test]
+    fn exact_empty_urls_are_documented_disabled_placeholders() {
+        // Standalone: every remote transport accepts an explicit exact empty
+        // URL as the documented disabled/not-configured connector placeholder.
+        // P012 still applies to the selected sse type.
+        let rules = reported_rules(
+            r#"{"mcpServers":{"h":{"type":"http","url":""},"s":{"type":"streamable-http","url":""},"e":{"type":"sse","url":""},"w":{"type":"ws","url":""}}}"#,
+            ".mcp.json",
+        );
+        assert_eq!(rules, vec![LintRule::McpSseDeprecated], "{rules:?}");
+
+        // Inline plugin manifest surface, all four remote transports.
+        let temp = tempfile::tempdir().unwrap();
+        let mut inline = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::parsed(serde_json::json!({
+                    "name": "empty-url-plugin",
+                    "mcpServers": {
+                        "placeholder": {"type": "http", "url": ""},
+                        "streamable": {"type": "streamable-http", "url": ""},
+                        "legacy": {"type": "sse", "url": ""},
+                        "socket": {"type": "ws", "url": ""}
+                    }
+                })),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut inline,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert_eq!(
+            inline
+                .diagnostics()
+                .iter()
+                .map(|item| item.rule)
+                .collect::<Vec<_>>(),
+            vec![LintRule::McpSseDeprecated],
+            "{:#?}",
+            inline.diagnostics()
+        );
+
+        // Plugin-referenced MCP config surface, all four remote transports.
+        std::fs::write(
+            temp.path().join("servers.json"),
+            r#"{"mcpServers":{"placeholder":{"type":"http","url":""},"streamable":{"type":"streamable-http","url":""},"legacy":{"type":"sse","url":""},"socket":{"type":"ws","url":""}}}"#,
+        )
+        .unwrap();
+        let mut referenced = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::parsed(serde_json::json!({
+                    "mcpServers": "./servers.json"
+                })),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut referenced,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert_eq!(
+            referenced
+                .diagnostics()
+                .iter()
+                .map(|item| item.rule)
+                .collect::<Vec<_>>(),
+            vec![LintRule::McpSseDeprecated],
+            "{:#?}",
+            referenced.diagnostics()
+        );
+    }
+
+    #[test]
+    fn documented_url_templates_are_valid_and_locality_unknown_stays_quiet() {
+        for (transport, url) in [
+            ("http", "${MCP_URL}"),
+            ("http", "${API_BASE_URL:-https://api.example.com}/mcp"),
+            ("http", "${BASE}/path"),
+            ("http", "${URL:-}"),
+            ("http", "https://${HOST}/mcp"),
+            ("streamable-http", "https://${HOST}/mcp"),
+            ("ws", "wss://${HOST}/socket"),
+            ("http", "https://api.example.com/${PATH}?key=${KEY}"),
+            // Reference-supplied authority: locality unknown, no P017.
+            ("http", "http://${HOST}/mcp"),
+            ("ws", "ws://${HOST}/socket"),
+            // Decidable-local defaults, hosts, and loopback IPs stay clean.
+            ("http", "http://${HOST:-localhost}/x"),
+            ("http", "http://localhost/${PATH}"),
+            ("http", "http://127.0.0.1/${PATH}"),
+            ("http", "http://[::1]:3000/${PATH}"),
+            // A token inside the authority (port) leaves locality unknown.
+            ("http", "http://example.com:${PORT}/x"),
+            // WHATWG parses special-scheme URLs with zero or one separator
+            // slash identically, so these carry a reference-supplied
+            // authority: P010-clean and locality-unknown for P017.
+            ("http", "https:${HOST}/mcp"),
+            ("http", "http:${HOST}"),
+            ("http", "http:/${HOST}/x"),
+            ("ws", "wss:${HOST}/socket"),
+            // Bracketed IPv6 host template.
+            ("http", "https://[${V6}]/mcp"),
+        ] {
+            let content = serde_json::json!({
+                "mcpServers": {"tmpl": {"type": transport, "url": url}}
+            })
+            .to_string();
+            let rules = reported_rules(&content, ".mcp.json");
+            assert!(rules.is_empty(), "{transport} {url}: {rules:?}");
+        }
+    }
+
+    #[test]
+    fn broken_url_templates_remain_exact_p010() {
+        for (transport, url) in [
+            // Transport-inappropriate default supplied by a leading reference.
+            ("http", "${BASE:-ftp://x}/mcp"),
+            // Empty default: the decidable unset expansion `/path` is invalid.
+            ("http", "${BASE:-}/path"),
+            // Malformed or unclosed reference fragments get no template rescue.
+            ("http", "${MCP_URL"),
+            ("http", "${API BASE}/x"),
+            // Junk literal prefix before the first reference.
+            ("http", "junk${HOST}/mcp"),
+            // Transport-inappropriate literal schemes.
+            ("http", "ftp://${HOST}/x"),
+            ("ws", "https://${HOST}/socket"),
+            // Single-pass expansion: DEFAULT text is literal output, never new
+            // template source, so these decidably expand to invalid URLs
+            // (`${B:-ftp://x}/mcp`, `${B}`, and `${B}` respectively).
+            ("http", "${A:-$}{B:-ftp://x}/mcp"),
+            ("http", "${A:-${B}}"),
+            ("http", "${A:-$}{B}"),
+        ] {
+            let content = serde_json::json!({
+                "mcpServers": {"tmpl": {"type": transport, "url": url}}
+            })
+            .to_string();
+            let rules = reported_rules(&content, ".mcp.json");
+            assert_eq!(
+                rules,
+                vec![LintRule::McpHttpUrlMissing],
+                "{transport} {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn template_p017_applies_only_when_decidable_from_the_source() {
+        for (transport, url) in [
+            // Concrete non-local insecure host with path token still errors.
+            ("http", "http://remote.example/${PATH}"),
+            // WHATWG treats `\` like `/` and tolerates a missing separator, so
+            // both hosts are concrete and the tokens sit in the path.
+            ("http", "http://remote.example\\${PATH}"),
+            ("http", "http:remote.example/${PATH}"),
+            // Defaults make the authority decidable from the source template.
+            ("http", "http://${HOST:-remote.example}/x"),
+            ("ws", "ws://${HOST:-remote.example}/socket"),
+            ("http", "${BASE:-http://remote.example}/x"),
+        ] {
+            let content = serde_json::json!({
+                "mcpServers": {"tmpl": {"type": transport, "url": url}}
+            })
+            .to_string();
+            let rules = reported_rules(&content, ".mcp.json");
+            assert_eq!(rules, vec![LintRule::McpUrlNotHttps], "{transport} {url}");
+        }
+    }
+
+    #[test]
+    fn malformed_reference_fragments_keep_concrete_url_behavior() {
+        // A stray `${` in a URL that parses concretely stays clean for P010
+        // and keeps the concrete P017 outcome for its literal scheme/host.
+        assert!(
+            reported_rules(
+                r#"{"mcpServers":{"a":{"type":"http","url":"https://example.com/${oops"}}}"#,
+                ".mcp.json",
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            reported_rules(
+                r#"{"mcpServers":{"a":{"type":"http","url":"http://${HOST}/${oops"}}}"#,
+                ".mcp.json",
+            ),
+            vec![LintRule::McpUrlNotHttps]
+        );
     }
 
     #[test]

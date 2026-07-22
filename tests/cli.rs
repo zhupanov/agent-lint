@@ -636,6 +636,74 @@ fn mcp_remote_transport_contract_has_exact_json_diagnostics_in_normal_and_all_mo
 }
 
 #[test]
+fn mcp_empty_placeholders_and_url_templates_are_clean_for_focused_p010_p017() {
+    // Issue #548: documented Claude URL states — an explicit exact empty URL
+    // (disabled connector placeholder) and `${VAR}` / `${VAR:-default}` URL
+    // templates — are clean under focused P010/P017 in normal and all modes.
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    // Array-form mcpServers exercises the inline-plugin (issue reproduction
+    // placeholder) and plugin-referenced surfaces in one manifest.
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"empty-url-plugin","mcpServers":[{"placeholder":{"type":"http","url":""}},"./servers/mcp-servers.json"]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("servers")).unwrap();
+    std::fs::write(
+        tmp.path().join("servers/mcp-servers.json"),
+        r#"{"mcpServers":{"http-off":{"type":"http","url":""},"streamable-off":{"type":"streamable-http","url":""},"sse-off":{"type":"sse","url":""},"ws-off":{"type":"ws","url":""}}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".mcp.json"),
+        r#"{"mcpServers":{"http-off":{"type":"http","url":""},"streamable-off":{"type":"streamable-http","url":""},"sse-off":{"type":"sse","url":""},"ws-off":{"type":"ws","url":""},"exact":{"type":"http","url":"${MCP_URL}"},"documented":{"type":"http","url":"${API_BASE_URL:-https://api.example.com}/mcp"},"host":{"type":"http","url":"https://${HOST}/mcp"},"socket":{"type":"ws","url":"wss://${HOST}/socket"},"path-query":{"type":"http","url":"https://api.example.com/${PATH}?key=${KEY}"},"unknown-host":{"type":"http","url":"http://${HOST}/mcp"}}}"#,
+    )
+    .unwrap();
+
+    for args in [
+        vec!["--format", "json", "--only", "P010,P017", "."],
+        vec!["--format", "json", "--all", "--only", "P010,P017", "."],
+    ] {
+        let output = run_in(tmp.path(), &args);
+        assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        assert_eq!(report["status"], "clean", "{report:#}");
+        assert_eq!(
+            report["diagnostics"].as_array().unwrap().len(),
+            0,
+            "{report:#}"
+        );
+    }
+
+    // The empty sse placeholders still carry the transport deprecation on the
+    // standalone and plugin-referenced surfaces.
+    let sse = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", "P012", "."],
+    );
+    assert_eq!(sse.status.code(), Some(1), "stderr: {}", stderr(&sse));
+    let report = json(&sse);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 2, "{report:#}");
+    let subjects: std::collections::BTreeSet<_> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            assert_eq!(diagnostic["code"], "P012", "{report:#}");
+            diagnostic["subject_path"].as_str().unwrap()
+        })
+        .collect();
+    assert_eq!(
+        subjects,
+        [".mcp.json", "servers/mcp-servers.json"]
+            .into_iter()
+            .collect(),
+        "{report:#}"
+    );
+}
+
+#[test]
 fn mcp_structure_and_invalid_type_preserve_focused_rule_contracts() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

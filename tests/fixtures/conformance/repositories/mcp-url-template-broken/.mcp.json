@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "bad-default": { "type": "http", "url": "${BASE:-ftp://x}/mcp" },
+    "unclosed": { "type": "http", "url": "${MCP_URL" },
+    "junk-prefix": { "type": "http", "url": "junk${HOST}/mcp" },
+    "wrong-ws": { "type": "ws", "url": "https://${HOST}/socket" },
+    "insecure-default": { "type": "http", "url": "http://${HOST:-remote.example}/x" }
+  }
+}
