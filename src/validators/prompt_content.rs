@@ -437,7 +437,7 @@ fn check_unbounded_retry(
 }
 
 /// Prose lines joined exactly as the sentence parser sees them, retaining the
-/// original source coordinates for structured Q005 diagnostics.
+/// original source coordinates for structured diagnostics (Q005 and Q006).
 struct JoinedProseScope<'a> {
     text: String,
     segments: Vec<(
@@ -466,7 +466,7 @@ impl<'a> JoinedProseScope<'a> {
             .segments
             .iter()
             .find(|(range, _)| range.start <= offset && offset <= range.end)
-            .expect("Q005 match offset belongs to a source prose line");
+            .expect("joined prose match offset belongs to a source prose line");
         let local_offset = offset.saturating_sub(range.start).min(line.text.len());
         (line.line, line.text[..local_offset].chars().count() + 1)
     }
@@ -474,8 +474,8 @@ impl<'a> JoinedProseScope<'a> {
 
 /// Contiguous Markdown instruction scopes: runs of non-empty, non-example,
 /// non-heading prose lines split at blank/example/heading/fence gaps and at each
-/// new list item. Shared by Q002 (alternative association) and Q005 (retry
-/// bound association).
+/// new list item. Shared by Q002 (alternative association), Q005 (retry bound
+/// association), and Q006 (output-conflict sentence assembly).
 fn instruction_scopes<'a>(
     document: &'a LiveInstructionDocument<'_>,
     example_scopes: &[bool],
@@ -1202,23 +1202,18 @@ fn check_output_conflict(
     document: &LiveInstructionDocument<'_>,
     diag: &mut DiagnosticCollector,
 ) {
-    let lines = document.prose_lines();
-    let example = document.example_scopes();
     let headings = document.headings();
     let scope_roots = heading_scope_roots(headings);
+    let example_scopes = document.example_scopes();
     let mut requirements: Vec<DetectedRequirement> = Vec::new();
 
-    for (index, line) in lines.iter().enumerate() {
-        if example[index] {
-            continue;
-        }
-        // Heading lines define response scopes; they are never operative output
-        // instructions themselves.
-        if headings.iter().any(|heading| heading.line == line.line) {
-            continue;
-        }
-        let scope = enclosing_response_scope(headings, &scope_roots, line.line);
-        for (sentence_offset, sentence) in split_on(&line.text, SENTENCE_DELIMITERS) {
+    // Assemble sentences over joined contiguous prose so a leading conditional
+    // guard on one hard-wrapped line still protects the directive on the next.
+    // Scope boundaries match Q005 (`instruction_scopes`); response-scope identity
+    // for conflict pairing still comes from the heading-tree engine below.
+    for scope_lines in instruction_scopes(document, &example_scopes) {
+        let joined_scope = JoinedProseScope::new(&scope_lines);
+        for (sentence_offset, sentence) in split_on(&joined_scope.text, SENTENCE_DELIMITERS) {
             // Conditionality is judged on the whole sentence first so a leading
             // "For X, ..." condition still guards the directive that follows it.
             if sentence_is_conditional(sentence) {
@@ -1229,12 +1224,12 @@ fn check_output_conflict(
                     continue;
                 }
                 for (requirement_offset, requirement) in detect_requirements(clause) {
+                    let offset = sentence_offset + clause_offset + requirement_offset;
+                    let (line, column) = joined_scope.position_at(offset);
+                    let scope = enclosing_response_scope(headings, &scope_roots, line);
                     requirements.push(DetectedRequirement {
-                        line: line.line,
-                        column: line.text[..sentence_offset + clause_offset + requirement_offset]
-                            .chars()
-                            .count()
-                            + 1,
+                        line,
+                        column,
                         scope,
                         requirement,
                     });
@@ -2941,6 +2936,107 @@ mod tests {
                 .as_deref()
                 .unwrap()
                 .contains("Clarify")
+        );
+    }
+
+    #[test]
+    fn q006_assembles_hard_wrapped_sentences_like_q005() {
+        // Leading conditional guards survive ordinary hard-wraps (the #399 FP).
+        let wrapped_routing = "\
+For data requests,
+respond only in JSON.
+For prose explanations,
+respond only in Markdown.
+";
+        assert!(
+            q006_diagnostics(wrapped_routing).is_empty(),
+            "wrapped conditional routing must stay clean"
+        );
+        // Semantically identical single-line form stays clean too.
+        assert!(q006_diagnostics(
+            "For data requests, respond only in JSON. For prose explanations, respond only in Markdown.\n"
+        )
+        .is_empty());
+
+        // Unguarded wrapped exclusives are detected with per-line coordinates
+        // (the #399 FN: verb and format token on different source lines).
+        let wrapped_conflict = "\
+Respond only in
+JSON.
+Respond only in
+Markdown.
+";
+        let diagnostics = q006_diagnostics(wrapped_conflict);
+        assert_eq!(diagnostics.len(), 1);
+        let evidence = diagnostics[0].evidence.as_deref().unwrap();
+        assert!(
+            evidence.contains("line 1 column 1:") && evidence.contains("line 3 column 1:"),
+            "{evidence}"
+        );
+        assert!(
+            evidence.contains("JSON") && evidence.contains("Markdown"),
+            "{evidence}"
+        );
+
+        // Wrapped shape bounds conflict once; per-item and artifact targets stay clean.
+        assert_eq!(
+            q006_diagnostics("Use at most\ntwo sentences.\nWrite at least\nfive sentences.\n")
+                .len(),
+            1
+        );
+        assert!(
+            q006_diagnostics(
+                "Use at most\ntwo sentences apiece.\nWrite at least\nfive sentences.\n"
+            )
+            .is_empty()
+        );
+        assert!(
+            q006_diagnostics(
+                "Write commit messages in\nplain text only.\nRespond only in\nMarkdown.\n"
+            )
+            .is_empty()
+        );
+
+        // Conditional whose directive continues after the comma on the next line.
+        assert!(
+            q006_diagnostics(
+                "For data requests,\nrespond only in JSON.\nFor prose,\nrespond only in Markdown.\n"
+            )
+            .is_empty()
+        );
+        assert!(q006_diagnostics(
+            "When summarizing,\nuse at most two sentences.\nWhen expanding,\nwrite at least five sentences.\n"
+        )
+        .is_empty());
+
+        // Blank lines terminate joining: a conditional guard does not span them.
+        assert_eq!(
+            q006_diagnostics(
+                "For data requests,\n\nrespond only in JSON.\nFor prose explanations,\n\nrespond only in Markdown.\n"
+            )
+            .len(),
+            1,
+            "blank-line boundary must drop the leading guard so the pair conflicts"
+        );
+        // Heading boundary keeps distinct response modes clean even when wrapped.
+        assert!(
+            q006_diagnostics(
+                "## JSON responses\nRespond only in\nJSON.\n## Markdown responses\nRespond only in\nMarkdown.\n"
+            )
+            .is_empty()
+        );
+        // List-item wrap continuation joins within the item; a new item starts a
+        // new instruction scope (guards stay local to each item).
+        assert!(
+            q006_diagnostics(
+                "- For data requests,\n  respond only in JSON.\n- For prose explanations,\n  respond only in Markdown.\n"
+            )
+            .is_empty()
+        );
+        // Example heading still suppresses live instructions.
+        assert!(
+            q006_diagnostics("# Examples\nRespond only in\nJSON.\nRespond only in\nMarkdown.\n")
+                .is_empty()
         );
     }
 
