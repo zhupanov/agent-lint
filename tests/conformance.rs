@@ -182,6 +182,130 @@ struct LoadedCase {
     manifest: CaseManifest,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RequiredContracts {
+    requirements: Vec<ContractRequirement>,
+    baseline: Vec<ContractBaseline>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContractRequirement {
+    rule: String,
+    surface: ContractSurface,
+    classes: Vec<CaseClass>,
+    axes: Vec<ContractAxis>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ContractBaseline {
+    rule: String,
+    surface: ContractSurface,
+    class: CaseClass,
+    axis: ContractAxis,
+    reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(rename_all = "kebab-case")]
+enum ContractSurface {
+    HookSchema,
+    CursorSkill,
+    CodexPlugin,
+    SharedSkillDiscovery,
+}
+
+impl ContractSurface {
+    fn coverage_tag(self) -> &'static str {
+        match self {
+            Self::HookSchema => "hook-schema",
+            Self::CursorSkill => "cursor-skill",
+            Self::CodexPlugin => "codex-plugin",
+            Self::SharedSkillDiscovery => "agent-skills-description",
+        }
+    }
+
+    fn name(self) -> &'static str {
+        self.coverage_tag()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+#[serde(rename_all = "kebab-case")]
+enum ContractAxis {
+    JsonOutput,
+    FocusedSelection,
+    BasicMode,
+    PluginMode,
+    NormalPolicy,
+    PedanticPolicy,
+    AllPolicy,
+    ClaudeActive,
+    CursorActive,
+    CodexActive,
+    PlatformDisabled,
+    PlatformForced,
+    GlobalSuppression,
+    PerFileSuppression,
+    Exclusion,
+    Diagnostic,
+    Subject,
+    Location,
+    Suggestion,
+    Autofix,
+    NoAutofix,
+}
+
+impl ContractAxis {
+    fn name(self) -> &'static str {
+        match self {
+            Self::JsonOutput => "json-output",
+            Self::FocusedSelection => "focused-selection",
+            Self::BasicMode => "basic-mode",
+            Self::PluginMode => "plugin-mode",
+            Self::NormalPolicy => "normal-policy",
+            Self::PedanticPolicy => "pedantic-policy",
+            Self::AllPolicy => "all-policy",
+            Self::ClaudeActive => "claude-active",
+            Self::CursorActive => "cursor-active",
+            Self::CodexActive => "codex-active",
+            Self::PlatformDisabled => "platform-disabled",
+            Self::PlatformForced => "platform-forced",
+            Self::GlobalSuppression => "global-suppression",
+            Self::PerFileSuppression => "per-file-suppression",
+            Self::Exclusion => "exclusion",
+            Self::Diagnostic => "diagnostic",
+            Self::Subject => "subject",
+            Self::Location => "location",
+            Self::Suggestion => "suggestion",
+            Self::Autofix => "autofix",
+            Self::NoAutofix => "no-autofix",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+struct ContractTuple {
+    rule: String,
+    surface: ContractSurface,
+    class: CaseClass,
+    axis: ContractAxis,
+}
+
+impl ContractTuple {
+    fn display(&self) -> String {
+        format!(
+            "rule={}, surface={}, class={:?}, axis={}",
+            self.rule,
+            self.surface.name(),
+            self.class,
+            self.axis.name()
+        )
+    }
+}
+
 #[test]
 fn checked_in_conformance_corpus_matches_released_cli_contract() {
     let corpus = corpus_root();
@@ -197,6 +321,208 @@ fn checked_in_conformance_corpus_matches_released_cli_contract() {
 
     for case in cases {
         run_case(&corpus, &case, &schema_validator);
+    }
+}
+
+#[test]
+fn test_required_contract_matrix_covers_rule_surface_policy_axes() {
+    let corpus = corpus_root();
+    let cases = load_cases(&corpus);
+    let path = corpus.join("required-contracts.json");
+    let bytes =
+        fs::read(&path).unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+    let contracts: RequiredContracts = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("invalid contract matrix {}: {error}", path.display()));
+
+    let known_rules = known_rule_codes();
+    let mut required = BTreeSet::new();
+    for requirement in contracts.requirements {
+        assert!(
+            known_rules.contains(requirement.rule.as_str()),
+            "unknown contract rule '{}'",
+            requirement.rule
+        );
+        assert!(
+            !requirement.classes.is_empty(),
+            "{} / {} has no required classes",
+            requirement.rule,
+            requirement.surface.name()
+        );
+        assert!(
+            !requirement.axes.is_empty(),
+            "{} / {} has no required axes",
+            requirement.rule,
+            requirement.surface.name()
+        );
+        for class in requirement.classes {
+            for axis in &requirement.axes {
+                let tuple = ContractTuple {
+                    rule: requirement.rule.clone(),
+                    surface: requirement.surface,
+                    class,
+                    axis: *axis,
+                };
+                assert!(
+                    required.insert(tuple.clone()),
+                    "duplicate contract tuple: {}",
+                    tuple.display()
+                );
+            }
+        }
+    }
+    assert!(!required.is_empty(), "contract matrix has no requirements");
+
+    let mut baseline = BTreeMap::new();
+    for gap in contracts.baseline {
+        assert!(
+            known_rules.contains(gap.rule.as_str()),
+            "unknown baseline rule '{}'",
+            gap.rule
+        );
+        assert!(
+            !gap.reason.trim().is_empty(),
+            "baseline reason is empty for rule={}, surface={}, class={:?}, axis={}",
+            gap.rule,
+            gap.surface.name(),
+            gap.class,
+            gap.axis.name()
+        );
+        let tuple = ContractTuple {
+            rule: gap.rule,
+            surface: gap.surface,
+            class: gap.class,
+            axis: gap.axis,
+        };
+        assert!(
+            required.contains(&tuple),
+            "baseline tuple is not required: {}",
+            tuple.display()
+        );
+        assert!(
+            baseline.insert(tuple.clone(), gap.reason).is_none(),
+            "duplicate baseline tuple: {}",
+            tuple.display()
+        );
+    }
+
+    let uncovered: BTreeSet<_> = required
+        .iter()
+        .filter(|tuple| !cases.iter().any(|case| case_covers_contract(case, tuple)))
+        .cloned()
+        .collect();
+    let baseline_tuples = baseline.keys().cloned().collect();
+    if let Some(tuple) = uncovered.difference(&baseline_tuples).next() {
+        panic!("missing contract tuple: {}", tuple.display());
+    }
+    for tuple in baseline.keys() {
+        assert!(
+            uncovered.contains(tuple),
+            "covered baseline tuple must be removed: {}",
+            tuple.display()
+        );
+    }
+}
+
+fn known_rule_codes() -> BTreeSet<&'static str> {
+    include_str!("../src/rules.rs")
+        .lines()
+        .filter_map(|line| line.split_once("code = \"").map(|(_, rest)| rest))
+        .filter_map(|rest| rest.split_once('"').map(|(code, _)| code))
+        .collect()
+}
+
+fn case_covers_contract(case: &LoadedCase, tuple: &ContractTuple) -> bool {
+    if case.manifest.class != tuple.class
+        || !case
+            .manifest
+            .covers
+            .iter()
+            .any(|tag| tag == tuple.surface.coverage_tag())
+    {
+        return false;
+    }
+
+    let arguments = &case.manifest.invocation.arguments;
+    let matching_diagnostics = || {
+        case.manifest
+            .expected_diagnostics
+            .iter()
+            .chain(
+                case.manifest
+                    .allowed_additional_diagnostics
+                    .iter()
+                    .map(|allowed| &allowed.diagnostic),
+            )
+            .filter(|diagnostic| diagnostic.code == tuple.rule)
+    };
+    match tuple.axis {
+        ContractAxis::JsonOutput => arguments
+            .windows(2)
+            .any(|pair| pair == ["--format", "json"]),
+        ContractAxis::FocusedSelection => arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--only" && pair[1].split(',').any(|rule| rule == tuple.rule)),
+        ContractAxis::BasicMode => case.manifest.invocation.mode == "basic",
+        ContractAxis::PluginMode => case.manifest.invocation.mode == "plugin",
+        ContractAxis::NormalPolicy => !arguments
+            .iter()
+            .any(|argument| argument == "--pedantic" || argument == "--all"),
+        ContractAxis::PedanticPolicy => arguments.iter().any(|argument| argument == "--pedantic"),
+        ContractAxis::AllPolicy => arguments.iter().any(|argument| argument == "--all"),
+        ContractAxis::ClaudeActive => case
+            .manifest
+            .expected_active_platforms
+            .iter()
+            .any(|platform| platform == "claude"),
+        ContractAxis::CursorActive => case
+            .manifest
+            .expected_active_platforms
+            .iter()
+            .any(|platform| platform == "cursor"),
+        ContractAxis::CodexActive => case
+            .manifest
+            .expected_active_platforms
+            .iter()
+            .any(|platform| platform == "codex"),
+        ContractAxis::PlatformDisabled => case
+            .manifest
+            .covers
+            .iter()
+            .any(|tag| tag == "platform-disabled"),
+        ContractAxis::PlatformForced => case
+            .manifest
+            .covers
+            .iter()
+            .any(|tag| tag == "platform-forced"),
+        ContractAxis::GlobalSuppression => case
+            .manifest
+            .covers
+            .iter()
+            .any(|tag| tag == "global-suppression"),
+        ContractAxis::PerFileSuppression => case
+            .manifest
+            .covers
+            .iter()
+            .any(|tag| tag == "per-file-suppression"),
+        ContractAxis::Exclusion => case.manifest.covers.iter().any(|tag| tag == "exclusion"),
+        ContractAxis::Diagnostic => matching_diagnostics().next().is_some(),
+        ContractAxis::Subject => matching_diagnostics().any(|diagnostic| {
+            diagnostic.subject_path.is_some() || !diagnostic.related_subjects.is_empty()
+        }),
+        ContractAxis::Location => {
+            matching_diagnostics().any(|diagnostic| diagnostic.expected_location.is_some())
+        }
+        ContractAxis::Suggestion => {
+            matching_diagnostics().any(|diagnostic| diagnostic.suggestion.is_some())
+        }
+        ContractAxis::Autofix => {
+            arguments.iter().any(|argument| argument == "--autofix")
+                && !case.manifest.post_fix.is_empty()
+        }
+        ContractAxis::NoAutofix => {
+            !arguments.iter().any(|argument| argument == "--autofix")
+                && case.manifest.post_fix.is_empty()
+        }
     }
 }
 

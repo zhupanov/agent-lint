@@ -2145,6 +2145,247 @@ fn prompt_analysis_covers_all_supported_live_instruction_surfaces() {
 }
 
 #[test]
+fn test_skill_surface_matrix_keeps_validation_autofix_and_prompt_consumers_in_sync() {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Policy {
+        Active,
+        RootFallback,
+        Excluded,
+        PlatformDisabled,
+    }
+    struct Surface {
+        path: &'static str,
+        platform: &'static str,
+        s006_mutable: bool,
+        policy: Policy,
+        fallback_active: bool,
+    }
+
+    let surfaces = [
+        Surface {
+            path: "skills/conventional/SKILL.md",
+            platform: "claude",
+            s006_mutable: true,
+            policy: Policy::Active,
+            fallback_active: false,
+        },
+        Surface {
+            path: ".claude/skills/private/SKILL.md",
+            platform: "claude",
+            s006_mutable: true,
+            policy: Policy::Active,
+            fallback_active: true,
+        },
+        Surface {
+            path: ".agents/skills/shared-agent/SKILL.md",
+            platform: "claude",
+            s006_mutable: true,
+            policy: Policy::Active,
+            fallback_active: true,
+        },
+        Surface {
+            path: "packages/api/.agents/skills/nested-agent/SKILL.md",
+            platform: "claude",
+            s006_mutable: true,
+            policy: Policy::Active,
+            fallback_active: true,
+        },
+        Surface {
+            path: "custom-skills/declared/SKILL.md",
+            platform: "claude",
+            s006_mutable: true,
+            policy: Policy::Active,
+            fallback_active: false,
+        },
+        Surface {
+            path: "SKILL.md",
+            platform: "claude",
+            s006_mutable: false,
+            policy: Policy::RootFallback,
+            fallback_active: true,
+        },
+        Surface {
+            path: ".cursor/skills/cursor/SKILL.md",
+            platform: "cursor",
+            s006_mutable: false,
+            policy: Policy::Active,
+            fallback_active: true,
+        },
+        Surface {
+            path: ".claude/skills/excluded/SKILL.md",
+            platform: "claude",
+            s006_mutable: true,
+            policy: Policy::Excluded,
+            fallback_active: false,
+        },
+        Surface {
+            path: ".cursor/skills/platform-disabled/SKILL.md",
+            platform: "cursor",
+            s006_mutable: false,
+            policy: Policy::PlatformDisabled,
+            fallback_active: true,
+        },
+    ];
+
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    for surface in &surfaces {
+        let path = tmp.path().join(surface.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            "---\nname: wrong-name\ndescription: Use when testing skill surface parity across consumers\n---\nRetry until success. Fetch http://api.corp/data.\n",
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"surface-matrix","description":"Surface matrix plugin","skills":"./custom-skills"}"#,
+    )
+    .unwrap();
+    let config = "[lint]\nexclude = [\".claude/skills/excluded/**\"]\n";
+    std::fs::write(tmp.path().join("agent-lint.toml"), config).unwrap();
+
+    let subjects = |report: &Value, rule: &str| -> std::collections::BTreeSet<String> {
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|diagnostic| diagnostic["code"] == rule)
+            .map(|diagnostic| diagnostic["subject_path"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let expected = |fallback: bool, cursor: bool| -> std::collections::BTreeSet<String> {
+        surfaces
+            .iter()
+            .filter(|surface| {
+                let phase_active = if fallback {
+                    surface.fallback_active
+                } else {
+                    surface.policy != Policy::RootFallback && surface.policy != Policy::Excluded
+                };
+                phase_active && (cursor || surface.platform != "cursor")
+            })
+            .map(|surface| surface.path.to_string())
+            .collect()
+    };
+    let run_focused = |rules: &str| {
+        let output = run_in(tmp.path(), &["--format", "json", "--only", rules, "."]);
+        assert!(
+            matches!(output.status.code(), Some(0 | 1)),
+            "stderr: {}",
+            stderr(&output)
+        );
+        json(&output)
+    };
+
+    let active = expected(false, true);
+    let content = run_focused("S031");
+    let prompt = run_focused("Q005");
+    let focused = run_focused("S031,Q005");
+    assert_eq!(subjects(&content, "S031"), active);
+    assert_eq!(subjects(&prompt, "Q005"), active);
+    assert_eq!(subjects(&focused, "S031"), active);
+    assert_eq!(subjects(&focused, "Q005"), active);
+    for surface in surfaces
+        .iter()
+        .filter(|surface| active.contains(surface.path))
+    {
+        assert!(
+            content["active_platforms"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|platform| platform == surface.platform),
+            "{} must activate {}",
+            surface.path,
+            surface.platform
+        );
+    }
+
+    let mutable: std::collections::BTreeSet<_> = surfaces
+        .iter()
+        .filter(|surface| surface.s006_mutable && active.contains(surface.path))
+        .map(|surface| surface.path.to_string())
+        .collect();
+    assert_eq!(subjects(&run_focused("S006"), "S006"), mutable);
+    let before: std::collections::BTreeMap<_, _> = surfaces
+        .iter()
+        .map(|surface| {
+            (
+                surface.path,
+                std::fs::read(tmp.path().join(surface.path)).unwrap(),
+            )
+        })
+        .collect();
+    let first_fix = run_in(tmp.path(), &["--autofix", "--only", "S006", "."]);
+    assert!(first_fix.status.success(), "stderr: {}", stderr(&first_fix));
+    for surface in &surfaces {
+        let after = std::fs::read(tmp.path().join(surface.path)).unwrap();
+        assert_eq!(
+            after != before[surface.path],
+            surface.s006_mutable && active.contains(surface.path),
+            "unexpected S006 mutability for {}",
+            surface.path
+        );
+    }
+    let after_first: Vec<_> = surfaces
+        .iter()
+        .map(|surface| std::fs::read(tmp.path().join(surface.path)).unwrap())
+        .collect();
+    let second_fix = run_in(tmp.path(), &["--autofix", "--only", "S006", "."]);
+    assert!(
+        second_fix.status.success(),
+        "stderr: {}",
+        stderr(&second_fix)
+    );
+    assert_eq!(
+        surfaces
+            .iter()
+            .map(|surface| std::fs::read(tmp.path().join(surface.path)).unwrap())
+            .collect::<Vec<_>>(),
+        after_first
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        format!("[platforms]\ncursor = false\n{config}"),
+    )
+    .unwrap();
+    let disabled = run_focused("S031,Q005");
+    assert_eq!(subjects(&disabled, "S031"), expected(false, false));
+    assert_eq!(subjects(&disabled, "Q005"), expected(false, false));
+    assert!(
+        !disabled["active_platforms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|platform| platform == "cursor")
+    );
+
+    std::fs::rename(
+        tmp.path().join("skills"),
+        tmp.path().join("inactive-skills"),
+    )
+    .unwrap();
+    std::fs::rename(
+        tmp.path().join("custom-skills"),
+        tmp.path().join("inactive-custom-skills"),
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"surface-matrix","description":"Surface matrix plugin"}"#,
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("agent-lint.toml"), config).unwrap();
+    let fallback = run_focused("S031,Q005");
+    assert_eq!(subjects(&fallback, "S031"), expected(true, true));
+    assert_eq!(subjects(&fallback, "Q005"), expected(true, true));
+}
+
+#[test]
 fn cursor_frontmatter_recovery_keeps_q005_selection_and_suppression_independent() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
