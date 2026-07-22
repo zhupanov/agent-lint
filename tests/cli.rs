@@ -3215,11 +3215,14 @@ fn basic_mode_hook_autofix_is_idempotent() {
     init_git(tmp.path());
     std::fs::create_dir_all(tmp.path().join(".claude/hooks")).unwrap();
     let script = tmp.path().join(".claude/hooks/check.py");
+    let interpreted = tmp.path().join(".claude/hooks/interpreted.py");
     std::fs::write(&script, "#!/usr/bin/env python3\n").unwrap();
+    std::fs::write(&interpreted, "#!/usr/bin/env python3\n").unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(&interpreted, std::fs::Permissions::from_mode(0o644)).unwrap();
     std::fs::write(
         tmp.path().join(".claude/settings.json"),
-        r#"{"hooks":[{"command":"\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/check.py"}]}"#,
+        r#"{"hooks":[{"command":"\"${CLAUDE_PROJECT_DIR}\"/.claude/hooks/check.py; python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/interpreted.py; echo ${CLAUDE_PROJECT_DIR}/generated/output.json"}]}"#,
     )
     .unwrap();
 
@@ -3228,6 +3231,14 @@ fn basic_mode_hook_autofix_is_idempotent() {
     assert!(stderr(&first).contains("fixed[H005/hook-not-executable]"));
     assert_ne!(
         std::fs::metadata(&script).unwrap().permissions().mode() & 0o111,
+        0
+    );
+    assert_eq!(
+        std::fs::metadata(&interpreted)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o111,
         0
     );
 

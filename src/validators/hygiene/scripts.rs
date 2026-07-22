@@ -3,8 +3,8 @@ use crate::context::LintMode;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::rules::LintRule;
 use crate::script_paths::{
-    Invocation, ScriptReference, extract_bare_script_references, extract_command_references,
-    script_kind,
+    Invocation, ScriptReference, extract_bare_script_references,
+    extract_instruction_command_references, script_kind,
 };
 use crate::traversal;
 use regex::Regex;
@@ -146,7 +146,7 @@ fn extract_fragment_references(
     fragment: &str,
     line: usize,
 ) -> Vec<(String, ScriptReference)> {
-    let mut references = extract_command_references(fragment, line);
+    let mut references = extract_instruction_command_references(fragment, line);
     references.extend(extract_bare_script_references(fragment, line));
     references
         .into_iter()

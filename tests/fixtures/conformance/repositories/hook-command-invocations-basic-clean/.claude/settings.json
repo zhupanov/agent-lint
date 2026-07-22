@@ -1,0 +1,7 @@
+{
+  "hooks": [
+    {
+      "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/interpreted.py; source ${CLAUDE_PROJECT_DIR}/.claude/hooks/sourced.sh; echo ${CLAUDE_PROJECT_DIR}/generated/runtime.json"
+    }
+  ]
+}
