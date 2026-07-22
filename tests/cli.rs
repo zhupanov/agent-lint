@@ -87,6 +87,45 @@ fn write_public_path_hygiene_fixture(root: &std::path::Path) -> std::path::PathB
 }
 
 #[test]
+fn s037_cli_accepts_repository_relative_json_reference() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"s037-json","version":"1.0.0","description":"Fixture"}"#,
+    )
+    .unwrap();
+    let skill = tmp.path().join("skills/s037-json/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let body = "Read references/config.json before the next step.\n".repeat(301);
+    std::fs::write(
+        skill,
+        format!(
+            "---\nname: s037-json\ndescription: Use when validating explicit reference recognition in a plugin skill\n---\n{body}"
+        ),
+    )
+    .unwrap();
+
+    for arguments in [
+        vec!["--only", "S037", "."],
+        vec!["--pedantic", "--only", "S037", "."],
+        vec!["--all", "--only", "S037", "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert!(
+            output.status.success(),
+            "S037 should not report the JSON path for {arguments:?}: {}",
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).is_empty(),
+            "S037 emitted an unexpected diagnostic for {arguments:?}"
+        );
+    }
+}
+
+#[test]
 fn s022_autofix_converts_complete_runs_preserves_escapes_and_is_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
