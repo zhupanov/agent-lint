@@ -1,5 +1,7 @@
 mod autofix;
 mod config;
+#[cfg(test)]
+mod conformance_coverage;
 mod context;
 mod diagnostic;
 #[cfg(test)]

@@ -211,6 +211,49 @@ mod tests {
     use super::*;
     use std::fs;
 
+    const SHALLOW_WALK_FILES: &[(&str, &str)] = &[
+        ("traversal.rs", "definition site"),
+        (
+            "validators/agents.rs",
+            "inventoried at adoption; matches landed discovery design",
+        ),
+        (
+            "validators/skill_discovery.rs",
+            "inventoried at adoption; matches landed discovery design",
+        ),
+        (
+            "validators/hygiene/scripts.rs",
+            "inventoried at adoption; matches landed discovery design",
+        ),
+        (
+            "validators/hygiene/todo.rs",
+            "inventoried at adoption; matches landed discovery design",
+        ),
+    ];
+
+    #[test]
+    fn shallow_walk_call_sites_are_pinned() {
+        let actual: std::collections::BTreeSet<_> = crate::test_helpers::source_files()
+            .into_iter()
+            .filter_map(|(path, content)| content.contains("shallow_files").then_some(path))
+            .collect();
+        let expected: std::collections::BTreeSet<_> = SHALLOW_WALK_FILES
+            .iter()
+            .map(|(path, _reason)| (*path).to_owned())
+            .collect();
+
+        let unpinned: Vec<_> = actual.difference(&expected).cloned().collect();
+        let stale: Vec<_> = expected.difference(&actual).cloned().collect();
+        assert!(
+            unpinned.is_empty(),
+            "shallow_files call sites are not pinned: {unpinned:?}"
+        );
+        assert!(
+            stale.is_empty(),
+            "pinned shallow_files files no longer contain a call site: {stale:?}"
+        );
+    }
+
     #[test]
     fn shallow_walk_is_sorted_and_does_not_recurse() {
         let tmp = tempfile::tempdir().unwrap();

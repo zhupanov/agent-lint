@@ -3362,6 +3362,28 @@ mod tests {
     }
 
     #[test]
+    fn p019_shared_argv_semantics() {
+        for case in crate::test_helpers::argv_hard_negative_corpus() {
+            let Some(expected) = case.expect_p019_diagnostic else {
+                continue;
+            };
+            let content = serde_json::json!({
+                "mcpServers": {
+                    "shared-case": {
+                        "command": case.command,
+                        "args": case.args,
+                    }
+                }
+            })
+            .to_string();
+            let found = collected(&content)
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::McpCommandDangerous);
+            assert_eq!(found, expected, "shared argv case: {case:?}");
+        }
+    }
+
+    #[test]
     fn p018_warns_on_literals_pseudo_placeholders_and_secret_defaults() {
         let diagnostics = collected(
             r#"{
