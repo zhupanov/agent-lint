@@ -182,7 +182,7 @@ pub(crate) fn contains_codex_mcp_token_signature(value: &str) -> bool {
         vec![
             Regex::new(r"sk-[a-zA-Z0-9]{20,}").expect("valid sk- signature"),
             Regex::new(r"ghp_[a-zA-Z0-9]{36,}").expect("valid ghp_ signature"),
-            Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\\-]{8,}").expect("valid slack signature"),
+            Regex::new(r"xox[bp]-[0-9][a-zA-Z0-9\-]{8,}").expect("valid slack signature"),
         ]
     });
     CODEX_MCP_TOKEN_SIGNATURES
@@ -407,6 +407,11 @@ mod tests {
         for value in [
             "github_pat_abcdefghijklmnopqrstuvwxyz",
             "AKIAIOSFODNN7EXAMPLE",
+            // Hard negative: a backslash-laden non-token must not match. The
+            // Slack character class is `[a-zA-Z0-9\-]` (alphanumerics + hyphen),
+            // identical to `SECRET_PATTERNS`; a widened class that admitted `\`
+            // would accept this and silently diverge from the shipped pattern.
+            r"xoxb-1a\b\c\d\e\f",
         ] {
             assert!(!contains_codex_mcp_token_signature(value), "{value}");
         }
