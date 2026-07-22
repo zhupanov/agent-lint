@@ -50,6 +50,32 @@ static AWK_COMMAND: LazyLock<Regex> = LazyLock::new(|| {
 static FORWARDED_ARRAY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?m)^[^#\n]*(?:exec\s+)?[^\n]*"\$\{([A-Za-z_][A-Za-z0-9_]*)\[@\]\}""#).unwrap()
 });
+static PYTHON_METHOD_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)\b([A-Za-z_][A-Za-z0-9_]*)\.(add_argument|add_parser)\s*\(").unwrap()
+});
+static PYTHON_ASSIGNMENT_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.add_parser\s*\(")
+        .unwrap()
+});
+static PYTHON_SUBPARSER_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.add_subparsers\s*\(",
+    )
+    .unwrap()
+});
+static PYTHON_FROM_IMPORT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*from\s+(\.*[A-Za-z_][A-Za-z0-9_\.]*|\.+)\s+import\s+([^#\n]+)").unwrap()
+});
+static PYTHON_IMPORT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*import\s+([A-Za-z_][A-Za-z0-9_\.]*)").unwrap());
+static PYTHON_LONG_FLAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"["'](--[A-Za-z0-9][A-Za-z0-9_-]*)["']"#).unwrap());
+static PYTHON_ACTION_NO_VALUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\b(?:action\s*=\s*[\"'](?:store_true|store_false|count|help|version)[\"']|nargs\s*=\s*0)"#)
+        .unwrap()
+});
+const MAX_PYTHON_CLI_MODULES: usize = 64;
+const MAX_PYTHON_CLI_SOURCE_BYTES: usize = 512 * 1024;
 pub fn validate_contracts(
     ctx: &LintContext,
     diag: &mut DiagnosticCollector,
@@ -289,7 +315,7 @@ fn validate_flag_signature(
             continue;
         }
         for flag in invocation_flags(&arguments) {
-            if !script_declares_flag(&script, &source, &flag) {
+            if !script_accepts_flag(&script, &source, &arguments, &flag) {
                 diag.report_at_with(
                     LintRule::SkillFlagMismatch,
                     skill,
@@ -364,7 +390,12 @@ fn invocation_flags(arguments: &[String]) -> Vec<String> {
     flags
 }
 
-fn script_declares_flag(script: &Path, source: &str, flag: &str) -> bool {
+fn script_accepts_flag(script: &Path, source: &str, arguments: &[String], flag: &str) -> bool {
+    if script.extension().and_then(|value| value.to_str()) == Some("py")
+        && let Some(signature) = python_cli_signature(script, source)
+    {
+        return signature.accepts_invocation(arguments, flag);
+    }
     let escaped = regex::escape(flag);
     match script.extension().and_then(|value| value.to_str()) {
         Some("sh") => [
@@ -385,6 +416,328 @@ fn script_declares_flag(script: &Path, source: &str, flag: &str) -> bool {
         .any(|raw| Regex::new(raw).is_ok_and(|pattern| pattern.is_match(source))),
         _ => false,
     }
+}
+
+/// A deliberately small, lexical model of an argparse dispatcher.  S059 must
+/// not import repository Python, but a dispatcher often owns only global flags
+/// while literal local imports register its subcommands.  The model follows
+/// only repository-contained `.py` files and recognizes only literal
+/// `add_parser` and `add_argument` calls.  Anything dynamic remains unknown
+/// and therefore cannot cause a flag to be accepted.
+#[derive(Default)]
+struct PythonCliSignature {
+    global_flags: BTreeMap<String, bool>,
+    subcommand_flags: BTreeMap<Vec<String>, BTreeMap<String, bool>>,
+}
+
+impl PythonCliSignature {
+    fn accepts_invocation(&self, arguments: &[String], flag: &str) -> bool {
+        let Some(subcommand) = self.selected_subcommand(arguments) else {
+            return self.global_flags.contains_key(flag);
+        };
+        self.global_flags.contains_key(flag)
+            || self
+                .subcommand_flags
+                .get(&subcommand)
+                .is_some_and(|flags| flags.contains_key(flag))
+    }
+
+    fn selected_subcommand(&self, arguments: &[String]) -> Option<Vec<String>> {
+        let mut index = 0;
+        while let Some(argument) = arguments.get(index) {
+            if argument == "--" {
+                return None;
+            }
+            if let Some(flag) = argument.strip_prefix("--") {
+                let (flag, has_inline_value) = match flag.split_once('=') {
+                    Some((name, _)) => (name, true),
+                    None => (flag, false),
+                };
+                if self.global_flags.get(flag).copied().unwrap_or(false) && !has_inline_value {
+                    index += 1;
+                }
+            } else if !argument.starts_with('-') {
+                let commands = arguments[index..]
+                    .iter()
+                    .take_while(|argument| *argument != "--")
+                    .filter(|argument| !argument.starts_with('-'))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                return self
+                    .subcommand_flags
+                    .keys()
+                    .filter(|path| commands.starts_with(path))
+                    .max_by_key(|path| path.len())
+                    .cloned();
+            }
+            index += 1;
+        }
+        None
+    }
+}
+
+fn python_cli_signature(script: &Path, source: &str) -> Option<PythonCliSignature> {
+    let root = fs::canonicalize(".").ok()?;
+    let script = fs::canonicalize(script).ok()?;
+    if !script.starts_with(&root) || source.len() > MAX_PYTHON_CLI_SOURCE_BYTES {
+        return None;
+    }
+
+    let mut signature = PythonCliSignature::default();
+    let mut pending = VecDeque::from([(script, source.to_string())]);
+    let mut visited = BTreeSet::new();
+    let mut is_root = true;
+    while let Some((module, module_source)) = pending.pop_front() {
+        if !visited.insert(module.clone()) || visited.len() > MAX_PYTHON_CLI_MODULES {
+            continue;
+        }
+        let parsed = python_module_signature(&module_source);
+        if is_root {
+            signature.global_flags = parsed.global_flags;
+            is_root = false;
+        }
+        for (name, flags) in parsed.subcommand_flags {
+            signature
+                .subcommand_flags
+                .entry(name)
+                .or_default()
+                .extend(flags);
+        }
+        for import in python_local_imports(&module_source) {
+            if let Some(path) = resolve_python_import(&root, &module, &import)
+                && !visited.contains(&path)
+                && pending.len() < MAX_PYTHON_CLI_MODULES
+                && let Ok(contents) = fs::read_to_string(&path)
+                && contents.len() <= MAX_PYTHON_CLI_SOURCE_BYTES
+            {
+                pending.push_back((
+                    path,
+                    executable_script_source(Path::new("module.py"), &contents),
+                ));
+            }
+        }
+    }
+    (!signature.subcommand_flags.is_empty()).then_some(signature)
+}
+
+#[derive(Default)]
+struct PythonModuleSignature {
+    global_flags: BTreeMap<String, bool>,
+    subcommand_flags: BTreeMap<Vec<String>, BTreeMap<String, bool>>,
+}
+
+fn python_module_signature(source: &str) -> PythonModuleSignature {
+    let mut signature = PythonModuleSignature::default();
+    let registrations = PYTHON_ASSIGNMENT_CALL
+        .captures_iter(source)
+        .filter_map(|capture| {
+            let arguments = python_call_arguments(source, capture.get(0).expect("match").end())?;
+            let name = python_first_string(&arguments)?;
+            Some((
+                capture[1].to_string(),
+                capture[2].to_string(),
+                name,
+                python_aliases(&arguments),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut child_parsers: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut subparser_owners: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut aliases: BTreeMap<Vec<String>, Vec<String>> = BTreeMap::new();
+    // Resolve nested `add_subparsers` ownership to a fixed point.  This is
+    // bounded so malformed input cannot make analysis unbounded.
+    for _ in 0..8 {
+        child_parsers.clear();
+        aliases.clear();
+        for (parser, owner, name, parser_aliases) in &registrations {
+            let mut path = subparser_owners.get(owner).cloned().unwrap_or_default();
+            path.push(name.clone());
+            child_parsers.insert(parser.clone(), path.clone());
+            for alias in parser_aliases {
+                let mut alias_path = path.clone();
+                let last = alias_path.last_mut().expect("a parser has a command name");
+                *last = alias.clone();
+                aliases.insert(alias_path, path.clone());
+            }
+        }
+        for capture in PYTHON_SUBPARSER_ASSIGNMENT.captures_iter(source) {
+            if let Some(parent) = child_parsers.get(&capture[2]) {
+                subparser_owners.insert(capture[1].to_string(), parent.clone());
+            }
+        }
+    }
+
+    for capture in PYTHON_METHOD_CALL.captures_iter(source) {
+        let Some(arguments) = python_call_arguments(source, capture.get(0).expect("match").end())
+        else {
+            continue;
+        };
+        if &capture[2] != "add_argument" {
+            continue;
+        }
+        let flags = python_flags(&arguments);
+        if flags.is_empty() {
+            continue;
+        }
+        if let Some(path) = child_parsers.get(&capture[1]) {
+            signature
+                .subcommand_flags
+                .entry(path.clone())
+                .or_default()
+                .extend(flags);
+        } else {
+            signature.global_flags.extend(flags);
+        }
+    }
+    for (alias, path) in aliases {
+        if let Some(flags) = signature.subcommand_flags.get(&path).cloned() {
+            signature.subcommand_flags.insert(alias, flags);
+        }
+    }
+    PythonModuleSignature {
+        global_flags: signature.global_flags,
+        subcommand_flags: signature.subcommand_flags,
+    }
+}
+
+fn python_call_arguments(source: &str, start: usize) -> Option<String> {
+    let mut depth = 1usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (offset, character) in source[start..].char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+        } else if matches!(character, '\'' | '\"') {
+            quote = Some(character);
+        } else if character == '(' {
+            depth += 1;
+        } else if character == ')' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(source[start..start + offset].to_string());
+            }
+        }
+    }
+    None
+}
+
+fn python_first_string(arguments: &str) -> Option<String> {
+    PYTHON_LONG_FLAG
+        .captures(arguments)
+        .map(|capture| capture[1].to_string())
+        .or_else(|| {
+            Regex::new(r#"^\s*["']([A-Za-z0-9][A-Za-z0-9_-]*)["']"#)
+                .ok()?
+                .captures(arguments)
+                .map(|capture| capture[1].to_string())
+        })
+}
+
+fn python_aliases(arguments: &str) -> Vec<String> {
+    let Some((_, aliases)) = arguments.split_once("aliases") else {
+        return Vec::new();
+    };
+    let Some((_, aliases)) = aliases.split_once('[') else {
+        return Vec::new();
+    };
+    let aliases = aliases.split(']').next().unwrap_or_default();
+    PYTHON_LONG_FLAG
+        .captures_iter(aliases)
+        .map(|capture| capture[1].trim_start_matches("--").to_string())
+        .chain(
+            Regex::new(r#"["']([A-Za-z0-9][A-Za-z0-9_-]*)["']"#)
+                .into_iter()
+                .flat_map(|pattern| {
+                    pattern
+                        .captures_iter(aliases)
+                        .map(|capture| capture[1].to_string())
+                        .collect::<Vec<_>>()
+                }),
+        )
+        .collect()
+}
+
+fn python_flags(arguments: &str) -> BTreeMap<String, bool> {
+    let takes_value = !PYTHON_ACTION_NO_VALUE.is_match(arguments);
+    PYTHON_LONG_FLAG
+        .captures_iter(arguments)
+        .map(|capture| (capture[1].trim_start_matches("--").to_string(), takes_value))
+        .collect()
+}
+
+fn python_local_imports(source: &str) -> Vec<String> {
+    let mut imports = BTreeSet::new();
+    for capture in PYTHON_FROM_IMPORT.captures_iter(source) {
+        let module = &capture[1];
+        imports.insert(module.to_string());
+        for name in capture[2].split(',') {
+            let name = name.split_whitespace().next().unwrap_or_default();
+            if !name.is_empty() && name != "*" {
+                imports.insert(format!("{module}.{name}"));
+            }
+        }
+    }
+    imports.extend(
+        PYTHON_IMPORT
+            .captures_iter(source)
+            .map(|capture| capture[1].to_string()),
+    );
+    imports.into_iter().collect()
+}
+
+fn resolve_python_import(root: &Path, module: &Path, import: &str) -> Option<PathBuf> {
+    let dot_count = import.bytes().take_while(|byte| *byte == b'.').count();
+    let import = &import[dot_count..];
+    if import.is_empty()
+        || import
+            .split('.')
+            .any(|part| part.is_empty() || !is_python_identifier(part))
+    {
+        return None;
+    }
+    let suffix = import.replace('.', "/");
+    if dot_count > 0 {
+        let mut base = module.parent()?.to_path_buf();
+        for _ in 1..dot_count {
+            base = base.parent()?.to_path_buf();
+        }
+        return resolve_python_module_candidate(root, &base, &suffix);
+    }
+    let mut bases = Vec::new();
+    let mut current = module.parent()?;
+    while current.starts_with(root) {
+        bases.push(current.to_path_buf());
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+    bases
+        .into_iter()
+        .find_map(|base| resolve_python_module_candidate(root, &base, &suffix))
+}
+
+fn resolve_python_module_candidate(root: &Path, base: &Path, suffix: &str) -> Option<PathBuf> {
+    let file = base.join(suffix).with_extension("py");
+    let package = base.join(suffix).join("__init__.py");
+    [file, package].into_iter().find_map(|candidate| {
+        let candidate = fs::canonicalize(candidate).ok()?;
+        (candidate.starts_with(root) && candidate.is_file()).then_some(candidate)
+    })
+}
+
+fn is_python_identifier(part: &str) -> bool {
+    let mut characters = part.chars();
+    characters
+        .next()
+        .is_some_and(|character| character == '_' || character.is_ascii_alphabetic())
+        && characters.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn forwards_all_args(script: &Path, source: &str) -> bool {
@@ -3167,6 +3520,132 @@ mod tests {
                 .diagnostics()
                 .iter()
                 .any(|item| item.rule == LintRule::SkillFlagMismatch)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_follows_literal_local_argparse_subcommands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts/larch/commands").unwrap();
+        fs::write(
+            "skills/demo/scripts/cli.py",
+            "from larch.commands import alpha, beta\n\nparser = argparse.ArgumentParser()\nparser.add_argument(\"--repo\")\nparser.add_argument(\"--verbose\", action=\"store_true\")\nsubparsers = parser.add_subparsers()\nalpha.register(subparsers)\nbeta.register(subparsers)\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/larch/commands/alpha.py",
+            "def register(subparsers):\n    parser = subparsers.add_parser(\"alpha\", aliases=[\"a\"])\n    parser.add_argument(\"--alpha-flag\", action=\"store_true\")\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/larch/commands/beta.py",
+            "def register(subparsers):\n    parser = subparsers.add_parser(\"beta\")\n    parser.add_argument(\"--beta-flag\", action=\"store_true\")\n",
+        )
+        .unwrap();
+        let mut clean = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "scripts/cli.py --repo repo alpha --alpha-flag",
+            "scripts/cli.py --verbose a --alpha-flag",
+            "scripts/cli.py alpha --alpha-flag -- --missing",
+        ] {
+            validate_flag_signature(Path::new("skills/demo/SKILL.md"), 1, command, &mut clean);
+        }
+        assert!(clean.diagnostics().is_empty());
+
+        let mut invalid = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "scripts/cli.py alpha --beta-flag",
+            "scripts/cli.py alpha --missing",
+        ] {
+            validate_flag_signature(Path::new("skills/demo/SKILL.md"), 1, command, &mut invalid);
+        }
+        assert_eq!(
+            invalid
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_fails_closed_for_dynamic_python_dispatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts").unwrap();
+        fs::write(
+            "skills/demo/scripts/cli.py",
+            "import importlib\nmodule = importlib.import_module(\"side_effect\")\nmodule.register()\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/side_effect.py",
+            "from pathlib import Path\nPath(\"executed\").write_text(\"bad\")\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            1,
+            "scripts/cli.py alpha --dynamic-flag",
+            &mut diag,
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::SkillFlagMismatch)
+        );
+        assert!(!Path::new("executed").exists());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_supports_larch_shaped_nested_python_dispatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts/larch/commands").unwrap();
+        fs::write(
+            "skills/demo/scripts/cli.py",
+            "from larch.commands import design\n\nparser = argparse.ArgumentParser()\nsubparsers = parser.add_subparsers()\ndesign.register(subparsers)\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/larch/commands/design.py",
+            "def register(subparsers):\n    design = subparsers.add_parser(\"design\")\n    verbs = design.add_subparsers()\n    driver = verbs.add_parser(\"driver\")\n    driver.add_argument(\"--run-id\")\n",
+        )
+        .unwrap();
+
+        let mut clean = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            1,
+            "scripts/cli.py design driver --run-id abc123",
+            &mut clean,
+        );
+        assert!(clean.diagnostics().is_empty());
+
+        let mut invalid = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "scripts/cli.py design driver --missing",
+            "scripts/cli.py design other --run-id abc123",
+        ] {
+            validate_flag_signature(Path::new("skills/demo/SKILL.md"), 1, command, &mut invalid);
+        }
+        assert_eq!(
+            invalid
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+                .count(),
+            2
         );
     }
 
