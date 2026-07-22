@@ -1,0 +1,4 @@
+[lint]
+[[lint.overrides]]
+files = [".claude/agents/alpha.md"]
+suppress = ["A031"]

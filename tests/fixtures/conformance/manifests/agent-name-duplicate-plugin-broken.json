@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "agent-name-duplicate-plugin-broken",
+  "covers": ["plugin-mode", "normal", "json", "agent-name-duplicate", "related-subjects"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A031", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A031", "name": "agent-name-duplicate", "severity": "warning", "subject_path": ".claude/agents/alpha.md", "related_subjects": [".claude/agents/beta.md"], "suggestion": "rename or remove the duplicate agent definitions" }
+  ],
+  "allowed_additional_diagnostics": []
+}

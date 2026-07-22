@@ -6,7 +6,7 @@ use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::num::NonZeroU64;
 use std::path::Path;
@@ -320,6 +320,52 @@ pub(crate) fn validate_private_agents_with_prompt_pass(
         diag.with_subject_path(agent_path, |diag| {
             validate_agent_file(diag, agent_path, &content, prompt_pass, surface);
         });
+    }
+    validate_private_agent_name_duplicates(diag, &inventory.lint_files);
+}
+
+/// Report duplicate name-based identities among private Claude agents.
+///
+/// Claude Code resolves `.claude/agents/` identities from frontmatter `name`,
+/// so only this tree participates. Plugin `agents/` files use path-derived
+/// registered IDs and deliberately remain outside A031's comparison scope.
+/// Discovery has already applied exclusions, leaving the primary (first sorted)
+/// path available for per-file override policy.
+fn validate_private_agent_name_duplicates(diag: &mut DiagnosticCollector, paths: &[String]) {
+    let mut paths_by_name: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for path in paths {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let markdown = MarkdownDocument::parse(content);
+        let Some(frontmatter) = markdown.frontmatter() else {
+            continue;
+        };
+        // A002, A003, and X001 own malformed, missing, blank, and non-string
+        // names. Only their canonical strict-YAML values enter this index.
+        let Some(name) = frontmatter::get_strict_string_field(frontmatter, "name") else {
+            continue;
+        };
+        paths_by_name.entry(name).or_default().push(path);
+    }
+
+    for (name, participants) in paths_by_name {
+        if participants.len() < 2 {
+            continue;
+        }
+        let primary = participants[0];
+        let related_subjects = &participants[1..];
+        let count = participants.len();
+        diag.report_at_with(
+            LintRule::AgentNameDuplicate,
+            primary,
+            &format!(
+                "agent name '{name}' is declared by {count} files; agent identity comes from the name field, so only one definition can be active"
+            ),
+            DiagnosticMetadata::default()
+                .with_related_subjects(related_subjects)
+                .with_suggestion("rename or remove the duplicate agent definitions"),
+        );
     }
 }
 
@@ -1675,6 +1721,129 @@ mod tests {
         assert_eq!(
             agents_of(&diag, LintRule::AgentModelInvalid),
             vec![".claude/agents/a/b/c/deep.md".to_string()]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn private_agent_duplicate_names_are_grouped_sorted_and_path_scoped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents/review").unwrap();
+        for (path, name) in [
+            (".claude/agents/alpha.md", "reviewer"),
+            (".claude/agents/review/beta.md", "reviewer"),
+            (".claude/agents/gamma.md", "auditor"),
+            (".claude/agents/zeta.md", "auditor"),
+        ] {
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: {name}\ndescription: Reviews pull requests for correctness and regressions\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &ExcludeSet::default());
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::AgentNameDuplicate)
+            .collect();
+
+        assert_eq!(findings.len(), 2);
+        assert_eq!(
+            findings[0].subject_path.as_deref(),
+            Some(Path::new(".claude/agents/gamma.md"))
+        );
+        assert_eq!(
+            findings[0].related_subjects,
+            vec![Path::new(".claude/agents/zeta.md").to_path_buf()]
+        );
+        assert_eq!(
+            findings[1].subject_path.as_deref(),
+            Some(Path::new(".claude/agents/alpha.md"))
+        );
+        assert_eq!(
+            findings[1].related_subjects,
+            vec![Path::new(".claude/agents/review/beta.md").to_path_buf()]
+        );
+        assert!(
+            findings[1]
+                .message
+                .contains("agent name 'reviewer' is declared by 2 files")
+        );
+        assert_eq!(
+            findings[1].suggestion.as_deref(),
+            Some("rename or remove the duplicate agent definitions")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn private_agent_duplicate_name_skips_invalid_names_and_honors_exclusions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            ".claude/agents/alpha.md",
+            "---\nname: reviewer\ndescription: Reviews backend pull requests for correctness and regressions\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/beta.md",
+            "---\nname: reviewer\ndescription: Audits frontend accessibility and design-system conformance\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/blank.md",
+            "---\nname: \ndescription: Reviews frontend pull requests for accessibility regressions\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/invalid.md",
+            "---\nname: reviewer\ndescription: [unterminated\n---\nBody\n",
+        )
+        .unwrap();
+
+        let exclude = ExcludeSet::new(&[".claude/agents/beta.md".to_string()]).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &exclude);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|finding| finding.rule != LintRule::AgentNameDuplicate)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_agent_names_are_deliberately_excluded_from_a031() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        for path in ["agents/alpha.md", "agents/beta.md"] {
+            std::fs::write(
+                path,
+                "---\nname: reviewer\ndescription: Reviews pull requests for correctness and regressions\n---\nBody\n",
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents(&mut diag, &ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|finding| finding.rule != LintRule::AgentNameDuplicate)
         );
     }
 
