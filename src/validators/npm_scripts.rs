@@ -25,6 +25,17 @@ const QUALIFIER_FLAGS: &[&str] = &[
     "-g",
 ];
 
+/// Documented bare npm flags whose following token is a value, not the script.
+/// All other bare `--name` flags are treated as no-value. Long forms only.
+const VALUE_TAKING_FLAGS: &[&str] = &[
+    "--loglevel",
+    "--registry",
+    "--script-shell",
+    "--otp",
+    "--userconfig",
+    "--cache",
+];
+
 /// L006: `npm run` / `npm run-script` referenced from a configured instruction
 /// file must exist in the root `package.json` `scripts` map.
 ///
@@ -143,8 +154,8 @@ enum NpmRunParse {
 /// Recognize `npm run` / `npm run-script` with no-value flags in `--name` or
 /// `--name=value` form before `run` and between `run` and the script token.
 /// Arguments after the script do not affect identity. Qualifier flags anywhere
-/// before the script skip the command. A bare non-qualifier flag followed by
-/// two non-flag tokens (value then script) is treated as malformed and skipped.
+/// before the script skip the command. Bare flags in [`VALUE_TAKING_FLAGS`]
+/// consume the following token; every other bare `--name` flag is no-value.
 fn parse_npm_run(tokens: &[ShellToken]) -> NpmRunParse {
     if tokens
         .first()
@@ -165,37 +176,14 @@ fn parse_npm_run(tokens: &[ShellToken]) -> NpmRunParse {
             index += 1;
             break;
         }
-        if is_qualifier(text) {
-            qualified = true;
-            index += 1;
-            if qualifier_consumes_value(text)
-                && tokens
-                    .get(index)
-                    .is_some_and(|next| !is_flag_token(strip_quotes(&next.text)))
-            {
-                index += 1;
+        match consume_pre_script_flag(tokens, index, text) {
+            FlagConsume::Qualifier { next_index } => {
+                qualified = true;
+                index = next_index;
             }
-            continue;
+            FlagConsume::Advance { next_index } => index = next_index,
+            FlagConsume::NotFlag => return NpmRunParse::NotNpmRun,
         }
-        if is_self_contained_flag(text) {
-            index += 1;
-            continue;
-        }
-        if is_flag_token(text) {
-            // Bare non-qualifier `--name` before `run`: allow only when the next
-            // token is another flag or `run`/`run-script`. A following value
-            // token means the flag takes an argument we do not model.
-            let Some(next) = tokens.get(index + 1) else {
-                return NpmRunParse::Skip;
-            };
-            let next_text = strip_quotes(&next.text);
-            if next_text == "run" || next_text == "run-script" || is_flag_token(next_text) {
-                index += 1;
-                continue;
-            }
-            return NpmRunParse::Skip;
-        }
-        return NpmRunParse::NotNpmRun;
     }
 
     loop {
@@ -203,48 +191,17 @@ fn parse_npm_run(tokens: &[ShellToken]) -> NpmRunParse {
             return NpmRunParse::Skip;
         };
         let text = strip_quotes(&token.text);
-        if is_qualifier(text) {
-            qualified = true;
-            index += 1;
-            if qualifier_consumes_value(text)
-                && tokens
-                    .get(index)
-                    .is_some_and(|next| !is_flag_token(strip_quotes(&next.text)))
-            {
-                index += 1;
+        match consume_pre_script_flag(tokens, index, text) {
+            FlagConsume::Qualifier { next_index } => {
+                qualified = true;
+                index = next_index;
+                continue;
             }
-            continue;
-        }
-        if is_self_contained_flag(text) {
-            index += 1;
-            continue;
-        }
-        if is_flag_token(text) {
-            // Bare flag after `run`. If the next two tokens are both non-flags,
-            // this looks like `--flag value script` and must not be guessed.
-            let next = tokens.get(index + 1).map(|item| strip_quotes(&item.text));
-            let after = tokens.get(index + 2).map(|item| strip_quotes(&item.text));
-            match (next, after) {
-                (Some(next), Some(after))
-                    if !is_flag_token(next) && !is_flag_token(after) && after != "--" =>
-                {
-                    return NpmRunParse::Skip;
-                }
-                (Some(next), _) if !is_flag_token(next) => {
-                    // `npm run --silent build` — next token is the script.
-                    index += 1;
-                    continue;
-                }
-                (Some(next), _) if is_flag_token(next) => {
-                    index += 1;
-                    continue;
-                }
-                (None, _) => return NpmRunParse::Skip,
-                _ => {
-                    index += 1;
-                    continue;
-                }
+            FlagConsume::Advance { next_index } => {
+                index = next_index;
+                continue;
             }
+            FlagConsume::NotFlag => {}
         }
         if qualified {
             return NpmRunParse::Skip;
@@ -259,6 +216,49 @@ fn parse_npm_run(tokens: &[ShellToken]) -> NpmRunParse {
     }
 }
 
+enum FlagConsume {
+    Qualifier { next_index: usize },
+    Advance { next_index: usize },
+    NotFlag,
+}
+
+/// Consume a qualifier, `--name=value`, value-taking, or no-value flag before
+/// the script token. Returns [`FlagConsume::NotFlag`] when `text` is not a flag.
+fn consume_pre_script_flag(tokens: &[ShellToken], index: usize, text: &str) -> FlagConsume {
+    if is_qualifier(text) {
+        let mut next_index = index + 1;
+        if qualifier_consumes_value(text)
+            && tokens
+                .get(next_index)
+                .is_some_and(|next| !is_flag_token(strip_quotes(&next.text)))
+        {
+            next_index += 1;
+        }
+        return FlagConsume::Qualifier { next_index };
+    }
+    if is_self_contained_flag(text) {
+        return FlagConsume::Advance {
+            next_index: index + 1,
+        };
+    }
+    if !is_flag_token(text) {
+        return FlagConsume::NotFlag;
+    }
+    if is_value_taking_flag(text) {
+        let mut next_index = index + 1;
+        if tokens
+            .get(next_index)
+            .is_some_and(|next| !is_flag_token(strip_quotes(&next.text)))
+        {
+            next_index += 1;
+        }
+        return FlagConsume::Advance { next_index };
+    }
+    FlagConsume::Advance {
+        next_index: index + 1,
+    }
+}
+
 fn is_qualifier(text: &str) -> bool {
     let name = flag_name(text);
     QUALIFIER_FLAGS.contains(&name)
@@ -266,6 +266,10 @@ fn is_qualifier(text: &str) -> bool {
 
 fn is_self_contained_flag(text: &str) -> bool {
     is_flag_token(text) && text.contains('=')
+}
+
+fn is_value_taking_flag(text: &str) -> bool {
+    VALUE_TAKING_FLAGS.contains(&flag_name(text))
 }
 
 fn qualifier_consumes_value(flag: &str) -> bool {
@@ -372,8 +376,60 @@ mod tests {
             1
         );
         assert_eq!(
+            missing_scripts_for("`npm run --silent build target`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run --silent build -- target`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run-script --silent build target`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
             missing_scripts_for("`npm run build -- --flag`\n", &missing).len(),
             1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run --loglevel silent build`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm --registry https://example.com run build`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run --userconfig ./rc build`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm --userconfig ./rc run build`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run --cache /tmp/npm build`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run --otp 123456 build`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run --script-shell /bin/bash build`\n", &missing).len(),
+            1
+        );
+        assert_eq!(
+            missing_scripts_for("`npm run --silent --production build extra`\n", &missing).len(),
+            1
+        );
+        assert!(
+            missing_scripts_for("`npm run --silent build`\n", &present).is_empty(),
+            "present script with no-value flag stays clean"
+        );
+        assert!(
+            missing_scripts_for("`npm run --silent build target`\n", &present).is_empty(),
+            "present script with trailing args stays clean"
         );
 
         for command in [
@@ -384,6 +440,7 @@ mod tests {
             "`npm --global run build`\n",
             "`npm -g run build`\n",
             "`npm --workspace=pkg run build`\n",
+            "`npm --workspace pkg run build --silent arg`\n",
         ] {
             assert!(
                 missing_scripts_for(command, &missing).is_empty(),
@@ -391,14 +448,6 @@ mod tests {
             );
         }
 
-        assert!(
-            missing_scripts_for("`npm --userconfig ./rc run build`\n", &missing).is_empty(),
-            "value-taking non-qualifier flags are skipped"
-        );
-        assert!(
-            missing_scripts_for("`npm run --userconfig ./rc build`\n", &missing).is_empty(),
-            "value-taking flags after run are skipped"
-        );
         assert!(missing_scripts_for("Do not run npm run build\n", &missing).is_empty());
         assert_eq!(
             missing_scripts_for("Never invent. Run npm run build\n", &missing)
@@ -406,6 +455,13 @@ mod tests {
                 .map(|item| item.0.as_str())
                 .collect::<Vec<_>>(),
             ["build"]
+        );
+        let quoted = missing_scripts_for("`npm run \"build\" target`\n", &missing);
+        assert_eq!(quoted.len(), 1);
+        assert_eq!(quoted[0].0, "build");
+        assert_eq!(
+            missing_scripts_for("`npm run --loglevel silent --otp 99 build`\n", &missing).len(),
+            1
         );
     }
 
