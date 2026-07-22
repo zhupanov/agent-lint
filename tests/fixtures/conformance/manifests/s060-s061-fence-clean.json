@@ -1,0 +1,15 @@
+{
+  "class": "clean",
+  "repository": "s060-s061-fence-clean",
+  "covers": ["s060-s061-fence"],
+  "invocation": {
+    "mode": "basic",
+    "arguments": ["--format", "json", "--only", "S060,S061", "."]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}
