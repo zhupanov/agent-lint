@@ -157,6 +157,14 @@ pub(crate) fn validate_plugin_output_styles(
     let mut roots: Vec<&str> = vec!["output-styles"];
     roots.extend(declared_roots.iter().map(String::as_str));
     for path in &super::agent_discovery::collect(&roots, exclude).lint_files {
+        // The `.claude-plugin/` tree is manifest-owned (M012), so its contents are
+        // never linted as component content. Declared paths pointing *at*
+        // `.claude-plugin/` are already rejected by the M012/M013 classifier; this
+        // also drops a nested `.claude-plugin/` reached incidentally while walking
+        // a declared directory root.
+        if path.split('/').any(|segment| segment == ".claude-plugin") {
+            continue;
+        }
         let Ok(content) = fs::read_to_string(path) else {
             continue;
         };
@@ -1502,19 +1510,123 @@ mod tests {
         });
     }
 
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn plugin_output_styles_never_escape_via_symlinked_declared_ancestor() {
+        use std::os::unix::fs::symlink;
+        with_temp_dir(|| {
+            let outside = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(outside.path().join("styles")).unwrap();
+            std::fs::write(
+                outside.path().join("styles/leak.md"),
+                "---\ndescription: [\n---\n",
+            )
+            .unwrap();
+            fs::create_dir_all(".claude-plugin").unwrap();
+            fs::write(
+                ".claude-plugin/plugin.json",
+                r#"{"name":"p","version":"1.0.0","outputStyles":["./via/styles"]}"#,
+            )
+            .unwrap();
+            // `via` is an intermediate symlink pointing outside the repository.
+            symlink(outside.path(), "via").unwrap();
+
+            let diag = plugin_output_style_diag();
+            assert!(
+                diag.diagnostics().is_empty(),
+                "a declared root behind a symlinked ancestor must not read outside the repository: {:?}",
+                diag.diagnostics()
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_output_styles_report_o006_for_non_mapping_and_crlf_frontmatter() {
+        with_temp_dir(|| {
+            fs::create_dir_all("output-styles").unwrap();
+            // A syntactically valid YAML sequence is not a mapping: O006, no cascade.
+            fs::write("output-styles/seq.md", "---\n- a\n- b\n---\nBody\n").unwrap();
+            // CRLF delimiters with a genuinely malformed YAML body: O006.
+            fs::write(
+                "output-styles/crlf.md",
+                "---\r\ndescription: [\r\n---\r\nBody\r\n",
+            )
+            .unwrap();
+            let diag = plugin_output_style_diag();
+            for subject in ["output-styles/seq.md", "output-styles/crlf.md"] {
+                let found = diagnostics_for(&diag, subject);
+                assert_eq!(found.len(), 1, "{subject} emits exactly one diagnostic");
+                assert_eq!(found[0].rule, LintRule::OutputStyleFrontmatterInvalid);
+            }
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn output_style_diagnostics_are_deterministically_ordered_across_surfaces() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/output-styles").unwrap();
+            fs::create_dir_all("output-styles").unwrap();
+            fs::create_dir_all(".claude-plugin").unwrap();
+            fs::write(
+                ".claude-plugin/plugin.json",
+                r#"{"name":"p","version":"1.0.0"}"#,
+            )
+            .unwrap();
+            let invalid = "---\ndescription: [\n---\n";
+            fs::write(".claude/output-styles/priv.md", invalid).unwrap();
+            fs::write("output-styles/plug.md", invalid).unwrap();
+
+            // Run the full plugin pipeline: the private surface is validated
+            // before the plugin surface, and the collector orders by registry
+            // rank then emission order, so the private O006 precedes the plugin
+            // O006 deterministically.
+            let ctx = LintContext::new(
+                &std::env::current_dir().unwrap(),
+                crate::context::LintMode::Plugin,
+            );
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            super::super::run_all(&ctx, &mut diag, &ExcludeSet::default());
+            let o006: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|d| d.rule == LintRule::OutputStyleFrontmatterInvalid)
+                .filter_map(|d| d.subject_path.as_deref().map(Path::to_path_buf))
+                .collect();
+            assert_eq!(
+                o006,
+                vec![
+                    Path::new(".claude/output-styles/priv.md").to_path_buf(),
+                    Path::new("output-styles/plug.md").to_path_buf(),
+                ],
+                "private-surface O006 must precede plugin-surface O006 deterministically"
+            );
+        });
+    }
+
     #[test]
     #[serial_test::serial]
     fn plugin_output_styles_never_read_unsafe_or_nonexistent_declared_paths() {
         with_temp_dir(|| {
             fs::create_dir_all(".claude-plugin/output-styles").unwrap();
+            fs::create_dir_all("bundle/.claude-plugin/output-styles").unwrap();
             fs::write(
                 ".claude-plugin/plugin.json",
-                r#"{"name":"p","version":"1.0.0","outputStyles":["/abs/x.md","../up/y.md","./.claude-plugin/output-styles","./missing"]}"#,
+                r#"{"name":"p","version":"1.0.0","outputStyles":["/abs/x.md","../up/y.md","./.claude-plugin/output-styles","./bundle","./missing"]}"#,
             )
             .unwrap();
-            // A file at a rejected location that must never be read or reported.
+            // Files at rejected locations that must never be read or reported: the
+            // repo-root manifest tree, and a `.claude-plugin/` nested under an
+            // otherwise-safe declared directory root.
             fs::write(
                 ".claude-plugin/output-styles/nested.md",
+                "---\ndescription: [\n---\n",
+            )
+            .unwrap();
+            fs::write(
+                "bundle/.claude-plugin/output-styles/leak.md",
                 "---\ndescription: [\n---\n",
             )
             .unwrap();
@@ -1522,7 +1634,7 @@ mod tests {
             let diag = plugin_output_style_diag();
             assert!(
                 diag.diagnostics().is_empty(),
-                "absolute, traversal, nested-plugin-dir, and missing declared paths must not be read: {:?}",
+                "absolute, traversal, manifest-tree, and missing declared paths must not be read: {:?}",
                 diag.diagnostics()
             );
         });
