@@ -1,0 +1,2 @@
+[lint]
+suppress = ["CX012", "CX028", "CX013", "CX004", "CX030"]

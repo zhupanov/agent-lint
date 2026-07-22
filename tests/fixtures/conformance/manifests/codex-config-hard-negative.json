@@ -1,0 +1,38 @@
+{
+  "class": "hard-negative",
+  "repository": "codex-config-hard-negative",
+  "covers": [
+    "codex",
+    "codex-config",
+    "normal",
+    "json",
+    "global-suppression",
+    "autofix"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--autofix",
+      "--only",
+      "CX004,CX012,CX013,CX028,CX030",
+      "."
+    ]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": [
+    "claude",
+    "codex"
+  ],
+  "expected_suppressed": 5,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    {
+      "path": ".codex/config.toml",
+      "contents": "[mcp_servers.sk-abcdefghijklmnopqrstuv]\ncommand = \"server\"\nbearer_token = \"nope\"\nargs = [\"ok\", 7]\nunknown_mcp = true\ndefault_tools_approval_mode = \"bad\"\nenv = { ORDINARY = \"sk-abcdefghijklmnopqrstuvwxyz\" }\n"
+    }
+  ]
+}

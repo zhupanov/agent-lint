@@ -1,0 +1,42 @@
+{
+  "class": "hard-negative",
+  "repository": "codex-project-doc-hard-negative",
+  "covers": [
+    "codex",
+    "codex-project-doc",
+    "normal",
+    "json",
+    "global-suppression",
+    "autofix"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--autofix",
+      "--only",
+      "CX040,CX045,codex-agents-limit,codex-agents-conflict",
+      "."
+    ]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": [
+    "claude",
+    "codex"
+  ],
+  "expected_suppressed": 1,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    {
+      "path": "AGENTS.md",
+      "contents": "approval_policy = \"on-request\"\n"
+    },
+    {
+      "path": ".codex/config.toml",
+      "contents": "project_doc_max_bytes = 0\napproval_policy = \"never\"\n"
+    }
+  ]
+}

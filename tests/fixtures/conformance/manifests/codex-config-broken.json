@@ -1,0 +1,310 @@
+{
+  "class": "broken",
+  "repository": "codex-config-broken",
+  "covers": [
+    "codex",
+    "codex-config",
+    "normal",
+    "json"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--only",
+      "CX002,CX003,CX004,CX005,CX006,CX007,CX008,CX009,CX011,CX012,CX013,CX014,CX015,CX016,CX017,CX018,CX019,CX020,CX021,CX022,CX023,CX024,CX025,CX026,CX027,CX028,CX029,CX030,CX031,CX032,CX033,CX034,CX035,CX036,CX061,CX062",
+      "."
+    ]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": [
+    "claude",
+    "codex"
+  ],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "CX002",
+      "name": "codex-doc-bytes",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a nonnegative integer"
+    },
+    {
+      "code": "CX003",
+      "name": "codex-doc-names",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use an array of strings"
+    },
+    {
+      "code": "CX004",
+      "name": "codex-key-unknown",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "remove or correct this unsupported key"
+    },
+    {
+      "code": "CX004",
+      "name": "codex-key-unknown",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "remove or correct this unsupported key"
+    },
+    {
+      "code": "CX005",
+      "name": "codex-approval-policy",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX006",
+      "name": "codex-sandbox-mode",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX007",
+      "name": "codex-reasoning-effort",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a non-empty string"
+    },
+    {
+      "code": "CX008",
+      "name": "codex-model-verbosity",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX009",
+      "name": "codex-personality",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX011",
+      "name": "codex-shell-inherit",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX012",
+      "name": "codex-mcp-transport",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use only fields valid for this transport"
+    },
+    {
+      "code": "CX013",
+      "name": "codex-secret-literal",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "move the variable name to env_vars instead of storing a credential literal"
+    },
+    {
+      "code": "CX014",
+      "name": "codex-cli-credentials",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX015",
+      "name": "codex-workspace-write",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use the required field type"
+    },
+    {
+      "code": "CX015",
+      "name": "codex-workspace-write",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use the required field type"
+    },
+    {
+      "code": "CX016",
+      "name": "codex-model-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a string"
+    },
+    {
+      "code": "CX016",
+      "name": "codex-model-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a string"
+    },
+    {
+      "code": "CX017",
+      "name": "codex-provider-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a string"
+    },
+    {
+      "code": "CX018",
+      "name": "codex-reasoning-summary",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX019",
+      "name": "codex-history-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a TOML table"
+    },
+    {
+      "code": "CX020",
+      "name": "codex-tui-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a TOML table"
+    },
+    {
+      "code": "CX021",
+      "name": "codex-opener-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a string"
+    },
+    {
+      "code": "CX022",
+      "name": "codex-mcp-credentials",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX023",
+      "name": "codex-context-window",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a positive integer"
+    },
+    {
+      "code": "CX024",
+      "name": "codex-compact-limit",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a positive integer"
+    },
+    {
+      "code": "CX025",
+      "name": "codex-approval-field",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "remove or correct this unsupported key"
+    },
+    {
+      "code": "CX026",
+      "name": "codex-approval-reviewer",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX027",
+      "name": "codex-service-tier-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a string"
+    },
+    {
+      "code": "CX028",
+      "name": "codex-bearer-token",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "replace bearer_token with bearer_token_env_var"
+    },
+    {
+      "code": "CX029",
+      "name": "codex-agent-threads",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use an integer greater than zero"
+    },
+    {
+      "code": "CX030",
+      "name": "codex-app-approval",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX030",
+      "name": "codex-app-approval",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX031",
+      "name": "codex-skills-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a TOML table"
+    },
+    {
+      "code": "CX032",
+      "name": "codex-profile-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a string"
+    },
+    {
+      "code": "CX033",
+      "name": "codex-top-key",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "remove or correct this unsupported key"
+    },
+    {
+      "code": "CX034",
+      "name": "codex-feature-key",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "remove or correct this unsupported key"
+    },
+    {
+      "code": "CX035",
+      "name": "codex-network-field",
+      "severity": "warning",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "remove or correct this unsupported key"
+    },
+    {
+      "code": "CX036",
+      "name": "codex-windows-sandbox",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "select one of the supported values"
+    },
+    {
+      "code": "CX061",
+      "name": "codex-approval-shape",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a boolean"
+    },
+    {
+      "code": "CX062",
+      "name": "codex-config-container-type",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "use a TOML table"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}
