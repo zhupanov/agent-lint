@@ -230,7 +230,13 @@ pub struct YamlStrictError {
 /// location and a message that does not embed the parser's YAML-relative
 /// `at line N, column M` coordinates.
 pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, YamlStrictError> {
-    let text = fm_lines.join("\n");
+    // Restore the trailing newline that line extraction dropped. A frontmatter
+    // block whose final line is a bare `key:` (a null value) is valid YAML, but
+    // the parser rejects a document that ends at a key with no following
+    // newline. The only value this changes is a keep-chomped (`|+`/`>+`) block
+    // scalar on the final line, which regains the trailing newline the real
+    // file carries before the closing `---`; every other document is identical.
+    let text = format!("{}\n", fm_lines.join("\n"));
     match crate::yaml::parse(&text) {
         Ok(value) => Ok(value),
         Err(err) => {
@@ -303,6 +309,24 @@ pub fn canonical_nonempty_string_field<'a>(
         .get(key)?
         .as_str()
         .filter(|value| !value.is_empty())
+}
+
+/// Interpret a canonical YAML value as an accepted skill boolean field value.
+///
+/// Returns `Some(true)`/`Some(false)` for a YAML boolean (any YAML 1.2 casing)
+/// or the quoted strings `"true"`/`"false"` kept accepted for compatibility.
+/// Every other value — other strings, numbers, null, sequences, mappings —
+/// yields `None`. This is the shared contract for S023 (accept iff `Some`) and
+/// the S027/S066 gates (which branch on the concrete boolean).
+pub fn canonical_bool_value(value: &crate::yaml::Value) -> Option<bool> {
+    if let Some(boolean) = value.as_bool() {
+        return Some(boolean);
+    }
+    match value.as_str() {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None,
+    }
 }
 
 /// Whether a top-level field in an already strictly parsed frontmatter mapping

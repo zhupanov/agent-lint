@@ -86,6 +86,32 @@ pub(crate) fn is_named_tex_escape_pair(value: &str) -> bool {
     NAMED_TEX_ESCAPES.contains(&first) && NAMED_TEX_ESCAPES.contains(&second)
 }
 
+/// Frontmatter fields S043 must never scan or rewrite. `description`,
+/// `compatibility`, and `when_to_use` are free prose (a description may
+/// legitimately mention `C:\Users`), and `metadata` holds arbitrary string
+/// data rather than path configuration.
+pub(crate) const S043_PROSE_FIELDS: &[&str] =
+    &["description", "compatibility", "when_to_use", "metadata"];
+
+/// Whether a canonical frontmatter value carries an S043 backslash path.
+/// A scalar string is checked directly and each string item of a sequence is
+/// checked individually; mappings, nested collections, and non-string scalars
+/// never match. This is the S043 *validator's* detector; the autofix rewrites
+/// only single-line scalars, so it does its own scalar-scoped detection but
+/// shares `S043_PROSE_FIELDS` and `contains_backslash_path` with this path.
+pub(crate) fn canonical_value_has_backslash_path(value: &crate::yaml::Value) -> bool {
+    if let Some(text) = value.as_str() {
+        contains_backslash_path(text)
+    } else if let Some(items) = value.as_sequence() {
+        items
+            .iter()
+            .filter_map(|item| item.as_str())
+            .any(contains_backslash_path)
+    } else {
+        false
+    }
+}
+
 /// Canonical skill frontmatter keys (Claude Code docs + fields already linted here).
 /// Used by S070 (unknown-fm-field) and kept alongside S007's empty-optional list.
 pub(crate) const KNOWN_SKILL_FRONTMATTER_FIELDS: &[&str] = &[
@@ -2974,6 +3000,8 @@ suppress = ["S033"]
     #[test]
     #[serial_test::serial]
     fn test_s039_metadata_inline_value() {
+        // A present-but-non-mapping `metadata` (here a bare boolean) reports the
+        // single shape diagnostic rather than a per-entry one.
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -2987,7 +3015,9 @@ suppress = ["S033"]
         assert!(
             diag.errors()
                 .iter()
-                .any(|e| e.contains("metadata") && e.contains("non-string"))
+                .any(|e| e.contains("metadata must be a map of string values")),
+            "S039 shape diagnostic expected, got: {:?}",
+            diag.errors()
         );
     }
 
@@ -3173,31 +3203,56 @@ suppress = ["S033"]
         );
     }
 
-    // ── S042: dmi-empty-desc ─────────────────────────────────────────
+    // ── S042: dmi-empty-desc (soft-retired) ──────────────────────────
+    // S042 is a strict subset of S005 and no longer fires from any path; S005
+    // remains the sole diagnostic for a missing/empty description.
 
     #[test]
     #[serial_test::serial]
-    fn test_s042_dmi_empty_desc() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription:\ndisable-model-invocation: true\n---\nBody content\n",
-        ).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            diag.errors()
-                .iter()
-                .any(|e| e.contains("disable-model-invocation") && e.contains("empty"))
-        );
+    fn test_s042_retired_dmi_empty_desc_reports_only_s005() {
+        for description in [
+            "description:",
+            "description: \"\"",
+            "description: [not, a, string]",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::create_dir_all("skills/my-skill").unwrap();
+            std::fs::write(
+                "skills/my-skill/SKILL.md",
+                format!(
+                    "---\nname: my-skill\n{description}\ndisable-model-invocation: true\n---\nBody content\n"
+                ),
+            )
+            .unwrap();
+            let exclude = crate::config::ExcludeSet::default();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            // S005 lives in the frontmatter pass; the (retired) S042 lived in the
+            // content pass. Run both so we see the whole picture on one file.
+            crate::validators::skills::validate_skill_frontmatter(&mut diag, &exclude);
+            validate_skill_content(&mut diag, &exclude);
+            // S005 is the sole diagnostic; S042 never fires.
+            assert!(
+                fires(diag.diagnostics(), LintRule::FrontmatterFieldMissing),
+                "S005 must fire for {description:?}"
+            );
+            assert!(
+                diag.diagnostics()
+                    .iter()
+                    .all(|d| d.rule != LintRule::DmiEmptyDesc),
+                "S042 must not fire for {description:?}, got: {:?}",
+                diag.diagnostics()
+                    .iter()
+                    .map(|d| d.rule.code())
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]
     #[serial_test::serial]
-    fn test_s042_dmi_with_desc_ok() {
+    fn test_s042_retired_even_with_dmi_and_valid_desc() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -3209,10 +3264,9 @@ suppress = ["S033"]
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
-            !diag
-                .errors()
+            diag.diagnostics()
                 .iter()
-                .any(|e| e.contains("disable-model-invocation") && e.contains("empty"))
+                .all(|d| d.rule != LintRule::DmiEmptyDesc)
         );
     }
 
@@ -7301,5 +7355,529 @@ suppress = ["S055"]
                 .iter()
                 .any(|e| e.contains("'paths'") && e.contains("empty"))
         );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // Canonical-YAML field-type migration (issue #341)
+    //
+    // These exercise the input-handling change: trailing comments, YAML 1.2
+    // boolean casing, quoting, and value shapes now read through canonical YAML.
+    // ════════════════════════════════════════════════════════════════
+
+    /// Lint one public skill (directory `dir`) written with `content`. The
+    /// caller owns the `CwdGuard`, so `serial_test` ordering stays explicit.
+    fn lint_skill_in(dir: &str, content: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        std::fs::create_dir_all(format!("skills/{dir}")).unwrap();
+        std::fs::write(format!("skills/{dir}/SKILL.md"), content).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        diag.diagnostics().to_vec()
+    }
+
+    fn fires(diags: &[crate::diagnostic::Diagnostic], rule: LintRule) -> bool {
+        diags.iter().any(|d| d.rule == rule)
+    }
+
+    fn message_for(diags: &[crate::diagnostic::Diagnostic], rule: LintRule) -> String {
+        diags
+            .iter()
+            .find(|d| d.rule == rule)
+            .map(|d| d.message.clone())
+            .unwrap_or_default()
+    }
+
+    fn skill_with_field(field_line: &str) -> String {
+        format!(
+            "---\nname: subject\ndescription: A valid skill description here\n{field_line}\n---\nBody content here\n"
+        )
+    }
+
+    // ── S023: canonical booleans, casing, comments, shapes ───────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s023_canonical_bool_table() {
+        let cases: &[(&str, bool)] = &[
+            ("user-invocable: true", false),
+            ("user-invocable: false", false),
+            ("user-invocable: True", false), // YAML 1.2 casing
+            ("user-invocable: TRUE", false), // YAML 1.2 casing
+            ("user-invocable: true # allow slash use", false), // trailing comment
+            ("user-invocable: \"true\"", false), // quoted compat form
+            ("user-invocable: yes", true),
+            ("user-invocable: 1", true),
+            ("user-invocable: [true]", true),
+        ];
+        for (field_line, should_fire) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in("subject", &skill_with_field(field_line));
+            assert_eq!(
+                fires(&diags, LintRule::BoolFieldInvalid),
+                *should_fire,
+                "S023 verdict mismatch for {field_line:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s023_renders_canonical_value_not_raw_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in("subject", &skill_with_field("user-invocable: yes # nope"));
+        assert!(
+            message_for(&diags, LintRule::BoolFieldInvalid).contains("got 'yes'"),
+            "comment must not leak into the rendered value: {}",
+            message_for(&diags, LintRule::BoolFieldInvalid)
+        );
+    }
+
+    // ── S024/S025/S026/S063: canonical scalar vocabularies ───────────
+
+    #[test]
+    #[serial_test::serial]
+    fn enum_fields_read_canonical_scalars() {
+        // (field_line, rule, should_fire)
+        let cases: &[(&str, LintRule, bool)] = &[
+            (
+                "context: fork # run forked",
+                LintRule::ContextFieldInvalid,
+                false,
+            ),
+            ("context: forked", LintRule::ContextFieldInvalid, true),
+            ("context: [fork]", LintRule::ContextFieldInvalid, true),
+            (
+                "effort: high # default",
+                LintRule::EffortFieldInvalid,
+                false,
+            ),
+            ("effort: extreme", LintRule::EffortFieldInvalid, true),
+            ("effort: 5", LintRule::EffortFieldInvalid, true),
+            ("shell: bash # posix", LintRule::ShellFieldInvalid, false),
+            ("shell: zsh", LintRule::ShellFieldInvalid, true),
+            (
+                "model: sonnet # fast default",
+                LintRule::ModelInvalid,
+                false,
+            ),
+            ("model: sonet", LintRule::ModelInvalid, true),
+            ("model: [sonnet]", LintRule::ModelInvalid, true),
+        ];
+        for (field_line, rule, should_fire) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in("subject", &skill_with_field(field_line));
+            assert_eq!(
+                fires(&diags, *rule),
+                *should_fire,
+                "{} verdict mismatch for {field_line:?}",
+                rule.code()
+            );
+        }
+    }
+
+    // ── S027/S066 gates read commented canonical booleans ────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s027_fires_on_commented_boolean_gates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in(
+            "subject",
+            "---\nname: subject\ndescription: A valid skill description here\ndisable-model-invocation: true # manual only\nuser-invocable: false\n---\nBody content here\n",
+        );
+        assert!(fires(&diags, LintRule::SkillUnreachable));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s066_does_not_fire_when_dmi_true_is_commented() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // Evidence 2: side-effect-named skill with a commented dmi:true.
+        let diags = lint_skill_in(
+            "deploy-site",
+            "---\nname: deploy-site\ndescription: Use when deploying the site to production\ndisable-model-invocation: true # keep manual\n---\nDeploy the site\n",
+        );
+        assert!(
+            !fires(&diags, LintRule::SideEffectAuto),
+            "S066 must invert on a commented dmi:true"
+        );
+    }
+
+    // ── S064: only a usable string agent gates on context ────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s064_agent_shape_table() {
+        // (agent line + optional context, S064 fires?, S065 fires?)
+        // Refinement B: an unusable agent shape emits S065 only, never S064.
+        let cases: &[(&str, bool, bool)] = &[
+            ("agent: Explore", true, false), // string builtin, no fork → S064 only
+            ("context: fork # note\nagent: Explore", false, false), // commented fork → clean
+            ("agent:", false, true),         // null → S065 owns
+            ("agent: null", false, true),    // null → S065 owns
+            ("agent: [Explore]", false, true), // sequence → S065 owns
+            ("agent: \"\"", false, true),    // empty string → S065 owns
+        ];
+        for (field_lines, s064, s065) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in(
+                "subject",
+                &format!(
+                    "---\nname: subject\ndescription: A valid skill description here\n{field_lines}\n---\nResearch and report.\n"
+                ),
+            );
+            assert_eq!(
+                fires(&diags, LintRule::AgentNoFork),
+                *s064,
+                "S064 verdict mismatch for {field_lines:?}"
+            );
+            assert_eq!(
+                fires(&diags, LintRule::AgentUnknown),
+                *s065,
+                "S065 verdict mismatch for {field_lines:?}"
+            );
+        }
+    }
+
+    // ── S070: canonical keys, not raw lines ──────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s070_reads_canonical_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Quoted and spaced key spellings resolve to their real key → no S070.
+        let clean = lint_skill_in(
+            "known",
+            "---\nname : known\n\"description\": A valid skill description here\n\"model\": inherit\n---\nBody content here\n",
+        );
+        assert!(
+            !fires(&clean, LintRule::UnknownFmField),
+            "quoted/spaced known keys must not fire S070: {:?}",
+            clean
+                .iter()
+                .filter(|d| d.rule == LintRule::UnknownFmField)
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        // A genuinely unknown key still fires.
+        let unknown = lint_skill_in("subject", &skill_with_field("modell: sonnet"));
+        assert!(fires(&unknown, LintRule::UnknownFmField));
+    }
+
+    // ── S071: canonical shape of `paths` ─────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s071_paths_shape_table() {
+        let cases: &[(&str, bool)] = &[
+            ("paths: []", true),            // empty flow sequence (Evidence 4)
+            ("paths: \"\"", true),          // empty string
+            ("paths: null", true),          // explicit null
+            ("paths: {}", true),            // mapping shape
+            ("paths: [\"\", \"\"]", true),  // sequence of empty strings
+            ("paths: [\"src/**\"]", false), // non-empty flow sequence
+            ("paths: \"**/*.ts\"", false),  // non-empty string
+        ];
+        for (field_line, should_fire) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in("subject", &skill_with_field(field_line));
+            assert_eq!(
+                fires(&diags, LintRule::PathsEmpty),
+                *should_fire,
+                "S071 verdict mismatch for {field_line:?}"
+            );
+        }
+    }
+
+    // ── S039: canonical metadata shapes ──────────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s039_metadata_value_table() {
+        // (metadata block, S039 should fire?)
+        let cases: &[(&str, bool)] = &[
+            ("metadata:\n  count: 1 # note", true), // commented numeric entry
+            ("metadata:\n  tags:\n    - a", true),  // sequence entry
+            ("metadata:\n  slot: null", true),      // null entry
+            ("metadata: production", true),         // non-mapping scalar
+            ("metadata:\n  nested:\n    a: b", true), // nested-mapping entry
+            ("metadata:\n  version: \"1.0\"", false), // quoted string entry
+            ("metadata:\n  channel: stable", false), // plain string entry
+            ("metadata:", false),                   // null metadata — silent
+        ];
+        for (block, should_fire) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in(
+                "subject",
+                &format!(
+                    "---\nname: subject\ndescription: A valid skill description here\n{block}\n---\nBody content here\n"
+                ),
+            );
+            assert_eq!(
+                fires(&diags, LintRule::MetadataNotString),
+                *should_fire,
+                "S039 verdict mismatch for {block:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s039_non_mapping_metadata_uses_shape_message() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in("subject", &skill_with_field("metadata: production"));
+        assert!(
+            message_for(&diags, LintRule::MetadataNotString)
+                .contains("metadata must be a map of string values")
+        );
+    }
+
+    // ── S035: character count, comments, multiline scalars ───────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s035_measures_characters_not_bytes() {
+        // 180 CJK characters = 540 UTF-8 bytes: clean by character count.
+        let cjk = "世".repeat(180);
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in(
+            "subject",
+            &skill_with_field(&format!("compatibility: {cjk}")),
+        );
+        assert!(
+            !fires(&diags, LintRule::CompatTooLong),
+            "180 CJK chars must be clean"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s035_strips_trailing_comment_before_counting() {
+        let value = "x".repeat(490);
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in(
+            "subject",
+            &skill_with_field(&format!("compatibility: {value} # requires macOS")),
+        );
+        assert!(
+            !fires(&diags, LintRule::CompatTooLong),
+            "490 chars plus a comment must be clean"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s035_counts_multiline_block_scalar() {
+        let value = "a".repeat(501);
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in(
+            "subject",
+            &format!(
+                "---\nname: subject\ndescription: A valid skill description here\ncompatibility: |-\n  {value}\n---\nBody content here\n"
+            ),
+        );
+        assert!(fires(&diags, LintRule::CompatTooLong));
+        assert!(
+            message_for(&diags, LintRule::CompatTooLong).contains("(501)"),
+            "count must be characters: {}",
+            message_for(&diags, LintRule::CompatTooLong)
+        );
+    }
+
+    // ── S028/S069: canonical argument-hint presence ──────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s028_quoted_and_commented_hint_counts_as_set() {
+        for hint in [
+            "\"argument-hint\": \"<feature>\"", // quoted key (Evidence 4)
+            "argument-hint: <feature> # note",  // trailing comment
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in(
+                "subject",
+                &format!(
+                    "---\nname: subject\ndescription: A valid skill description here\n{hint}\n---\nUse $ARGUMENTS as input.\n"
+                ),
+            );
+            assert!(
+                !fires(&diags, LintRule::ArgsNoHint),
+                "S028 must not fire when the hint is set via {hint:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s069_gate_engages_for_quoted_key_hint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in(
+            "subject",
+            "---\nname: subject\ndescription: A valid skill description here\n\"argument-hint\": \"<x>\"\n---\nBody never mentions the token.\n",
+        );
+        assert!(fires(&diags, LintRule::HintNoArgs));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s028_null_hint_counts_as_unset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let diags = lint_skill_in(
+            "subject",
+            "---\nname: subject\ndescription: A valid skill description here\nargument-hint:\nmodel: inherit\n---\nUse $ARGUMENTS as input.\n",
+        );
+        assert!(
+            fires(&diags, LintRule::ArgsNoHint),
+            "a null argument-hint counts as unset"
+        );
+    }
+
+    // ── S043: field scope + prose exemption ──────────────────────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s043_scope_table() {
+        // (frontmatter body between ---, S043 should fire?)
+        let cases: &[(&str, bool)] = &[
+            ("paths: C:\\Users\\me\\file", true),            // path field
+            ("argument-hint: C:\\Users\\file", true),        // path field
+            ("paths:\n  - C:\\Users\\a", true),              // sequence item
+            ("description: See C:\\Users\\me\\file", false), // prose exempt
+            ("compatibility: needs C:\\Windows\\x", false),  // prose exempt
+            ("when_to_use: from C:\\Users\\me", false),      // prose exempt
+            ("metadata:\n  path: C:\\Users\\x", false),      // metadata exempt
+        ];
+        for (block, should_fire) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in(
+                "subject",
+                &format!(
+                    "---\nname: subject\ndescription: A valid skill description here\n{block}\n---\nBody content here\n"
+                ),
+            );
+            assert_eq!(
+                fires(&diags, LintRule::FrontmatterBackslash),
+                *should_fire,
+                "S043 verdict mismatch for {block:?}"
+            );
+        }
+    }
+
+    // ── Invalid YAML skips every migrated rule (X001 owns) ───────────
+
+    #[test]
+    #[serial_test::serial]
+    fn invalid_yaml_skips_field_type_rules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // A tab-indented line is invalid YAML; model: sonet must not reach S063.
+        let diags = lint_skill_in(
+            "subject",
+            "---\nname: subject\ndescription: A valid skill description here\n\tmodel: sonet\n---\nBody content here\n",
+        );
+        for rule in [
+            LintRule::BoolFieldInvalid,
+            LintRule::ContextFieldInvalid,
+            LintRule::EffortFieldInvalid,
+            LintRule::ShellFieldInvalid,
+            LintRule::SkillUnreachable,
+            LintRule::ModelInvalid,
+            LintRule::AgentNoFork,
+            LintRule::SideEffectAuto,
+            LintRule::UnknownFmField,
+            LintRule::PathsEmpty,
+            LintRule::MetadataNotString,
+            LintRule::CompatTooLong,
+            LintRule::FrontmatterBackslash,
+            LintRule::ArgsNoHint,
+            LintRule::HintNoArgs,
+        ] {
+            assert!(
+                !fires(&diags, rule),
+                "{} must skip invalid YAML (X001 owns)",
+                rule.code()
+            );
+        }
+    }
+
+    // ── Evidence 1: the fully-valid commented file stays clean ───────
+
+    #[test]
+    #[serial_test::serial]
+    fn evidence_commented_fields_produce_no_field_type_findings() {
+        // Acceptance: the trailing-comment file and its comment-free equivalent
+        // lint identically (both produce no field-type findings).
+        let field_type_rules = [
+            LintRule::BoolFieldInvalid,
+            LintRule::ContextFieldInvalid,
+            LintRule::EffortFieldInvalid,
+            LintRule::ShellFieldInvalid,
+            LintRule::ModelInvalid,
+            LintRule::AgentNoFork,
+        ];
+        for (label, body) in [
+            (
+                "commented",
+                "model: sonnet # fast default\ncontext: fork # run forked\nagent: Explore\nuser-invocable: true # allow slash use",
+            ),
+            (
+                "uncommented",
+                "model: sonnet\ncontext: fork\nagent: Explore\nuser-invocable: true",
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in(
+                "comments",
+                &format!(
+                    "---\nname: comments\ndescription: Use when exercising commented frontmatter fields\n{body}\n---\nResearch the codebase and report findings.\n"
+                ),
+            );
+            for rule in field_type_rules {
+                assert!(
+                    !fires(&diags, rule),
+                    "{} false-positives on the {label} fixture: {:?}",
+                    rule.code(),
+                    diags.iter().map(|d| d.rule.code()).collect::<Vec<_>>()
+                );
+            }
+        }
     }
 }

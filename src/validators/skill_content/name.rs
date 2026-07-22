@@ -142,10 +142,12 @@ mod tests {
             .frontmatter()
             .expect("fixture frontmatter")
             .to_vec();
+        let parsed_frontmatter = crate::frontmatter::parse_yaml_strict(&fm_lines).ok();
         SkillInfo {
             path: format!("skills/{name}/SKILL.md"),
             dir_name: name.to_string(),
             fm_lines,
+            parsed_frontmatter,
             body: document.body().to_string(),
             document,
             has_scripts_dir: false,

@@ -254,6 +254,14 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 
 ### Frontmatter Field Types (S023--S027, S063--S066, S070--S071)
 
+These field-type rules (together with S028, S035, S039, and S043 below) read
+frontmatter through canonical YAML: trailing comments, YAML 1.2 boolean
+spellings, quoting, and multiline scalars are interpreted as a real parser
+would, and each rule skips a file whose frontmatter is invalid YAML or not a
+mapping (X001/S004/S005 own those states). S043 scans only path-configuration
+values — every frontmatter field except the free-prose `description`,
+`compatibility`, and `when_to_use` fields and `metadata` values.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S023 | `bool-field-invalid` | Boolean fields (`user-invocable`, `disable-model-invocation`) must be `true`/`false` | Always | error |
@@ -277,7 +285,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | S035 | `compat-too-long` | `compatibility` field exceeds 500 characters | Always | warn |
 | S039 | `metadata-not-string` | Metadata map values must be strings | Always | error |
 | S040 | `tools-unknown` | `allowed-tools` lists unrecognized tool name | Always | warn |
-| S042 | `dmi-empty-desc` | `disable-model-invocation: true` with empty/missing description | Always | error |
+| S042 | `dmi-empty-desc` | Deprecated — no longer fires (a strict subset of S005; the code/name remain accepted in config) | Always | error |
 | S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Always | error |
 | S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Always | warn |
 | S045 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Always | warn |

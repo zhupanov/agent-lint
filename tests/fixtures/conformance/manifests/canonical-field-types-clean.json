@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "canonical-field-types-clean",
+  "covers": ["canonical-field-types", "basic-mode", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S023,S063,S070,S071", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}
