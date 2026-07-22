@@ -1,0 +1,17 @@
+{
+  "class": "hard-negative",
+  "repository": "claude-rules-autofix",
+  "covers": ["basic-mode", "autofix", "normal", "json", "claude-rules"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--autofix", "--only", "R001,R002,R003", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "R001", "name": "rules-glob-invalid", "severity": "error", "subject_path": ".claude/rules/bad.md", "suggestion": "use a valid Claude gitignore-style paths pattern" }
+  ],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    { "path": ".claude/rules/bad.md", "contents": "---\npaths: []\n---\nBody\n" }
+  ]
+}

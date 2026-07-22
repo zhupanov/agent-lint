@@ -1,0 +1,17 @@
+{
+  "class": "broken",
+  "repository": "claude-rules-basic-broken",
+  "covers": ["basic-mode", "normal", "json", "claude-rules"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "R001,R002,R003", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "R001", "name": "rules-glob-invalid", "severity": "error", "subject_path": ".claude/rules/empty-paths.md", "suggestion": "use a valid Claude gitignore-style paths pattern" },
+    { "code": "R001", "name": "rules-glob-invalid", "severity": "error", "subject_path": ".claude/rules/nested/shape.md", "suggestion": "use a valid Claude gitignore-style paths pattern" },
+    { "code": "R002", "name": "rules-field-unknown", "severity": "warning", "subject_path": ".claude/rules/unknown.md", "suggestion": "remove the unsupported key" },
+    { "code": "R003", "name": "rules-frontmatter-invalid", "severity": "error", "subject_path": ".claude/rules/missing-closer.md", "suggestion": "repair or remove the attempted frontmatter" }
+  ],
+  "allowed_additional_diagnostics": []
+}

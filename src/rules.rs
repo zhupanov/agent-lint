@@ -530,12 +530,15 @@ pub enum LintRule {
     PromptOutputConflict,
 
     // ── Claude configuration (R/O/T) ─────────────────────────────
-    /// R001: .claude/rules frontmatter paths contains an invalid glob
+    /// R001: .claude/rules frontmatter paths is not a usable Claude paths value
     #[strum(props(code = "R001", name = "rules-glob-invalid"))]
     RulesGlobInvalid,
     /// R002: .claude/rules frontmatter contains an unrecognized field
     #[strum(props(code = "R002", name = "rules-field-unknown"))]
     RulesFieldUnknown,
+    /// R003: .claude/rules frontmatter is missing or invalid
+    #[strum(props(code = "R003", name = "rules-frontmatter-invalid"))]
+    RulesFrontmatterInvalid,
     /// O001: output style description is missing or blank
     #[strum(props(code = "O001", name = "style-description-missing"))]
     OutputStyleDescriptionMissing,
@@ -1299,7 +1302,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            298,
+            299,
             "every enum variant must be registered"
         );
     }
@@ -1663,8 +1666,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            174,
-            "Expected 174 default-error rules, got {}",
+            175,
+            "Expected 175 default-error rules, got {}",
             errors.len()
         );
     }
