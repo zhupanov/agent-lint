@@ -1,0 +1,4 @@
+{
+  "name": "alternate-path-plugin",
+  "description": "Codex selects .claude-plugin when no .codex-plugin exists in the root."
+}

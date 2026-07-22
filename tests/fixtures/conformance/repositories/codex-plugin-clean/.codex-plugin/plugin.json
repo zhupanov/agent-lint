@@ -1,0 +1,19 @@
+{
+  "name": "example-plugin",
+  "description": "An example Codex plugin used for conformance testing.",
+  "skills": ["./skills/one", "./skills/two"],
+  "commands": "./commands",
+  "apps": "./apps",
+  "mcpServers": { "example": { "command": "./bin/server" } },
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "defaultPrompt": ["Summarize the change", "Explain the failure"],
+    "websiteURL": "https://example.com/plugin",
+    "privacyPolicyURL": "https://example.com/privacy",
+    "termsOfServiceURL": "https://example.com/terms",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/logo.svg",
+    "logoDark": "./assets/logo-dark.svg",
+    "screenshots": ["./assets/one.png", "./assets/two.png"]
+  }
+}

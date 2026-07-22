@@ -6,7 +6,8 @@
 
 use crate::config::{ExcludeSet, PlatformOverrides};
 use crate::traversal;
-use std::path::{Component, Path};
+use std::collections::BTreeMap;
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DetectedSurfaces {
@@ -157,8 +158,84 @@ fn is_beneath_cursor_rules(path: &Path) -> bool {
 
 fn codex_surface_exists(exclude: &ExcludeSet) -> bool {
     is_included_file(".codex/config.toml", exclude)
-        || is_included_file(".codex-plugin/plugin.json", exclude)
         || is_included_file("AGENTS.override.md", exclude)
+        || !codex_plugin_manifests(exclude).is_empty()
+}
+
+/// Codex-recognized plugin manifest directory components, in the precedence
+/// order Codex applies when more than one exists beneath a single plugin root.
+pub(crate) const CODEX_PLUGIN_MANIFEST_DIRS: &[&str] =
+    &[".codex-plugin", ".claude-plugin", ".cursor-plugin"];
+
+/// One Codex plugin manifest selected for validation: exactly one per plugin
+/// root, chosen by upstream precedence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodexPluginManifest {
+    /// Physical path used to read the manifest file.
+    pub path: PathBuf,
+    /// Normalized, repository-relative path for diagnostics and exclusions.
+    pub display: String,
+}
+
+/// Discover every Codex plugin root and select its effective manifest.
+///
+/// A plugin root is any directory that contains a recognized manifest directory
+/// (`.codex-plugin`, `.claude-plugin`, or `.cursor-plugin`) holding a
+/// `plugin.json`. Candidates are classified by their exact parent-directory
+/// component, never by path-string suffix, so `my.codex-plugin/plugin.json`
+/// (parent component `my.codex-plugin`) is not a recognized manifest and
+/// establishes no plugin root. Each root selects the first existing manifest in
+/// Codex precedence order and yields it once; a nested plugin root is
+/// independent, never a mislocated copy of an ancestor.
+///
+/// This is the single discovery contract consumed by both platform detection
+/// and Codex plugin validation, so an included manifest that activates Codex is
+/// the same manifest validation receives. `recursive_files` supplies
+/// deterministic repository-relative ordering, exclusion handling,
+/// ignored-tree pruning, and no-follow-symlink behavior.
+pub(crate) fn codex_plugin_manifests(exclude: &ExcludeSet) -> Vec<CodexPluginManifest> {
+    let mut by_root: BTreeMap<PathBuf, (usize, traversal::WalkEntry)> = BTreeMap::new();
+    for entry in traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude)).entries {
+        if entry
+            .path
+            .file_name()
+            .is_none_or(|name| name != "plugin.json")
+        {
+            continue;
+        }
+        let Some(parent) = entry.path.parent() else {
+            continue;
+        };
+        let Some(precedence) = parent
+            .file_name()
+            .and_then(|component| component.to_str())
+            .and_then(|component| {
+                CODEX_PLUGIN_MANIFEST_DIRS
+                    .iter()
+                    .position(|dir| *dir == component)
+            })
+        else {
+            continue;
+        };
+        let root = parent.parent().map(Path::to_path_buf).unwrap_or_default();
+        by_root
+            .entry(root)
+            .and_modify(|selected| {
+                if precedence < selected.0 {
+                    *selected = (precedence, entry.clone());
+                }
+            })
+            .or_insert_with(|| (precedence, entry.clone()));
+    }
+    let mut manifests: Vec<CodexPluginManifest> = by_root
+        .into_values()
+        .map(|(_, entry)| CodexPluginManifest {
+            path: entry.path,
+            display: entry.display,
+        })
+        .collect();
+    manifests.sort_by(|left, right| left.display.cmp(&right.display));
+    manifests
 }
 
 fn agents_md_surface_exists(exclude: &ExcludeSet) -> bool {
@@ -468,6 +545,92 @@ mod tests {
             DetectedSurfaces::discover(&exclude),
             DetectedSurfaces::default()
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_activates_on_any_recognized_manifest_at_any_depth() {
+        for path in [
+            ".codex-plugin/plugin.json",
+            "plugins/example/.codex-plugin/plugin.json",
+            ".claude-plugin/plugin.json",
+            "packages/api/.claude-plugin/plugin.json",
+            "libs/widget/.cursor-plugin/plugin.json",
+        ] {
+            let _guard = CwdGuard::new();
+            let tmp = tempfile::tempdir().unwrap();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let path = Path::new(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, r#"{"name":"x"}"#).unwrap();
+            assert!(
+                DetectedSurfaces::discover(&ExcludeSet::default()).codex,
+                "manifest {} must activate Codex",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn suffix_collision_manifests_do_not_activate_codex() {
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for path in [
+            "my.codex-plugin/plugin.json",
+            "x.claude-plugin/plugin.json",
+            "y.cursor-plugin/plugin.json",
+        ] {
+            let path = Path::new(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, r#"{"name":"x"}"#).unwrap();
+        }
+        assert!(!DetectedSurfaces::discover(&ExcludeSet::default()).codex);
+        assert!(codex_plugin_manifests(&ExcludeSet::default()).is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_plugin_manifests_select_one_per_root_by_precedence() {
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // Root: all three present -> .codex-plugin wins.
+        for dir in [".codex-plugin", ".claude-plugin", ".cursor-plugin"] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(format!("{dir}/plugin.json"), r#"{"name":"x"}"#).unwrap();
+        }
+        // Nested root with only claude+cursor -> .claude-plugin wins.
+        std::fs::create_dir_all("nested/.claude-plugin").unwrap();
+        std::fs::write("nested/.claude-plugin/plugin.json", r#"{"name":"x"}"#).unwrap();
+        std::fs::create_dir_all("nested/.cursor-plugin").unwrap();
+        std::fs::write("nested/.cursor-plugin/plugin.json", r#"{"name":"x"}"#).unwrap();
+
+        let selected: Vec<String> = codex_plugin_manifests(&ExcludeSet::default())
+            .into_iter()
+            .map(|manifest| manifest.display)
+            .collect();
+        assert_eq!(
+            selected,
+            vec![
+                ".codex-plugin/plugin.json".to_string(),
+                "nested/.claude-plugin/plugin.json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_plugin_manifests_honor_exclusions() {
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("vendored/.codex-plugin").unwrap();
+        std::fs::write("vendored/.codex-plugin/plugin.json", r#"{"name":"x"}"#).unwrap();
+        let exclude = ExcludeSet::new(&["vendored/**".to_string()]).unwrap();
+        assert!(codex_plugin_manifests(&exclude).is_empty());
+        assert!(!DetectedSurfaces::discover(&exclude).codex);
     }
 
     #[test]

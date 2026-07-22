@@ -1,0 +1,5 @@
+{
+  "name": "nested-plugin",
+  "description": "A nested plugin root is an independent, valid plugin.",
+  "hooks": [{ "event": "PreToolUse" }]
+}

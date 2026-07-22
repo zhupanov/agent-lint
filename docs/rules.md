@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 298 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 299 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -685,22 +685,30 @@ active; the shared instruction rules above run independently.
 | CX040 | `codex-agents-limit` | `AGENTS.md` exceeds the effective Codex document limit | Always | warn |
 | CX042 | `codex-agents-override` | Root `AGENTS.override.md` is tracked by Git | Always | warn |
 | CX045 | `codex-agents-conflict` | Explicit `AGENTS.md` setting conflicts with `.codex/config.toml` | Always | error |
-| CX046 | `codex-plugin-path` | Codex plugin manifest is not at `.codex-plugin/plugin.json` | Always | error |
-| CX047 | `codex-plugin-invalid` | `.codex-plugin/plugin.json` is invalid JSON | Always | error |
-| CX048--CX049 | — | Missing/invalid Codex plugin name | Always | error |
-| CX050--CX052 | — | Component path lacks `./`, traverses, or is bare `./` | Always | error |
-| CX053--CX056 | — | Invalid default prompts or interface URL | Always | warn |
-| CX057 | `codex-plugin-asset` | Interface asset path lacks `./` or traverses | Always | error |
-| CX058--CX059 | — | Unsupported `hooks` field or missing description | Always | warn |
+| CX046 | `codex-plugin-path` | Deprecated — no longer emitted; any recognized manifest directory establishes a valid plugin root | Always | error |
+| CX047 | `codex-plugin-invalid` | Codex plugin manifest is unreadable, invalid JSON, a non-object root, or has an invalid field type | Always | error |
+| CX048--CX049 | — | Codex plugin name is missing/blank or not kebab-case | Always | error |
+| CX050--CX052 | — | Component path lacks `./`, escapes the plugin root, or is bare `./` | Always | error |
+| CX053--CX056 | — | Too many/empty/over-long `interface.defaultPrompt` entries or an unusable interface URL | Always | warn |
+| CX057 | `codex-plugin-asset` | Interface asset path (`composerIcon`, `logo`, `logoDark`, `screenshots[]`) is bare `./`, missing `./`, or escapes the plugin root | Always | error |
+| CX058 | `codex-plugin-hooks` | Deprecated — no longer emitted; Codex loads plugin-bundled hooks, and hook path strings participate in CX050–CX052 | Always | warn |
+| CX059 | `codex-plugin-description` | Codex plugin manifest `description` is missing, blank, or not a string (agent-lint install-surface recommendation) | Always | warn |
 | CX060 | `codex-skill-frontmatter` | Codex skill uses Claude-only frontmatter (`context`, `agent`, or `hooks`) | Always | warn |
+| CX063 | `codex-prompt-field` | `interface.default_prompt` / `interface.default_prompts` are ignored by Codex; rename to `interface.defaultPrompt` | Always | warn |
 
 CX040 uses Codex's default 32,768-byte project-document budget unless
-`.codex/config.toml` sets `project_doc_max_bytes`. CX053 and CX054 use the
-three-prompt and 128-character limits from
-[`openai/codex` commit `18110b8`](https://github.com/openai/codex/blob/18110b810f0a328147f6cd85e6f1ab6414927366/codex-rs/core-plugins/src/manifest.rs),
-checked on 2026-07-16. The canonical manifest field is
-`interface.defaultPrompt`; `default_prompts` is accepted by the linter only to
-make migrations diagnosable.
+`.codex/config.toml` sets `project_doc_max_bytes`. Codex plugin discovery
+recognizes `.codex-plugin/`, `.claude-plugin/`, and `.cursor-plugin/`
+`plugin.json` beneath every plugin root (Codex precedence order); a manifest
+directory is matched by exact parent-directory component, never by path suffix.
+CX047–CX055 are runtime-compatibility checks, CX048/CX049 are the public
+authoring name policy, and CX056/CX057/CX059/CX063 are publishing/install
+quality. The three-prompt and 128-Unicode-scalar limits, the recognized manifest
+paths, and the canonical `interface.defaultPrompt` field come from
+[`openai/codex` commit `7442f5f`](https://github.com/openai/codex/blob/7442f5f9323d116755dfe630e22c931a8aeaa5c7/codex-rs/core-plugins/src/manifest.rs)
+and the public [authoring documentation](https://developers.openai.com/codex/plugins/build#plugin-structure),
+checked on 2026-07-21. `interface.default_prompt` and
+`interface.default_prompts` are read by no Codex runtime; each triggers CX063.
 
 ## Cursor Configuration Rules (CU / CR)
 

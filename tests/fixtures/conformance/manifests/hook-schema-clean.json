@@ -5,7 +5,7 @@
   "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "H007,H008,H009,H010,H011,H012,H013,H014,H015,H016,H017,H018,H019,H020,H021,H022,H023,H024,H026", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",
-  "expected_active_platforms": ["claude"],
+  "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [],
   "allowed_additional_diagnostics": []

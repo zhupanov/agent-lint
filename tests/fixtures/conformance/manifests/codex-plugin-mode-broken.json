@@ -1,0 +1,16 @@
+{
+  "class": "broken",
+  "repository": "codex-plugin-mode-broken",
+  "covers": ["codex-plugin", "plugin-mode", "codex", "json", "normal"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "CX046,CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX058,CX059,CX063", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CX049", "name": "codex-name-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "CX050", "name": "codex-path-prefix", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "CX059", "name": "codex-plugin-description", "severity": "warning", "subject_path": ".claude-plugin/plugin.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

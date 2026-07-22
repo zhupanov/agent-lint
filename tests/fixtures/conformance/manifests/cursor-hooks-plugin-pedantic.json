@@ -5,7 +5,7 @@
   "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--pedantic", "--only", "CU011", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",
-  "expected_active_platforms": ["claude", "cursor"],
+  "expected_active_platforms": ["claude", "cursor", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
     { "code": "CU011", "name": "cursor-event-unknown", "severity": "error", "subject_path": ".cursor/hooks.json" }

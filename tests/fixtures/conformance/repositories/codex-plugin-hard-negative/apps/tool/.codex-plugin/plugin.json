@@ -1,0 +1,5 @@
+{
+  "name": "tool-plugin",
+  "description": "A nested plugin root is independent, never a mislocated manifest.",
+  "hooks": "./hooks/hooks.json"
+}

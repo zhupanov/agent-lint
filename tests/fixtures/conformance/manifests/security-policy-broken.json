@@ -5,7 +5,7 @@
   "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--all", "--only", "G005", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",
-  "expected_active_platforms": ["claude"],
+  "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
     { "code": "G005", "name": "security-policy-missing", "severity": "error", "subject_path": "SECURITY.md" }

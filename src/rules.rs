@@ -683,7 +683,10 @@ pub enum LintRule {
     /// CX045: AGENTS.md explicitly contradicts a Codex config value
     #[strum(props(code = "CX045", name = "codex-agents-conflict"))]
     CodexAgentsConfigConflict,
-    /// CX046: a Codex plugin manifest is not at the repository root
+    /// CX046: a Codex plugin manifest is not at the repository root (deprecated —
+    /// no longer fires; any recognized manifest directory establishes a valid
+    /// plugin root, so repository-relative depth is not an error. Retained so
+    /// existing config identifiers keep parsing.)
     #[strum(props(code = "CX046", name = "codex-plugin-path"))]
     CodexPluginManifestPath,
     /// CX047: .codex-plugin/plugin.json is not valid JSON
@@ -719,7 +722,10 @@ pub enum LintRule {
     /// CX057: Codex plugin interface asset path is unsafe
     #[strum(props(code = "CX057", name = "codex-plugin-asset"))]
     CodexPluginInterfaceAssetPath,
-    /// CX058: Codex plugin manifest uses the unsupported hooks field
+    /// CX058: Codex plugin manifest uses the unsupported hooks field (deprecated —
+    /// no longer fires; Codex loads plugin-bundled hooks, and hook path strings
+    /// participate in CX050–CX052. Retained so existing config identifiers keep
+    /// parsing.)
     #[strum(props(code = "CX058", name = "codex-plugin-hooks"))]
     CodexPluginHooksUnsupported,
     /// CX059: Codex plugin manifest description is missing or blank
@@ -734,6 +740,11 @@ pub enum LintRule {
     /// CX062: a structured Codex configuration container is not a table
     #[strum(props(code = "CX062", name = "codex-config-container-type"))]
     CodexConfigContainerType,
+    /// CX063: interface uses an ignored default-prompt key
+    /// (`interface.default_prompt` or `interface.default_prompts`); Codex reads
+    /// only `interface.defaultPrompt`
+    #[strum(props(code = "CX063", name = "codex-prompt-field"))]
+    CodexPluginPromptField,
 
     // ── Cursor configuration (CU / CR) ───────────────────────────
     /// CU001: Cursor rule file has no instructions
@@ -1094,7 +1105,7 @@ impl LintRule {
             Self::CodexPluginDefaultPromptCount | Self::CodexPluginDefaultPromptLength |
             Self::CodexPluginDefaultPromptEmpty | Self::CodexPluginInterfaceUrl |
             Self::CodexPluginHooksUnsupported | Self::CodexPluginDescriptionMissing |
-            Self::CodexSkillUnsupportedFrontmatter |
+            Self::CodexPluginPromptField | Self::CodexSkillUnsupportedFrontmatter |
             Self::CursorRuleFrontmatterMissing | Self::CursorRuleFieldUnknown |
             Self::CursorLegacyRules | Self::CursorAlwaysApplyGlobs |
             Self::CursorRuleDescriptionMissing | Self::CursorHookEventUnknown |
@@ -1260,7 +1271,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            298,
+            299,
             "every enum variant must be registered"
         );
     }
@@ -1427,8 +1438,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            127,
-            "Expected 127 default-warning rules, got {}",
+            128,
+            "Expected 128 default-warning rules, got {}",
             warnings.len()
         );
     }
