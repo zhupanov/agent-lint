@@ -5289,3 +5289,37 @@ fn unfinished_work_markers_report_structured_span_and_ignore_prose() {
     assert!(after.contains("- [ ] FIXME: real debt"));
     assert!(after.contains("Do not hack around the permission system."));
 }
+
+#[test]
+fn only_s042_is_accepted_and_clean_in_every_mode() {
+    // S042 is soft-retired: its code still parses for `--only`, but it never
+    // fires — even on a fixture (dmi:true + empty description) that formerly
+    // produced it. S005 owns the empty description and is filtered out here.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    init_git(root);
+    let skill = root.join(".claude/skills/manual/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        &skill,
+        "---\nname: manual\ndescription:\ndisable-model-invocation: true\n---\nBody content for the manual skill.\n",
+    )
+    .unwrap();
+
+    for extra in [&[][..], &["--pedantic"][..], &["--all"][..]] {
+        let mut args = vec!["--format", "json", "--only", "S042"];
+        args.extend_from_slice(extra);
+        args.push(".");
+        let output = run_in(root, &args);
+        let value = json(&output);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "--only S042 {extra:?} must exit clean: {value}"
+        );
+        assert!(
+            value["diagnostics"].as_array().unwrap().is_empty(),
+            "--only S042 {extra:?} must produce no diagnostics: {value}"
+        );
+    }
+}

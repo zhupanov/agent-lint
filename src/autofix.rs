@@ -10,7 +10,7 @@ use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::skill_content::security::flagged_http_offsets;
 use crate::validators::skill_content::{
-    RE_BACKSLASH_PATH, contains_backslash_path, is_named_tex_escape_pair,
+    RE_BACKSLASH_PATH, S043_PROSE_FIELDS, contains_backslash_path, is_named_tex_escape_pair,
 };
 use crate::validators::skills::{collect_plugin_skill_files, collect_skills};
 use regex::Regex;
@@ -701,44 +701,45 @@ fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet, config: &Lint
             if is_suppressed(config, LintRule::FrontmatterBackslash, &skill_path) {
                 continue;
             }
-            let has_backslash = info
-                .fm_lines
-                .iter()
-                .any(|line| contains_backslash_path(line));
-            if !has_backslash {
+            // Read canonical values so prose and metadata are never rewritten
+            // and quoting cannot corrupt the value. Invalid YAML is owned by
+            // X001 and has nothing safe to rewrite here.
+            let Some(map) = info.frontmatter_mapping() else {
                 continue;
-            }
+            };
 
             let content = match fs::read_to_string(&skill_path) {
                 Ok(c) => c,
                 Err(_) => continue,
             };
 
-            // Replace backslash paths in frontmatter lines only
-            let mut new_content = String::new();
-            let mut in_frontmatter = false;
-            let mut fm_delim_count = 0;
+            // The autofix only rewrites a single-line scalar whose raw value is
+            // exactly the canonical scalar; sequences, multiline, and quoted
+            // values leave the diagnostic standing (item 9 / #309 / #318).
+            let mut new_content = content.clone();
             let mut changed = false;
-
-            for line in content.lines() {
-                if line == "---" {
-                    fm_delim_count += 1;
-                    if fm_delim_count == 1 {
-                        in_frontmatter = true;
-                    } else if fm_delim_count == 2 {
-                        in_frontmatter = false;
-                    }
-                    new_content.push_str(line);
-                } else if in_frontmatter && contains_backslash_path(line) {
-                    new_content.push_str(&replace_backslash_paths(line));
-                    changed = true;
-                } else {
-                    new_content.push_str(line);
+            for (key, value) in map.iter() {
+                if S043_PROSE_FIELDS.contains(&key.as_str()) {
+                    continue;
                 }
-                new_content.push('\n');
-            }
-            if !content.ends_with('\n') && new_content.ends_with('\n') {
-                new_content.pop();
+                let Some(scalar) = value.as_str() else {
+                    continue;
+                };
+                if !contains_backslash_path(scalar) {
+                    continue;
+                }
+                let Some(raw_line) = single_line_scalar_raw_line(&info.fm_lines, key, scalar)
+                else {
+                    continue;
+                };
+                let new_line = replace_backslash_paths(&raw_line);
+                if new_line == raw_line {
+                    continue;
+                }
+                if let Some(updated) = replace_in_frontmatter(&new_content, &raw_line, &new_line) {
+                    new_content = updated;
+                    changed = true;
+                }
             }
 
             if changed && fs::write(&skill_path, &new_content).is_ok() {
@@ -754,6 +755,20 @@ fn fix_frontmatter_backslash(mode: LintMode, exclude: &ExcludeSet, config: &Lint
         }
     }
     fixed
+}
+
+/// The raw frontmatter line for a simple top-level scalar `field` when it is
+/// single-line-safe to rewrite: the key is unindented, has no continuation, and
+/// its raw value equals the canonical scalar. Returns the full raw line.
+fn single_line_scalar_raw_line(
+    fm_lines: &[String],
+    field: &str,
+    canonical: &str,
+) -> Option<String> {
+    let index = single_line_frontmatter_field_index(fm_lines, field)?;
+    let raw_line = &fm_lines[index];
+    let raw_value = raw_line.strip_prefix(&format!("{field}:"))?;
+    (raw_value.trim_start() == canonical).then(|| raw_line.clone())
 }
 
 // ── S045: YAML list syntax for allowed-tools ────────────────────────────
@@ -1199,9 +1214,13 @@ mod tests {
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all(".claude/skills/empty").unwrap();
+        // A duplicate `name` key makes the frontmatter genuinely invalid YAML,
+        // so S007's autofix must use its line-oriented fallback to find and
+        // remove the bare `argument-hint:` field. (A bare trailing null key is
+        // valid YAML and is now handled by the canonical path instead.)
         std::fs::write(
             ".claude/skills/empty/SKILL.md",
-            "---\nname: empty\ndescription: A valid description\nargument-hint:\n---\nBody\n",
+            "---\nname: empty\ndescription: A valid description\nargument-hint:\nname: duplicate\n---\nBody\n",
         )
         .unwrap();
 
@@ -1222,6 +1241,91 @@ mod tests {
             !std::fs::read_to_string(".claude/skills/empty/SKILL.md")
                 .unwrap()
                 .contains("argument-hint:")
+        );
+    }
+
+    // ── S043 autofix: single-line-safe, prose-exempt, idempotent ─────
+
+    #[test]
+    #[serial_test::serial]
+    fn fix_frontmatter_backslash_rewrites_single_line_scalar_and_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: A valid skill description here\nargument-hint: C:\\Users\\me\\file\n---\nBody\n",
+        )
+        .unwrap();
+
+        assert!(fix_frontmatter_backslash(
+            LintMode::Plugin,
+            &ExcludeSet::default(),
+            &LintConfig::default()
+        ));
+        let after = std::fs::read_to_string("skills/demo/SKILL.md").unwrap();
+        assert!(
+            after.contains("argument-hint: C:/Users/me/file"),
+            "got: {after}"
+        );
+        assert!(!after.contains('\\'));
+
+        // Second pass makes no change.
+        assert!(!fix_frontmatter_backslash(
+            LintMode::Plugin,
+            &ExcludeSet::default(),
+            &LintConfig::default()
+        ));
+        assert_eq!(
+            std::fs::read_to_string("skills/demo/SKILL.md").unwrap(),
+            after
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn fix_frontmatter_backslash_leaves_sequence_and_prose_byte_identical() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        // A prose description (exempt) and a sequence item (fires S043 but is not
+        // single-line-scalar) both carry a backslash path. Neither is rewritten.
+        let original = "---\nname: demo\ndescription: See C:\\Users\\me\\notes\npaths:\n  - C:\\Users\\a\n---\nBody\n";
+        std::fs::write("skills/demo/SKILL.md", original).unwrap();
+
+        assert!(!fix_frontmatter_backslash(
+            LintMode::Plugin,
+            &ExcludeSet::default(),
+            &LintConfig::default()
+        ));
+        assert_eq!(
+            std::fs::read_to_string("skills/demo/SKILL.md").unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn fix_frontmatter_backslash_leaves_quoted_scalar_standing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        // A double-quoted value's raw text differs from its canonical scalar, so
+        // the single-line-safety rule declines to rewrite it.
+        let original = "---\nname: demo\ndescription: A valid skill description here\nargument-hint: \"C:\\\\Users\\\\x\"\n---\nBody\n";
+        std::fs::write("skills/demo/SKILL.md", original).unwrap();
+
+        assert!(!fix_frontmatter_backslash(
+            LintMode::Plugin,
+            &ExcludeSet::default(),
+            &LintConfig::default()
+        ));
+        assert_eq!(
+            std::fs::read_to_string("skills/demo/SKILL.md").unwrap(),
+            original
         );
     }
 

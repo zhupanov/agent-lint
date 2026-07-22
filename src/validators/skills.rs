@@ -21,6 +21,11 @@ pub struct SkillInfo {
     pub dir_name: String,
     /// Frontmatter lines (between the --- delimiters).
     pub fm_lines: Vec<String>,
+    /// Canonical frontmatter parsed once with `parse_yaml_strict`. `None` when
+    /// the frontmatter is not valid YAML. Field-type rules that read canonical
+    /// values consume this instead of the legacy line-oriented helpers; invalid
+    /// YAML is owned by X001 (and missing/non-string required fields by S005).
+    pub(crate) parsed_frontmatter: Option<crate::yaml::Value>,
     /// Body content after the frontmatter closing delimiter.
     pub body: String,
     /// Shared Markdown facts for this file. Content validators must consume
@@ -28,6 +33,16 @@ pub struct SkillInfo {
     pub document: MarkdownDocument,
     /// Whether the skill directory contains a non-empty `scripts/` subdirectory.
     pub has_scripts_dir: bool,
+}
+
+impl SkillInfo {
+    /// Canonical top-level frontmatter mapping, or `None` when the frontmatter
+    /// is invalid YAML or its document is not a mapping. Field-type rules that
+    /// read canonical values skip when this is `None`; those invalid states are
+    /// owned by X001 (parse failure) and S004/S005 (structure/required fields).
+    pub(crate) fn frontmatter_mapping(&self) -> Option<&crate::yaml::Mapping> {
+        self.parsed_frontmatter.as_ref()?.as_mapping()
+    }
 }
 
 /// Walk a skills directory and collect SkillInfo for each valid skill.
@@ -120,6 +135,9 @@ fn collect_skill_files(entries: impl IntoIterator<Item = traversal::WalkEntry>) 
             .path
             .parent()
             .is_some_and(|parent| parent.as_os_str().is_empty());
+        // Parse the frontmatter once here so field-type validators read
+        // canonical YAML values. Invalid YAML stays `None` (X001 owns it).
+        let parsed_frontmatter = frontmatter::parse_yaml_strict(&fm_lines).ok();
         let scripts_dir = entry
             .path
             .parent()
@@ -134,6 +152,7 @@ fn collect_skill_files(entries: impl IntoIterator<Item = traversal::WalkEntry>) 
             path: entry.display,
             dir_name,
             fm_lines,
+            parsed_frontmatter,
             body: document.body().to_string(),
             document,
             has_scripts_dir,
@@ -1142,6 +1161,38 @@ mod tests {
             file_line_hits, 1,
             "file line must appear exactly once: {}",
             diagnostic.message
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_x001_allows_trailing_bare_null_key() {
+        // A frontmatter block whose final line is a bare `key:` (a null value)
+        // is valid YAML; line extraction dropped the trailing newline the real
+        // file carries before the closing `---`, which the strict parse restores
+        // so this no longer emits a spurious X001.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\npaths:\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.rule != LintRule::FrontmatterYamlInvalid),
+            "trailing bare null key must not emit X001: {:?}",
+            diag.diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.message.as_str())
+                .collect::<Vec<_>>()
         );
     }
 

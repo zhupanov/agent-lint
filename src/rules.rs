@@ -307,6 +307,8 @@ pub enum LintRule {
     #[strum(props(code = "S041", name = "fork-no-task"))]
     ForkNoTask,
     /// S042: disable-model-invocation: true with empty/missing description
+    /// (deprecated — no longer fires; a strict subset of S005, retained so
+    /// existing config identifiers keep parsing)
     #[strum(props(code = "S042", name = "dmi-empty-desc"))]
     DmiEmptyDesc,
     /// S043: Windows-style backslash paths in frontmatter fields

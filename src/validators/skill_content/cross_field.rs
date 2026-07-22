@@ -31,20 +31,28 @@ pub(super) fn check_cross_field(
     // S028: $ARGUMENTS in body without argument-hint (only outside code fences)
     let body_has_args =
         crate::fence::lines_outside_fences(&info.body).any(|line| RE_ARGS.is_match(line));
-    if body_has_args && !frontmatter::field_exists(&info.fm_lines, "argument-hint") {
-        diag.report(
-            LintRule::ArgsNoHint,
-            &format!(
-                "{}: body uses $ARGUMENTS but frontmatter has no 'argument-hint' field",
-                info.path
-            ),
-        );
-    }
 
-    // S069: argument-hint set but body never references $ARGUMENTS (smell; args also auto-append)
-    if frontmatter::field_exists(&info.fm_lines, "argument-hint") && !body_has_args {
-        // Also count $ARGUMENTS inside fences — presence anywhere in body is enough
-        if !RE_ARGS.is_match(&info.body) {
+    // S028/S069 read `argument-hint` presence from the canonical mapping: a key
+    // present with any non-null value counts as set; a null value counts as
+    // unset (S007/S070 own empty/unknown shapes). Invalid or non-mapping
+    // frontmatter is owned by X001/S004 and skips both rules.
+    if let Some(map) = info.frontmatter_mapping() {
+        let hint_set = map
+            .get("argument-hint")
+            .is_some_and(|value| !value.is_null());
+        if body_has_args && !hint_set {
+            diag.report(
+                LintRule::ArgsNoHint,
+                &format!(
+                    "{}: body uses $ARGUMENTS but frontmatter has no 'argument-hint' field",
+                    info.path
+                ),
+            );
+        }
+        // S069: argument-hint set but body never references $ARGUMENTS (smell;
+        // args also auto-append). Count $ARGUMENTS anywhere in the body (even
+        // inside fences) — presence anywhere is enough.
+        if hint_set && !body_has_args && !RE_ARGS.is_match(&info.body) {
             diag.report(
                 LintRule::HintNoArgs,
                 &format!(

@@ -176,9 +176,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   repository-local `SECURITY.md` in the repository root, `.github/`, or
   `docs/` (previously repo root only), matching GitHub's supported
   community-health file locations
+- Skill frontmatter field-type rules S023-S027, S035, S039, S043, S063, S064,
+  S066, S070, and S071, plus the cross-field rules S028/S069, now read
+  frontmatter through canonical YAML instead of the legacy line-oriented
+  helpers. Trailing YAML comments, YAML 1.2 boolean spellings (`True`/`TRUE`),
+  quoting, and multiline scalars are interpreted as the platform's parser would;
+  each rule skips a file whose frontmatter is invalid YAML or not a mapping
+  (X001/S004/S005 own those states). S035 counts Unicode scalar values rather
+  than bytes; S039 flags every non-string `metadata` entry and reports a single
+  shape diagnostic for a present-but-non-mapping `metadata`; S064 fires only for
+  a non-empty string `agent`; S070 reads canonical keys so quoted (`"name"`) and
+  spaced (`name :`) spellings are no longer reported as unknown fields; and S043
+  scans only path-configuration values, exempting the `description`,
+  `compatibility`, `when_to_use`, and `metadata` fields, with a single-line-safe
+  autofix
+- `frontmatter::parse_yaml_strict` restores the trailing newline dropped by line
+  extraction, so a frontmatter block whose final line is a bare `key:` (a valid
+  null value) no longer reports X001 (`frontmatter-yaml-invalid`)
 
 ### Deprecated
 
+- Soft-retired S042 (`dmi-empty-desc`): the rule no longer emits in any mode
+  (including `--all`) because it was a strict subset of
+  S005 (`frontmatter-field-missing`), while `S042` / `dmi-empty-desc` remain
+  recognized in configuration for compatibility
 - Soft-retired S049 (`name-not-gerund`): the rule no longer emits in any mode
   (including `--all`), while `S049` / `name-not-gerund` remain recognized in
   configuration for compatibility

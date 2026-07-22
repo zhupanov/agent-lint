@@ -2,77 +2,95 @@ use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::validators::skills::SkillInfo;
-
-use super::contains_backslash_path;
+use crate::yaml::Mapping;
 
 pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    // S035: compatibility field too long
-    if let frontmatter::FieldState::Value(val) =
-        frontmatter::get_field_state(&info.fm_lines, "compatibility")
-    {
-        if val.len() > 500 {
+    // S035, S039, and S043 read canonical YAML values so comments, quoting, and
+    // multiline scalars cannot corrupt the compared value. Invalid or
+    // non-mapping frontmatter is owned by X001/S004/S005, so they skip it.
+    if let Some(map) = info.frontmatter_mapping() {
+        check_compatibility_length(info, map, diag);
+        check_metadata_values(info, map, diag);
+        check_frontmatter_backslash(info, map, diag);
+    }
+
+    // S045 and S040/S067 remain line-oriented and are outside this migration's
+    // scope; they keep their existing behavior.
+    check_allowed_tools_list_syntax(info, diag);
+    check_allowed_tools(info, diag);
+
+    // S042 (dmi-empty-desc) is soft-retired: it was a strict subset of
+    // S005/frontmatter-field-missing and no longer fires from any path. Its
+    // registry code/name remain as a deprecated, config-only identifier.
+}
+
+/// S035: cap `compatibility` length, measured in Unicode scalar values so the
+/// count matches user-visible characters and multiline scalars are covered. A
+/// canonical non-string value is left to the field-shape rules.
+fn check_compatibility_length(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticCollector) {
+    if let Some(text) = map.get("compatibility").and_then(|value| value.as_str()) {
+        let count = text.chars().count();
+        if count > 500 {
             diag.report(
                 LintRule::CompatTooLong,
                 &format!(
-                    "{}: 'compatibility' exceeds 500 characters ({})",
-                    info.path,
-                    val.len()
+                    "{}: 'compatibility' exceeds 500 characters ({count})",
+                    info.path
                 ),
             );
         }
     }
+}
 
-    // S039: metadata values should be strings
-    // Look for metadata lines in frontmatter that have bare true/false/numeric values
-    let mut in_metadata = false;
-    for line in &info.fm_lines {
-        if line == "metadata:" || line.starts_with("metadata:") {
-            // Check for inline scalar value on the metadata: line itself
-            let inline_val = line["metadata:".len()..].trim();
-            if !inline_val.is_empty()
-                && !inline_val.starts_with('"')
-                && !inline_val.starts_with('\'')
-                && (inline_val == "true"
-                    || inline_val == "false"
-                    || inline_val.parse::<f64>().is_ok())
-            {
+/// S039: `metadata`, when present, must be a mapping whose values are all
+/// strings. A non-string entry value is flagged individually; a present but
+/// non-mapping, non-null `metadata` yields a single shape diagnostic. Null and
+/// absent stay silent.
+fn check_metadata_values(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticCollector) {
+    let Some(value) = map.get("metadata") else {
+        return;
+    };
+    if let Some(metadata) = value.as_mapping() {
+        for (key, entry) in metadata.iter() {
+            if entry.as_str().is_none() {
                 diag.report(
                     LintRule::MetadataNotString,
                     &format!(
-                        "{}: metadata has non-string inline value '{}' (wrap in quotes)",
-                        info.path, inline_val
+                        "{}: metadata key '{}' has non-string value '{}' (wrap in quotes)",
+                        info.path, key, entry
                     ),
                 );
             }
-            in_metadata = true;
-            continue;
         }
-        if in_metadata {
-            // Metadata entries are indented (e.g., "  key: value")
-            if !line.starts_with(' ') && !line.starts_with('\t') {
-                break; // End of metadata block
-            }
-            if let Some(colon_pos) = line.find(':') {
-                let val = line[colon_pos + 1..].trim();
-                if !val.is_empty()
-                    && !val.starts_with('"')
-                    && !val.starts_with('\'')
-                    && (val == "true" || val == "false" || val.parse::<f64>().is_ok())
-                {
-                    let key = line[..colon_pos].trim();
-                    diag.report(
-                        LintRule::MetadataNotString,
-                        &format!(
-                            "{}: metadata key '{}' has non-string value '{}' (wrap in quotes)",
-                            info.path, key, val
-                        ),
-                    );
-                }
-            }
-        }
+    } else if !value.is_null() {
+        diag.report(
+            LintRule::MetadataNotString,
+            &format!("{}: metadata must be a map of string values", info.path),
+        );
     }
+}
 
-    // S045: allowed-tools uses YAML list syntax
+/// S043: reject Windows-style backslash paths in path-configuration frontmatter
+/// values. Free-prose and metadata values are exempt (see `S043_PROSE_FIELDS`).
+/// Scalar values and sequence string items are scanned; other shapes are not.
+fn check_frontmatter_backslash(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticCollector) {
+    let has_backslash_path = map.iter().any(|(key, value)| {
+        !super::S043_PROSE_FIELDS.contains(&key.as_str())
+            && super::canonical_value_has_backslash_path(value)
+    });
+    if has_backslash_path {
+        diag.report(
+            LintRule::FrontmatterBackslash,
+            &format!(
+                "{}: Windows-style backslash path in frontmatter; use forward slashes",
+                info.path
+            ),
+        );
+    }
+}
+
+/// S045: `allowed-tools` written as a YAML list instead of a comma scalar.
+fn check_allowed_tools_list_syntax(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     if frontmatter::field_exists(&info.fm_lines, "allowed-tools")
         && frontmatter::get_field(&info.fm_lines, "allowed-tools").is_none()
     {
@@ -103,8 +121,10 @@ pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut Diagnostic
             );
         }
     }
+}
 
-    // S040: allowed-tools unknown
+/// S040 / S067: unrecognized or unscoped `allowed-tools` entries.
+fn check_allowed_tools(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     if let Some(tools_str) = frontmatter::get_field(&info.fm_lines, "allowed-tools") {
         for tool in tools_str.split(',') {
             let tool = tool.trim();
@@ -139,37 +159,6 @@ pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut Diagnostic
                     ),
                 );
             }
-        }
-    }
-
-    // S042: disable-model-invocation: true with empty/missing description
-    if frontmatter::get_field(&info.fm_lines, "disable-model-invocation").as_deref() == Some("true")
-    {
-        match frontmatter::get_field_state(&info.fm_lines, "description") {
-            frontmatter::FieldState::Missing | frontmatter::FieldState::Empty => {
-                diag.report(
-                    LintRule::DmiEmptyDesc,
-                    &format!(
-                        "{}: disable-model-invocation: true but description is empty/missing (user-only skills need descriptions for the / menu)",
-                        info.path
-                    ),
-                );
-            }
-            frontmatter::FieldState::Value(_) => {}
-        }
-    }
-
-    // S043: backslash paths in frontmatter
-    for line in &info.fm_lines {
-        if contains_backslash_path(line) {
-            diag.report(
-                LintRule::FrontmatterBackslash,
-                &format!(
-                    "{}: Windows-style backslash path in frontmatter; use forward slashes",
-                    info.path
-                ),
-            );
-            break; // Report once per file
         }
     }
 }
