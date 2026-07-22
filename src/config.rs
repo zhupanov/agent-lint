@@ -733,7 +733,7 @@ fn load_script_inventory(root: &Path, inventory: &str) -> Result<Vec<String>, St
             .map_err(|message| format!("{message} on line {}", index + 1))?;
         if !is_supported_script_path(value) {
             return Err(format!(
-                "script-inventory entry '{value}' on line {} must end in .sh, .inc.bash, or .awk",
+                "script-inventory entry '{value}' on line {} must be a supported script kind",
                 index + 1
             ));
         }
@@ -968,7 +968,7 @@ fn validate_inventory_file(root: &Path, path: &Path, label: &str) -> Result<(), 
 }
 
 fn is_supported_script_path(path: &str) -> bool {
-    path.ends_with(".sh") || path.ends_with(".inc.bash") || path.ends_with(".awk")
+    crate::script_paths::script_kind(Path::new(path)).is_some()
 }
 
 fn validate_relative_paths(
@@ -1602,6 +1602,35 @@ suppress = ["S033"]
 
     #[test]
     #[serial_test::serial]
+    fn script_inventory_accepts_the_shared_script_kind_matrix() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("scripts")).unwrap();
+        let paths = [
+            "scripts/shell.sh",
+            "scripts/shell.bash",
+            "scripts/library.inc.bash",
+            "scripts/rules.awk",
+            "scripts/tool.py",
+            "scripts/tool.js",
+            "scripts/tool.mjs",
+            "scripts/extensionless",
+        ];
+        for path in paths {
+            std::fs::write(tmp.path().join(path), "# fixture\n").unwrap();
+        }
+        std::fs::write(tmp.path().join("inventory.txt"), paths.join("\n")).unwrap();
+        std::fs::write(
+            tmp.path().join("agent-lint.toml"),
+            "[lint]\nscript-inventory = \"inventory.txt\"\n",
+        )
+        .unwrap();
+
+        let config = LintConfig::load(tmp.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.script_inventory.as_ref().unwrap().len(), paths.len());
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn invalid_script_inventory_fails_closed() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("notes.md"), "notes\n").unwrap();
@@ -1616,7 +1645,7 @@ suppress = ["S033"]
 
         std::fs::write(tmp.path().join("inventory.txt"), "notes.md\n").unwrap();
         let extension = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();
-        assert!(extension.contains("must end in .sh, .inc.bash, or .awk"));
+        assert!(extension.contains("must be a supported script kind"));
 
         std::fs::write(tmp.path().join("inventory.txt"), "missing.sh\n").unwrap();
         let missing = LintConfig::load(tmp.path().to_str().unwrap()).unwrap_err();

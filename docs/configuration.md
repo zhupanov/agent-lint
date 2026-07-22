@@ -119,8 +119,10 @@ JSON rows containing `group`, `source_set`, `scope`, `metric`,
 `measured_value`, and `cap`.
 
 When `script-inventory` is set, blank lines and full-line `#` comments are
-ignored and every other line must name an existing regular `.sh`, `.inc.bash`,
-or `.awk` file beneath the repository root. Entries are sorted and deduplicated;
+ignored and every other line must name an existing regular supported script
+file beneath the repository root. Supported kinds are `.sh`, `.bash`,
+`.inc.bash`, `.awk`, `.py`, `.js`, `.mjs`, and extensionless files. Entries are
+sorted and deduplicated;
 they do not need to be tracked by Git. The inventory becomes the authoritative
 scope for G009-G011, so those rules scan every listed file on every invocation,
 including pre-commit runs. Invalid, unreadable, escaping, symlinked, missing, or

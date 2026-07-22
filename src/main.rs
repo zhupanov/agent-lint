@@ -245,10 +245,9 @@ fn main() {
     // --list-scripts: print discovered script paths and exit.
     if cli.list_scripts {
         if let Some(scripts) = &lint_config.script_inventory {
-            for path in scripts
-                .iter()
-                .filter(|path| path.ends_with(".sh") || path.ends_with(".inc.bash"))
-            {
+            for path in scripts.iter().filter(|path| {
+                crate::script_paths::script_kind(std::path::Path::new(path)).is_some()
+            }) {
                 println!("{path}");
             }
         } else {

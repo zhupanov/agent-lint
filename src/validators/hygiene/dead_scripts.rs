@@ -20,7 +20,10 @@ pub fn validate_dead_scripts(
 ) {
     let mut references = BTreeSet::new();
     for (source, reference) in collect_references(LintMode::Plugin, exclude) {
-        if reference.path.as_os_str().is_empty() || reference.invocation == Invocation::Mention {
+        if reference.path.as_os_str().is_empty()
+            || !reference.path.is_file()
+            || reference.invocation == Invocation::Mention
+        {
             continue;
         }
         // A script mentioning its own name is documentation, not reachability.
@@ -49,10 +52,7 @@ pub fn validate_dead_scripts(
             .and_then(|value| value.as_array())
     {
         for value in allow {
-            if let Some(path) = value
-                .as_str()
-                .and_then(crate::script_paths::normalize_repository_path)
-            {
+            if let Some(path) = value.as_str().and_then(permission_script_path) {
                 references.insert(path);
             }
         }
@@ -77,4 +77,16 @@ pub fn validate_dead_scripts(
                 .with_suggestion("add an executable invocation or suppress G004 for intentional inventory entries"),
         );
     }
+}
+
+fn permission_script_path(value: &str) -> Option<PathBuf> {
+    if let Some((name, body)) = value.split_once('(')
+        && !name.is_empty()
+        && let Some(body) = body.strip_suffix(')')
+    {
+        let token = body.split_whitespace().next()?;
+        let path = token.split_once(':').map_or(token, |(path, _)| path);
+        return crate::script_paths::normalize_repository_path(path);
+    }
+    crate::script_paths::normalize_repository_path(value)
 }

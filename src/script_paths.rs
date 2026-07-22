@@ -3,7 +3,39 @@
 //! This is deliberately lexical: a reference may not escape the repository,
 //! but symlink targets are left to the filesystem operation that consumes it.
 
+use regex::Regex;
 use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
+
+static ASSIGNMENT_WORD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*=").unwrap());
+
+/// The file kinds shared by script discovery and the hygiene and portability
+/// rules.  Match full filename suffixes because `Path::extension` cannot
+/// distinguish `.inc.bash` from an ordinary `.bash` file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScriptKind {
+    Shell,
+    Awk,
+    Other,
+}
+
+pub(crate) fn script_kind(path: &Path) -> Option<ScriptKind> {
+    let value = path.to_string_lossy();
+    if value.ends_with(".sh") || value.ends_with(".bash") || value.ends_with(".inc.bash") {
+        Some(ScriptKind::Shell)
+    } else if value.ends_with(".awk") {
+        Some(ScriptKind::Awk)
+    } else if value.ends_with(".py")
+        || value.ends_with(".js")
+        || value.ends_with(".mjs")
+        || path.extension().is_none()
+    {
+        Some(ScriptKind::Other)
+    } else {
+        None
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Invocation {
@@ -218,23 +250,40 @@ fn is_shell_path_delimiter(character: char) -> bool {
 }
 
 fn invocation_for(command: &str, reference_start: usize) -> Invocation {
-    let preceding = command[..reference_start].trim_end();
-    let first = preceding
+    let raw_preceding = &command[..reference_start];
+    let preceding = raw_preceding.trim_end();
+    let separated_from_previous_word = raw_preceding.len() != preceding.len();
+    let mut words = preceding
         .trim_matches('"')
         .split_whitespace()
+        .collect::<Vec<_>>();
+    if words
         .last()
+        .is_some_and(|word| ASSIGNMENT_WORD.is_match(word))
+        && !separated_from_previous_word
+    {
+        return Invocation::Mention;
+    }
+    while words
+        .first()
+        .is_some_and(|word| ASSIGNMENT_WORD.is_match(word))
+    {
+        words.remove(0);
+    }
+    let context = words
+        .iter()
+        .rev()
+        .copied()
+        .find(|word| !ASSIGNMENT_WORD.is_match(word))
         .unwrap_or("");
-    if matches!(first, "source" | ".") {
+    if matches!(context, "source" | ".") {
         Invocation::Sourced
     } else if matches!(
-        first,
+        context,
         "bash" | "sh" | "zsh" | "fish" | "python" | "python3" | "node" | "ruby" | "perl"
     ) {
         Invocation::Interpreter
-    } else if preceding.contains('=')
-        || first.starts_with('-')
-        || matches!(first, "[[" | "[" | "test" | "if" | "while")
-    {
+    } else if context.starts_with('-') || matches!(context, "[[" | "[" | "test" | "if" | "while") {
         Invocation::Mention
     } else {
         Invocation::Direct
@@ -268,5 +317,43 @@ mod tests {
             extract_command_references("source ${CLAUDE_PLUGIN_ROOT}/scripts/a", 1)[0].invocation,
             Invocation::Sourced
         );
+    }
+
+    #[test]
+    fn classifies_env_prefixed_direct_calls() {
+        assert_eq!(
+            extract_command_references("FOO=1 ${CLAUDE_PLUGIN_ROOT}/scripts/a", 1)[0].invocation,
+            Invocation::Direct
+        );
+    }
+
+    #[test]
+    fn does_not_treat_assignment_values_or_conditionals_as_direct_calls() {
+        assert_eq!(
+            extract_command_references("FOO=${CLAUDE_PLUGIN_ROOT}/scripts/a", 1)[0].invocation,
+            Invocation::Mention
+        );
+        assert_eq!(
+            extract_command_references("if FOO=1 ${CLAUDE_PLUGIN_ROOT}/scripts/a", 1)[0].invocation,
+            Invocation::Mention
+        );
+    }
+
+    #[test]
+    fn classifies_full_name_script_suffixes() {
+        assert_eq!(
+            script_kind(Path::new("scripts/a.bash")),
+            Some(ScriptKind::Shell)
+        );
+        assert_eq!(
+            script_kind(Path::new("scripts/a.inc.bash")),
+            Some(ScriptKind::Shell)
+        );
+        assert_eq!(
+            script_kind(Path::new("scripts/a.awk")),
+            Some(ScriptKind::Awk)
+        );
+        assert_eq!(script_kind(Path::new("scripts/a")), Some(ScriptKind::Other));
+        assert_eq!(script_kind(Path::new("scripts/a.txt")), None);
     }
 }

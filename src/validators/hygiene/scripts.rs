@@ -1,9 +1,10 @@
 use crate::config::ExcludeSet;
 use crate::context::LintMode;
-use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::rules::LintRule;
 use crate::script_paths::{
     Invocation, ScriptReference, extract_bare_script_references, extract_command_references,
+    script_kind,
 };
 use crate::traversal;
 use regex::Regex;
@@ -20,12 +21,19 @@ pub const BASIC_SCRIPT_DIRS: &[&str] = &[".claude/skills/*/scripts"];
 
 static RE_FULL_HASH_COMMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[[:space:]]*#").unwrap());
+static RE_YAML_KEY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[[:space:]]*(?:-[[:space:]]+)?([A-Za-z_-]+):").unwrap());
 
 pub(super) fn strip_yaml_comments(content: &str) -> String {
     content
         .lines()
-        .filter(|line| !RE_FULL_HASH_COMMENT.is_match(line))
-        .map(strip_trailing_yaml_comment)
+        .map(|line| {
+            if RE_FULL_HASH_COMMENT.is_match(line) {
+                String::new()
+            } else {
+                strip_trailing_yaml_comment(line)
+            }
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -83,12 +91,14 @@ pub(crate) fn collect_references(
         LintMode::Plugin => vec![
             "skills",
             "agents",
+            "commands",
             ".claude/skills",
             ".claude/agents",
+            ".claude/commands",
             "scripts",
             ".github/workflows",
         ],
-        LintMode::Basic => vec![".claude/skills", ".claude/agents"],
+        LintMode::Basic => vec![".claude/skills", ".claude/agents", ".claude/commands"],
     };
     let mut references = Vec::new();
     for dir in sources.drain(..) {
@@ -106,6 +116,8 @@ pub(crate) fn collect_references(
             };
             let fragments = if source.ends_with(".md") {
                 markdown_command_fragments(&content)
+            } else if source.ends_with(".yml") || source.ends_with(".yaml") {
+                yaml_command_line_fragments(&strip_yaml_comments(&content))
             } else {
                 command_line_fragments(&strip_yaml_comments(&content))
             };
@@ -113,16 +125,7 @@ pub(crate) fn collect_references(
                 if !is_executable_fragment(&fragment) {
                     continue;
                 }
-                references.extend(
-                    extract_command_references(&fragment, line)
-                        .into_iter()
-                        .map(|reference| (source.clone(), reference)),
-                );
-                references.extend(
-                    extract_bare_script_references(&fragment, line)
-                        .into_iter()
-                        .map(|reference| (source.clone(), reference)),
-                );
+                references.extend(extract_fragment_references(&source, &fragment, line));
             }
         }
     }
@@ -130,16 +133,7 @@ pub(crate) fn collect_references(
         for (source, content) in collect_makefile_contents(exclude) {
             for (line, fragment) in command_line_fragments(&content) {
                 if is_executable_fragment(&fragment) {
-                    references.extend(
-                        extract_command_references(&fragment, line)
-                            .into_iter()
-                            .map(|reference| (source.clone(), reference)),
-                    );
-                    references.extend(
-                        extract_bare_script_references(&fragment, line)
-                            .into_iter()
-                            .map(|reference| (source.clone(), reference)),
-                    );
+                    references.extend(extract_fragment_references(&source, &fragment, line));
                 }
             }
         }
@@ -147,11 +141,50 @@ pub(crate) fn collect_references(
     references
 }
 
+fn extract_fragment_references(
+    source: &str,
+    fragment: &str,
+    line: usize,
+) -> Vec<(String, ScriptReference)> {
+    let mut references = extract_command_references(fragment, line);
+    references.extend(extract_bare_script_references(fragment, line));
+    references
+        .into_iter()
+        .filter(|reference| !contains_unsupported_glob(reference))
+        .flat_map(expand_glob_reference)
+        .map(|reference| (source.to_string(), reference))
+        .collect()
+}
+
 fn command_line_fragments(content: &str) -> Vec<(usize, String)> {
     content
         .lines()
         .enumerate()
         .map(|(index, line)| (index + 1, line.to_string()))
+        .collect()
+}
+
+/// Workflows are command-like only in `run` values.  This small lexical
+/// boundary deliberately leaves block scalar continuation lines executable
+/// while preventing value keys such as `path:` from becoming invocations.
+fn yaml_command_line_fragments(content: &str) -> Vec<(usize, String)> {
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let captures = RE_YAML_KEY.captures(line)?;
+            (captures
+                .get(1)
+                .is_some_and(|capture| capture.as_str() == "run"))
+            .then(|| (index + 1, line.to_string()))
+        })
+        .chain(
+            content
+                .lines()
+                .enumerate()
+                .filter(|(_, line)| !RE_YAML_KEY.is_match(line))
+                .map(|(index, line)| (index + 1, line.to_string())),
+        )
         .collect()
 }
 
@@ -192,6 +225,100 @@ fn is_executable_fragment(fragment: &str) -> bool {
     )
 }
 
+fn contains_unsupported_glob(reference: &ScriptReference) -> bool {
+    reference.reference.contains(['?', '['])
+        || reference
+            .path
+            .components()
+            .any(|component| component.as_os_str().to_string_lossy().contains(['?', '[']))
+}
+
+fn expand_glob_reference(reference: ScriptReference) -> Vec<ScriptReference> {
+    if !reference.path.to_string_lossy().contains('*') {
+        return vec![reference];
+    }
+    let matches = expand_path_glob(&reference.path);
+    if matches.is_empty() {
+        vec![reference]
+    } else {
+        matches
+            .into_iter()
+            .map(|path| ScriptReference {
+                path,
+                ..reference.clone()
+            })
+            .collect()
+    }
+}
+
+/// Expand `*` component-wise below the repository root. Intermediate matches
+/// must be directories; a final component may identify either a file or a
+/// directory so G002 can apply its normal directory semantics.
+fn expand_path_glob(pattern: &Path) -> Vec<PathBuf> {
+    let components: Vec<_> = pattern.components().collect();
+    let mut candidates = vec![PathBuf::new()];
+    for (index, component) in components.iter().enumerate() {
+        let segment = component.as_os_str().to_string_lossy();
+        let final_component = index + 1 == components.len();
+        let mut next = Vec::new();
+        for base in &candidates {
+            let directory = if base.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                base.as_path()
+            };
+            if segment.contains('*') {
+                for entry in traversal::shallow_directories(directory, Path::new("."), None).entries
+                {
+                    let name = entry.path.file_name().unwrap_or_default();
+                    if wildcard_matches(&segment, &name.to_string_lossy()) {
+                        next.push(base.join(name));
+                    }
+                }
+                if final_component {
+                    for entry in traversal::shallow_files(directory, Path::new("."), None).entries {
+                        let name = entry.path.file_name().unwrap_or_default();
+                        if wildcard_matches(&segment, &name.to_string_lossy()) {
+                            next.push(base.join(name));
+                        }
+                    }
+                }
+            } else {
+                let child = base.join(segment.as_ref());
+                if child.is_dir() || (final_component && child.exists()) {
+                    next.push(child);
+                }
+            }
+        }
+        candidates = next;
+    }
+    candidates
+}
+
+fn wildcard_matches(pattern: &str, value: &str) -> bool {
+    let mut remaining = value;
+    let mut parts = pattern.split('*').peekable();
+    let anchored_start = !pattern.starts_with('*');
+    if let Some(first) = parts.next()
+        && anchored_start
+    {
+        let Some(after) = remaining.strip_prefix(first) else {
+            return false;
+        };
+        remaining = after;
+    }
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() && !pattern.ends_with('*') {
+            return remaining.ends_with(part);
+        }
+        let Some(index) = remaining.find(part) else {
+            return false;
+        };
+        remaining = &remaining[index + part.len()..];
+    }
+    true
+}
+
 /// G002: missing or unsafe script references. Dedupe includes the source path
 /// so collector policy is applied independently for every source file.
 #[cfg(test)]
@@ -206,10 +333,15 @@ pub fn validate_script_references_for_mode(
 ) {
     let mut seen = HashSet::new();
     for (source, reference) in collect_references(mode, exclude) {
-        if !seen.insert((source.clone(), reference.path.clone())) {
+        let dedupe_key = if reference.path.as_os_str().is_empty() {
+            reference.reference.clone()
+        } else {
+            reference.path.display().to_string()
+        };
+        if !seen.insert((source.clone(), dedupe_key)) {
             continue;
         }
-        if reference.path.as_os_str().is_empty() || !reference.path.is_file() {
+        if reference.path.as_os_str().is_empty() || !reference.path.exists() {
             let expected = reference.path.display().to_string();
             diag.report_at_with(
                 LintRule::ScriptRefMissing,
@@ -225,6 +357,7 @@ pub fn validate_script_references_for_mode(
                     }
                 ),
                 DiagnosticMetadata::default()
+                    .with_location(SourceSpan::line(reference.line))
                     .with_evidence(reference.reference)
                     .with_suggestion("use a normalized path within the repository"),
             );
@@ -353,8 +486,5 @@ pub fn collect_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<String>
 }
 
 fn is_supported_script_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|extension| extension.to_str()),
-        None | Some("sh" | "py" | "js" | "mjs" | "inc.bash")
-    )
+    script_kind(path).is_some()
 }
