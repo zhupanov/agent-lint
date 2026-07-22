@@ -1,0 +1,30 @@
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+model_reasoning_effort = "high"
+model_verbosity = "medium"
+personality = "friendly"
+cli_auth_credentials_store = "auto"
+mcp_oauth_credentials_store = "keyring"
+model = "gpt-5"
+model_provider = "openai"
+model_reasoning_summary = "auto"
+model_context_window = 1000
+model_auto_compact_token_limit = 500
+file_opener = "vscode"
+profile = "work"
+project_doc_max_bytes = 1024
+project_doc_fallback_filenames = ["TEAM.md"]
+service_tier = "default"
+[history]
+[features]
+multi_agent_v2 = false
+[tui]
+[shell_environment_policy]
+inherit = "core"
+[skills]
+[apps.example]
+default_tools_approval_mode = "auto"
+[mcp_servers.local]
+command = "server"
+[profiles.work]
+approval_policy = "never"

@@ -120,6 +120,48 @@ impl<'a> SourceMap<'a> {
             .and_then(|(key, _)| key.span())
             .and_then(|span| SourceSpan::from_byte_range(self.content, span))
     }
+
+    /// Locate an existing path, preferring the requested site and otherwise the
+    /// nearest concrete ancestor key/header. Never fabricates a missing child.
+    fn existing_span(&self, path: &[&str], key_only: bool) -> Option<SourceSpan> {
+        if path.is_empty() {
+            return None;
+        }
+        if key_only {
+            if let Some(span) = self.key_span(path) {
+                return Some(span);
+            }
+        } else if let Some(span) = self.value_span(path).or_else(|| self.key_span(path)) {
+            return Some(span);
+        }
+        for len in (1..path.len()).rev() {
+            let ancestor = &path[..len];
+            if let Some(span) = self
+                .key_span(ancestor)
+                .or_else(|| self.value_span(ancestor))
+            {
+                return Some(span);
+            }
+        }
+        None
+    }
+
+    /// Span of one array element at `path[index]`, when the path is an array.
+    fn array_element_span(&self, path: &[&str], index: usize) -> Option<SourceSpan> {
+        self.item(path)
+            .and_then(Item::as_array)
+            .and_then(|array| array.get(index))
+            .and_then(toml_edit::Value::span)
+            .and_then(|span| SourceSpan::from_byte_range(self.content, span))
+    }
+
+    /// Source-order keys for a table path, falling back to empty when absent.
+    fn table_keys_in_source_order(&self, path: &[&str]) -> Vec<String> {
+        let Some(table) = self.item(path).and_then(Item::as_table_like) else {
+            return Vec::new();
+        };
+        table.iter().map(|(key, _)| key.to_owned()).collect()
+    }
 }
 
 #[allow(clippy::too_many_arguments)] // keeps each validator's rule, source path, and safe metadata explicit at the call site.
@@ -133,11 +175,43 @@ fn report_config(
     evidence: Option<&str>,
     suggestion: &str,
 ) {
-    let span = if key_only {
-        source.key_span(path)
-    } else {
-        source.value_span(path)
-    };
+    report_config_at(
+        diag,
+        source.existing_span(path, key_only),
+        rule,
+        message,
+        path,
+        evidence,
+        suggestion,
+    );
+}
+
+#[allow(clippy::too_many_arguments)] // mirrors report_config's explicit call-site metadata.
+fn report_config_array_element(
+    diag: &mut DiagnosticCollector,
+    source: &SourceMap<'_>,
+    rule: LintRule,
+    message: &str,
+    path: &[&str],
+    index: usize,
+    evidence: Option<&str>,
+    suggestion: &str,
+) {
+    let span = source
+        .array_element_span(path, index)
+        .or_else(|| source.existing_span(path, false));
+    report_config_at(diag, span, rule, message, path, evidence, suggestion);
+}
+
+fn report_config_at(
+    diag: &mut DiagnosticCollector,
+    span: Option<SourceSpan>,
+    rule: LintRule,
+    message: &str,
+    path: &[&str],
+    evidence: Option<&str>,
+    suggestion: &str,
+) {
     let fallback_evidence = match path {
         ["mcp_servers", _] | ["apps", _] => None,
         _ => path.last().copied(),
@@ -239,24 +313,36 @@ fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table, source: &
         );
     }
     if let Some(value) = root.get("project_doc_fallback_filenames") {
-        let valid = value
-            .as_array()
-            .is_some_and(|items| items.iter().all(Value::is_str));
-        if !valid {
-            report_config(
-                diag,
-                source,
-                LintRule::CodexProjectDocFallbackNames,
-                &format!(
-                    "{CONFIG_PATH}: 'project_doc_fallback_filenames' must be an array of strings"
-                ),
-                &["project_doc_fallback_filenames"],
-                false,
-                None,
-                "use an array of strings",
-            );
-        }
+        report_string_array_contract(
+            diag,
+            source,
+            LintRule::CodexProjectDocFallbackNames,
+            &format!("{CONFIG_PATH}: 'project_doc_fallback_filenames' must be an array of strings"),
+            &["project_doc_fallback_filenames"],
+            value,
+            "use an array of strings",
+        );
     }
+}
+
+/// Report a non-string array contract at the narrowest offending element, or at
+/// the whole value when it is not an array.
+fn report_string_array_contract(
+    diag: &mut DiagnosticCollector,
+    source: &SourceMap<'_>,
+    rule: LintRule,
+    message: &str,
+    path: &[&str],
+    value: &Value,
+    suggestion: &str,
+) {
+    if let Some(items) = value.as_array() {
+        if let Some(index) = items.iter().position(|item| !item.is_str()) {
+            report_config_array_element(diag, source, rule, message, path, index, None, suggestion);
+        }
+        return;
+    }
+    report_config(diag, source, rule, message, path, false, None, suggestion);
 }
 
 fn validate_scalar_enums(
@@ -558,15 +644,20 @@ fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, source: &Source
             LintRule::CodexUnknownNestedKey,
             &["sandbox_workspace_write"],
         );
+        if let Some(value) = table.get("writable_roots") {
+            report_string_array_contract(
+                diag,
+                source,
+                LintRule::CodexWorkspaceWrite,
+                &format!(
+                    "{CONFIG_PATH}: sandbox_workspace_write.writable_roots has an invalid type"
+                ),
+                &["sandbox_workspace_write", "writable_roots"],
+                value,
+                "use the required field type",
+            );
+        }
         for (key, valid) in [
-            (
-                "writable_roots",
-                table.get("writable_roots").is_none_or(|value| {
-                    value
-                        .as_array()
-                        .is_some_and(|values| values.iter().all(Value::is_str))
-                }),
-            ),
             (
                 "network_access",
                 table.get("network_access").is_none_or(Value::is_bool),
@@ -664,6 +755,9 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table, source
     }
 }
 
+/// Stable MCP wording that never interpolates a repository-controlled server name.
+const MCP_SERVERS_LABEL: &str = ".codex/config.toml: mcp_servers";
+
 fn validate_mcp_servers(
     diag: &mut DiagnosticCollector,
     value: Option<&Value>,
@@ -673,15 +767,14 @@ fn validate_mcp_servers(
         return;
     };
     for (name, value) in servers {
-        let label = format!("{CONFIG_PATH}: mcp_servers.{name}");
         let Some(server) = value.as_table() else {
             report_config(
                 diag,
                 source,
                 LintRule::CodexMcpServerTransport,
-                &format!("{label} must be an object with 'command' or 'url'"),
+                &format!("{MCP_SERVERS_LABEL} entry must be an object with 'command' or 'url'"),
                 &["mcp_servers", name],
-                false,
+                true,
                 None,
                 "define a server table with exactly one transport",
             );
@@ -690,7 +783,7 @@ fn validate_mcp_servers(
         validate_unknown_keys(
             diag,
             source,
-            &label,
+            MCP_SERVERS_LABEL,
             server,
             MCP_SERVER_KEYS,
             LintRule::CodexUnknownNestedKey,
@@ -701,28 +794,30 @@ fn validate_mcp_servers(
         let valid_command = command.is_some_and(|value| !value.is_empty());
         let valid_url = url.is_some_and(|value| !value.is_empty());
         if valid_command == valid_url {
+            // Prefer a present transport key; otherwise the server table header.
+            let path: &[&str] = if server.contains_key("url") {
+                &["mcp_servers", name, "url"]
+            } else if server.contains_key("command") {
+                &["mcp_servers", name, "command"]
+            } else {
+                &["mcp_servers", name]
+            };
             report_config(
                 diag,
                 source,
                 LintRule::CodexMcpServerTransport,
-                &format!("{label} must define exactly one non-empty string 'command' or 'url'"),
-                &[
-                    "mcp_servers",
-                    name,
-                    if server.contains_key("url") {
-                        "url"
-                    } else {
-                        "command"
-                    },
-                ],
-                false,
+                &format!(
+                    "{MCP_SERVERS_LABEL} entry must define exactly one non-empty string 'command' or 'url'"
+                ),
+                path,
+                path.len() == 2,
                 None,
                 "define exactly one non-empty transport field",
             );
         } else if valid_command {
-            validate_mcp_transport_fields(diag, &label, server, source, name, McpTransport::Stdio);
+            validate_mcp_transport_fields(diag, server, source, name, McpTransport::Stdio);
         } else {
-            validate_mcp_transport_fields(diag, &label, server, source, name, McpTransport::Http);
+            validate_mcp_transport_fields(diag, server, source, name, McpTransport::Http);
         }
         if let Some(mode) = server.get("default_tools_approval_mode")
             && !mode
@@ -736,7 +831,7 @@ fn validate_mcp_servers(
                 source,
                 LintRule::CodexAppApprovalMode,
                 &format!(
-                    "{label}.default_tools_approval_mode must be one of: {}",
+                    "{MCP_SERVERS_LABEL}.default_tools_approval_mode must be one of: {}",
                     APP_APPROVAL_MODES.join(", ")
                 ),
                 &["mcp_servers", name, "default_tools_approval_mode"],
@@ -750,7 +845,7 @@ fn validate_mcp_servers(
                 diag,
                 source,
                 LintRule::CodexInlineBearerToken,
-                &format!("{label}.bearer_token is forbidden; use bearer_token_env_var"),
+                &format!("{MCP_SERVERS_LABEL}.bearer_token is forbidden; use bearer_token_env_var"),
                 &["mcp_servers", name, "bearer_token"],
                 true,
                 Some("bearer_token"),
@@ -769,13 +864,23 @@ enum McpTransport {
 
 fn validate_mcp_transport_fields(
     diag: &mut DiagnosticCollector,
-    label: &str,
     server: &Table,
     source: &SourceMap<'_>,
     server_name: &str,
     transport: McpTransport,
 ) {
-    for (key, value) in server {
+    // Walk source-key order so independently invalid transport fields emit in
+    // TOML order rather than semantic BTreeMap order.
+    let keys = source.table_keys_in_source_order(&["mcp_servers", server_name]);
+    let keys = if keys.is_empty() {
+        server.keys().cloned().collect::<Vec<_>>()
+    } else {
+        keys
+    };
+    for key in keys {
+        let Some(value) = server.get(key.as_str()) else {
+            continue;
+        };
         let invalid = match transport {
             McpTransport::Stdio => match key.as_str() {
                 "args" | "env_vars" => !value
@@ -797,13 +902,34 @@ fn validate_mcp_transport_fields(
                 _ => false,
             },
         };
-        if invalid {
+        if !invalid {
+            continue;
+        }
+        let path = ["mcp_servers", server_name, key.as_str()];
+        let message = format!("{MCP_SERVERS_LABEL}.{key} is invalid for this transport");
+        // Narrow to the offending element only when the field is valid for this
+        // transport but contains a non-string entry. Wholly invalid transport
+        // fields always report at the value.
+        if matches!(
+            (transport, key.as_str()),
+            (McpTransport::Stdio, "args" | "env_vars")
+        ) {
+            report_string_array_contract(
+                diag,
+                source,
+                LintRule::CodexMcpServerTransport,
+                &message,
+                &path,
+                value,
+                "use only fields valid for this transport",
+            );
+        } else {
             report_config(
                 diag,
                 source,
                 LintRule::CodexMcpServerTransport,
-                &format!("{label}.{key} is invalid for this transport"),
-                &["mcp_servers", server_name, key],
+                &message,
+                &path,
                 false,
                 None,
                 "use only fields valid for this transport",
@@ -1415,6 +1541,151 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn mcp_diagnostics_never_leak_server_names_and_pin_narrow_spans() {
+        let token = "sk-abcdefghijklmnopqrstuv";
+        let mixed = format!(
+            "project_doc_fallback_filenames = [\"ok\", 7]\n\n[mcp_servers.{token}]\ncommand = \"server\"\nbearer_token = \"{token}\"\nargs = [\"ok\", 7]\nunknown_field = true\n\n[approval_policy.granular]\nsandbox_approval = true\nrules = true\nmcp_elicitations = true\nrequest_permissions = true\n\n[sandbox_workspace_write]\nwritable_roots = [\"ok\", 7]\n"
+        );
+        let diag = with_config(&mixed);
+        let findings: Vec<_> = diag.diagnostics().iter().collect();
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.rule == LintRule::CodexProjectDocFallbackNames)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.rule == LintRule::CodexMcpServerTransport)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.rule == LintRule::CodexInlineBearerToken)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.rule == LintRule::CodexUnknownNestedKey)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.rule == LintRule::CodexApprovalPolicyShape)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|d| d.rule == LintRule::CodexWorkspaceWrite)
+        );
+
+        for diagnostic in &findings {
+            for channel in [
+                diagnostic.message.as_str(),
+                diagnostic.evidence.as_deref().unwrap_or(""),
+                diagnostic.suggestion.as_deref().unwrap_or(""),
+            ] {
+                assert!(
+                    !channel.contains(token),
+                    "leaked server name in {diagnostic:?}"
+                );
+            }
+        }
+
+        let cx003 = findings
+            .iter()
+            .find(|d| d.rule == LintRule::CodexProjectDocFallbackNames)
+            .unwrap();
+        assert_eq!(cx003.location.unwrap().start().line_number(), 1);
+        assert!(
+            cx003
+                .location
+                .unwrap()
+                .start()
+                .column_number()
+                .is_some_and(|column| column > 1)
+        );
+
+        let cx061 = findings
+            .iter()
+            .find(|d| d.rule == LintRule::CodexApprovalPolicyShape)
+            .unwrap();
+        assert!(cx061.location.is_some(), "{cx061:?}");
+        assert_eq!(cx061.evidence.as_deref(), Some("skill_approval"));
+
+        let args_element = findings
+            .iter()
+            .find(|d| {
+                d.rule == LintRule::CodexMcpServerTransport
+                    && d.message.contains(".args is invalid")
+            })
+            .unwrap();
+        assert!(
+            args_element
+                .location
+                .unwrap()
+                .start()
+                .column_number()
+                .is_some_and(|column| column > 8),
+            "{args_element:?}"
+        );
+
+        let writable = findings
+            .iter()
+            .find(|d| d.rule == LintRule::CodexWorkspaceWrite)
+            .unwrap();
+        assert!(
+            writable
+                .location
+                .unwrap()
+                .start()
+                .column_number()
+                .is_some_and(|column| column > 18),
+            "{writable:?}"
+        );
+
+        let missing = with_config(&format!("[mcp_servers.{token}]\n"));
+        let transport = missing
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::CodexMcpServerTransport)
+            .unwrap();
+        assert!(transport.location.is_some(), "{transport:?}");
+        assert!(transport.message.contains("entry must define exactly one"));
+        assert!(!transport.message.contains(token));
+        assert!(
+            !transport
+                .evidence
+                .as_deref()
+                .is_some_and(|value| value.contains(token))
+        );
+
+        // cwd is written before args (reverse lexical order); emit source order.
+        let ordered = with_config("[mcp_servers.order]\ncommand = \"server\"\ncwd = 1\nargs = 2\n");
+        let order_messages: Vec<_> = ordered
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::CodexMcpServerTransport)
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(
+            order_messages,
+            vec![
+                ".codex/config.toml: mcp_servers.cwd is invalid for this transport",
+                ".codex/config.toml: mcp_servers.args is invalid for this transport",
+            ]
+        );
+        let order_lines: Vec<_> = ordered
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule == LintRule::CodexMcpServerTransport)
+            .map(|d| d.location.unwrap().start().line_number())
+            .collect();
+        assert_eq!(order_lines, vec![3, 4]);
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn mcp_transports_and_workspace_write_validate_types_without_cascades() {
         let clean = "[mcp_servers.stdio]\ncommand = 'server'\nargs = ['--ok']\nenv = { KEY = 'value' }\nenv_vars = ['TOKEN']\ncwd = '.'\n[mcp_servers.http]\nurl = 'https://example.com/mcp'\nbearer_token_env_var = 'TOKEN'\nhttp_headers = { Accept = 'application/json' }\nenv_http_headers = { Authorization = 'TOKEN' }\noauth_resource = 'resource'\n[sandbox_workspace_write]\nwritable_roots = ['.']\nnetwork_access = true\nexclude_tmpdir_env_var = false\nexclude_slash_tmp = false\n";
         assert_eq!(rules(&with_config(clean)), Vec::<LintRule>::new());
@@ -1826,12 +2097,12 @@ mod tests {
             (
                 "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 'bad'\n",
                 LintRule::CodexAppApprovalMode,
-                ".codex/config.toml: mcp_servers.stdio.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+                ".codex/config.toml: mcp_servers.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
             ),
             (
                 "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = 'bad'\n",
                 LintRule::CodexAppApprovalMode,
-                ".codex/config.toml: mcp_servers.http.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+                ".codex/config.toml: mcp_servers.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
             ),
             (
                 "[apps.a]\napprovals_reviewer = 1\n",
@@ -1846,12 +2117,12 @@ mod tests {
             (
                 "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 1\n",
                 LintRule::CodexAppApprovalMode,
-                ".codex/config.toml: mcp_servers.stdio.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+                ".codex/config.toml: mcp_servers.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
             ),
             (
                 "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = []\n",
                 LintRule::CodexAppApprovalMode,
-                ".codex/config.toml: mcp_servers.http.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+                ".codex/config.toml: mcp_servers.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
             ),
         ] {
             // Use the default collector so severity matches compiled defaults
@@ -1958,8 +2229,8 @@ mod tests {
         assert_eq!(
             messages,
             vec![
-                ".codex/config.toml: mcp_servers.a.default_tools_approval_mode must be one of: auto, prompt, writes, approve".to_string(),
-                ".codex/config.toml: mcp_servers.z.default_tools_approval_mode must be one of: auto, prompt, writes, approve".to_string(),
+                ".codex/config.toml: mcp_servers.default_tools_approval_mode must be one of: auto, prompt, writes, approve".to_string(),
+                ".codex/config.toml: mcp_servers.default_tools_approval_mode must be one of: auto, prompt, writes, approve".to_string(),
                 ".codex/config.toml: apps._default.approvals_reviewer must be one of: user, auto_review, guardian_subagent".to_string(),
                 ".codex/config.toml: apps.a.approvals_reviewer must be one of: user, auto_review, guardian_subagent".to_string(),
                 ".codex/config.toml: apps.z.approvals_reviewer must be one of: user, auto_review, guardian_subagent".to_string(),

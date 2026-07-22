@@ -5861,7 +5861,7 @@ fn cx026_cx030_nested_sites_honor_cli_selection_exclusion_and_autofix() {
                 "CX030",
                 "error",
                 ".codex/config.toml",
-                ".codex/config.toml: mcp_servers.x.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+                ".codex/config.toml: mcp_servers.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
             ),
         ]
     );
@@ -6480,6 +6480,249 @@ fn cx013_cli_is_precise_across_modes_suppression_and_plugin_dispatch() {
 
     let _ = run_in(tmp.path(), &["--autofix", "--only", "CX013", "."]);
     assert_eq!(std::fs::read_to_string(config_path).unwrap(), config);
+}
+
+#[test]
+fn mcp_cx_diagnostics_never_leak_token_shaped_server_names_through_cli() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    let server = "sk-abcdefghijklmnopqrstuv";
+    let config = format!(
+        "[mcp_servers.{server}]\ncommand = 'server'\nbearer_token = 'nope'\nargs = ['ok', 7]\nunknown_mcp = true\ndefault_tools_approval_mode = 'bad'\n"
+    );
+    let config_path = tmp.path().join(".codex/config.toml");
+    std::fs::write(&config_path, &config).unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CX004,CX012,CX028,CX030", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    let codes: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, vec!["CX004", "CX012", "CX028", "CX030"]);
+    let serialized = report.to_string();
+    assert!(!serialized.contains(server), "{serialized}");
+    let text = stderr(&run_in(
+        tmp.path(),
+        &["--only", "CX004,CX012,CX028,CX030", "."],
+    ));
+    assert!(!text.contains(server), "{text}");
+
+    let args = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["code"] == "CX012"
+                && diagnostic["message"].as_str().unwrap().contains("args")
+        })
+        .unwrap();
+    assert!(
+        args["location"]["start"]["column"].as_u64().unwrap() > 8,
+        "{args}"
+    );
+
+    let _ = run_in(
+        tmp.path(),
+        &["--autofix", "--only", "CX004,CX012,CX028,CX030", "."],
+    );
+    assert_eq!(std::fs::read_to_string(config_path).unwrap(), config);
+}
+
+#[test]
+fn cx040_cx045_honor_visible_budget_policy_and_legacy_aliases() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    let config_path = tmp.path().join(".codex/config.toml");
+    let agents = tmp.path().join("AGENTS.md");
+    std::fs::write(
+        &config_path,
+        "project_doc_max_bytes = 0\napproval_policy = \"never\"\n",
+    )
+    .unwrap();
+    std::fs::write(&agents, "approval_policy = \"on-request\"\n").unwrap();
+
+    let normal = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CX040,CX045", "."],
+    );
+    assert!(normal.status.success(), "stderr: {}", stderr(&normal));
+    let normal = json(&normal);
+    assert_eq!(normal["mode"], "basic");
+    let diagnostics = normal["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "CX040");
+    assert_eq!(diagnostics[0]["severity"], "warning");
+    assert_eq!(diagnostics[0]["subject_path"], "AGENTS.md");
+    assert_eq!(
+        diagnostics[0]["related_subjects"],
+        serde_json::json!(["AGENTS.md"])
+    );
+
+    for selector in ["CX040", "codex-project-doc-budget", "codex-agents-limit"] {
+        let report = json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", selector, "."],
+        ));
+        assert_eq!(
+            report["diagnostics"].as_array().unwrap().len(),
+            1,
+            "{selector}"
+        );
+        assert_eq!(report["diagnostics"][0]["code"], "CX040");
+    }
+    for selector in [
+        "CX045",
+        "codex-project-doc-conflict",
+        "codex-agents-conflict",
+    ] {
+        let report = json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", selector, "."],
+        ));
+        assert!(
+            report["diagnostics"].as_array().unwrap().is_empty(),
+            "{selector}"
+        );
+    }
+    for retired in [
+        "CX039",
+        "codex-agents-large",
+        "CX042",
+        "codex-agents-override",
+    ] {
+        let output = run_in(tmp.path(), &["--only", retired, "."]);
+        assert_eq!(output.status.code(), Some(2), "{retired}");
+    }
+
+    let pedantic = run_in(
+        tmp.path(),
+        &["--format", "json", "--pedantic", "--only", "CX040", "."],
+    );
+    assert_eq!(pedantic.status.code(), Some(1));
+    assert_eq!(json(&pedantic)["diagnostics"][0]["severity"], "error");
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"CX040\"]\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX040", "."])
+            .status
+            .success()
+    );
+    assert_eq!(
+        run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", "CX040", "."]
+        )
+        .status
+        .code(),
+        Some(1)
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"AGENTS.md\"]\nsuppress = [\"CX040\"]\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX040", "."])
+            .status
+            .success()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\"AGENTS.md\"]\n",
+    )
+    .unwrap();
+    assert!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", "CX040,CX045", "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = false\n",
+    )
+    .unwrap();
+    assert!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", "CX040", "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = true\n",
+    )
+    .unwrap();
+    assert_eq!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", "CX040", "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"example","description":"Plugin mode surface."}"#,
+    )
+    .unwrap();
+    let plugin = run_in(tmp.path(), &["--format", "json", "--only", "CX040", "."]);
+    assert!(plugin.status.success());
+    assert_eq!(json(&plugin)["mode"], "plugin");
+    assert_eq!(json(&plugin)["diagnostics"].as_array().unwrap().len(), 1);
+
+    let original_agents = std::fs::read_to_string(&agents).unwrap();
+    let original_config = std::fs::read_to_string(&config_path).unwrap();
+    let _ = run_in(tmp.path(), &["--autofix", "--only", "CX040,CX045", "."]);
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), original_agents);
+    assert_eq!(
+        std::fs::read_to_string(&config_path).unwrap(),
+        original_config
+    );
+
+    // Fully visible conflict still emits CX045.
+    std::fs::write(
+        &config_path,
+        "project_doc_max_bytes = 1024\napproval_policy = \"never\"\n",
+    )
+    .unwrap();
+    let visible = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CX040,CX045", "."],
+    ));
+    assert_eq!(
+        visible["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["CX045"]
+    );
 }
 
 #[test]

@@ -208,7 +208,9 @@ fn validate_selected_codex_project_documents(diag: &mut DiagnosticCollector, exc
             .take_while(|active| active.path != document.path)
             .fold(0usize, |used, active| used.saturating_add(active.byte_len))
             .min(settings.max_bytes);
-        if document.byte_len > settings.max_bytes.saturating_sub(used) {
+        let remaining = settings.max_bytes.saturating_sub(used);
+        let visible = document.byte_len.min(remaining);
+        if document.byte_len > remaining {
             let metadata = DiagnosticMetadata::default()
                 .with_evidence(format!("{used}/{} bytes", settings.max_bytes))
                 .with_suggestion(
@@ -225,7 +227,9 @@ fn validate_selected_codex_project_documents(diag: &mut DiagnosticCollector, exc
                 metadata,
             );
         }
-        validate_project_document_conflicts(diag, document, &settings);
+        if visible > 0 {
+            validate_project_document_conflicts(diag, document, &settings, visible);
+        }
     }
 }
 
@@ -601,11 +605,20 @@ fn validate_project_document_conflicts(
     diag: &mut DiagnosticCollector,
     document: &ProjectDocument,
     settings: &ProjectDocumentSettings,
+    visible_bytes: usize,
 ) {
     let Some(config) = settings.config.as_ref() else {
         return;
     };
-    let markdown = MarkdownDocument::parse(&document.content);
+    // Codex only includes a prefix of each selected document. Never inspect
+    // suffix bytes beyond that cutoff, and never treat a partial construct as a
+    // complete assertion.
+    let visible_bytes = floor_char_boundary(&document.content, visible_bytes);
+    if visible_bytes == 0 {
+        return;
+    }
+    let visible_content = &document.content[..visible_bytes];
+    let markdown = MarkdownDocument::parse(visible_content);
     let live = LiveInstructionDocument::new(
         Path::new(&document.display),
         InstructionSurfaceKind::AgentsMd,
@@ -615,11 +628,17 @@ fn validate_project_document_conflicts(
         if is_example {
             continue;
         }
-        let raw_line = document
-            .content
+        let raw_line = visible_content
             .lines()
             .nth(line.line - 1)
             .unwrap_or_default();
+        let Some(line_start) = line_start_offset(visible_content, line.line) else {
+            continue;
+        };
+        let line_end = line_start + raw_line.len();
+        if !line_wholly_visible(&document.content, visible_bytes, line_end) {
+            continue;
+        }
         let (marker_bytes, prose) = strip_leading_list_marker(raw_line);
         let Some(captures) = PROJECT_DOCUMENT_ASSERTION.captures(prose) else {
             continue;
@@ -630,11 +649,11 @@ fn validate_project_document_conflicts(
         let Some(value_match) = captures.get(2) else {
             continue;
         };
-        let Some(line_start) = line_start_offset(&document.content, line.line) else {
-            continue;
-        };
         let assertion_start = line_start + marker_bytes + key_match.start();
         let assertion_end = line_start + marker_bytes + value_match.end();
+        if assertion_end > visible_bytes {
+            continue;
+        }
         if markdown.inline_code().iter().any(|code| {
             code.byte_range.start < assertion_end && assertion_start < code.byte_range.end
         }) || markdown.links().iter().any(|link| {
@@ -661,7 +680,10 @@ fn validate_project_document_conflicts(
             - value_match.as_str().trim_start().len();
         let value_start = line_start + value_offset;
         let value_end = value_start + literal.len();
-        let metadata = SourceSpan::from_byte_range(&document.content, value_start..value_end)
+        if value_end > visible_bytes {
+            continue;
+        }
+        let metadata = SourceSpan::from_byte_range(visible_content, value_start..value_end)
             .map_or_else(DiagnosticMetadata::default, |location| {
                 DiagnosticMetadata::default().with_location(location)
             })
@@ -677,6 +699,30 @@ fn validate_project_document_conflicts(
             metadata,
         );
     }
+}
+
+fn floor_char_boundary(content: &str, index: usize) -> usize {
+    if index >= content.len() {
+        content.len()
+    } else {
+        let mut index = index;
+        while index > 0 && !content.is_char_boundary(index) {
+            index -= 1;
+        }
+        index
+    }
+}
+
+/// A line is complete only when its content is wholly inside the visible prefix
+/// and either the document ends there or the line terminator is visible.
+fn line_wholly_visible(content: &str, visible_bytes: usize, line_end: usize) -> bool {
+    if line_end > visible_bytes {
+        return false;
+    }
+    if visible_bytes >= content.len() {
+        return true;
+    }
+    matches!(content.as_bytes().get(line_end), Some(b'\n' | b'\r'))
 }
 
 fn parse_toml_scalar(literal: &str) -> Option<toml::Value> {
@@ -1413,12 +1459,12 @@ mod tests {
         std::fs::create_dir_all(".codex").unwrap();
         std::fs::write(
             ".codex/config.toml",
-            "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\nproject_doc_max_bytes = 10\n",
+            "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\nproject_doc_max_bytes = 4096\n",
         )
         .unwrap();
         std::fs::write(
             "AGENTS.md",
-            "---\nsandbox_mode: \"read-only\"\n---\n```toml\nsandbox_mode = \"read-only\"\n```\n> sandbox_mode = \"read-only\"\n`sandbox_mode = \"read-only\"`\n[sandbox_mode = \"read-only\"](https://example.com)\n## Examples\n- approval_policy = \"on-request\"\n## Live\n- sandbox_mode: \"read-only\"\nproject_doc_max_bytes is 10.\n",
+            "---\nsandbox_mode: \"read-only\"\n---\n```toml\nsandbox_mode = \"read-only\"\n```\n> sandbox_mode = \"read-only\"\n`sandbox_mode = \"read-only\"`\n[sandbox_mode = \"read-only\"](https://example.com)\n## Examples\n- approval_policy = \"on-request\"\n## Live\n- sandbox_mode: \"read-only\"\nproject_doc_max_bytes is 4096.\n",
         )
         .unwrap();
         std::fs::write(
@@ -1450,6 +1496,113 @@ mod tests {
             Some(
                 "align this project instruction with .codex/config.toml or remove the runtime assertion"
             )
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cx045_only_scans_model_visible_project_document_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".codex").unwrap();
+        std::fs::create_dir_all("nested").unwrap();
+
+        // Zero budget: wholly omitted root document is CX040 only.
+        std::fs::write(
+            ".codex/config.toml",
+            "project_doc_max_bytes = 0\napproval_policy = \"never\"\n",
+        )
+        .unwrap();
+        std::fs::write("AGENTS.md", "approval_policy = \"on-request\"\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        assert!(diag.diagnostics().iter().any(|item| {
+            item.rule == LintRule::CodexProjectDocBudget
+                && item.subject_path.as_deref() == Some(Path::new("AGENTS.md"))
+        }));
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| { item.rule != LintRule::CodexProjectDocConflict })
+        );
+
+        // Partial document: only conflicts wholly before the cutoff emit.
+        std::fs::write(
+            ".codex/config.toml",
+            "project_doc_max_bytes = 31\napproval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n",
+        )
+        .unwrap();
+        // First line is 30 content bytes + newline; second line is omitted.
+        std::fs::write(
+            "AGENTS.md",
+            "approval_policy = \"on-request\"\nsandbox_mode = \"read-only\"\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        let conflicts: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::CodexProjectDocConflict)
+            .collect();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].evidence.as_deref(), Some("approval_policy"));
+
+        // Clause split by the cutoff does not emit.
+        std::fs::write(
+            ".codex/config.toml",
+            "project_doc_max_bytes = 20\napproval_policy = \"never\"\n",
+        )
+        .unwrap();
+        std::fs::write("AGENTS.md", "approval_policy = \"on-request\"\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|item| { item.rule == LintRule::CodexProjectDocBudget })
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| { item.rule != LintRule::CodexProjectDocConflict })
+        );
+
+        // Cumulative chain: ancestor consumes budget; descendant conflict omitted.
+        std::fs::write(
+            ".codex/config.toml",
+            "project_doc_max_bytes = 10\napproval_policy = \"never\"\n",
+        )
+        .unwrap();
+        std::fs::write("AGENTS.md", "aaaaaaaaaa").unwrap();
+        std::fs::write("nested/AGENTS.md", "approval_policy = \"on-request\"\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        assert!(diag.diagnostics().iter().any(|item| {
+            item.rule == LintRule::CodexProjectDocBudget
+                && item.subject_path.as_deref() == Some(Path::new("nested/AGENTS.md"))
+        }));
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| { item.rule != LintRule::CodexProjectDocConflict })
+        );
+
+        // UTF-8 boundary immediately inside a multibyte scalar does not panic.
+        std::fs::write(
+            ".codex/config.toml",
+            "project_doc_max_bytes = 2\napproval_policy = \"never\"\n",
+        )
+        .unwrap();
+        std::fs::write("AGENTS.md", "éapproval_policy = \"on-request\"\n").unwrap();
+        std::fs::remove_file("nested/AGENTS.md").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| { item.rule != LintRule::CodexProjectDocConflict })
         );
     }
 

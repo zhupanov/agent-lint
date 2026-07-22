@@ -1,0 +1,66 @@
+unknown_top = true
+project_doc_max_bytes = -1
+project_doc_fallback_filenames = ["ok", 7]
+sandbox_mode = "yolo"
+model_reasoning_effort = ""
+model_verbosity = "yolo"
+personality = "yolo"
+cli_auth_credentials_store = "yolo"
+mcp_oauth_credentials_store = "yolo"
+model = 1
+model_provider = 1
+model_reasoning_summary = "yolo"
+history = false
+tui = false
+file_opener = 1
+profile = 1
+model_context_window = 0
+model_auto_compact_token_limit = 0
+service_tier = 1
+skills = false
+
+[shell_environment_policy]
+inherit = "yolo"
+unknown_shell = true
+
+[sandbox_workspace_write]
+writable_roots = ["ok", 7]
+network_access = "yes"
+
+[features]
+unknown_feature = true
+
+[permissions.network]
+future_key = true
+
+[windows]
+sandbox = "yolo"
+
+[agents]
+max_threads = 0
+
+[apps.demo]
+approvals_reviewer = "bad"
+default_tools_approval_mode = "bad"
+
+[mcp_servers.sk-abcdefghijklmnopqrstuv]
+command = "server"
+bearer_token = "nope"
+args = ["ok", 7]
+unknown_mcp = true
+default_tools_approval_mode = "bad"
+env = { ORDINARY = "sk-abcdefghijklmnopqrstuvwxyz" }
+
+[approval_policy.granular]
+sandbox_approval = true
+rules = true
+mcp_elicitations = true
+request_permissions = true
+typo = true
+
+[profiles]
+not_a_table = "bad"
+
+[profiles.work]
+approval_policy = "yolo"
+model = 5

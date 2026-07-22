@@ -1,0 +1,40 @@
+{
+  "class": "broken",
+  "repository": "codex-config-toml-broken",
+  "covers": [
+    "codex",
+    "codex-config",
+    "normal",
+    "json"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--only",
+      "CX001",
+      "."
+    ]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": [
+    "claude",
+    "codex"
+  ],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "CX001",
+      "name": "codex-toml-invalid",
+      "severity": "error",
+      "subject_path": ".codex/config.toml",
+      "suggestion": "correct the TOML syntax at the reported location",
+      "location": {
+        "line": 1
+      }
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

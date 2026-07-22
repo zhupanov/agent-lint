@@ -1,0 +1,29 @@
+{
+  "class": "clean",
+  "repository": "codex-config-clean",
+  "covers": [
+    "codex",
+    "codex-config",
+    "normal",
+    "json"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--only",
+      "CX002,CX003,CX004,CX005,CX006,CX007,CX008,CX009,CX011,CX012,CX013,CX014,CX015,CX016,CX017,CX018,CX019,CX020,CX021,CX022,CX023,CX024,CX025,CX026,CX027,CX028,CX029,CX030,CX031,CX032,CX033,CX034,CX035,CX036,CX061,CX062",
+      "."
+    ]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": [
+    "claude",
+    "codex"
+  ],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

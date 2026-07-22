@@ -1,0 +1,7 @@
+[mcp_servers.sk-abcdefghijklmnopqrstuv]
+command = "server"
+bearer_token = "nope"
+args = ["ok", 7]
+unknown_mcp = true
+default_tools_approval_mode = "bad"
+env = { ORDINARY = "sk-abcdefghijklmnopqrstuvwxyz" }
