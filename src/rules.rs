@@ -295,7 +295,8 @@ pub enum LintRule {
     /// S029: referenced shared .md file itself references other shared .md files
     #[strum(props(code = "S029", name = "nested-ref-deep"))]
     NestedRefDeep,
-    /// S030: files in skill scripts/ not referenced from any skill-local .md
+    /// S030: files in skill scripts/ not referenced from skill-local Markdown
+    /// or reachable from a Markdown-live supported harness script
     #[strum(props(code = "S030", name = "orphaned-skill-files"))]
     OrphanedSkillFiles,
     /// S031: http:// URL in skill content (not https)

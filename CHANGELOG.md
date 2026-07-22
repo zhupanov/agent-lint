@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- S030 (`orphaned-skill-files`) no longer treats repository-ignored files or
+  conventional cache artifacts (`__pycache__`, `*.pyc`, …) as orphan
+  candidates, and treats fixture/data files as owned when a Markdown-live
+  supported harness script references them (skill-relative, `scripts/`-stripped,
+  peer-relative, or unique basename). Unreferenced supported scripts remain
+  true positives; Git fixtures apply root `.gitignore` / `.git/info/exclude`,
+  while non-Git fixtures stay on conventional cache exclusion only.
 - A001 (`agents-dir-missing`) and A004 (`no-agent-files`) now carry a stable
   structured `suggestion` in versioned JSON output: create the declared agent
   path or remove its `plugin.json` declaration (A001), and add an agent `.md`
