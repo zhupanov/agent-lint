@@ -27,8 +27,6 @@ static RE_BACKSLASH_PATH_RUN: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
-static RE_BASH_FENCE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^```(bash|sh|shell)\s*$").unwrap());
 static RE_NAME_INVALID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-z0-9-]").unwrap());
 
 /// Attempt to fix all instances of a given auto-fixable rule.
@@ -436,7 +434,6 @@ fn fix_desc_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -
 // ── S021: consecutive bash code blocks ──────────────────────────────────
 
 fn fix_consecutive_bash(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
-    let mut fixed = false;
     let base_dirs: &[&str] = match mode {
         LintMode::Plugin => &["skills", ".claude/skills"],
         LintMode::Basic => &[".claude/skills"],
@@ -452,80 +449,111 @@ fn fix_consecutive_bash(mode: LintMode, exclude: &ExcludeSet, config: &LintConfi
                 Ok(c) => c,
                 Err(_) => continue,
             };
-
-            if let Some(new_content) = merge_first_consecutive_bash(&content) {
-                if fs::write(&skill_path, new_content).is_ok() {
-                    log_fix(
-                        LintRule::ConsecutiveBash,
-                        &format!(
-                            "{base_dir}/{}/SKILL.md: merged consecutive bash blocks",
-                            info.dir_name
-                        ),
-                    );
-                    fixed = true;
-                    break; // One fix per pass
-                }
+            // The S021 body validator scans `info.body`; merge in that same
+            // coordinate space so autofix touches exactly its flagged pairs,
+            // then splice the rewritten body back onto the original preamble.
+            let Some(preamble) = content.strip_suffix(info.body.as_str()) else {
+                continue;
+            };
+            let Some(new_body) = merge_first_consecutive_bash(&info.body) else {
+                continue;
+            };
+            let new_content = format!("{preamble}{new_body}");
+            if fs::write(&skill_path, &new_content).is_ok() {
+                log_fix(
+                    LintRule::ConsecutiveBash,
+                    &format!(
+                        "{base_dir}/{}/SKILL.md: merged consecutive bash blocks",
+                        info.dir_name
+                    ),
+                );
+                return true; // One merged pair per apply_fix call; driver re-validates
             }
         }
     }
-    fixed
+    fix_reference_consecutive_bash(mode, exclude, config)
 }
 
+/// Merge reference-file (`references/*.md`) S021 pairs, using the same scope as
+/// `validate_reference_consecutive_bash`. One merged pair per call.
+fn fix_reference_consecutive_bash(
+    mode: LintMode,
+    exclude: &ExcludeSet,
+    config: &LintConfig,
+) -> bool {
+    let include_public = mode == LintMode::Plugin;
+    for path in crate::validators::contracts::reference_bash_markdown_paths(include_public, exclude)
+    {
+        // Mirror the validator's `read_text` guard, then honor per-file
+        // suppression before mutating (I-Fix-1).
+        if path.is_symlink() || exclude.is_excluded(&path.to_string_lossy()) {
+            continue;
+        }
+        if is_suppressed(config, LintRule::ConsecutiveBash, &path) {
+            continue;
+        }
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let Some(new_content) = merge_first_consecutive_bash(&content) else {
+            continue;
+        };
+        if fs::write(&path, &new_content).is_ok() {
+            log_fix(
+                LintRule::ConsecutiveBash,
+                &format!("{}: merged consecutive bash blocks", path.display()),
+            );
+            return true; // One merged pair per apply_fix call; driver re-validates
+        }
+    }
+    false
+}
+
+/// Merge the first flagged consecutive-bash pair whose gap is only blank lines,
+/// returning the rewritten content. Candidate pairs come from the shared policy
+/// host `fence::consecutive_bash_pairs`, so waived, WRONG/CORRECT, design-driver,
+/// and non-`bash` (`sh`/`shell`/bare) pairs the validator never flags are never
+/// touched. A flagged pair whose gap holds prose breadcrumbs or HTML comments is
+/// left for a human (deleting gap content is not a purely mechanical fix), so the
+/// diagnostic survives and the autofix loop can terminate.
+///
+/// `content` is the exact string the validator scans — a SKILL.md body or a whole
+/// reference file — and the result is in that same coordinate space.
 fn merge_first_consecutive_bash(content: &str) -> Option<String> {
-    use crate::fence::LineClass;
-    let body = frontmatter::extract_body(content);
-    if body.is_empty() {
+    let pairs = crate::fence::consecutive_bash_pairs(content);
+    if pairs.is_empty() {
         return None;
     }
-    // Count frontmatter lines to compute offset
-    let fm_line_count = content.lines().count() - body.lines().count();
-
-    let mut tracker = CodeFenceTracker::new();
-    let mut last_bash_end: Option<usize> = None;
-    let mut fence_is_bash = false;
-
-    let body_lines: Vec<&str> = body.lines().collect();
-    for (i, line) in body_lines.iter().enumerate() {
-        let trimmed = line.trim_start();
-        match tracker.process_line(line) {
-            LineClass::Delimiter => {
-                if !tracker.in_fence() {
-                    if fence_is_bash {
-                        last_bash_end = Some(i);
-                    }
-                    fence_is_bash = false;
-                } else if RE_BASH_FENCE.is_match(trimmed) {
-                    if let Some(prev_end) = last_bash_end {
-                        let between_lines: Vec<&&str> =
-                            body_lines[prev_end + 1..i].iter().collect();
-                        let only_blank = between_lines.iter().all(|l| l.trim().is_empty());
-                        if only_blank {
-                            // Found consecutive bash blocks: merge them
-                            // Remove lines from prev_end (closing ```) through i (opening ```bash)
-                            let file_lines: Vec<&str> = content.lines().collect();
-                            let remove_start = fm_line_count + prev_end;
-                            let remove_end = fm_line_count + i;
-                            let mut result_lines: Vec<&str> = Vec::new();
-                            for (j, fl) in file_lines.iter().enumerate() {
-                                if j < remove_start || j > remove_end {
-                                    result_lines.push(fl);
-                                }
-                            }
-                            // Preserve original trailing newline
-                            let mut result = result_lines.join("\n");
-                            if content.ends_with('\n') {
-                                result.push('\n');
-                            }
-                            return Some(result);
-                        }
-                    }
-                    fence_is_bash = true;
-                } else {
-                    fence_is_bash = false;
-                }
-            }
-            LineClass::Inside | LineClass::Outside => {}
+    let fences = crate::fence::markdown_fences(content);
+    // Terminator-preserving segments keep each line's own `\n`/`\r\n`, so a merge
+    // rewrites neither line endings nor the trailing-newline state. `split_inclusive`
+    // is index-aligned with the 1-based `str::lines()` numbering the fence policy
+    // uses, so line `N` is `segments[N - 1]`.
+    let segments: Vec<&str> = content.split_inclusive('\n').collect();
+    for (first_start, second_start) in pairs {
+        // `consecutive_bash_pairs` yields (first opener, second opener) line
+        // numbers; recover the first fence to find where its closer sits.
+        let Some(first) = fences.iter().find(|fence| fence.start_line == first_start) else {
+            continue;
+        };
+        // Gap between the first closer and the second opener, matching the slice
+        // `consecutive_bash_pairs` itself inspects.
+        let gap = &segments[first.end_line..second_start - 1];
+        if !gap.iter().all(|line| line.trim().is_empty()) {
+            continue; // Prose/HTML-comment gap: leave the diagnostic for a human.
         }
+        // Drop the first block's closing fence, the blank gap, and the second
+        // block's opening fence (1-based lines -> 0-based inclusive indices).
+        let remove_start = first.end_line - 1;
+        let remove_end = second_start - 1;
+        let mut result = String::with_capacity(content.len());
+        for (index, segment) in segments.iter().enumerate() {
+            if index < remove_start || index > remove_end {
+                result.push_str(segment);
+            }
+        }
+        return Some(result);
     }
     None
 }
@@ -1215,6 +1243,132 @@ mod tests {
         let content =
             "---\nname: test\n---\n```bash\necho a\n```\nsome text\n```bash\necho b\n```\n";
         assert!(merge_first_consecutive_bash(content).is_none());
+    }
+
+    #[test]
+    fn merge_bash_skips_pairs_the_shared_policy_never_flags() {
+        // Reason-bearing waiver in the first fence: deliberate tool boundary.
+        let waived = "```bash\n# lint-consecutive-bash: ok separate tool boundary needed\necho one\n```\n\n```bash\necho two\n```\n";
+        assert!(crate::fence::consecutive_bash_pairs(waived).is_empty());
+        assert!(merge_first_consecutive_bash(waived).is_none());
+
+        // Non-`bash` info strings are never S021, even with a blank-only gap.
+        for info in ["sh", "shell", ""] {
+            let content = format!("```{info}\necho one\n```\n\n```{info}\necho two\n```\n");
+            assert!(merge_first_consecutive_bash(&content).is_none(), "{info:?}");
+        }
+
+        // WRONG/CORRECT example pair (blank gap) is carved out by context.
+        let example = "WRONG then CORRECT:\n```bash\necho one\n```\n\n```bash\necho two\n```\n";
+        assert!(crate::fence::consecutive_bash_pairs(example).is_empty());
+        assert!(merge_first_consecutive_bash(example).is_none());
+
+        // Design-driver pause/resume pair (blank gap) is carved out.
+        let design = "```bash\npython3 python/cli.py design driver --action pause\n```\n\n```bash\npython3 python/cli.py design driver --action resume\n```\n";
+        assert!(crate::fence::consecutive_bash_pairs(design).is_empty());
+        assert!(merge_first_consecutive_bash(design).is_none());
+    }
+
+    #[test]
+    fn merge_bash_leaves_flagged_breadcrumb_gap_for_a_human() {
+        // A short breadcrumb does not create a tool boundary, so the pair is
+        // flagged — but the gap is not blank, so a mechanical merge would delete
+        // author content. Autofix must decline and leave the diagnostic.
+        let breadcrumb = "```bash\necho one\n```\nThen continue:\n```bash\necho two\n```\n";
+        assert_eq!(crate::fence::consecutive_bash_pairs(breadcrumb), [(1, 5)]);
+        assert!(merge_first_consecutive_bash(breadcrumb).is_none());
+    }
+
+    #[test]
+    fn merge_bash_merges_genuine_blank_gap_pair_and_is_idempotent() {
+        let genuine = "```bash\necho one\n```\n\n```bash\necho two\n```\n";
+        let merged = merge_first_consecutive_bash(genuine).unwrap();
+        assert_eq!(merged, "```bash\necho one\necho two\n```\n");
+        // The rewritten content re-lints clean and a second pass is a no-op.
+        assert!(crate::fence::consecutive_bash_pairs(&merged).is_empty());
+        assert!(merge_first_consecutive_bash(&merged).is_none());
+
+        // Directly adjacent fences (empty gap) merge too.
+        let adjacent = "```bash\necho one\n```\n```bash\necho two\n```\n";
+        assert_eq!(
+            merge_first_consecutive_bash(adjacent).unwrap(),
+            "```bash\necho one\necho two\n```\n"
+        );
+    }
+
+    #[test]
+    fn merge_bash_preserves_absent_trailing_newline() {
+        let no_newline = "```bash\necho one\n```\n\n```bash\necho two\n```";
+        let merged = merge_first_consecutive_bash(no_newline).unwrap();
+        assert_eq!(merged, "```bash\necho one\necho two\n```");
+        assert!(!merged.ends_with('\n'));
+    }
+
+    #[test]
+    fn merge_bash_preserves_crlf_line_endings() {
+        // Every retained line keeps its own terminator, so a CRLF file stays
+        // CRLF instead of degrading to mixed or LF-only endings.
+        let crlf = "```bash\r\necho one\r\n```\r\n\r\n```bash\r\necho two\r\n```\r\n";
+        let merged = merge_first_consecutive_bash(crlf).unwrap();
+        assert_eq!(merged, "```bash\r\necho one\r\necho two\r\n```\r\n");
+        assert!(!merged.contains("\r\r") && !merged.contains("\n\n"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn fix_consecutive_bash_merges_reference_file_blank_gap_pair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/demo/references").unwrap();
+        std::fs::write(
+            "skills/demo/references/guide.md",
+            "# Guide\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n",
+        )
+        .unwrap();
+
+        assert!(fix_consecutive_bash(
+            LintMode::Plugin,
+            &ExcludeSet::default(),
+            &LintConfig::default()
+        ));
+        assert_eq!(
+            std::fs::read_to_string("skills/demo/references/guide.md").unwrap(),
+            "# Guide\n\n```bash\necho one\necho two\n```\n"
+        );
+        // No flagged pair remains, so a second pass makes no change.
+        assert!(!fix_consecutive_bash(
+            LintMode::Plugin,
+            &ExcludeSet::default(),
+            &LintConfig::default()
+        ));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn fix_consecutive_bash_honors_reference_file_suppression() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/demo/references").unwrap();
+        let original = "# Guide\n\n```bash\necho one\n```\n\n```bash\necho two\n```\n";
+        std::fs::write("skills/demo/references/guide.md", original).unwrap();
+
+        std::fs::write(
+            "agent-lint.toml",
+            "[lint]\n[[lint.overrides]]\nfiles = [\"skills/demo/references/guide.md\"]\nsuppress = [\"S021\"]\n",
+        )
+        .unwrap();
+        let config = LintConfig::load(Path::new(".")).unwrap();
+        assert!(!fix_consecutive_bash(
+            LintMode::Plugin,
+            &ExcludeSet::default(),
+            &config
+        ));
+        assert_eq!(
+            std::fs::read_to_string("skills/demo/references/guide.md").unwrap(),
+            original
+        );
     }
 
     #[test]

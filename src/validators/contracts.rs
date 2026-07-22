@@ -750,20 +750,23 @@ fn grep_has_explicit_path(args: &[String]) -> bool {
     count >= if explicit_pattern { 1 } else { 2 }
 }
 
-fn validate_reference_consecutive_bash(
-    diag: &mut DiagnosticCollector,
-    exclude: &ExcludeSet,
+/// Repository-relative `references/*.md` paths (never `SKILL.md`) that S021
+/// scans, in deterministic order. Shared with the autofix so the validator and
+/// the fixer resolve the same reference files under the same roots and
+/// exclusions (`.claude/skills` in both modes, `skills` when `include_public`).
+pub(crate) fn reference_bash_markdown_paths(
     include_public: bool,
-) {
+    exclude: &ExcludeSet,
+) -> Vec<PathBuf> {
     let mut roots = vec![PathBuf::from(".claude/skills")];
     if include_public {
         roots.push(PathBuf::from("skills"));
     }
+    let mut paths = Vec::new();
     for root in roots {
         if !root.is_dir() {
             continue;
         }
-        let mut paths = Vec::new();
         for entry in traversal::recursive_files(&root, Path::new("."), Some(exclude)).entries {
             let path = entry.path;
             if path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
@@ -776,21 +779,29 @@ fn validate_reference_consecutive_bash(
             }
             paths.push(path);
         }
-        paths.sort();
-        for path in paths {
-            let Some(content) = read_text(&path, exclude) else {
-                continue;
-            };
-            for (first, second) in consecutive_bash_pairs(&content) {
-                diag.report_at(
-                    LintRule::ConsecutiveBash,
-                    &path,
-                    &format!(
-                        "{}:{first}: consecutive bash tool-call fences at lines {first} and {second}; combine them or add a reason-bearing lint-consecutive-bash waiver",
-                        path.display()
-                    ),
-                );
-            }
+    }
+    paths.sort();
+    paths
+}
+
+fn validate_reference_consecutive_bash(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    include_public: bool,
+) {
+    for path in reference_bash_markdown_paths(include_public, exclude) {
+        let Some(content) = read_text(&path, exclude) else {
+            continue;
+        };
+        for (first, second) in consecutive_bash_pairs(&content) {
+            diag.report_at(
+                LintRule::ConsecutiveBash,
+                &path,
+                &format!(
+                    "{}:{first}: consecutive bash tool-call fences at lines {first} and {second}; combine them or add a reason-bearing lint-consecutive-bash waiver",
+                    path.display()
+                ),
+            );
         }
     }
 }
