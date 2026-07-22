@@ -3129,7 +3129,30 @@ suppress = ["S033"]
         );
     }
 
-    // ── S038: time-sensitive ─────────────────────────────────────────
+    #[test]
+    #[serial_test::serial]
+    fn test_s037_bare_claude_plugin_root_suppresses_body_no_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        let mut body = "Some text without paths\n".repeat(300);
+        body.push_str("Use ${CLAUDE_PLUGIN_ROOT} for bundled resources.\n");
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!("---\nname: my-skill\ndescription: Use when you need a skill for testing purposes\n---\n{body}"),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::BodyNoRefs),
+            "bare ${{CLAUDE_PLUGIN_ROOT}} must suppress S037"
+        );
+    }
 
     #[test]
     #[serial_test::serial]

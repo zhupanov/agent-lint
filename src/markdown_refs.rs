@@ -162,12 +162,14 @@ pub fn is_root_plain_md_prefix(path: &str) -> bool {
 /// Classify whether a clause mandates loading the referenced prompt source.
 pub fn clause_is_mandatory_load(clause: &str) -> bool {
     let lower = clause.to_ascii_lowercase();
+    // Negation and conditional cues always win, including for explicit `@`
+    // directives (`@path if needed`, `never @path`).
+    if contains_phrase(&lower, NEGATION_CUES) {
+        return false;
+    }
     let trimmed = lower.trim();
     if trimmed.starts_with('@') {
         return true;
-    }
-    if contains_phrase(&lower, NEGATION_CUES) {
-        return false;
     }
     let has_verb = contains_word(&lower, &["read", "load", "open"]);
     let has_strength = contains_word(
@@ -183,6 +185,13 @@ pub fn clause_is_mandatory_load(clause: &str) -> bool {
         ],
     );
     has_verb && has_strength
+}
+
+/// Whether a live clause rejects an explicit `@` import from the always-loaded
+/// closure. Explicit `@` directives are mandatory without strength cues, but
+/// still honor negation and conditional prose.
+pub fn clause_rejects_mandatory_at_import(clause: &str) -> bool {
+    contains_phrase(&clause.to_ascii_lowercase(), NEGATION_CUES)
 }
 
 const NEGATION_CUES: &[&str] = &[
@@ -483,6 +492,20 @@ mod tests {
             refs[0].clause.as_deref().unwrap()
         ));
         assert!(clause_is_mandatory_load(refs[1].clause.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn explicit_at_imports_respect_negation_before_mandatory_positive() {
+        assert!(clause_is_mandatory_load("@reference.md"));
+        assert!(!clause_is_mandatory_load("@reference.md if needed"));
+        assert!(!clause_is_mandatory_load("never @reference.md"));
+        assert!(!clause_rejects_mandatory_at_import("@reference.md"));
+        assert!(clause_rejects_mandatory_at_import(
+            "Do not load @reference.md"
+        ));
+        assert!(clause_rejects_mandatory_at_import(
+            "@reference.md only when required"
+        ));
     }
 
     #[test]

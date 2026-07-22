@@ -40,6 +40,10 @@ static RE_BARE_MARKDOWN_FILE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?:^|[^A-Za-z0-9_./:-])[A-Za-z0-9][A-Za-z0-9._-]*\.md\b"#).unwrap()
 });
 
+// S037: Bare plugin-root variable is a retained pre-#446 file-reference positive.
+static RE_BARE_CLAUDE_PLUGIN_ROOT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}").unwrap());
+
 // S038: Time-sensitive
 static RE_YEAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b20[2-3][0-9]\b").unwrap());
 
@@ -360,6 +364,7 @@ fn body_has_file_reference(body: &str, links: &[crate::markdown::MarkdownLink]) 
         || RE_BODY_FILE_PATH.is_match(body)
         || RE_BODY_REFERENCE_DIRECTORY.is_match(body)
         || RE_BARE_MARKDOWN_FILE.is_match(body)
+        || RE_BARE_CLAUDE_PLUGIN_ROOT.is_match(body)
 }
 
 fn link_destination_is_repository_relative(destination: &str) -> bool {
@@ -691,6 +696,7 @@ mod tests {
             "See *guide.md* for the full procedure.",
             "Run ${CLAUDE_PLUGIN_ROOT}/tools/check.rb.",
             "Inspect templates/default before writing output.",
+            "Use ${CLAUDE_PLUGIN_ROOT} for bundled resources.",
         ] {
             assert!(has_reference(body), "expected reference in: {body}");
         }

@@ -7171,3 +7171,157 @@ fn plugin_name_rules_distinguish_unusable_names_from_format_warnings_across_mode
     assert_eq!(diagnostics[0]["code"], "M023");
     assert_eq!(diagnostics[0]["severity"], "error");
 }
+
+#[test]
+fn l001_ignores_package_manager_scopes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "pnpm add @scope/package\nnpm install @scope/package@1.2.3\nyarn add -D \"@scope/package\"\nbun remove @scope/package\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "L001", "."]);
+    assert!(
+        output.status.success(),
+        "package scopes must not fail L001: {}",
+        stderr(&output)
+    );
+    let report = json(&output);
+    assert!(report["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn s062_counts_raw_at_imports_in_closure() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill_dir = tmp.path().join(".claude/skills/demo");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "line\nline\nline\nline\n@reference.md\n",
+    )
+    .unwrap();
+    std::fs::write(
+        skill_dir.join("reference.md"),
+        "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nskill-closure-max-lines = 14\n",
+    )
+    .unwrap();
+
+    let over = run_in(tmp.path(), &["--format", "json", "--only", "S062", "."]);
+    let over_report = json(&over);
+    assert!(
+        over_report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "S062"),
+        "raw @ import must count toward S062: {over_report}"
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nskill-closure-max-lines = 15\n",
+    )
+    .unwrap();
+    let equal = run_in(tmp.path(), &["--format", "json", "--only", "S062", "."]);
+    assert!(
+        equal.status.success(),
+        "equality boundary must pass: {}",
+        stderr(&equal)
+    );
+    assert!(json(&equal)["diagnostics"].as_array().unwrap().is_empty());
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.prompt-source-budgets]]
+name = "demo"
+roots = [".claude/skills/demo/SKILL.md"]
+closure-max-lines = 14
+"#,
+    )
+    .unwrap();
+    let named = run_in(tmp.path(), &["--format", "json", "--only", "S062", "."]);
+    let named_report = json(&named);
+    assert!(
+        named_report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "S062"),
+        "named budget must count raw @ import: {named_report}"
+    );
+
+    let report = run_in(tmp.path(), &["--closure-report"]);
+    assert!(report.status.success(), "{}", stderr(&report));
+    let rows: Value = serde_json::from_slice(&report.stdout).unwrap();
+    let closure_lines = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row["group"] == "demo"
+                && row["source_set"] == "always"
+                && row["scope"] == "closure"
+                && row["metric"] == "lines"
+        })
+        .expect("closure lines row");
+    assert_eq!(closure_lines["measured_value"], 15);
+}
+
+#[test]
+fn s037_cli_accepts_bare_claude_plugin_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"s037-root","version":"1.0.0","description":"Fixture"}"#,
+    )
+    .unwrap();
+    let skill = tmp.path().join("skills/s037-root/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let mut body = "Some text without paths\n".repeat(300);
+    body.push_str("Use ${CLAUDE_PLUGIN_ROOT} for bundled resources.\n");
+    std::fs::write(
+        &skill,
+        format!(
+            "---\nname: s037-root\ndescription: Use when validating bare plugin root references in a plugin skill\n---\n{body}"
+        ),
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S037", "."]);
+    assert!(
+        output.status.success(),
+        "bare ${{CLAUDE_PLUGIN_ROOT}} must suppress S037: {}",
+        stderr(&output)
+    );
+    assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+
+    let no_ref_body = "Some text without paths\n".repeat(301);
+    std::fs::write(
+        skill,
+        format!(
+            "---\nname: s037-root\ndescription: Use when validating bare plugin root references in a plugin skill\n---\n{no_ref_body}"
+        ),
+    )
+    .unwrap();
+    let missing = run_in(tmp.path(), &["--format", "json", "--only", "S037", "."]);
+    let missing_report = json(&missing);
+    assert!(
+        missing_report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "S037"),
+        "long body without references must still emit S037: {missing_report}"
+    );
+}

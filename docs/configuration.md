@@ -124,14 +124,20 @@ Inline-code references whose first normalized component is `skills`,
 `.claude/skills`, `docs`, `agents`, or `scripts` resolve from the repository
 root; every other inline-code relative reference (including `references/...`
 and safe `../...`) resolves from the owning source file. Plain-path extraction
-is limited to those same repository-root prefixes. The selected base is never
+is limited to those same repository-root prefixes. Live raw `@path.md`
+directives in authored prose also enter the always-loaded closure and always
+resolve source-relatively (no repository-root fallback). Only `.md` targets
+participate in prompt-source budgets; non-Markdown `@` imports remain an
+instruction-graph concern for D004 and L001--L004. The selected base is never
 retried against the other base when missing. A clause enters the always-loaded
-closure only for an explicit `@` import or when it contains `read|load|open`
-plus a strength cue (`before|first|completely|always|entire|required|must`)
-and no negation/conditional cue (`do not`, `don't`, `never`, `must not`,
-`need not`, `cannot`, `can't`, `without`, `if`, `when`, `unless`, `as needed`,
-`optional`, `only when`, or `may`). Fenced/indented code, blockquotes, HTML
-comments, and example sections are excluded.
+closure for an explicit `@` import without requiring `read|load|open` strength
+cues, or when it contains `read|load|open` plus a strength cue
+(`before|first|completely|always|entire|required|must`), provided it has no
+negation/conditional cue (`do not`, `don't`, `never`, `must not`, `need not`,
+`cannot`, `can't`, `without`, `if`, `when`, `unless`, `as needed`, `optional`,
+`only when`, or `may`). Negation and conditional cues are checked before the
+explicit-`@` positive, so `@path.md if needed` stays out. Fenced/indented code,
+blockquotes, HTML comments, and example sections are excluded.
 
 When `script-inventory` is set, blank lines and full-line `#` comments are
 ignored and every other line must name an existing regular supported script

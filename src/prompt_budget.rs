@@ -2,9 +2,12 @@
 
 use crate::config::{PromptMetricCaps, PromptSourceBudget};
 use crate::fence::lines_outside_fences;
+use crate::live_instructions::example_scopes_for;
+use crate::markdown::MarkdownDocument;
 use crate::markdown_refs::{
-    MarkdownRefKind, clause_is_mandatory_load, is_root_plain_md_prefix,
-    markdown_references as structured_refs, percent_decode_once, prompt_resolution_base,
+    MarkdownRefKind, clause_is_mandatory_load, clause_rejects_mandatory_at_import,
+    is_root_plain_md_prefix, markdown_references as structured_refs, percent_decode_once,
+    prompt_resolution_base,
 };
 use crate::repo_path::{PathProbe, ResolutionBase, normalize_separators, resolve_repo_path};
 use regex::Regex;
@@ -100,7 +103,72 @@ pub fn markdown_references(source_path: &Path, content: &str) -> Vec<PathBuf> {
             add_resolved_reference(source_path, raw, ResolutionBase::RepositoryRoot, &mut refs);
         }
     }
+    collect_live_raw_at_md_references(source_path, content, &mut refs);
     refs.into_iter().collect()
+}
+
+/// Live raw `@path.md` directives are mandatory without strength cues, resolve
+/// source-relatively only, and honor the shared live-prose exclusions.
+fn collect_live_raw_at_md_references(
+    source_path: &Path,
+    content: &str,
+    refs: &mut BTreeSet<PathBuf>,
+) {
+    let document = MarkdownDocument::parse(content);
+    let example_scopes = example_scopes_for(&document);
+    for (line, is_example) in document.body_prose().iter().zip(example_scopes) {
+        if is_example {
+            continue;
+        }
+        if clause_rejects_mandatory_at_import(&line.text) {
+            continue;
+        }
+        let chars: Vec<char> = line.text.chars().collect();
+        let mut index = 0;
+        while index < chars.len() {
+            if chars[index] != '@'
+                || !raw_at_token_boundary(chars.get(index.wrapping_sub(1)).copied())
+                || document.links().iter().any(|link| {
+                    (link.line..=link.end_line).contains(&line.line)
+                        && (line.line != link.line || index + 1 >= link.start_column)
+                        && (line.line != link.end_line || index < link.end_column)
+                })
+            {
+                index += 1;
+                continue;
+            }
+            index += 1;
+            let token_start = index;
+            while index < chars.len() && !chars[index].is_whitespace() {
+                index += 1;
+            }
+            let mut token_end = index;
+            while token_end > token_start
+                && matches!(
+                    chars[token_end - 1],
+                    ')' | ']' | '}' | '>' | ',' | '.' | ';' | ':' | '!' | '?'
+                )
+            {
+                token_end -= 1;
+            }
+            if token_end == token_start {
+                continue;
+            }
+            let raw: String = chars[token_start..token_end].iter().collect();
+            if raw.contains('@') || raw.starts_with('/') || raw.starts_with("~/") {
+                continue;
+            }
+            let path = raw.split(['#', ':']).next().unwrap_or(&raw);
+            if !path.ends_with(".md") || path.contains(['$', '{', '}', '<', '>', '*']) {
+                continue;
+            }
+            add_resolved_reference(source_path, path, ResolutionBase::SourceRelative, refs);
+        }
+    }
+}
+
+fn raw_at_token_boundary(previous: Option<char>) -> bool {
+    previous.is_none_or(|ch| ch.is_whitespace() || matches!(ch, '(' | '[' | '{' | '<' | '"' | '\''))
 }
 
 fn add_resolved_reference(
@@ -380,5 +448,110 @@ mod tests {
         let result = measure_budget(&budget).unwrap();
         assert_eq!(result.closure.lines, 5);
         assert_eq!(result.closure_files.len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn raw_at_imports_are_mandatory_and_source_relative() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all(".claude/skills/demo").unwrap();
+        fs::write(
+            ".claude/skills/demo/SKILL.md",
+            "line\nline\nline\nline\n@reference.md\n",
+        )
+        .unwrap();
+        fs::write(
+            ".claude/skills/demo/reference.md",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .unwrap();
+        fs::write("reference.md", "shadow\n").unwrap();
+
+        let equality = PromptSourceBudget {
+            name: "demo".into(),
+            roots: vec![".claude/skills/demo/SKILL.md".into()],
+            conditional_sources: vec![],
+            root_caps: PromptMetricCaps::default(),
+            closure_caps: PromptMetricCaps {
+                lines: Some(15),
+                ..PromptMetricCaps::default()
+            },
+            conditional_caps: PromptMetricCaps::default(),
+        };
+        let measured = measure_budget(&equality).unwrap();
+        assert_eq!(measured.closure.lines, 15);
+        assert_eq!(
+            measured.closure_files,
+            [
+                PathBuf::from(".claude/skills/demo/SKILL.md"),
+                PathBuf::from(".claude/skills/demo/reference.md"),
+            ]
+            .into_iter()
+            .collect()
+        );
+        let over = PromptSourceBudget {
+            name: "demo".into(),
+            roots: vec![".claude/skills/demo/SKILL.md".into()],
+            conditional_sources: vec![],
+            root_caps: PromptMetricCaps::default(),
+            closure_caps: PromptMetricCaps {
+                lines: Some(14),
+                ..PromptMetricCaps::default()
+            },
+            conditional_caps: PromptMetricCaps::default(),
+        };
+        assert!(measure_budget(&over).unwrap().closure.lines > 14);
+
+        let refs = markdown_references(
+            Path::new(".claude/skills/demo/SKILL.md"),
+            "See @reference.md for details.\n",
+        );
+        assert_eq!(
+            refs,
+            vec![PathBuf::from(".claude/skills/demo/reference.md")]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn raw_at_hard_negatives_stay_out_of_closure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo").unwrap();
+        fs::write("skills/demo/optional.md", "child\n").unwrap();
+        fs::write("skills/demo/notes.txt", "not markdown\n").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("optional.md", "skills/demo/link.md").unwrap();
+        }
+
+        let content = "\
+---
+name: demo
+description: fixture
+---
+Do not load @optional.md
+@optional.md if needed
+> @optional.md
+<!-- @optional.md -->
+`@optional.md`
+[@optional.md](@optional.md)
+```text
+@optional.md
+```
+@notes.txt
+@/tmp/outside.md
+@~/outside.md
+@../outside.md
+";
+        #[cfg(unix)]
+        let content = format!("{content}@link.md\n");
+        fs::write("skills/demo/SKILL.md", &content).unwrap();
+
+        let refs = markdown_references(Path::new("skills/demo/SKILL.md"), &content);
+        assert!(refs.is_empty(), "unexpected refs: {refs:?}");
     }
 }
