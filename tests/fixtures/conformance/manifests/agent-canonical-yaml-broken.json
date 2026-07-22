@@ -1,0 +1,27 @@
+{
+  "class": "broken",
+  "repository": "agent-canonical-yaml-broken",
+  "covers": ["plugin-mode", "normal", "json", "agent-canonical-yaml"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A002,A003,A008,A009,A010,A011", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "A009",
+      "name": "agent-desc-short",
+      "severity": "warning",
+      "subject_path": "agents/routing.md",
+      "suggestion": "add concrete capability and when-to-use context"
+    },
+    {
+      "code": "A011",
+      "name": "agent-desc-redundant",
+      "severity": "warning",
+      "subject_path": "agents/routing.md",
+      "suggestion": "add concrete capability plus when-to-use context"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

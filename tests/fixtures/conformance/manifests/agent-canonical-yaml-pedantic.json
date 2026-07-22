@@ -1,0 +1,20 @@
+{
+  "class": "broken",
+  "repository": "agent-canonical-yaml-pedantic",
+  "covers": ["basic-mode", "pedantic", "json", "agent-canonical-yaml"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--pedantic", "--only", "A009", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "A009",
+      "name": "agent-desc-short",
+      "severity": "error",
+      "subject_path": ".claude/agents/short.md",
+      "suggestion": "add concrete capability and when-to-use context"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

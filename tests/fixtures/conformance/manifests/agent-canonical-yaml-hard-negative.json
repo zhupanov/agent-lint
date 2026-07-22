@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "agent-canonical-yaml-hard-negative",
+  "covers": ["basic-mode", "normal", "json", "agent-canonical-yaml"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A002,A003,A008,A009,A010,A011", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

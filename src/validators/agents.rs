@@ -1,6 +1,6 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
-use crate::frontmatter;
+use crate::frontmatter::{self, LeadingFrontmatterState};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
@@ -14,7 +14,8 @@ use std::sync::LazyLock;
 
 use super::common::{
     NEVER_INVENT_PROHIBITION, RE_NAME_INVALID, has_bound_or_fallback, is_known_tool_name,
-    is_valid_model_value, normalize_emphasis_for_gates, sentence_ranges,
+    is_valid_model_value, normalize_description_suffix, normalize_emphasis_for_gates,
+    sentence_ranges,
 };
 
 /// Jaccard similarity threshold (strict greater-than).
@@ -136,23 +137,28 @@ static UNREADABLE_EVIDENCE_OUTCOME: LazyLock<Regex> = LazyLock::new(|| {
 /// Returns `true` when the description adds no meaningful information beyond
 /// what the name already conveys.
 fn is_desc_redundant(name: &str, desc: &str) -> bool {
-    let name_lower = name.to_lowercase().replace('-', " ");
-    let name_words: HashSet<&str> = name_lower.split_whitespace().collect();
+    let name_words: HashSet<String> = name
+        .to_lowercase()
+        .replace('-', " ")
+        .split_whitespace()
+        .map(normalize_agent_redundancy_token)
+        .collect();
 
-    let desc_lower = desc.to_lowercase();
     // Strip leading/trailing punctuation from each token so "analyzer." matches "analyzer".
-    let desc_stripped: Vec<String> = desc_lower
+    let desc_stripped: Vec<String> = desc
+        .to_lowercase()
         .split_whitespace()
         .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
         .filter(|w| !w.is_empty())
+        .map(|word| normalize_agent_redundancy_token(&word))
         .collect();
     let desc_word_count = desc_stripped.len();
 
     let stopwords: HashSet<&str> = STOPWORDS.iter().copied().collect();
-    let desc_content_words: HashSet<&str> = desc_stripped
+    let desc_content_words: HashSet<String> = desc_stripped
         .iter()
-        .map(|w| w.as_str())
-        .filter(|w| !stopwords.contains(w))
+        .filter(|w| !stopwords.contains(w.as_str()))
+        .cloned()
         .collect();
 
     // Jaccard path: flag short descriptions with high word overlap.
@@ -181,6 +187,18 @@ fn is_desc_redundant(name: &str, desc: &str) -> bool {
     }
 
     false
+}
+
+/// Preserve #319's shared deterministic suffix normalization, then apply the
+/// two recorded agent-role forms. This remains lexical and finite rather than
+/// using a general stemmer or semantic model.
+fn normalize_agent_redundancy_token(token: &str) -> String {
+    let normalized = normalize_description_suffix(token);
+    match normalized.as_str() {
+        "reviewer" => "review".to_string(),
+        "runner" => "run".to_string(),
+        _ => normalized,
+    }
 }
 
 /// V7: Validate agents/*.md frontmatter.
@@ -321,115 +339,95 @@ fn validate_agent_file(
         InstructionSurfaceKind::Agent,
         &markdown,
     );
-    let fm_lines = match markdown.frontmatter() {
-        Some(lines) => lines,
-        None => {
-            diag.report(
+    let fm_lines: Vec<String> = match frontmatter::leading_frontmatter(content) {
+        LeadingFrontmatterState::Absent { .. } => {
+            let bom_hint = if starts_with_bom_delimiter(content) {
+                "; file starts with a UTF-8 byte-order mark; remove it"
+            } else {
+                ""
+            };
+            diag.report_with(
                 LintRule::AgentFrontmatterMalformed,
-                &format!(
-                    "{agent_path}: malformed frontmatter (must start with '---' on line 1, must have closing '---')"
-                ),
+                &format!("{agent_path}: frontmatter must start with '---' on line 1{bom_hint}"),
+                DiagnosticMetadata::at_line(1)
+                    .with_suggestion("insert '---' as the first line of the frontmatter"),
             );
             // X002–X005 still apply when frontmatter is broken.
             super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
             prompt_pass.validate(&prompt_document, diag);
             return;
         }
+        LeadingFrontmatterState::Unterminated { .. } => {
+            diag.report_with(
+                LintRule::AgentFrontmatterMalformed,
+                &format!("{agent_path}: frontmatter opening delimiter has no closing '---'"),
+                DiagnosticMetadata::at_line(1)
+                    .with_suggestion("insert a closing '---' delimiter after the frontmatter"),
+            );
+            super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
+            prompt_pass.validate(&prompt_document, diag);
+            return;
+        }
+        LeadingFrontmatterState::Complete(block) => block.yaml.lines().map(str::to_owned).collect(),
     };
 
     // X001: strict YAML; CC-AG-011: hooks schema when present.
-    let parsed_frontmatter = match frontmatter::parse_yaml_strict(fm_lines) {
-        Ok(yaml) => {
-            let agent_frontmatter = AgentFrontmatter::from_yaml(&yaml);
-            // A028 owns unsupported plugin fields outright, including hooks.
-            if !surface.is_plugin_agent()
-                && let Some(hooks) = yaml.get("hooks")
-            {
-                super::hook_schema::validate_frontmatter_hooks(
-                    hooks,
-                    &format!("{agent_path} frontmatter"),
-                    diag,
-                );
+    let (parsed_frontmatter, non_mapping_frontmatter) =
+        match frontmatter::parse_yaml_strict(&fm_lines) {
+            Ok(yaml) => {
+                let agent_frontmatter = AgentFrontmatter::from_yaml(&yaml, &fm_lines);
+                // A028 owns unsupported plugin fields outright, including hooks.
+                if !surface.is_plugin_agent()
+                    && let Some(hooks) = yaml.get("hooks")
+                {
+                    super::hook_schema::validate_frontmatter_hooks(
+                        hooks,
+                        &format!("{agent_path} frontmatter"),
+                        diag,
+                    );
+                }
+                let non_mapping = agent_frontmatter.is_none();
+                (agent_frontmatter, non_mapping)
             }
-            agent_frontmatter
-        }
-        Err(err) => {
-            let metadata = match err.column {
-                Some(column) => DiagnosticMetadata::at_point(err.file_line, column),
-                None => DiagnosticMetadata::at_line(err.file_line),
-            };
-            diag.report_with(
-                LintRule::FrontmatterYamlInvalid,
-                &format!(
-                    "{agent_path}:{}: frontmatter is not valid YAML: {}",
-                    err.file_line, err.message
-                ),
-                metadata,
-            );
-            None
-        }
-    };
+            Err(err) => {
+                let metadata = match err.column {
+                    Some(column) => DiagnosticMetadata::at_point(err.file_line, column),
+                    None => DiagnosticMetadata::at_line(err.file_line),
+                };
+                diag.report_with(
+                    LintRule::FrontmatterYamlInvalid,
+                    &format!(
+                        "{agent_path}:{}: frontmatter is not valid YAML: {}",
+                        err.file_line, err.message
+                    ),
+                    metadata,
+                );
+                (None, false)
+            }
+        };
 
     // X002–X005 on the full agent markdown file.
     super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
 
-    let fm_name = frontmatter::get_field(fm_lines, "name");
-    let fm_desc = frontmatter::get_field(fm_lines, "description");
-
-    if fm_name.is_none() {
-        diag.report(
+    if let Some(frontmatter) = parsed_frontmatter.as_ref() {
+        check_agent_required_fields(diag, agent_path, frontmatter);
+        if let (RequiredAgentString::Valid(name), RequiredAgentString::Valid(description)) = (
+            frontmatter.required_string("name"),
+            frontmatter.required_string("description"),
+        ) {
+            check_agent_name_and_description(diag, agent_path, frontmatter, name, description);
+        }
+    } else if non_mapping_frontmatter {
+        // Valid YAML with a non-mapping root has exactly one structural owner.
+        diag.report_with(
             LintRule::AgentFieldMissing,
-            &format!("{agent_path}: missing required frontmatter field 'name'"),
+            &format!(
+                "{agent_path}: agent frontmatter must be a mapping with required string fields"
+            ),
+            DiagnosticMetadata::at_line(1).with_suggestion(
+                "make the frontmatter a YAML mapping with name and description strings",
+            ),
         );
-    }
-    if fm_desc.is_none() {
-        diag.report(
-            LintRule::AgentFieldMissing,
-            &format!("{agent_path}: missing required frontmatter field 'description'"),
-        );
-    }
-
-    // A008: agent description too long
-    // A009: agent description too short
-    if let Some(ref desc) = fm_desc {
-        let char_count = desc.chars().count();
-        if char_count > 1024 {
-            diag.report(
-                LintRule::AgentDescLong,
-                &format!("{agent_path}: description exceeds 1024 characters ({char_count})"),
-            );
-        }
-        if char_count < 20 {
-            diag.report(
-                LintRule::AgentDescShort,
-                &format!("{agent_path}: description is under 20 characters ({char_count})"),
-            );
-        }
-    }
-
-    // A011: agent description too similar to agent name
-    if let Some(ref n) = fm_name {
-        if let Some(ref desc) = fm_desc {
-            if is_desc_redundant(n, desc) {
-                diag.report(
-                    LintRule::AgentDescRedundant,
-                    &format!("{agent_path}: description is too similar to the agent name '{n}'"),
-                );
-            }
-        }
-    }
-
-    // A010: agent name invalid characters
-    if let Some(ref n) = fm_name {
-        if RE_NAME_INVALID.is_match(n) {
-            diag.report(
-                LintRule::AgentNameInvalid,
-                &format!(
-                    "{agent_path}: name '{}' contains characters outside [a-z0-9-]",
-                    n
-                ),
-            );
-        }
     }
 
     let max_turns = parsed_frontmatter
@@ -453,6 +451,18 @@ fn validate_agent_file(
         );
     }
     prompt_pass.validate(&prompt_document, diag);
+}
+
+/// Return true only for a UTF-8 BOM immediately followed by an otherwise
+/// correct opening delimiter on line 1. This is source recognition for the
+/// A002 hint, not a second frontmatter parser.
+fn starts_with_bom_delimiter(content: &str) -> bool {
+    let Some(rest) = content.strip_prefix('\u{feff}') else {
+        return false;
+    };
+    let line = rest.split_once('\n').map_or(rest, |(line, _)| line);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    line == "---"
 }
 
 /// Recognized agent frontmatter fields. Any other top-level key triggers A027
@@ -520,11 +530,27 @@ impl AgentSurface {
 #[derive(Clone)]
 struct AgentFrontmatter {
     mapping: crate::yaml::Mapping,
+    key_lines: HashMap<String, usize>,
 }
 
 impl AgentFrontmatter {
-    fn from_yaml(value: &crate::yaml::Value) -> Option<Self> {
-        value.as_mapping().cloned().map(|mapping| Self { mapping })
+    fn from_yaml(value: &crate::yaml::Value, fm_lines: &[String]) -> Option<Self> {
+        let mapping = value.as_mapping()?.clone();
+        // The strict Value remains the semantic authority. The CST is used
+        // only to map already-accepted canonical keys back to source lines.
+        let source = fm_lines.join("\n");
+        let document = noyalib::cst::parse_document(&source).ok();
+        let key_lines = mapping
+            .keys()
+            .filter_map(|key| {
+                document
+                    .as_ref()
+                    .and_then(|document| document.span_at(key))
+                    .and_then(|(start, end)| SourceSpan::from_byte_range(&source, start..end))
+                    .map(|span| (key.clone(), span.start().line_number() + 1))
+            })
+            .collect();
+        Some(Self { mapping, key_lines })
     }
 
     fn value(&self, key: &str) -> Option<&crate::yaml::Value> {
@@ -537,6 +563,112 @@ impl AgentFrontmatter {
 
     fn keys(&self) -> impl Iterator<Item = &str> {
         self.mapping.keys().map(String::as_str)
+    }
+
+    fn field_line(&self, key: &str) -> Option<usize> {
+        self.key_lines.get(key).copied()
+    }
+
+    fn required_string(&self, key: &str) -> RequiredAgentString<'_> {
+        match self.value(key) {
+            None => RequiredAgentString::Missing,
+            Some(value) => match value.as_str() {
+                Some(string) if string.trim().is_empty() => RequiredAgentString::Blank,
+                Some(string) => RequiredAgentString::Valid(string),
+                None => RequiredAgentString::WrongType(yaml_type(value)),
+            },
+        }
+    }
+}
+
+enum RequiredAgentString<'a> {
+    Missing,
+    Blank,
+    WrongType(&'static str),
+    Valid(&'a str),
+}
+
+fn check_agent_required_fields(
+    diag: &mut DiagnosticCollector,
+    agent_path: &str,
+    frontmatter: &AgentFrontmatter,
+) {
+    for key in ["name", "description"] {
+        let (message, suggestion) = match frontmatter.required_string(key) {
+            RequiredAgentString::Missing => (
+                format!("{agent_path}: missing required frontmatter field '{key}'"),
+                format!(
+                    "add {key}: <{}>",
+                    if key == "name" {
+                        "agent-name"
+                    } else {
+                        "routing description"
+                    }
+                ),
+            ),
+            RequiredAgentString::Blank => (
+                format!("{agent_path}: required frontmatter field '{key}' must not be blank"),
+                format!("set {key} to a non-blank string"),
+            ),
+            RequiredAgentString::WrongType(actual) => (
+                format!(
+                    "{agent_path}: required frontmatter field '{key}' must be a string (found {actual})"
+                ),
+                format!("replace {key} with a string value"),
+            ),
+            RequiredAgentString::Valid(_) => continue,
+        };
+        let line = frontmatter.field_line(key).unwrap_or(1);
+        diag.report_with(
+            LintRule::AgentFieldMissing,
+            &message,
+            DiagnosticMetadata::at_line(line).with_suggestion(suggestion),
+        );
+    }
+}
+
+fn check_agent_name_and_description(
+    diag: &mut DiagnosticCollector,
+    agent_path: &str,
+    frontmatter: &AgentFrontmatter,
+    name: &str,
+    description: &str,
+) {
+    let name_line = frontmatter.field_line("name").unwrap_or(1);
+    let description_line = frontmatter.field_line("description").unwrap_or(1);
+    let character_count = description.chars().count();
+    if character_count > 1024 {
+        diag.report_with(
+            LintRule::AgentDescLong,
+            &format!("{agent_path}: description exceeds 1024 characters ({character_count})"),
+            DiagnosticMetadata::at_line(description_line)
+                .with_suggestion("shorten the description to 1024 characters or fewer"),
+        );
+    }
+    let trimmed_count = description.trim().chars().count();
+    if trimmed_count < 20 {
+        diag.report_with(
+            LintRule::AgentDescShort,
+            &format!("{agent_path}: description routing-quality advisory is under 20 characters ({trimmed_count})"),
+            DiagnosticMetadata::at_line(description_line)
+                .with_suggestion("add concrete capability and when-to-use context"),
+        );
+    }
+    if RE_NAME_INVALID.is_match(name) {
+        diag.report_with(
+            LintRule::AgentNameInvalid,
+            &format!("{agent_path}: name contains characters outside [a-z0-9-]"),
+            DiagnosticMetadata::at_line(name_line)
+                .with_suggestion("use only lowercase letters, digits, and hyphens"),
+        );
+    }
+    if is_desc_redundant(name.trim(), description.trim()) {
+        diag.report_with(
+            LintRule::AgentDescRedundant,
+            &format!("{agent_path}: description substantially restates the name"),
+            DiagnosticMetadata::at_line(description_line)
+                .with_suggestion("add concrete capability plus when-to-use context"),
+        );
     }
 }
 
@@ -2380,7 +2512,7 @@ Body ## Reviewer
         assert!(
             diag.errors()
                 .iter()
-                .any(|e| e.contains("too similar to the agent name"))
+                .any(|e| e.contains("substantially restates the name"))
         );
     }
 
@@ -2402,7 +2534,7 @@ Body ## Reviewer
             !diag
                 .errors()
                 .iter()
-                .any(|e| e.contains("too similar to the agent name"))
+                .any(|e| e.contains("substantially restates the name"))
         );
     }
 
@@ -2497,7 +2629,7 @@ Body ## Reviewer
             !diag
                 .errors()
                 .iter()
-                .any(|e| e.contains("too similar to the agent name")),
+                .any(|e| e.contains("substantially restates the name")),
             "Existing fixture should not trigger A011"
         );
     }
@@ -3551,7 +3683,8 @@ Body ## Reviewer
             ("tools:\n  - Bash\n  - \"Read\"\n", vec!["Bash", "Read"]),
         ] {
             let yaml = crate::yaml::parse(source).unwrap();
-            let frontmatter = AgentFrontmatter::from_yaml(&yaml).unwrap();
+            let lines = vec!["name: example".to_string()];
+            let frontmatter = AgentFrontmatter::from_yaml(&yaml, &lines).unwrap();
             match canonical_string_list(&frontmatter, "tools") {
                 StringList::Valid(items) => assert_eq!(items, expected),
                 _ => panic!("expected a canonical string list"),
@@ -3559,7 +3692,8 @@ Body ## Reviewer
         }
 
         let yaml = crate::yaml::parse("tools: [Bash, 1]\n").unwrap();
-        let frontmatter = AgentFrontmatter::from_yaml(&yaml).unwrap();
+        let lines = vec!["tools: 42".to_string()];
+        let frontmatter = AgentFrontmatter::from_yaml(&yaml, &lines).unwrap();
         assert!(matches!(
             canonical_string_list(&frontmatter, "tools"),
             StringList::Invalid
@@ -3665,6 +3799,145 @@ Body ## Reviewer
                 diag.diagnostics()
             );
         });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a002_distinguishes_opening_and_closing_delimiter_and_bom() {
+        for (content, expected) in [
+            ("name: general\n", "must start with '---' on line 1"),
+            (
+                "---\nname: general\n",
+                "opening delimiter has no closing '---'",
+            ),
+            (
+                "\u{feff}---\nname: general\ndescription: A useful routing description\n---\n",
+                "file starts with a UTF-8 byte-order mark; remove it",
+            ),
+        ] {
+            run_agent(content, |diag| {
+                let findings: Vec<_> = diag
+                    .diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.rule == LintRule::AgentFrontmatterMalformed)
+                    .collect();
+                assert_eq!(findings.len(), 1);
+                assert!(findings[0].message.contains(expected));
+                assert_eq!(findings[0].location, Some(SourceSpan::line(1)));
+                assert!(findings[0].suggestion.is_some());
+                assert!(!diag.diagnostics().iter().any(|diagnostic| {
+                    matches!(
+                        diagnostic.rule,
+                        LintRule::AgentFieldMissing
+                            | LintRule::AgentDescLong
+                            | LintRule::AgentDescShort
+                            | LintRule::AgentNameInvalid
+                            | LintRule::AgentDescRedundant
+                    )
+                }));
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a003_a008_to_a011_consume_only_canonical_yaml_values() {
+        let folded = "---\n\"name\": folded-reviewer\n\"description\": >-\n  Reviews folded YAML agent descriptions without line parser artifacts\n---\nBody\n";
+        run_private_agent(folded, |diag| {
+            assert!(!diag.diagnostics().iter().any(|diagnostic| {
+                matches!(
+                    diagnostic.rule,
+                    LintRule::AgentFieldMissing | LintRule::AgentDescShort
+                )
+            }));
+        });
+
+        let short_with_comment = "---\nname: concise\ndescription: \"1234567890123456789\" # canonical value is 19 chars\n---\nBody\n";
+        run_agent(short_with_comment, |diag| {
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.rule == LintRule::AgentDescShort)
+                    .count(),
+                1
+            );
+        });
+
+        let blank = "---\nname: concise\ndescription: \"                    \"\n---\nBody\n";
+        run_agent(blank, |diag| {
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.rule == LintRule::AgentFieldMissing)
+                    .count(),
+                1
+            );
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == LintRule::AgentDescShort)
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a003_has_single_structural_owner_and_ordered_field_findings() {
+        run_agent("---\n- not\n- a mapping\n---\nBody\n", |diag| {
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.rule == LintRule::AgentFieldMissing)
+                    .count(),
+                1
+            );
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.rule == LintRule::FrontmatterYamlInvalid)
+            );
+        });
+        run_agent(
+            "---\nname: null\ndescription: [not, text]\n---\nBody\n",
+            |diag| {
+                let messages: Vec<_> = diag
+                    .diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.rule == LintRule::AgentFieldMissing)
+                    .map(|diagnostic| diagnostic.message.as_str())
+                    .collect();
+                assert_eq!(messages.len(), 2);
+                assert!(messages[0].contains("'name' must be a string (found null)"));
+                assert!(messages[1].contains("'description' must be a string (found sequence)"));
+                let locations: Vec<_> = diag
+                    .diagnostics()
+                    .iter()
+                    .filter(|diagnostic| diagnostic.rule == LintRule::AgentFieldMissing)
+                    .map(|diagnostic| diagnostic.location)
+                    .collect();
+                assert_eq!(
+                    locations,
+                    vec![Some(SourceSpan::line(2)), Some(SourceSpan::line(3))]
+                );
+                assert!(!diag.diagnostics().iter().any(|diagnostic| {
+                    matches!(
+                        diagnostic.rule,
+                        LintRule::AgentDescLong
+                            | LintRule::AgentDescShort
+                            | LintRule::AgentNameInvalid
+                            | LintRule::AgentDescRedundant
+                    )
+                }));
+            },
+        );
+    }
+
+    #[test]
+    fn a011_normalizes_originating_inflections() {
+        assert!(is_desc_redundant("security-reviewer", "Reviews security"));
+        assert!(is_desc_redundant("test-runner", "Runs tests"));
     }
 
     #[test]
