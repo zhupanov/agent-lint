@@ -69,6 +69,18 @@ pub(crate) fn has_bound_or_fallback(text: &str) -> bool {
         .any(|pattern| pattern.is_match(text))
 }
 
+/// Return every recognized shared bound or fallback phrase in `text`.
+///
+/// Q005 uses the ranges to decide whether a bound in an adjacent sentence
+/// controls the retry or another operation. The patterns remain the sole
+/// vocabulary owner, so A029 and Q005 cannot drift in what they recognize.
+pub(crate) fn bound_or_fallback_ranges(text: &str) -> Vec<Range<usize>> {
+    BOUND_OR_FALLBACK_PATTERNS
+        .iter()
+        .flat_map(|pattern| pattern.find_iter(text).map(|matched| matched.range()))
+        .collect()
+}
+
 /// Strip Markdown emphasis marker runs for A029/Q005 operativity and label
 /// gates only.
 ///
