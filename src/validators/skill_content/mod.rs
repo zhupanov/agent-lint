@@ -2826,6 +2826,29 @@ suppress = ["S033"]
         );
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s040_end_conversation_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: EndConversation\n---\nBody content\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("unrecognized tool")),
+            "S040 must accept EndConversation"
+        );
+    }
+
     // ── S041: fork-no-task ───────────────────────────────────────────
 
     #[test]
@@ -6458,6 +6481,45 @@ suppress = ["S055"]
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("'model'")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s063_a014_shared_vocabulary_table() {
+        let cases: &[(&str, bool)] = &[
+            ("fable", true),
+            ("opusplan", true),
+            ("best", true),
+            ("claude-fable-5", true),
+            ("haiku[1m]", false),
+            ("inherit[1m]", false),
+            ("sonet", false),
+        ];
+        for &(model, expect_valid) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::create_dir_all("skills/my-skill").unwrap();
+            std::fs::write(
+                "skills/my-skill/SKILL.md",
+                format!(
+                    "---\nname: my-skill\ndescription: A valid skill description here\nmodel: {model}\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            let fires = diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("'model'") && e.contains(model));
+            assert_eq!(
+                !fires,
+                expect_valid,
+                "S063 verdict mismatch for model={model:?}, errors={:?}",
+                diag.errors()
+            );
+        }
     }
 
     // ── S064: agent-no-fork ──────────────────────────────────────────
