@@ -7,10 +7,11 @@ use crate::plugin_paths::{
     safe_component_path,
 };
 use crate::rules::LintRule;
+use crate::validators::codex_surfaces::{JsonScanner, Seg};
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
 use regex::Regex;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -609,7 +610,46 @@ fn json_value_range(source: &str, value: &Value) -> Option<std::ops::Range<usize
     source.find(&token).map(|start| start..start + token.len())
 }
 
-/// V30: Validate optional plugin.json metadata (M014, M015, M020).
+/// V30–V32: validate plugin-manifest fields on both directly lintable surfaces.
+/// Marketplace entries are inline metadata, not unavailable remote manifests.
+pub fn validate_plugin_fields(ctx: &LintContext, diag: &mut DiagnosticCollector) {
+    if let ManifestState::Parsed(value) = &ctx.plugin_json {
+        diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
+            validate_plugin_fields_surface(
+                ctx,
+                value,
+                value.source(),
+                ".claude-plugin/plugin.json",
+                "",
+                &[],
+                diag,
+            );
+        });
+    }
+    if let ManifestState::Parsed(marketplace) = &ctx.marketplace_json
+        && let Some(entries) = marketplace.get("plugins").and_then(Value::as_array)
+    {
+        diag.with_subject_path(".claude-plugin/marketplace.json", |diag| {
+            for (index, entry) in entries.iter().enumerate() {
+                if entry.is_object() {
+                    let prefix = format!("plugins[{index}]");
+                    validate_plugin_fields_surface(
+                        ctx,
+                        entry,
+                        marketplace.source(),
+                        ".claude-plugin/marketplace.json",
+                        &prefix,
+                        &[Seg::Key("plugins"), Seg::Index(index)],
+                        diag,
+                    );
+                }
+            }
+        });
+    }
+}
+
+/// Compatibility entry point retained for focused unit tests.
+#[cfg(test)]
 pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
@@ -617,35 +657,11 @@ pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    // M014 owns an incomplete author object; M020 owns every other present
-    // author shape because Claude Code accepts only an object here.
-    if let Some(author) = val.get("author") {
-        if !author.is_object() {
-            diag.report(
-                LintRule::AuthorTypeInvalid,
-                &format!("{f} author must be an object (found {})", json_type(author)),
-            );
-        } else if !is_non_empty_string(author.get("name")) {
-            diag.report(
-                LintRule::AuthorNameMissing,
-                &format!("{f} author.name missing or invalid (must be a non-empty string)"),
-            );
-        }
-    }
-
-    // M015: homepage is optional, but must be a usable http(s) URL when set.
-    if let Some(homepage) = val.get("homepage") {
-        let url = homepage.as_str().unwrap_or("");
-        if !is_valid_http_url(url) {
-            diag.report(
-                LintRule::HomepageUrlInvalid,
-                &format!("{f} homepage '{url}' is not a valid http(s) URL"),
-            );
-        }
-    }
+    validate_plugin_fields_surface(ctx, val, val.source(), f, "", &[], diag);
 }
 
 /// V31: Validate plugin.json lspServers entries (M016).
+#[cfg(test)]
 pub fn validate_lsp_servers(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
@@ -653,32 +669,12 @@ pub fn validate_lsp_servers(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         _ => return, // Missing/invalid already reported by V1
     };
 
-    let servers = match val.get("lspServers").and_then(|v| v.as_object()) {
-        Some(m) => m,
-        None => return,
-    };
-
-    for (name, entry) in servers {
-        let has_command = is_non_empty_string(entry.get("command"));
-        let has_extensions = entry
-            .get("extensionToLanguage")
-            .is_some_and(|v| v.is_object());
-        if !has_command || !has_extensions {
-            diag.report(
-                LintRule::LspServerInvalid,
-                &format!(
-                    "{f} lspServers.{name} has missing/invalid command or extensionToLanguage"
-                ),
-            );
-        }
-    }
+    validate_plugin_fields_surface(ctx, val, val.source(), f, "", &[], diag);
 }
 
 /// V32: Validate plugin.json channels entries (M017).
 ///
-/// `channels` is accepted both as an object keyed by channel name and as an
-/// array of entries; either way every entry must name a `server`. When the
-/// manifest declares inline MCP servers, that name must refer to one of them.
+#[cfg(test)]
 pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
@@ -686,39 +682,406 @@ pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         _ => return, // Missing/invalid already reported by V1
     };
 
-    let entries: Vec<(String, &Value)> = match val.get("channels") {
-        Some(Value::Object(map)) => map
-            .iter()
-            .map(|(k, v)| (format!("channels.{k}"), v))
-            .collect(),
-        Some(Value::Array(arr)) => arr
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (format!("channels[{i}]"), v))
-            .collect(),
-        _ => return,
-    };
-    let inline_servers = val.get("mcpServers").and_then(Value::as_object);
+    validate_plugin_fields_surface(ctx, val, val.source(), f, "", &[], diag);
+}
 
-    for (label, entry) in entries {
-        let server = entry
-            .get("server")
-            .and_then(Value::as_str)
-            .filter(|server| !server.trim().is_empty());
-        let Some(server) = server else {
-            diag.report(
-                LintRule::ChannelServerMissing,
-                &format!("{f} {label} missing required field: server"),
-            );
+fn validate_plugin_fields_surface(
+    ctx: &LintContext,
+    value: &Value,
+    source: Option<&str>,
+    document: &str,
+    prefix: &str,
+    path_prefix: &[Seg<'_>],
+    diag: &mut DiagnosticCollector,
+) {
+    validate_author(value, source, document, prefix, path_prefix, diag);
+    validate_homepage(value, source, document, prefix, path_prefix, diag);
+    validate_lsp_servers_value(value, source, document, prefix, path_prefix, diag);
+    validate_channels_value(ctx, value, source, document, prefix, path_prefix, diag);
+}
+
+fn field_label(prefix: &str, field: &str) -> String {
+    if prefix.is_empty() {
+        field.to_owned()
+    } else {
+        format!("{prefix}.{field}")
+    }
+}
+
+fn extend_path<'a>(prefix: &[Seg<'a>], tail: &[Seg<'a>]) -> Vec<Seg<'a>> {
+    prefix.iter().chain(tail).copied().collect()
+}
+
+fn metadata_at(
+    source: Option<&str>,
+    path: &[Seg<'_>],
+    evidence: &str,
+    suggestion: &str,
+    redact: bool,
+) -> DiagnosticMetadata {
+    let mut metadata = DiagnosticMetadata::default().with_suggestion(suggestion);
+    metadata = if redact {
+        metadata.with_redacted_evidence()
+    } else {
+        metadata.with_evidence(evidence)
+    };
+    if let Some(span) = source
+        .and_then(|s| JsonScanner::locate(s, path))
+        .and_then(|range| source.and_then(|s| SourceSpan::from_byte_range(s, range)))
+    {
+        metadata = metadata.with_location(span);
+    }
+    metadata
+}
+
+fn validate_author(
+    value: &Value,
+    source: Option<&str>,
+    document: &str,
+    prefix: &str,
+    path_prefix: &[Seg<'_>],
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(author) = value.get("author") else {
+        return;
+    };
+    let author_path = extend_path(path_prefix, &[Seg::Key("author")]);
+    let label = field_label(prefix, "author");
+    if !author.is_object() {
+        diag.report_with(
+            LintRule::AuthorTypeInvalid,
+            &format!(
+                "{document} {label} must be an object (found {})",
+                json_type(author)
+            ),
+            metadata_at(
+                source,
+                &author_path,
+                &label,
+                "use an author object with a non-empty name",
+                false,
+            ),
+        );
+    } else if !is_non_empty_string(author.get("name")) {
+        let name_path = author.get("name").map_or_else(
+            || author_path.clone(),
+            |_| extend_path(&author_path, &[Seg::Key("name")]),
+        );
+        diag.report_with(
+            LintRule::AuthorNameMissing,
+            &format!(
+                "{document} {} missing or invalid (must be a non-empty string)",
+                field_label(prefix, "author.name")
+            ),
+            metadata_at(
+                source,
+                &name_path,
+                &label,
+                "set author.name to a non-empty string",
+                false,
+            ),
+        );
+    }
+}
+
+fn validate_homepage(
+    value: &Value,
+    source: Option<&str>,
+    document: &str,
+    prefix: &str,
+    path_prefix: &[Seg<'_>],
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(homepage) = value.get("homepage") else {
+        return;
+    };
+    let path = extend_path(path_prefix, &[Seg::Key("homepage")]);
+    let label = field_label(prefix, "homepage");
+    match homepage {
+        Value::String(url) if is_valid_http_url(url) => {}
+        Value::String(_) => diag.report_with(
+            LintRule::HomepageUrlInvalid,
+            &format!("{document} {label} must be an absolute http(s) URL with a host"),
+            metadata_at(
+                source,
+                &path,
+                &label,
+                "use an absolute http:// or https:// homepage URL",
+                true,
+            ),
+        ),
+        _ => diag.report_with(
+            LintRule::HomepageTypeInvalid,
+            &format!(
+                "{document} {label} must be a string (found {})",
+                json_type(homepage)
+            ),
+            metadata_at(
+                source,
+                &path,
+                &label,
+                "use an absolute http:// or https:// homepage URL string",
+                true,
+            ),
+        ),
+    }
+}
+
+fn validate_lsp_servers_value(
+    value: &Value,
+    source: Option<&str>,
+    document: &str,
+    prefix: &str,
+    path_prefix: &[Seg<'_>],
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(servers) = value.get("lspServers") else {
+        return;
+    };
+    let root_path = extend_path(path_prefix, &[Seg::Key("lspServers")]);
+    let root_label = field_label(prefix, "lspServers");
+    match servers {
+        Value::String(_) => {}
+        Value::Object(map) => {
+            validate_lsp_map(map, source, document, &root_path, &root_label, diag)
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                let path = extend_path(&root_path, &[Seg::Index(index)]);
+                let label = format!("{root_label}[{index}]");
+                match item {
+                    Value::String(_) => {}
+                    Value::Object(map) => {
+                        validate_lsp_map(map, source, document, &path, &label, diag)
+                    }
+                    _ => report_lsp_invalid(
+                        source,
+                        &path,
+                        document,
+                        &label,
+                        "must be a string path or inline server-map object",
+                        diag,
+                    ),
+                }
+            }
+        }
+        _ => report_lsp_invalid(
+            source,
+            &root_path,
+            document,
+            &root_label,
+            "must be a string path, inline server-map object, or array of those forms",
+            diag,
+        ),
+    }
+}
+
+fn validate_lsp_map(
+    map: &serde_json::Map<String, Value>,
+    source: Option<&str>,
+    document: &str,
+    map_path: &[Seg<'_>],
+    map_label: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    for (name, server) in map {
+        let path = extend_path(map_path, &[Seg::Key(name)]);
+        let label = format!("{map_label}.{name}");
+        let Some(server) = server.as_object() else {
+            report_lsp_invalid(source, &path, document, &label, "must be an object", diag);
             continue;
         };
-        if inline_servers.is_some_and(|servers| !servers.contains_key(server)) {
-            diag.report(
-                LintRule::ChannelServerMissing,
-                &format!("{f} {label} server '{server}' does not reference an mcpServers entry"),
+        let command_bad = !is_non_empty_string(server.get("command"));
+        let extensions_bad = match server.get("extensionToLanguage").and_then(Value::as_object) {
+            Some(map) if !map.is_empty() => map.iter().any(|(extension, language)| {
+                extension.trim().is_empty()
+                    || extension.chars().count() < 2
+                    || !is_non_empty_string(Some(language))
+            }),
+            _ => true,
+        };
+        if command_bad || extensions_bad {
+            let mut defects = Vec::new();
+            if command_bad {
+                defects.push("non-empty command");
+            }
+            if extensions_bad {
+                defects.push(
+                    "non-empty extensionToLanguage object with extension keys and language strings",
+                );
+            }
+            report_lsp_invalid(
+                source,
+                &path,
+                document,
+                &label,
+                &format!("requires {}", defects.join(" and ")),
+                diag,
             );
         }
     }
+}
+
+fn report_lsp_invalid(
+    source: Option<&str>,
+    path: &[Seg<'_>],
+    document: &str,
+    label: &str,
+    detail: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    diag.report_with(
+        LintRule::LspServerInvalid,
+        &format!("{document} {label} {detail}"),
+        metadata_at(
+            source,
+            path,
+            label,
+            "use an inline server object with command and extensionToLanguage",
+            false,
+        ),
+    );
+}
+
+enum KnownMcpServers {
+    Known(BTreeSet<String>),
+    Unknown,
+}
+
+fn known_mcp_servers(ctx: &LintContext, value: &Value) -> KnownMcpServers {
+    let Some(declaration) = value.get("mcpServers") else {
+        return KnownMcpServers::Known(BTreeSet::new());
+    };
+    let mut names = BTreeSet::new();
+    match declaration {
+        Value::Object(map) => names.extend(map.keys().cloned()),
+        Value::String(path) => match mcp_names_from_path(ctx, path) {
+            Some(found) => names.extend(found),
+            None => return KnownMcpServers::Unknown,
+        },
+        Value::Array(items) => {
+            for item in items {
+                match item {
+                    Value::Object(map) => names.extend(map.keys().cloned()),
+                    Value::String(path) => match mcp_names_from_path(ctx, path) {
+                        Some(found) => names.extend(found),
+                        None => return KnownMcpServers::Unknown,
+                    },
+                    _ => return KnownMcpServers::Unknown,
+                }
+            }
+        }
+        _ => return KnownMcpServers::Unknown,
+    }
+    KnownMcpServers::Known(names)
+}
+
+fn mcp_names_from_path(ctx: &LintContext, path: &str) -> Option<BTreeSet<String>> {
+    let relative = safe_component_path(path)?;
+    let candidate = ctx.base_path.join(relative);
+    let base = std::fs::canonicalize(&ctx.base_path).ok()?;
+    let resolved = std::fs::canonicalize(candidate).ok()?;
+    if !resolved.starts_with(base) {
+        return None;
+    }
+    let content = std::fs::read_to_string(resolved).ok()?;
+    let config = serde_json::from_str::<Value>(&content).ok()?;
+    config
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .map(|map| map.keys().cloned().collect())
+}
+
+fn validate_channels_value(
+    ctx: &LintContext,
+    value: &Value,
+    source: Option<&str>,
+    document: &str,
+    prefix: &str,
+    path_prefix: &[Seg<'_>],
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(channels) = value.get("channels") else {
+        return;
+    };
+    let root_path = extend_path(path_prefix, &[Seg::Key("channels")]);
+    let root_label = field_label(prefix, "channels");
+    let Value::Array(entries) = channels else {
+        report_channel_invalid(
+            source,
+            &root_path,
+            document,
+            &root_label,
+            "must be an array",
+            diag,
+        );
+        return;
+    };
+    let known_servers = known_mcp_servers(ctx, value);
+    for (index, entry) in entries.iter().enumerate() {
+        let path = extend_path(&root_path, &[Seg::Index(index)]);
+        let label = format!("{root_label}[{index}]");
+        let Some(entry) = entry.as_object() else {
+            report_channel_invalid(
+                source,
+                &path,
+                document,
+                &label,
+                "must be an object with a non-empty server",
+                diag,
+            );
+            continue;
+        };
+        let Some(server) = entry
+            .get("server")
+            .and_then(Value::as_str)
+            .filter(|server| !server.trim().is_empty())
+        else {
+            report_channel_invalid(
+                source,
+                &path,
+                document,
+                &label,
+                "requires a non-empty string server",
+                diag,
+            );
+            continue;
+        };
+        if let KnownMcpServers::Known(names) = &known_servers
+            && !names.contains(server)
+        {
+            let server_path = extend_path(&path, &[Seg::Key("server")]);
+            report_channel_invalid(
+                source,
+                &server_path,
+                document,
+                &label,
+                "server does not reference a known mcpServers entry",
+                diag,
+            );
+        }
+    }
+}
+
+fn report_channel_invalid(
+    source: Option<&str>,
+    path: &[Seg<'_>],
+    document: &str,
+    label: &str,
+    detail: &str,
+    diag: &mut DiagnosticCollector,
+) {
+    diag.report_with(
+        LintRule::ChannelServerMissing,
+        &format!("{document} {label} {detail}"),
+        metadata_at(
+            source,
+            path,
+            label,
+            "use a channels array entry with a server declared by mcpServers",
+            false,
+        ),
+    );
 }
 
 #[cfg(test)]
@@ -2159,22 +2522,47 @@ mod tests {
         assert_eq!(diag.error_count(), 0);
     }
 
+    #[test]
+    fn test_m016_array_forms_and_extension_mapping_contract() {
+        let valid = json!({
+            "lspServers": [
+                "./lsp.json",
+                {"rust": {"command": "rust-analyzer", "extensionToLanguage": {".rs": "rust"}}}
+            ]
+        });
+        let ctx = make_ctx(ManifestState::parsed(valid), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_lsp_servers(&ctx, &mut diag);
+        assert!(diag.diagnostics().is_empty(), "{:?}", diag.diagnostics());
+
+        let invalid = json!({
+            "lspServers": [
+                {"bad-key": {"command": "ok", "extensionToLanguage": {"x": "", ".ok": "lang"}}},
+                7
+            ]
+        });
+        let ctx = make_ctx(ManifestState::parsed(invalid), ManifestState::Missing);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_lsp_servers(&ctx, &mut diag);
+        assert_eq!(diag.diagnostics().len(), 2, "{:?}", diag.diagnostics());
+        assert!(
+            diag.diagnostics()[0]
+                .message
+                .contains("lspServers[0].bad-key")
+        );
+        assert!(diag.diagnostics()[1].message.contains("lspServers[1]"));
+    }
+
     // ── M017: channel-server-missing ────────────────────────────────
 
     #[test]
-    fn test_m017_object_channels() {
+    fn test_m017_object_channels_are_rejected() {
         let val = json!({"channels": {"alerts": {"server": "my-server"}}});
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_channels(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
-
-        let val = json!({"channels": {"alerts": {"topic": "x"}}});
-        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_channels(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("channels.alerts"));
+        assert!(diag.errors()[0].contains("channels must be an array"));
     }
 
     #[test]
@@ -2183,9 +2571,10 @@ mod tests {
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_channels(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 2);
-        assert!(diag.errors()[0].contains("channels[1]"));
-        assert!(diag.errors()[1].contains("channels[2]"));
+        assert_eq!(diag.error_count(), 3);
+        assert!(diag.errors()[0].contains("channels[0]"));
+        assert!(diag.errors()[1].contains("channels[1]"));
+        assert!(diag.errors()[2].contains("channels[2]"));
     }
 
     #[test]
@@ -2201,14 +2590,14 @@ mod tests {
     fn test_m017_inline_mcp_server_reference_must_exist() {
         let val = json!({
             "mcpServers": {"existing": {"command": "server"}},
-            "channels": {"alerts": {"server": "missing"}}
+            "channels": [{"server": "missing"}]
         });
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_channels(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
         assert_eq!(diag.diagnostics()[0].rule, LintRule::ChannelServerMissing);
-        assert!(diag.diagnostics()[0].message.contains("does not reference"));
+        assert!(diag.diagnostics()[0].message.contains("known mcpServers"));
     }
 
     #[test]
@@ -2216,11 +2605,11 @@ mod tests {
         for val in [
             json!({
                 "mcpServers": {"existing": {"command": "server"}},
-                "channels": {"alerts": {"server": "existing"}}
+                "channels": [{"server": "existing"}]
             }),
             json!({
                 "mcpServers": "./servers.json",
-                "channels": {"alerts": {"server": "external"}}
+                "channels": [{"server": "external"}]
             }),
         ] {
             let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
@@ -2228,6 +2617,32 @@ mod tests {
             validate_channels(&ctx, &mut diag);
             assert_eq!(diag.error_count(), 0);
         }
+    }
+
+    #[test]
+    fn test_m017_resolves_safe_local_mcp_config_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("servers.json"),
+            r#"{"mcpServers":{"known":{"command":"server"}}}"#,
+        )
+        .unwrap();
+        let ctx = LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: LintMode::Plugin,
+            plugin_json: ManifestState::parsed(json!({
+                "mcpServers": "./servers.json",
+                "channels": [{"server": "known"}]
+            })),
+            marketplace_json: ManifestState::Missing,
+            hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
+            settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
+        };
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_channels(&ctx, &mut diag);
+        assert!(diag.diagnostics().is_empty(), "{:?}", diag.diagnostics());
     }
 
     #[test]

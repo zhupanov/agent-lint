@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 296 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -52,14 +52,15 @@ run only when their platform is auto-detected or force-enabled in
 | M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | warn |
 | M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a plugin/marketplace component path points there | Plugin | error |
 | M013 | `component-path-unsafe` | A plugin or marketplace component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`), uses `..` traversal, or does not start with exact `./` | Plugin | error |
-| M014 | `author-name-missing` | `plugin.json` `author` object present but `author.name` is missing or not a non-empty string | Plugin | warn |
-| M015 | `homepage-url-invalid` | `plugin.json` `homepage` is present but is not a valid http(s) URL | Plugin | warn |
-| M016 | `lsp-server-invalid` | `plugin.json` `lspServers` entry missing `command` or `extensionToLanguage` | Plugin | error |
-| M017 | `channel-server-missing` | `plugin.json` `channels` entry does not reference a `server` | Plugin | warn |
+| M014 | `author-name-missing` | Plugin or inline marketplace-entry `author` object has a missing or invalid `author.name` | Plugin | error |
+| M015 | `homepage-url-invalid` | Plugin or inline marketplace-entry `homepage` string is not a valid http(s) URL | Plugin | warn |
+| M016 | `lsp-server-invalid` | Plugin or inline marketplace-entry `lspServers` has an unsupported shape or invalid inline server | Plugin | error |
+| M017 | `channel-server-missing` | Plugin or inline marketplace-entry `channels` has an invalid server entry or reference | Plugin | error |
 | M018 | `plugin-version-missing` | `plugin.json` omits optional `version`; Claude Code falls back to the Git commit SHA. | Plugin | warn |
 | M019 | `marketplace-bare-path` | `marketplace.json` relative string `source` does not start with `./` while `metadata.pluginRoot` is absent | Plugin | warn |
-| M020 | `author-type-invalid` | `plugin.json` `author` is present but not an object. Claude Code rejects non-object authors as manifest load errors. | Plugin | error |
+| M020 | `author-type-invalid` | Plugin or inline marketplace-entry `author` is present but not an object. Claude Code rejects non-object authors as manifest load errors. | Plugin | error |
 | M021 | `marketplace-name-format` | Marketplace or plugin entry `name` is not kebab-case (`[a-z0-9]+(-[a-z0-9]+)*`); claude.ai marketplace sync rejects other forms | Plugin | warn |
+| M022 | `homepage-type-invalid` | Plugin or inline marketplace-entry `homepage` is present but not a string | Plugin | error |
 
 M003, M004, and M018 follow the [Claude Code plugin reference](https://code.claude.com/docs/en/plugins-reference) and its [plugin manifest schema](https://www.schemastore.org/claude-code-plugin-manifest.json). M005, M008, M009, M019, and M021 follow the [Claude Code marketplace guide](https://code.claude.com/docs/en/plugin-marketplaces); M005 remains an agent-lint advisory for repositories that intend to publish a self-hosted marketplace.
 
