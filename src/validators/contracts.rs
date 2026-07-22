@@ -3,7 +3,7 @@
 use crate::config::{ExcludeSet, PromptMetricCaps, PromptSourceBudget};
 use crate::context::LintContext;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
-use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs};
+use crate::fence::consecutive_bash_pairs;
 use crate::frontmatter;
 use crate::markdown::MarkdownDocument;
 use crate::markdown_refs::{
@@ -29,10 +29,12 @@ use std::sync::LazyLock;
 
 static SKILL_INVOKE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"\b(?:re-)?[Ii]nvoke\b\s+(?:the\s+)?(?:\*\*[^*\n]{1,40}\*\*\s+)?`/[-\w]+`(?:\s+skill\b)?",
+        r"(?i)\b(?:re-)?invoke\b\s+(?:the\s+)?(?:\*\*[^*\n]{1,40}\*\*\s+)?`/[-\w]+`(?:\s+skill\b)?",
     )
     .unwrap()
 });
+const S058_MISSING_STEP_SUGGESTION: &str = "add an operative Skill-tool invocation step";
+const S058_AMBIGUOUS_INVOKE_SUGGESTION: &str = "name the Skill tool on this line";
 static FLAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|\s)--([A-Za-z0-9][A-Za-z0-9_-]*)\b").unwrap());
 static AWK_FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$[0-9]+").unwrap());
@@ -112,13 +114,7 @@ fn frontmatter_tools(content: &str, key: &str) -> Option<Vec<String>> {
         let value = value.split(" #").next().unwrap_or(value).trim();
         if !value.is_empty() {
             let value = value.trim_matches(|ch| matches!(ch, '[' | ']' | '\'' | '"'));
-            return Some(
-                value
-                    .split(',')
-                    .map(|token| token.trim().trim_matches(['\'', '"']).to_string())
-                    .filter(|token| !token.is_empty())
-                    .collect(),
-            );
+            return Some(tokenize_tool_scalar(value));
         }
         let mut tools = Vec::new();
         for child in &lines[index + 1..] {
@@ -134,10 +130,77 @@ fn frontmatter_tools(content: &str, key: &str) -> Option<Vec<String>> {
     None
 }
 
-fn body_line_number(content: &str, body_offset: usize) -> usize {
-    let body = frontmatter::extract_body(content);
-    let prefix_len = content.len().saturating_sub(body.len());
-    content[..prefix_len].lines().count() + body_offset + 1
+/// Split a scalar tool field at commas and whitespace outside scoped `(...)`
+/// restrictions. YAML list items are already individual entries.
+fn tokenize_tool_scalar(value: &str) -> Vec<String> {
+    let mut tools = Vec::new();
+    let mut token = String::new();
+    let mut paren_depth = 0usize;
+    let mut push_token = |token: &mut String| {
+        let tool = token.trim().trim_matches(['\'', '"']);
+        if !tool.is_empty() {
+            tools.push(tool.to_string());
+        }
+        token.clear();
+    };
+
+    for character in value.chars() {
+        match character {
+            '(' => {
+                paren_depth += 1;
+                token.push(character);
+            }
+            ')' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                token.push(character);
+            }
+            ',' | ' ' | '\t' if paren_depth == 0 => push_token(&mut token),
+            _ => token.push(character),
+        }
+    }
+    push_token(&mut token);
+    tools
+}
+
+fn tool_base_name(tool: &str) -> &str {
+    tool.split_once('(').map_or(tool, |(base, _)| base).trim()
+}
+
+fn normalize_skill_line(line: &str) -> String {
+    line.chars()
+        .filter(|character| !matches!(character, '*' | '_' | '`'))
+        .map(|character| character.to_ascii_lowercase())
+        .collect()
+}
+
+fn clause_has_clear_skill_step(clause: &str) -> bool {
+    const ACTION_VERBS: &[&str] = &["invoke", "use", "call", "launch", "run", "delegate"];
+    const PROHIBITIONS: &[&str] = &[
+        "do not", "don't", "never", "must not", "cannot", "can't", "without",
+    ];
+
+    !PROHIBITIONS.iter().any(|phrase| clause.contains(phrase))
+        && clause.match_indices("skill tool").any(|(position, _)| {
+            clause[..position]
+                .split(|character: char| !character.is_ascii_alphabetic())
+                .any(|word| ACTION_VERBS.contains(&word))
+        })
+}
+
+fn has_clear_skill_step(line: &str) -> bool {
+    normalize_skill_line(line)
+        .split(['.', ';', '—'])
+        .any(clause_has_clear_skill_step)
+}
+
+/// Match the raw line only when the invocation verb itself is still visible in
+/// `body_prose()`. That preserves a live line's backticked `/name` while
+/// preventing quoted examples and HTML comments from becoming eligible again.
+fn has_visible_ambiguous_skill_invoke(raw_line: &str, prose_line: &str) -> bool {
+    SKILL_INVOKE.find_iter(raw_line).any(|matched| {
+        let start_column = raw_line[..matched.start()].chars().count();
+        raw_line.chars().nth(start_column) == prose_line.chars().nth(start_column)
+    })
 }
 
 fn has_reasoned_marker(content: &str, marker: &str) -> bool {
@@ -169,32 +232,40 @@ fn validate_skill_contracts_paths(
             continue;
         };
         let document = MarkdownDocument::parse(&content);
-        let body = document.body();
         if frontmatter_tools(&content, "allowed-tools")
-            .is_some_and(|tools| tools.iter().any(|tool| tool == "Skill"))
+            .is_some_and(|tools| tools.iter().any(|tool| tool_base_name(tool) == "Skill"))
         {
-            let has_clear_step =
-                body.contains("Invoke the Skill tool") || body.contains("via the Skill tool");
-            if !has_clear_step {
-                diag.report_at(
+            if !document
+                .body_prose()
+                .iter()
+                .any(|prose_line| has_clear_skill_step(&prose_line.text))
+            {
+                diag.report_at_with(
                     LintRule::SkillInvokeMissing,
                     &path,
                     &format!(
                         "{}: allowed-tools includes Skill but the body has no explicit Skill tool invocation step",
                         path.display()
                     ),
+                    DiagnosticMetadata::default().with_suggestion(S058_MISSING_STEP_SUGGESTION),
                 );
             }
-            for (number, line) in lines_outside_fences_with_numbers(body) {
-                if SKILL_INVOKE.is_match(line) && !line.contains("via the Skill tool") {
-                    diag.report_at(
+            let source_lines: Vec<_> = content.lines().collect();
+            for prose_line in document.body_prose() {
+                let raw_line = source_lines[prose_line.line - 1];
+                if has_visible_ambiguous_skill_invoke(raw_line, &prose_line.text)
+                    && !normalize_skill_line(&prose_line.text).contains("skill tool")
+                {
+                    diag.report_at_with(
                         LintRule::SkillInvokeMissing,
                         &path,
                         &format!(
                             "{}:{}: ambiguous skill invocation; identify the Skill tool on the same line",
                             path.display(),
-                            body_line_number(&content, number - 1)
+                            prose_line.line
                         ),
+                        DiagnosticMetadata::at_line(prose_line.line)
+                            .with_suggestion(S058_AMBIGUOUS_INVOKE_SUGGESTION),
                     );
                 }
             }
@@ -212,16 +283,6 @@ fn validate_skill_contracts_paths(
         }
         validate_skill_closure(&path, diag);
     }
-}
-
-fn lines_outside_fences_with_numbers(text: &str) -> Vec<(usize, &str)> {
-    let mut tracker = CodeFenceTracker::new();
-    text.lines()
-        .enumerate()
-        .filter_map(|(index, line)| {
-            (tracker.process_line(line) == LineClass::Outside).then_some((index + 1, line))
-        })
-        .collect()
 }
 
 fn is_shell_language(language: &str) -> bool {
@@ -2464,6 +2525,119 @@ mod tests {
             config.error.insert(*rule);
         }
         DiagnosticCollector::with_config_silent(config)
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn skill_invocation_rule_accepts_tokenized_tools_and_only_operative_live_prose() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all(".claude/skills/demo").unwrap();
+
+        let run_case = |allowed_tools: &str, body: &str| {
+            fs::write(
+                ".claude/skills/demo/SKILL.md",
+                format!(
+                    "---\nname: demo\ndescription: Use when validating Skill invocation contracts\n{allowed_tools}\n---\n{body}\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_contracts(&mut diag, &ExcludeSet::default(), false);
+            diag.diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillInvokeMissing)
+                .map(|item| {
+                    (
+                        item.message.clone(),
+                        item.location.map(|span| span.start().line_number()),
+                        item.suggestion.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for allowed_tools in [
+            "allowed-tools: Skill Bash",
+            "allowed-tools: Skill(child), Bash",
+            "allowed-tools: [Skill, Bash]",
+            "allowed-tools:\n  - Skill\n  - Bash",
+        ] {
+            assert_eq!(
+                run_case(allowed_tools, "Describe the child workflow."),
+                vec![(
+                    ".claude/skills/demo/SKILL.md: allowed-tools includes Skill but the body has no explicit Skill tool invocation step".to_string(),
+                    None,
+                    Some(S058_MISSING_STEP_SUGGESTION.to_string()),
+                )],
+                "{allowed_tools} must engage the Skill gate"
+            );
+            assert!(
+                run_case(allowed_tools, "Use the Skill tool to invoke the child.").is_empty(),
+                "{allowed_tools} must accept an operative clear step"
+            );
+        }
+
+        for body in [
+            "Launch each child skill with the Skill tool.",
+            "For each child, invoke the Skill tool with its name.",
+            "Invoke the **Skill** tool with the child name.",
+            "Use the Skill tool to invoke the child.",
+            "Invoke `/child` with the Skill tool.",
+        ] {
+            assert!(
+                run_case("allowed-tools: Skill, Bash", body).is_empty(),
+                "{body:?} must be a clear Skill-tool invocation"
+            );
+        }
+
+        for body in [
+            "Do not Invoke the Skill tool under any circumstance.",
+            "The Skill tool is available.",
+            "> Invoke the Skill tool for the child.",
+            "<!-- Invoke the Skill tool for the child. -->",
+            "```text\nInvoke the Skill tool for the child.\n```",
+        ] {
+            let findings = run_case("allowed-tools: Skill", body);
+            assert_eq!(findings.len(), 1, "{body:?} must not satisfy the gate");
+            assert_eq!(findings[0].1, None);
+            assert_eq!(
+                findings[0].2.as_deref(),
+                Some(S058_MISSING_STEP_SUGGESTION),
+                "{body:?} must retain the file-level fixed suggestion"
+            );
+        }
+
+        for allowed_tools in ["allowed-tools: Read, Write", "allowed-tools: SkillFoo"] {
+            assert!(
+                run_case(allowed_tools, "INVOKE `/child` directly.").is_empty(),
+                "{allowed_tools} must leave the S058 gate closed"
+            );
+        }
+
+        for body in [
+            "Use the Skill tool to invoke the child.\n> INVOKE `/child` directly.",
+            "Use the Skill tool to invoke the child.\n<!-- INVOKE `/child` directly. -->",
+            "Use the Skill tool to invoke the child.\n\"INVOKE `/child` directly.\"",
+        ] {
+            assert!(
+                run_case("allowed-tools: Skill", body).is_empty(),
+                "{body:?} must not revive an invocation from excluded prose"
+            );
+        }
+
+        let findings = run_case(
+            "allowed-tools: Skill",
+            "Use the Skill tool to invoke the child.\nINVOKE `/child` directly.",
+        );
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].1, Some(7));
+        assert_eq!(
+            findings[0].2.as_deref(),
+            Some(S058_AMBIGUOUS_INVOKE_SUGGESTION)
+        );
+        assert!(findings[0].0.contains(":7: ambiguous skill invocation"));
     }
 
     #[test]

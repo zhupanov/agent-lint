@@ -1769,6 +1769,52 @@ fn s059_json_reports_the_fence_line_and_actionable_suggestion() {
 }
 
 #[test]
+fn s058_json_reports_only_the_ambiguous_arm_at_a_line_with_fixed_suggestions() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/example/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: example\ndescription: Use when checking explicit Skill tool invocations\nallowed-tools: Skill(child), Bash\n---\nINVOKE `/child` directly.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S058", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 2);
+
+    let missing = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("body has no explicit")
+        })
+        .expect("missing-step S058 diagnostic");
+    assert!(missing["location"].is_null());
+    assert_eq!(
+        missing["suggestion"],
+        "add an operative Skill-tool invocation step"
+    );
+
+    let ambiguous = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["message"]
+                .as_str()
+                .unwrap()
+                .contains("ambiguous skill invocation")
+        })
+        .expect("ambiguous-invocation S058 diagnostic");
+    assert_eq!(ambiguous["location"]["start"]["line"], 6);
+    assert!(ambiguous["location"]["start"].get("column").is_none());
+    assert_eq!(ambiguous["suggestion"], "name the Skill tool on this line");
+}
+
+#[test]
 fn invalid_json_manifest_diagnostics_are_relative_and_located() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
