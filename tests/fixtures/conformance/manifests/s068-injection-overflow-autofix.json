@@ -1,0 +1,29 @@
+{
+  "class": "hard-negative",
+  "repository": "s068-injection-overflow-autofix",
+  "covers": ["s068-injection-overflow", "autofix", "normal", "json"],
+  "invocation": {
+    "mode": "basic",
+    "arguments": ["--format", "json", "--autofix", "--only", "S068", "."]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "S068",
+      "name": "injection-overflow",
+      "severity": "warning",
+      "subject_path": ".claude/skills/demo/SKILL.md",
+      "location": {"line": 8}
+    }
+  ],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    {
+      "path": ".claude/skills/demo/SKILL.md",
+      "contents": "---\nname: demo\ndescription: Use when checking inline injection overflow behavior\n---\n!`one`\n!`two`\n!`three`\n!`four`\n"
+    }
+  ]
+}

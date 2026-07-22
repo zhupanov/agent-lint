@@ -1,0 +1,15 @@
+{
+  "class": "clean",
+  "repository": "s068-injection-overflow-clean",
+  "covers": ["s068-injection-overflow", "normal", "json"],
+  "invocation": {
+    "mode": "basic",
+    "arguments": ["--format", "json", "--only", "injection-overflow", "."]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

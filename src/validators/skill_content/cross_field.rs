@@ -5,6 +5,7 @@ use crate::validators::common::normalize_description_suffix;
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::LazyLock;
 
 use super::description::{RE_TRIGGER, STOPWORDS};
@@ -22,9 +23,11 @@ static RE_ARGS: LazyLock<Regex> =
 static RE_POSITIONAL_ARG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\$(?:[1-9]|\{[1-9]\})(?:[^A-Za-z0-9_]|$)").unwrap());
 
-// S068: inline dynamic injections — !`cmd` at line start or after whitespace
+// S068: non-empty inline dynamic injections — !`cmd` at line start or after
+// whitespace. The capture deliberately excludes its boundary so locations
+// identify the token rather than preceding whitespace.
 static RE_INLINE_INJECT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?m)(?:^|[ \t])!`[^`]+`").unwrap());
+    LazyLock::new(|| Regex::new(r"(?m)(?:^|[ \t])(!`[^`]+`)").unwrap());
 
 /// Minimum number of keywords required from description to run S054.
 const MIN_KEYWORDS: usize = 3;
@@ -91,24 +94,33 @@ pub(super) fn check_cross_field(
     }
 }
 
-fn count_dynamic_injections(body: &str) -> usize {
-    let inline = RE_INLINE_INJECT.find_iter(body).count();
-    let fenced = body
-        .lines()
-        .filter(|l| l.trim_start().starts_with("```!"))
-        .count();
-    inline + fenced
+fn dynamic_injection_spans(body: &str) -> Vec<Range<usize>> {
+    RE_INLINE_INJECT
+        .captures_iter(body)
+        .filter_map(|captures| captures.get(1).map(|token| token.range()))
+        .collect()
 }
 
 fn check_injection_overflow(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    let count = count_dynamic_injections(&info.body);
+    let injections = dynamic_injection_spans(&info.body);
+    let count = injections.len();
     if count > MAX_DYNAMIC_INJECTIONS {
-        diag.report(
+        let first_over_budget = &injections[MAX_DYNAMIC_INJECTIONS];
+        let body_line = info.body[..first_over_budget.start]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        // Body line 1 follows the opening delimiter, frontmatter lines, and
+        // closing delimiter.
+        let line = body_line + info.fm_lines.len() + 2;
+        diag.report_with(
             LintRule::InjectionOverflow,
             &format!(
-                "{}: body has {count} dynamic injections (!`…` / ```!); prefer at most {MAX_DYNAMIC_INJECTIONS}",
+                "{}: body has {count} dynamic injections (!`…`); prefer at most {MAX_DYNAMIC_INJECTIONS}",
                 info.path
             ),
+            crate::diagnostic::DiagnosticMetadata::at_line(line),
         );
     }
 }

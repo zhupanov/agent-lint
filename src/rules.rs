@@ -390,7 +390,8 @@ pub enum LintRule {
     /// S067: allowed-tools lists unscoped Bash (suggest Bash(…)-style scoping)
     #[strum(props(code = "S067", name = "bash-unscoped"))]
     BashUnscoped,
-    /// S068: more than 3 dynamic context injections in skill body
+    /// S068: more than 3 non-empty inline dynamic injections in a skill body;
+    /// the first over-budget token owns the diagnostic location
     #[strum(props(code = "S068", name = "injection-overflow"))]
     InjectionOverflow,
     /// S069: argument-hint set but body never references $ARGUMENTS or positional $1–$9

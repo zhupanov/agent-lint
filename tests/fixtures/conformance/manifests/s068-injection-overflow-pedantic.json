@@ -1,0 +1,23 @@
+{
+  "class": "broken",
+  "repository": "s068-injection-overflow-pedantic",
+  "covers": ["s068-injection-overflow", "pedantic", "json"],
+  "invocation": {
+    "mode": "basic",
+    "arguments": ["--format", "json", "--pedantic", "--only", "S068", "."]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "S068",
+      "name": "injection-overflow",
+      "severity": "error",
+      "subject_path": ".claude/skills/demo/SKILL.md",
+      "location": {"line": 8}
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

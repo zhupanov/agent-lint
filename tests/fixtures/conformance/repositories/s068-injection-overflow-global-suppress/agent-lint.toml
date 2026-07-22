@@ -1,0 +1,2 @@
+[lint]
+suppress = ["S068"]

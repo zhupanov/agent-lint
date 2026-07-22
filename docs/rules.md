@@ -304,7 +304,7 @@ values — every frontmatter field except the free-prose `description`,
 | S036 | `ref-no-toc` | Referenced `.md` file exceeds 100 lines with no headings (levels 1–6, outside fences) | Plugin | warn |
 | S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Always | warn |
 | S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin | warn |
-| S068 | `injection-overflow` | More than 3 dynamic context injections (`!`…``) in skill body | Always | warn |
+| S068 | `injection-overflow` | More than 3 non-empty inline dynamic injections (`!`…``) in a skill body; the fourth token owns the location | Always | warn |
 | S069 | `hint-no-args` | `argument-hint` set but body never references `$ARGUMENTS` or a positional `$1`–`$9` | Always | warn |
 
 ## Agent Rules (A)
