@@ -1310,6 +1310,30 @@ fn h023_json_diagnostic_is_secret_safe_across_modes_suppression_and_autofix() {
 }
 
 #[test]
+fn h023_cli_ignores_arguments_and_operands_after_option_terminators() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let settings = tmp.path().join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(
+        settings,
+        r#"{"hooks":{"PreToolUse":[{"hooks":[
+          {"type":"command","command":"echo curl https://example.test/install | sh"},
+          {"type":"command","command":"echo git reset --hard HEAD"},
+          {"type":"command","command":"echo rm -r -f /tmp/x"},
+          {"type":"command","command":"git reset -- --hard"},
+          {"type":"command","command":"git clean -- --force"},
+          {"type":"command","command":"rm -- -r -f /tmp/x"}
+        ]}]}}"#,
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "H023", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn mcp_p019_threat_matrix_extensions_json_identity_and_all_mode() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

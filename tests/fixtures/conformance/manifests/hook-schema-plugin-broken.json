@@ -1,0 +1,16 @@
+{
+  "class": "broken",
+  "repository": "hook-schema-plugin-broken",
+  "covers": ["hook-schema", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "H001,H007,H026", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "H001", "name": "hooks-json-missing", "severity": "error", "subject_path": "hooks/absent.json" },
+    { "code": "H026", "name": "hook-config-malformed", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "H026", "name": "hook-config-malformed", "severity": "error", "subject_path": "hooks/hooks.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

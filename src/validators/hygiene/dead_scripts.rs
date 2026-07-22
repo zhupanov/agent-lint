@@ -38,7 +38,7 @@ pub fn validate_dead_scripts(
     {
         if let ManifestState::Parsed(value) = manifest {
             references.extend(
-                extract_hook_command_paths(value)
+                extract_hook_command_paths(value, None)
                     .into_iter()
                     .filter(|reference| {
                         reference.invocation != Invocation::Mention

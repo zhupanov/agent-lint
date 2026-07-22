@@ -85,6 +85,28 @@ pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<Scri
     extract_references(command, line, false)
 }
 
+/// As [`extract_command_references`], retaining the byte span of each
+/// reference in the command fragment. Hook JSON uses this to associate a
+/// finding with the command or argument string that supplied it.
+pub(crate) fn extract_command_references_with_ranges(
+    command: &str,
+    line: usize,
+) -> Vec<(ScriptReference, std::ops::Range<usize>)> {
+    let references = extract_command_references(command, line);
+    let mut search_from = 0;
+    references
+        .into_iter()
+        .filter_map(|reference| {
+            let start = command[search_from..]
+                .find(&reference.reference)
+                .map(|offset| search_from + offset)?;
+            let end = start + reference.reference.len();
+            search_from = end;
+            Some((reference, start..end))
+        })
+        .collect()
+}
+
 /// Extract root-qualified script paths from instruction and workflow command
 /// surfaces. These also support the explicit prose `Run`/`Execute` and YAML
 /// `run:` command markers that are not valid shell command words.

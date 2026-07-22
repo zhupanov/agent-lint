@@ -102,7 +102,7 @@ fn fix_executability_hooks(mode: LintMode, config: &LintConfig) -> bool {
 #[cfg(unix)]
 fn fix_hook_config_executability(value: &serde_json::Value, config: &LintConfig) -> bool {
     let mut fixed = false;
-    for reference in extract_hook_command_paths(value) {
+    for reference in extract_hook_command_paths(value, None) {
         if reference.invocation != Invocation::Direct || reference.path.as_os_str().is_empty() {
             continue;
         }
