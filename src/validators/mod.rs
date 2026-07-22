@@ -242,7 +242,7 @@ fn validate_optional_surfaces(
     targets: ValidationTargets,
     prompt_pass: &mut prompt_content::PromptContentPass,
 ) {
-    if targets.agents_md {
+    if targets.agents_md || targets.codex {
         instruction_files::validate_agents_files_with_prompt_pass(
             diag,
             exclude,
@@ -532,7 +532,7 @@ mod tests {
             assert_eq!(
                 diag.diagnostics()
                     .iter()
-                    .any(|item| item.rule == crate::rules::LintRule::CodexAgentsDocLimit),
+                    .any(|item| item.rule == crate::rules::LintRule::CodexProjectDocBudget),
                 case.expected_codex,
                 "{}: Codex rule dispatch mismatch",
                 case.name

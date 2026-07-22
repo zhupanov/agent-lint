@@ -1,4 +1,4 @@
-//! Validation for Codex override files, plugin manifests, and skills.
+//! Validation for Codex plugin manifests and skills.
 //!
 //! Codex plugin manifest linting is rebuilt around Codex's real manifest
 //! discovery and schema. Classification of checks:
@@ -93,12 +93,14 @@ pub(crate) fn validate_with_prompt_pass(
     exclude: &ExcludeSet,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    validate_override_tracking(diag, exclude, prompt_pass);
+    validate_override_prompt(diag, exclude, prompt_pass);
     validate_plugin_manifests(diag, exclude);
     validate_codex_skill_frontmatter(diag, exclude);
 }
 
-fn validate_override_tracking(
+/// Prompt-content rules retain their long-standing root override surface.
+/// CX040/CX045 selection is separately owned by `instruction_files`.
+fn validate_override_prompt(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
@@ -107,26 +109,16 @@ fn validate_override_tracking(
     if exclude.is_excluded(path) || !Path::new(path).is_file() {
         return;
     }
-    if let Ok(content) = std::fs::read_to_string(path) {
-        let markdown = MarkdownDocument::parse_body(content);
-        let document = LiveInstructionDocument::new(
-            Path::new(path),
-            InstructionSurfaceKind::CodexAgentsOverride,
-            &markdown,
-        );
-        prompt_pass.validate(&document, diag);
-    }
-    if !is_git_tracked(path) {
+    let Ok(content) = std::fs::read_to_string(path) else {
         return;
-    }
-    diag.report_at(LintRule::CodexAgentsOverrideTracked, path, "AGENTS.override.md is tracked by Git; add it to .gitignore because it holds user-specific overrides");
-}
-
-fn is_git_tracked(path: &str) -> bool {
-    std::process::Command::new("git")
-        .args(["ls-files", "--error-unmatch", "--", path])
-        .output()
-        .is_ok_and(|output| output.status.success())
+    };
+    let markdown = MarkdownDocument::parse_body(content);
+    let document = LiveInstructionDocument::new(
+        Path::new(path),
+        InstructionSurfaceKind::CodexAgentsOverride,
+        &markdown,
+    );
+    diag.with_subject_path(path, |diag| prompt_pass.validate(&document, diag));
 }
 
 // ── Plugin manifest discovery and validation ─────────────────────────────

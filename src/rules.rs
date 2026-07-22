@@ -671,18 +671,12 @@ pub enum LintRule {
     /// CX036: windows.sandbox is invalid
     #[strum(props(code = "CX036", name = "codex-windows-sandbox"))]
     CodexWindowsSandbox,
-    /// CX039: AGENTS.md exceeds Codex's hard size limit
-    #[strum(props(code = "CX039", name = "codex-agents-large"))]
-    CodexAgentsTooLarge,
-    /// CX040: AGENTS.md exceeds the configured Codex document budget
-    #[strum(props(code = "CX040", name = "codex-agents-limit"))]
-    CodexAgentsDocLimit,
-    /// CX042: AGENTS.override.md is tracked by Git
-    #[strum(props(code = "CX042", name = "codex-agents-override"))]
-    CodexAgentsOverrideTracked,
-    /// CX045: AGENTS.md explicitly contradicts a Codex config value
-    #[strum(props(code = "CX045", name = "codex-agents-conflict"))]
-    CodexAgentsConfigConflict,
+    /// CX040: an active Codex project-document chain exceeds its byte budget
+    #[strum(props(code = "CX040", name = "codex-project-doc-budget"))]
+    CodexProjectDocBudget,
+    /// CX045: a live Codex project document contradicts a local config value
+    #[strum(props(code = "CX045", name = "codex-project-doc-conflict"))]
+    CodexProjectDocConflict,
     /// CX046: a Codex plugin manifest is not at the repository root (deprecated —
     /// no longer fires; any recognized manifest directory establishes a valid
     /// plugin root, so repository-relative depth is not an error. Retained so
@@ -1002,6 +996,8 @@ impl LintRule {
             "CX038" | "codex-agents-secret" => Some(Self::InstructionFileSecret),
             "CX041" | "codex-agents-path" => Some(Self::InstructionFilePathMissing),
             "CX043" | "codex-agents-generic" => Some(Self::InstructionFileGenericGuidance),
+            "codex-agents-limit" => Some(Self::CodexProjectDocBudget),
+            "codex-agents-conflict" => Some(Self::CodexProjectDocConflict),
             _ => None,
         };
         if migrated.is_some() {
@@ -1101,9 +1097,9 @@ impl LintRule {
             Self::CodexApprovalPolicyField |
             Self::CodexTopLevelKey | Self::CodexFeatureKey |
             Self::CodexNetworkPermissionField |
-            Self::CodexAgentsTooLarge | Self::CodexAgentsDocLimit |
+            Self::CodexProjectDocBudget |
             Self::InstructionFilePathMissing | Self::InstructionFileGenericGuidance |
-            Self::CodexAgentsOverrideTracked |
+            Self::CodexProjectDocConflict |
             Self::CodexPluginDefaultPromptCount | Self::CodexPluginDefaultPromptLength |
             Self::CodexPluginDefaultPromptEmpty | Self::CodexPluginInterfaceUrl |
             Self::CodexPluginHooksUnsupported | Self::CodexPluginDescriptionMissing |
@@ -1278,7 +1274,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            299,
+            297,
             "every enum variant must be registered"
         );
     }
@@ -1307,7 +1303,10 @@ mod tests {
                 word_count <= 3
                     || matches!(
                         rule,
-                        LintRule::CodexServiceTier | LintRule::CodexConfigContainerType
+                        LintRule::CodexServiceTier
+                            | LintRule::CodexConfigContainerType
+                            | LintRule::CodexProjectDocBudget
+                            | LintRule::CodexProjectDocConflict
                     ),
                 "Rule {} name '{}' has {} words (max 3)",
                 rule.code(),
@@ -1365,6 +1364,26 @@ mod tests {
                 None,
                 "{retired} must not resolve after I005 removal"
             );
+        }
+    }
+
+    #[test]
+    fn project_document_rule_renames_preserve_only_the_requested_aliases() {
+        assert_eq!(
+            LintRule::from_code_or_name("codex-agents-limit"),
+            Some(LintRule::CodexProjectDocBudget)
+        );
+        assert_eq!(
+            LintRule::from_code_or_name("codex-agents-conflict"),
+            Some(LintRule::CodexProjectDocConflict)
+        );
+        for removed in [
+            "CX039",
+            "codex-agents-large",
+            "CX042",
+            "codex-agents-override",
+        ] {
+            assert_eq!(LintRule::from_code_or_name(removed), None, "{removed}");
         }
     }
 
@@ -1445,8 +1464,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            122,
-            "Expected 122 default-warning rules, got {}",
+            121,
+            "Expected 121 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1459,7 +1478,6 @@ mod tests {
             LintRule::CodexAgentThreads,
             LintRule::CodexApprovalPolicyShape,
             LintRule::CodexConfigContainerType,
-            LintRule::CodexAgentsConfigConflict,
             LintRule::PromptNegativeOnly,
             LintRule::PromptWeakCritical,
             LintRule::PromptUnboundedRetry,
@@ -1469,6 +1487,14 @@ mod tests {
         ] {
             assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
         }
+        assert_eq!(
+            LintRule::CodexProjectDocBudget.default_severity(),
+            DefaultSeverity::Warning
+        );
+        assert_eq!(
+            LintRule::CodexProjectDocConflict.default_severity(),
+            DefaultSeverity::Warning
+        );
         assert_eq!(
             LintRule::CodexNetworkPermissionField.default_severity(),
             DefaultSeverity::Warning
@@ -1572,8 +1598,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            174,
-            "Expected 174 default-error rules, got {}",
+            173,
+            "Expected 173 default-error rules, got {}",
             errors.len()
         );
     }

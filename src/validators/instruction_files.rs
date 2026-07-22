@@ -14,16 +14,16 @@ use crate::repo_path::{
 use crate::rules::LintRule;
 use crate::sensitive::find_instruction_secret;
 use crate::traversal;
+use crate::validators::codex_config::{self, ProjectDocumentSettings};
 use crate::validators::common::classify_inline_code_path;
-use std::collections::BTreeSet;
+use regex::Regex;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
 
 const I002_SUGGESTION: &str =
     "replace the literal with an environment-variable or secret-store reference";
-
-const CODEX_DEFAULT_MAX_BYTES: usize = 32_768;
-const CODEX_HARD_MAX_BYTES: usize = 100_000;
 
 /// Validate every included `AGENTS.md`, applying Codex policy only when Codex is active.
 #[cfg(test)]
@@ -42,7 +42,6 @@ pub(crate) fn validate_agents_files_with_prompt_pass(
     codex_active: bool,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let codex_max_bytes = codex_active.then(|| project_doc_max_bytes(exclude));
     for entry in traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude)).entries {
         if entry
             .path
@@ -66,10 +65,10 @@ pub(crate) fn validate_agents_files_with_prompt_pass(
         diag.with_subject_path(&display, |diag| {
             validate_shared_rules(diag, path, &display, &content, &prompt_document);
             prompt_pass.validate(&prompt_document, diag);
-            if let Some(max_bytes) = codex_max_bytes {
-                validate_codex_rules(diag, exclude, &display, &content, max_bytes);
-            }
         });
+    }
+    if codex_active {
+        validate_selected_codex_project_documents(diag, exclude);
     }
 }
 
@@ -116,48 +115,135 @@ fn validate_shared_rules(
     }
 }
 
-fn validate_codex_rules(
-    diag: &mut DiagnosticCollector,
+#[derive(Debug)]
+struct ProjectDocument {
+    path: PathBuf,
+    display: String,
+    directory: PathBuf,
+    content: String,
+    byte_len: usize,
+}
+
+/// Codex chooses one project document in each directory. Discovery deliberately
+/// uses the shared walker: it filters exclusions before selection, yields only
+/// regular files, and never follows links outside the repository.
+fn selected_codex_project_documents(
     exclude: &ExcludeSet,
-    display: &str,
-    content: &str,
-    max_bytes: usize,
-) {
-    if content.len() > CODEX_HARD_MAX_BYTES {
-        diag.report(
-            LintRule::CodexAgentsTooLarge,
-            &format!(
-                "{display} exceeds Codex's {CODEX_HARD_MAX_BYTES}-byte hard limit ({} bytes)",
-                content.len()
-            ),
-        );
+    fallback_filenames: &[String],
+) -> Vec<ProjectDocument> {
+    let mut candidates: BTreeMap<PathBuf, Vec<traversal::WalkEntry>> = BTreeMap::new();
+    for entry in traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude)).entries {
+        let Some(file_name) = entry.path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if file_name == "AGENTS.override.md"
+            || file_name == "AGENTS.md"
+            || fallback_filenames
+                .iter()
+                .any(|fallback| fallback == file_name)
+        {
+            let directory = entry
+                .path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
+            candidates.entry(directory).or_default().push(entry);
+        }
     }
-    if content.len() > max_bytes {
-        diag.report(LintRule::CodexAgentsDocLimit, &format!("{display} exceeds Codex's effective project document limit of {max_bytes} bytes ({} bytes)", content.len()));
-    }
-    if agents_conflicts_with_config(content, exclude) {
-        diag.report(
-            LintRule::CodexAgentsConfigConflict,
-            &format!("{display} explicitly contradicts a value in .codex/config.toml"),
-        );
+
+    candidates
+        .into_values()
+        .filter_map(|entries| {
+            let selected = ["AGENTS.override.md", "AGENTS.md"]
+                .into_iter()
+                .map(str::to_owned)
+                .chain(
+                    fallback_filenames
+                        .iter()
+                        .filter(|name| is_safe_project_document_filename(name))
+                        .cloned(),
+                )
+                .find_map(|name| {
+                    entries.iter().find(|entry| {
+                        entry
+                            .path
+                            .file_name()
+                            .is_some_and(|file_name| file_name == std::ffi::OsStr::new(&name))
+                    })
+                })?;
+            let bytes = std::fs::read(&selected.path).ok()?;
+            let content = String::from_utf8(bytes).ok()?;
+            Some(ProjectDocument {
+                directory: selected.path.parent()?.to_path_buf(),
+                path: selected.path.clone(),
+                display: selected.display.clone(),
+                byte_len: content.len(),
+                content,
+            })
+        })
+        .collect()
+}
+
+fn is_safe_project_document_filename(name: &str) -> bool {
+    let path = Path::new(name);
+    !name.is_empty()
+        && path.components().count() == 1
+        && matches!(path.components().next(), Some(Component::Normal(_)))
+}
+
+fn validate_selected_codex_project_documents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+    let Some(settings) = codex_config::project_document_settings(exclude) else {
+        return;
+    };
+    let documents = selected_codex_project_documents(exclude, &settings.fallback_filenames);
+    let by_directory: BTreeMap<_, _> = documents
+        .iter()
+        .map(|document| (document.directory.clone(), document))
+        .collect();
+
+    for document in &documents {
+        let chain = active_project_document_chain(document, &by_directory);
+        let used = chain
+            .iter()
+            .take_while(|active| active.path != document.path)
+            .fold(0usize, |used, active| used.saturating_add(active.byte_len))
+            .min(settings.max_bytes);
+        if document.byte_len > settings.max_bytes.saturating_sub(used) {
+            let metadata = DiagnosticMetadata::default()
+                .with_evidence(format!("{used}/{} bytes", settings.max_bytes))
+                .with_suggestion(
+                    "reduce the active project-document chain or raise project_doc_max_bytes",
+                )
+                .with_related_subjects(chain.iter().map(|document| document.display.as_str()));
+            diag.report_at_with(
+                LintRule::CodexProjectDocBudget,
+                &document.display,
+                &format!(
+                    "{} is partially or wholly omitted by Codex's cumulative project-document budget ({used}/{} bytes used; {} bytes in this document)",
+                    document.display, settings.max_bytes, document.byte_len
+                ),
+                metadata,
+            );
+        }
+        validate_project_document_conflicts(diag, document, &settings);
     }
 }
 
-fn project_doc_max_bytes(exclude: &ExcludeSet) -> usize {
-    if exclude.is_excluded(".codex/config.toml") {
-        return CODEX_DEFAULT_MAX_BYTES;
+fn active_project_document_chain<'a>(
+    document: &'a ProjectDocument,
+    by_directory: &BTreeMap<PathBuf, &'a ProjectDocument>,
+) -> Vec<&'a ProjectDocument> {
+    let mut directories = Vec::new();
+    let mut current = Some(document.directory.as_path());
+    while let Some(directory) = current {
+        directories.push(directory.to_path_buf());
+        current = directory.parent().filter(|parent| *parent != directory);
     }
-    std::fs::read_to_string(".codex/config.toml")
-        .ok()
-        .and_then(|content| content.parse::<toml::Value>().ok())
-        .and_then(|value| {
-            value
-                .get("project_doc_max_bytes")
-                .and_then(toml::Value::as_integer)
-        })
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(CODEX_DEFAULT_MAX_BYTES)
+    directories.reverse();
+    directories
+        .into_iter()
+        .filter_map(|directory| by_directory.get(&directory).copied())
+        .collect()
 }
 
 fn validate_inline_paths(
@@ -484,32 +570,102 @@ fn line_start_offset(content: &str, line_number: usize) -> Option<usize> {
     None
 }
 
-fn agents_conflicts_with_config(content: &str, exclude: &ExcludeSet) -> bool {
-    if exclude.is_excluded(".codex/config.toml") {
-        return false;
-    }
-    let Ok(config) = std::fs::read_to_string(".codex/config.toml") else {
-        return false;
+static PROJECT_DOCUMENT_ASSERTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*(approval_policy|sandbox_mode|project_doc_max_bytes)\s*(?:=|:|\bis\b)\s*(.*?)\s*$")
+        .expect("project-document assertion expression is valid")
+});
+
+fn validate_project_document_conflicts(
+    diag: &mut DiagnosticCollector,
+    document: &ProjectDocument,
+    settings: &ProjectDocumentSettings,
+) {
+    let Some(config) = settings.config.as_ref() else {
+        return;
     };
-    let Ok(value) = config.parse::<toml::Value>() else {
-        return false;
-    };
-    for key in ["approval_policy", "sandbox_mode", "project_doc_max_bytes"] {
-        let Some(config_value) = value.get(key) else {
+    let markdown = MarkdownDocument::parse(&document.content);
+    let live = LiveInstructionDocument::new(
+        Path::new(&document.display),
+        InstructionSurfaceKind::AgentsMd,
+        &markdown,
+    );
+    for (line, is_example) in live.prose_lines().iter().zip(live.example_scopes()) {
+        if is_example {
+            continue;
+        }
+        let raw_line = document
+            .content
+            .lines()
+            .nth(line.line - 1)
+            .unwrap_or_default();
+        let (marker_bytes, prose) = strip_leading_list_marker(raw_line);
+        let Some(captures) = PROJECT_DOCUMENT_ASSERTION.captures(prose) else {
             continue;
         };
-        let config_value = config_value.to_string().trim_matches('"').to_string();
-        for line in content.lines() {
-            let normalized = line.replace(['`', '"', '\''], "");
-            let Some((mentioned_key, mentioned_value)) = normalized.split_once('=') else {
-                continue;
-            };
-            if mentioned_key.trim() == key && mentioned_value.trim() != config_value {
-                return true;
-            }
+        let Some(key_match) = captures.get(1) else {
+            continue;
+        };
+        let Some(value_match) = captures.get(2) else {
+            continue;
+        };
+        let Some(line_start) = line_start_offset(&document.content, line.line) else {
+            continue;
+        };
+        let assertion_start = line_start + marker_bytes + key_match.start();
+        let assertion_end = line_start + marker_bytes + value_match.end();
+        if markdown.inline_code().iter().any(|code| {
+            code.byte_range.start < assertion_end && assertion_start < code.byte_range.end
+        }) || markdown.links().iter().any(|link| {
+            link.byte_range.start < assertion_end && assertion_start < link.byte_range.end
+        }) {
+            continue;
         }
+        let key = key_match.as_str().to_ascii_lowercase();
+        let Some(config_value) = config.get(&key) else {
+            continue;
+        };
+        let literal = value_match
+            .as_str()
+            .trim()
+            .trim_end_matches(['.', '!', '?'])
+            .trim_end();
+        let Some(asserted_value) = parse_toml_scalar(literal) else {
+            continue;
+        };
+        if asserted_value == *config_value {
+            continue;
+        }
+        let value_offset = marker_bytes + value_match.start() + value_match.as_str().len()
+            - value_match.as_str().trim_start().len();
+        let value_start = line_start + value_offset;
+        let value_end = value_start + literal.len();
+        let metadata = SourceSpan::from_byte_range(&document.content, value_start..value_end)
+            .map_or_else(DiagnosticMetadata::default, |location| {
+                DiagnosticMetadata::default().with_location(location)
+            })
+            .with_evidence(&key)
+            .with_suggestion("align this project instruction with .codex/config.toml or remove the runtime assertion");
+        diag.report_at_with(
+            LintRule::CodexProjectDocConflict,
+            &document.display,
+            &format!(
+                "{} asserts {key} contrary to .codex/config.toml",
+                document.display
+            ),
+            metadata,
+        );
     }
-    false
+}
+
+fn parse_toml_scalar(literal: &str) -> Option<toml::Value> {
+    let value = format!("value = {literal}").parse::<toml::Value>().ok()?;
+    let value = value.get("value")?.clone();
+    (value.is_str()
+        || value.is_integer()
+        || value.is_float()
+        || value.is_bool()
+        || value.is_datetime())
+    .then_some(value)
 }
 
 #[cfg(test)]
@@ -856,7 +1012,7 @@ mod tests {
             "AGENTS.md",
             format!(
                 "# Instructions\ntoken = sk-12345678901234567890\nSee `missing.md`.\n{}",
-                "x".repeat(CODEX_DEFAULT_MAX_BYTES)
+                "x".repeat(codex_config::CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES)
             ),
         )
         .unwrap();
@@ -884,9 +1040,7 @@ mod tests {
         }
         assert!(!diag.diagnostics().iter().any(|item| matches!(
             item.rule,
-            LintRule::CodexAgentsTooLarge
-                | LintRule::CodexAgentsDocLimit
-                | LintRule::CodexAgentsConfigConflict
+            LintRule::CodexProjectDocBudget | LintRule::CodexProjectDocConflict
         )));
     }
 
@@ -1108,7 +1262,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn codex_policy_uses_effective_limit_and_config() {
+    fn codex_project_document_selection_applies_cumulative_budget_and_live_conflicts() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -1119,12 +1273,10 @@ mod tests {
             "project_doc_max_bytes = 100\napproval_policy = \"never\"\n",
         )
         .unwrap();
+        std::fs::write("AGENTS.md", "a".repeat(70)).unwrap();
         std::fs::write(
             "nested/AGENTS.md",
-            format!(
-                "# Instructions\napproval_policy = \"on-request\"\n{}",
-                "x".repeat(CODEX_HARD_MAX_BYTES + 1)
-            ),
+            "approval_policy = \"on-request\"\n".to_string() + &"x".repeat(40),
         )
         .unwrap();
 
@@ -1132,23 +1284,19 @@ mod tests {
         validate_agents_files(&mut diag, &ExcludeSet::default(), true);
 
         assert!(diag.diagnostics().iter().any(|item| {
-            item.rule == LintRule::CodexAgentsDocLimit && item.message.contains("nested/AGENTS.md")
+            item.rule == LintRule::CodexProjectDocBudget
+                && item.subject_path.as_deref() == Some(Path::new("nested/AGENTS.md"))
         }));
         assert!(
             diag.diagnostics()
                 .iter()
-                .any(|item| item.rule == LintRule::CodexAgentsTooLarge)
-        );
-        assert!(
-            diag.diagnostics()
-                .iter()
-                .any(|item| item.rule == LintRule::CodexAgentsConfigConflict)
+                .any(|item| item.rule == LintRule::CodexProjectDocConflict)
         );
     }
 
     #[test]
     #[serial_test::serial]
-    fn excluded_codex_config_does_not_affect_agents_policy() {
+    fn excluded_codex_config_uses_default_budget_without_conflict_analysis() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -1171,9 +1319,140 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents_files(&mut diag, &exclude, true);
 
-        assert!(!diag.diagnostics().iter().any(|item| matches!(
-            item.rule,
-            LintRule::CodexAgentsDocLimit | LintRule::CodexAgentsConfigConflict
-        )));
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| matches!(item.rule, LintRule::CodexProjectDocConflict))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_project_document_precedence_exclusions_and_utf8_budget_are_deterministic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("nested").unwrap();
+        std::fs::create_dir_all(".codex").unwrap();
+        std::fs::write(
+            ".codex/config.toml",
+            "project_doc_max_bytes = 4\nproject_doc_fallback_filenames = [\"PROJECT.md\"]\n",
+        )
+        .unwrap();
+        std::fs::write("AGENTS.override.md", "ab").unwrap();
+        std::fs::write("AGENTS.md", "this inactive sibling is deliberately long").unwrap();
+        std::fs::write("nested/PROJECT.md", "éé").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        let budgets: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::CodexProjectDocBudget)
+            .collect();
+        assert_eq!(budgets.len(), 1);
+        assert_eq!(
+            budgets[0].subject_path.as_deref(),
+            Some(Path::new("nested/PROJECT.md"))
+        );
+        assert_eq!(budgets[0].evidence.as_deref(), Some("2/4 bytes"));
+        assert_eq!(
+            budgets[0].related_subjects,
+            vec![
+                PathBuf::from("AGENTS.override.md"),
+                PathBuf::from("nested/PROJECT.md")
+            ]
+        );
+
+        let excluded_override = ExcludeSet::new(&["AGENTS.override.md".into()]).unwrap();
+        let selected = selected_codex_project_documents(&excluded_override, &["PROJECT.md".into()]);
+        assert!(
+            selected
+                .iter()
+                .any(|document| document.display == "AGENTS.md")
+        );
+        assert!(
+            !selected
+                .iter()
+                .any(|document| document.display == "AGENTS.override.md")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_project_document_conflicts_only_scan_live_selected_prose() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".codex").unwrap();
+        std::fs::write(
+            ".codex/config.toml",
+            "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\nproject_doc_max_bytes = 10\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "AGENTS.md",
+            "---\nsandbox_mode: \"read-only\"\n---\n```toml\nsandbox_mode = \"read-only\"\n```\n> sandbox_mode = \"read-only\"\n`sandbox_mode = \"read-only\"`\n[sandbox_mode = \"read-only\"](https://example.com)\n## Examples\n- approval_policy = \"on-request\"\n## Live\n- sandbox_mode: \"read-only\"\nproject_doc_max_bytes is 10.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "AGENTS.override.md",
+            "selected override without assertions\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|finding| finding.rule != LintRule::CodexProjectDocConflict)
+        );
+
+        std::fs::remove_file("AGENTS.override.md").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+        let conflicts: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::CodexProjectDocConflict)
+            .collect();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].evidence.as_deref(), Some("sandbox_mode"));
+        assert_eq!(
+            conflicts[0].suggestion.as_deref(),
+            Some(
+                "align this project instruction with .codex/config.toml or remove the runtime assertion"
+            )
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn invalid_project_document_config_skips_dependent_budget_and_conflict_findings() {
+        for config in [
+            "project_doc_max_bytes = -1\napproval_policy = \"never\"\n",
+            "project_doc_fallback_filenames = [1]\napproval_policy = \"never\"\n",
+            "project_doc_max_bytes = [invalid\n",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::create_dir_all(".codex").unwrap();
+            std::fs::write(".codex/config.toml", config).unwrap();
+            std::fs::write(
+                "AGENTS.md",
+                "approval_policy = \"on-request\"\n".to_string() + &"x".repeat(40_000),
+            )
+            .unwrap();
+
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_agents_files(&mut diag, &ExcludeSet::default(), true);
+            assert!(diag.diagnostics().iter().all(|finding| !matches!(
+                finding.rule,
+                LintRule::CodexProjectDocBudget | LintRule::CodexProjectDocConflict
+            )));
+        }
     }
 }
