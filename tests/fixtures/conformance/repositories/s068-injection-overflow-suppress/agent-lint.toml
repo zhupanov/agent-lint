@@ -1,0 +1,4 @@
+[[lint.overrides]]
+files = [".claude/skills/ignored/SKILL.md"]
+suppress = ["S068"]
+reason = "The fixture verifies path-scoped S068 suppression."

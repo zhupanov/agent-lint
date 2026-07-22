@@ -7391,13 +7391,18 @@ suppress = ["S055"]
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            diag.errors()
-                .iter()
-                .any(|e| e.contains("dynamic injections")),
-            "S068 should fire, got: {:?}",
-            diag.errors()
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::InjectionOverflow)
+            .expect("S068 should fire");
+        assert_eq!(diagnostic.location.unwrap().start().line_number(), 8);
+        assert_eq!(
+            diagnostic.message,
+            "skills/my-skill/SKILL.md: body has 4 dynamic injections (!`…`); prefer at most 3"
         );
+        assert!(diagnostic.evidence.is_none());
+        assert!(diagnostic.suggestion.is_none());
     }
 
     #[test]
@@ -7419,6 +7424,114 @@ suppress = ["S055"]
                 .errors()
                 .iter()
                 .any(|e| e.contains("dynamic injections"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s068_ignores_bang_prefixed_fence_info_strings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n```!note\nfirst\n```\n```!custom\nsecond\n```\n```!note\nthird\n```\n```!custom\nfourth\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::InjectionOverflow)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s068_mixed_tokens_and_fence_info_strings_owns_fourth_token_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n!`one` !`two`\n```!note\nexample\n```\n!`three`\n```!custom\nexample\n```\n!`four`\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::InjectionOverflow)
+            .expect("the fourth inline token should produce S068");
+        assert_eq!(diagnostic.location.unwrap().start().line_number(), 13);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s068_counts_inline_tokens_inside_fenced_examples() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n```text\n!`one`\n!`two`\n!`three`\n!`four`\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::InjectionOverflow)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s068_counts_boundary_qualified_tokens_inside_inline_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n`` !`one` ``\n`` !`two` ``\n`` !`three` ``\n`` !`four` ``\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::InjectionOverflow)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s068_rejects_empty_escaped_and_non_token_forms() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\n---\n!``\n\\!`escaped`\n`ordinary backticks`\n!note\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::InjectionOverflow)
         );
     }
 

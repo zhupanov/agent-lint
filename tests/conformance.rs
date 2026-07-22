@@ -93,6 +93,14 @@ struct DiagnosticIdentity {
     related_subjects: Vec<String>,
     #[serde(default)]
     suggestion: Option<String>,
+    #[serde(default, rename = "location")]
+    expected_location: Option<ExpectedLocation>,
+}
+
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
+struct ExpectedLocation {
+    line: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,6 +141,17 @@ struct OutputDiagnostic {
     #[serde(default)]
     related_subjects: Vec<String>,
     suggestion: Option<String>,
+    location: Option<OutputLocation>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OutputLocation {
+    start: OutputPosition,
+}
+
+#[derive(Debug, Deserialize)]
+struct OutputPosition {
+    line: usize,
 }
 
 impl From<&OutputDiagnostic> for DiagnosticIdentity {
@@ -144,6 +163,7 @@ impl From<&OutputDiagnostic> for DiagnosticIdentity {
             subject_path: diagnostic.subject_path.clone(),
             related_subjects: diagnostic.related_subjects.clone(),
             suggestion: diagnostic.suggestion.clone(),
+            expected_location: None,
         }
     }
 }
@@ -499,6 +519,7 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
     );
 
     assert_expected_suggestions(case, report);
+    assert_expected_locations(case, report);
 
     let diagnostics: Vec<_> = report
         .diagnostics
@@ -506,6 +527,7 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
         .map(DiagnosticIdentity::from)
         .map(|mut diagnostic| {
             diagnostic.suggestion = None;
+            diagnostic.expected_location = None;
             diagnostic
         })
         .collect();
@@ -516,6 +538,7 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
         .cloned()
         .map(|mut diagnostic| {
             diagnostic.suggestion = None;
+            diagnostic.expected_location = None;
             diagnostic
         })
         .collect();
@@ -554,6 +577,45 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
             .position(|allowed| **allowed == *diagnostic)
             .unwrap_or_else(|| panic!("{}: unexpected diagnostic {diagnostic:?}", case.name));
         remaining_allowances.remove(position);
+    }
+}
+
+fn assert_expected_locations(case: &LoadedCase, report: &OutputReport) {
+    let mut matched_diagnostics = vec![false; report.diagnostics.len()];
+    for expected in case
+        .manifest
+        .expected_diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.expected_location.is_some())
+    {
+        let (index, actual) = report
+            .diagnostics
+            .iter()
+            .enumerate()
+            .find(|actual| {
+                !matched_diagnostics[actual.0]
+                    && actual.1.code == expected.code
+                    && actual.1.name == expected.name
+                    && actual.1.severity == expected.severity
+                    && actual.1.subject_path == expected.subject_path
+                    && actual.1.related_subjects == expected.related_subjects
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: cannot find diagnostic for expected location {:?}",
+                    case.name, expected
+                )
+            });
+        matched_diagnostics[index] = true;
+        assert_eq!(
+            actual.location.as_ref().map(|location| location.start.line),
+            expected
+                .expected_location
+                .as_ref()
+                .map(|location| location.line),
+            "{}: diagnostic source line changed",
+            case.name
+        );
     }
 }
 
