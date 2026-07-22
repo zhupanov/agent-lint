@@ -1,0 +1,18 @@
+{
+  "class": "broken",
+  "repository": "skill-recursive-all-broken",
+  "covers": ["plugin-mode", "all", "json", "skill-recursive"],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": ["--format", "json", "--all", "--only", "S030,S048", "."]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {"code": "S030", "name": "orphaned-skill-files", "severity": "error", "subject_path": "skills/demo/scripts/lib/orphan.sh"},
+    {"code": "S048", "name": "ref-name-generic", "severity": "error", "subject_path": "skills/demo/references/doc.md"}
+  ],
+  "allowed_additional_diagnostics": []
+}

@@ -4,7 +4,7 @@
   "covers": ["plugin-mode", "normal", "json", "skill-structural"],
   "invocation": {
     "mode": "plugin",
-    "arguments": ["--format", "json", "--only", "S030,S036,S072,S073", "."]
+    "arguments": ["--format", "json", "--only", "S030,S036,S048,S072,S073", "."]
   },
   "expected_exit_code": 1,
   "expected_status": "errors",
@@ -15,13 +15,19 @@
       "code": "S030",
       "name": "orphaned-skill-files",
       "severity": "error",
-      "subject_path": "skills/demo/scripts/orphan.sh"
+      "subject_path": "skills/demo/scripts/lib/orphan.sh"
     },
     {
       "code": "S036",
       "name": "ref-no-toc",
       "severity": "warning",
       "subject_path": "skills/shared/plain.md"
+    },
+    {
+      "code": "S048",
+      "name": "ref-name-generic",
+      "severity": "warning",
+      "subject_path": "skills/demo/references/doc.md"
     },
     {
       "code": "S072",

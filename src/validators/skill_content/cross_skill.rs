@@ -6,7 +6,7 @@ use crate::traversal;
 use crate::validators::shared_md_refs::{contains_shared_md_ref, find_shared_md_refs};
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 /// Matches generic stems (doc, file, ref, data, info, tmp, test) with optional
 /// digits, single letters (case-insensitive), and pure numeric names — all with .md extension.
 static RE_GENERIC_REF_NAME: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i:^(?:doc|file|ref|data|info|tmp|test)\d*|^[a-z]|^\d+)\.md$").unwrap()
+    Regex::new(r"(?i:^(?:(?:doc|file|ref|data|info|tmp|test)\d*|[a-z]|\d+)\.md$)").unwrap()
 });
 
 const REF_NO_TOC_THRESHOLD: usize = 100;
@@ -103,29 +103,40 @@ pub(super) fn validate_orphaned_skill_files(
         }
 
         let docs = read_skill_markdown_docs(&path);
-        if docs.is_empty() {
-            continue;
-        }
 
-        // Check each file in scripts/
-        for script_entry in traversal::shallow_files(&scripts_dir, Path::new("."), None).entries {
-            let script_path = script_entry.path;
-            let script_name = match script_path.file_name().and_then(|n| n.to_str()) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
+        let scripts = traversal::recursive_files_with_pruning(
+            &scripts_dir,
+            Path::new("."),
+            None,
+            traversal::should_descend_except_git,
+        )
+        .entries;
+        let basename_counts = scripts.iter().fold(HashMap::new(), |mut counts, script| {
+            let basename = script
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            *counts.entry(basename.into_owned()).or_insert(0usize) += 1;
+            counts
+        });
 
-            let display_path = format!("{base_dir}/{dir_name}/scripts/{script_name}");
+        for script in scripts {
+            let script_relative = traversal::display_path(&path, &script.path);
+            let script_name = script
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+            let display_path = script.display;
             if exclude.is_excluded(&display_path) {
                 continue;
             }
 
-            // Referenced when the file name appears in any skill-local .md with
-            // a leading character boundary (avoids dry-run.sh shadowing run.sh).
-            if !docs
-                .iter()
-                .any(|doc| name_referenced_with_boundary(doc, &script_name))
-            {
+            let unique_basename = basename_counts.get(script_name.as_ref()) == Some(&1);
+            if !docs.iter().any(|doc| {
+                script_referenced(doc, &script_relative, script_name.as_ref(), unique_basename)
+            }) {
                 diag.report_at(
                     LintRule::OrphanedSkillFiles,
                     &display_path,
@@ -141,35 +152,56 @@ pub(super) fn validate_orphaned_skill_files(
 
 /// Read every `*.md` under a skill directory in deterministic sorted order.
 fn read_skill_markdown_docs(skill_dir: &Path) -> Vec<String> {
-    traversal::recursive_files(skill_dir, Path::new("."), None)
-        .entries
-        .into_iter()
-        .filter(|entry| {
-            entry
-                .path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
-        })
-        .filter_map(|entry| fs::read_to_string(&entry.path).ok())
-        .collect()
+    traversal::recursive_files_with_pruning(
+        skill_dir,
+        Path::new("."),
+        None,
+        traversal::should_descend_except_git,
+    )
+    .entries
+    .into_iter()
+    .filter(|entry| {
+        entry
+            .path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+    })
+    .filter_map(|entry| fs::read_to_string(&entry.path).ok())
+    .collect()
 }
 
-/// True when `name` appears in `content` and the preceding character (if any)
-/// is not `[A-Za-z0-9_.-]`.
-fn name_referenced_with_boundary(content: &str, name: &str) -> bool {
+fn script_referenced(
+    content: &str,
+    relative_path: &str,
+    basename: &str,
+    unique_basename: bool,
+) -> bool {
+    token_referenced(content, relative_path, true)
+        || (unique_basename && token_referenced(content, basename, true))
+}
+
+/// True when `token` appears in `content` with exact token boundaries. When
+/// requested, reject a `/` continuation so a path to a child is not an
+/// ownership reference to its parent file.
+fn token_referenced(content: &str, token: &str, reject_slash_suffix: bool) -> bool {
     let mut start = 0;
-    while let Some(offset) = content[start..].find(name) {
+    while let Some(offset) = content[start..].find(token) {
         let abs = start + offset;
-        let boundary_ok = abs == 0
+        let leading_boundary_ok = abs == 0
             || content[..abs]
                 .chars()
                 .next_back()
                 .is_some_and(|prev| !is_name_boundary_char(prev));
-        if boundary_ok {
+        let end = abs + token.len();
+        let trailing_boundary_ok = end == content.len()
+            || content[end..].chars().next().is_some_and(|next| {
+                !is_name_boundary_char(next) && (!reject_slash_suffix || next != '/')
+            });
+        if leading_boundary_ok && trailing_boundary_ok {
             return true;
         }
-        start = abs + name.len().max(1);
+        start = end;
     }
     false
 }
@@ -232,8 +264,8 @@ pub(super) fn validate_ref_no_toc(
 }
 
 /// S048: Detect non-descriptive reference file names in skill directories.
-/// Walks each skill subdirectory (non-recursive), skips SKILL.md and subdirectories
-/// (e.g., scripts/), and flags `.md` files whose names match the generic denylist.
+/// Recursively walks skill-local Markdown outside `scripts/`, excluding
+/// `SKILL.md`, and flags names matching the generic denylist.
 pub(super) fn validate_generic_ref_names(
     base_dir: &str,
     diag: &mut DiagnosticCollector,
@@ -259,7 +291,14 @@ pub(super) fn validate_generic_ref_names(
             continue;
         }
 
-        for file_entry in traversal::shallow_files(&path, Path::new("."), None).entries {
+        for file_entry in traversal::recursive_files_with_pruning(
+            &path,
+            Path::new("."),
+            None,
+            should_descend_skill_reference_directory,
+        )
+        .entries
+        {
             let file_path = file_entry.path;
             let file_name = match file_path.file_name().and_then(|n| n.to_str()) {
                 Some(n) => n.to_string(),
@@ -270,7 +309,7 @@ pub(super) fn validate_generic_ref_names(
                 continue;
             }
 
-            let display_path = format!("{base_dir}/{dir_name}/{file_name}");
+            let display_path = file_entry.display;
             if exclude.is_excluded(&display_path) {
                 continue;
             }
@@ -287,4 +326,9 @@ pub(super) fn validate_generic_ref_names(
             }
         }
     }
+}
+
+fn should_descend_skill_reference_directory(entry: &walkdir::DirEntry) -> bool {
+    traversal::should_descend_except_git(entry)
+        && !(entry.depth() == 1 && entry.file_name() == "scripts")
 }
