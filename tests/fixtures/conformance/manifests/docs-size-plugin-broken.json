@@ -1,0 +1,37 @@
+{
+  "class": "broken",
+  "repository": "docs-size-plugin-broken",
+  "covers": [
+    "plugin-mode",
+    "normal",
+    "json",
+    "docs-size"
+  ],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": [
+      "--format",
+      "json",
+      "--only",
+      "D002",
+      "."
+    ]
+  },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": [
+    "claude",
+    "codex"
+  ],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "D002",
+      "name": "claudemd-too-large",
+      "severity": "warning",
+      "subject_path": "CLAUDE.md",
+      "suggestion": "split detailed guidance into referenced documents"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

@@ -958,11 +958,36 @@ P026 reserved names follow Claude Code's documented built-in server list
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin | error |
-| D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin | warn |
+| D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` Canonical sources not found on disk | Always | error |
+| D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines (advisory) | Always | warn |
 | D003 | `todo-in-docs` | Syntactic unfinished-work marker in root `CLAUDE.md` | Always | warn |
 | D004 | `claude-import-large` | Repository-local `CLAUDE.md` `@`-import closure exceeds a global, path-specific, or total line budget | Always | warn |
 | D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
+
+D001 runs in every Basic or Plugin mode when an included root `CLAUDE.md` is
+present. It owns only the level-2 heading whose trimmed case-insensitive text is
+exactly `canonical sources` (similarly prefixed headings are not matches),
+continues through nested level-3+ subsections, and ends at the next level-1/2
+heading or EOF. Within that section it recognizes repository-root `docs/...md`
+references from local Markdown link destinations, inline-code nodes, and plain
+prose/list tokens whose whole token begins with `docs/` (so
+`website/docs/intro.md` and `mydocs/foo.md` are out of scope). Fenced/indented
+code, images, block quotes, and identifiable example scopes are skipped.
+Link destinations are percent-decoded once; all candidates strip one `#fragment`
+before the shared repository-root safe probe. One error is emitted per distinct
+normalized target at the first path-token span, with bounded evidence and
+suggestion `create the canonical document or correct this reference`. Missing,
+non-regular, escaping, and symlink-component targets all fail; the resolver never
+follows or discloses an outside path. Not autofixable.
+
+D002 is a project-maintainability advisory (not a Claude platform hard limit). It
+warns when the root `CLAUDE.md` has more than 500 Unicode text lines (`str::lines`
+semantics: a final terminator adds no phantom line), emits one file-level finding
+with evidence `{N} lines` and suggestion
+`split detailed guidance into referenced documents`, and fabricates no point span.
+It shares D001's Always dispatch, exclusion/suppression policy, and non-autofixable
+status. Unreadable/non-UTF-8 root files keep both rules silent; a missing optional
+root stays clean.
 
 D005 scans inline-code pointers from the shared Markdown adapter in the
 configured `instruction-files` (default `AGENTS.md`, `SECURITY.md`, and

@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Made D001 (`docs-ref-missing`) and D002 (`claudemd-too-large`) Always-mode
+  checks with structured Markdown Canonical-sources parsing, exact `docs/`
+  left-boundary matching, shared repository-safe path probing, and file-level
+  advisory size metadata so Basic CLAUDE.md-only repos and fenced/parent-path
+  examples no longer false-positive or stay silent
 - Agent discovery is now recursive across `.claude/agents/`, the plugin
   `agents/` default, and manifest-declared `plugin.json` `agents` roots, matching
   Claude Code: agents nested in subdirectories are seen by every agent rule

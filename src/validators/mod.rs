@@ -91,6 +91,9 @@ fn run_basic(
     prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // X002–X005: CLAUDE.md structure (when present)
     docs::validate_claudemd_structure(diag, exclude);
+    // D001/D002: root CLAUDE.md canonical docs refs and size (Always)
+    docs::validate_docs_references(diag, exclude);
+    docs::validate_claudemd_size(diag, exclude);
     // D003: unfinished-work markers in root CLAUDE.md (Basic activation surface)
     docs::validate_claudemd_todos(diag, exclude);
     // Shared prompt/reference/script contracts for private configuration and
@@ -175,7 +178,7 @@ fn run_plugin(
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
         user_config::validate_user_config(ctx, diag);
     });
-    // V22: docs file references
+    // D001: docs file references from CLAUDE.md Canonical sources (Always)
     docs::validate_docs_references(diag, exclude);
     // V29: component path safety and layout
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
@@ -212,7 +215,7 @@ fn run_plugin(
         targets.agent_skills,
         targets.cursor,
     );
-    // D002: CLAUDE.md size
+    // D002: CLAUDE.md size (Always)
     docs::validate_claudemd_size(diag, exclude);
     // D003: TODO/FIXME in CLAUDE.md
     docs::validate_claudemd_todos(diag, exclude);
@@ -265,6 +268,7 @@ mod tests {
     use super::*;
     use crate::config::{ExcludeSet, PlatformOverrides};
     use crate::context::ManifestState;
+    use crate::rules::LintRule;
     use serde_json::json;
     use std::path::Path;
 
@@ -1364,5 +1368,84 @@ mod tests {
         // Should run without panic — fixed-path validators are unaffected
         // No errors expected since .claude/ exists but no skills
         assert_eq!(diag.error_count(), 0);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn d001_d002_dispatch_in_basic_and_plugin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::write(
+            "CLAUDE.md",
+            format!(
+                "# Project\n## Canonical sources\n- docs/missing.md\n## Other\n{}",
+                "line\n".repeat(500)
+            ),
+        )
+        .unwrap();
+
+        let basic = LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: LintMode::Basic,
+            plugin_json: ManifestState::Missing,
+            marketplace_json: ManifestState::Missing,
+            hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
+            settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
+        };
+        let mut basic_diag = DiagnosticCollector::new_all_enabled();
+        run_all(&basic, &mut basic_diag, &ExcludeSet::default());
+        assert!(
+            basic_diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::DocsRefMissing),
+            "Basic mode must dispatch D001"
+        );
+        assert!(
+            basic_diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::ClaudemdTooLarge),
+            "Basic mode must dispatch D002"
+        );
+
+        std::fs::create_dir_all(".claude-plugin").unwrap();
+        std::fs::write(
+            ".claude-plugin/plugin.json",
+            r#"{"name":"docs-dispatch","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        let plugin_val: serde_json::Value =
+            serde_json::from_str(r#"{"name":"docs-dispatch","version":"1.0.0"}"#).unwrap();
+        let plugin = LintContext {
+            base_path: tmp.path().to_path_buf(),
+            mode: LintMode::Plugin,
+            plugin_json: ManifestState::parsed(plugin_val),
+            marketplace_json: ManifestState::Missing,
+            hooks_json: ManifestState::Missing,
+            declared_hook_configs: vec![],
+            settings_json: ManifestState::Missing,
+            settings_local_json: ManifestState::Missing,
+        };
+        let mut plugin_diag = DiagnosticCollector::new_all_enabled();
+        run_all(&plugin, &mut plugin_diag, &ExcludeSet::default());
+        assert!(
+            plugin_diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::DocsRefMissing),
+            "Plugin mode must dispatch D001"
+        );
+        assert!(
+            plugin_diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::ClaudemdTooLarge),
+            "Plugin mode must dispatch D002"
+        );
     }
 }

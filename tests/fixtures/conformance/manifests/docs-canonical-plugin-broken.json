@@ -1,0 +1,37 @@
+{
+  "class": "broken",
+  "repository": "docs-canonical-plugin-broken",
+  "covers": [
+    "plugin-mode",
+    "normal",
+    "json",
+    "docs-canonical"
+  ],
+  "invocation": {
+    "mode": "plugin",
+    "arguments": [
+      "--format",
+      "json",
+      "--only",
+      "D001",
+      "."
+    ]
+  },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": [
+    "claude",
+    "codex"
+  ],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "D001",
+      "name": "docs-ref-missing",
+      "severity": "error",
+      "subject_path": "CLAUDE.md",
+      "suggestion": "create the canonical document or correct this reference"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}
