@@ -843,7 +843,7 @@ Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn
 | D001 | `docs-ref-missing` | Docs reference in `CLAUDE.md` not found on disk | Plugin | error |
 | D002 | `claudemd-too-large` | `CLAUDE.md` exceeds 500 lines | Plugin | warn |
 | D003 | `todo-in-docs` | Syntactic unfinished-work marker in root `CLAUDE.md` | Always | warn |
-| D004 | `claude-import-large` | Recursive `CLAUDE.md` `@`-import closure exceeds a global, path-specific, or total line budget | Always | warn |
+| D004 | `claude-import-large` | Repository-local `CLAUDE.md` `@`-import closure exceeds a global, path-specific, or total line budget | Always | warn |
 | D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
 
 D005 scans inline-code pointers outside fenced code blocks in the configured
@@ -859,20 +859,25 @@ marker only, and is not autofixable.
 
 ## Link/import integrity Rules (L)
 
-These rules validate the `@import` graph and relative markdown-link
-integrity of each configured instruction file (see `instruction-files` in
-[configuration](configuration.md); default `AGENTS.md`, `SECURITY.md`,
-`CLAUDE.md`). `@import` traversal is fence-aware (imports inside code
-fences are ignored), bounded to one visit per file per root, and reports
-the offending chain for cycles and depth violations. Non-markdown
-imports are legitimate in Claude Code and are not flagged.
+These rules validate the repository-local `@import` graph and relative
+markdown-link integrity of each configured instruction file (see
+`instruction-files` in [configuration](configuration.md); default
+`AGENTS.md`, `SECURITY.md`, `CLAUDE.md`). Import tokens may name any file
+extension (or none), are source-relative after lexical normalization, and are
+read only when they remain regular UTF-8 files inside the repository. The
+extractor ignores frontmatter, code, links, quotes, blockquotes, and examples.
+Absolute and `~/` imports are supported by Claude Code but intentionally sit
+outside repository integrity and D004 budget scope. Excluded imported sources
+are opaque: they are neither parsed nor measured, while a reference to one is
+accepted for L001. Cycles and depth use the complete shared graph, so a graph
+can report both independently.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| L001 | `import-path-missing` | `@import` target markdown file does not exist on disk | Plugin | error |
-| L002 | `circular-import` | Circular `@import` chain detected (the offending chain is reported) | Plugin | error |
-| L003 | `import-depth-exceeded` | `@import` chain depth exceeds 5 hops (Claude Code's documented limit) | Plugin | error |
-| L004 | `duplicate-import` | Duplicate `@import` of the same file within one instruction file (`./` prefixes normalized) | Plugin | warn |
+| L001 | `import-path-missing` | Repository-relative `@import` target is missing or unreadable | Always | error |
+| L002 | `circular-import` | Canonical reachable `@import` cycle detected once per configured root | Always | error |
+| L003 | `import-depth-exceeded` | Longest simple repository-local `@import` path exceeds 5 hops | Always | error |
+| L004 | `duplicate-import` | Duplicate normalized direct `@import` edge within one instruction file | Always | warn |
 | L005 | `broken-markdown-link` | Broken relative `[text](path.md)` link target in a configured instruction file; external URLs, anchors, and links inside code fences are skipped | Plugin | warn |
 | L006 | `npm-script-missing` | Actionable `npm run` / `npm run-script` commands in configured instruction files whose script is missing from the root `package.json` `scripts` object. Scans inline code, shell fences (`bash`/`sh`/`shell`/`zsh`/`console`, with one leading `$` or `>` console prompt plus its trailing space stripped), and live prose `npm` tokens after line start/whitespace/opening punctuation; skips non-shell fences, quotes, example scopes, same-clause prose negation, package-qualified flags (`--workspace`/`-w`/`--workspaces`/`--prefix`/`--global`/`-g`), substitutions/heredocs/malformed shell, and value-taking non-qualifier flags. Silent when root `package.json` is absent, unreadable, invalid, or has no object-valued `scripts`. One diagnostic per missing script per file at the first command span, with script-name evidence and a correction suggestion. Not autofixable. | Always | warn |
 

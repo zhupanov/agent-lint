@@ -66,13 +66,15 @@ codex = false   # disable Codex checks even when Codex files exist
 | `claude-import-total-max-lines` | positive integer | Enables D004 with a total recursive `@`-import closure budget |
 | `claude-import-path-budgets` | path-to-positive-integer table | D004 per-import caps that override the global per-import cap for matching normalized paths |
 | `prompt-source-budgets` | array of tables | Named S062 groups with explicit sources and metric caps |
-| `instruction-files` | string array | Repository-relative Markdown files scanned by D005 |
+| `instruction-files` | string array | Repository-relative instruction roots scanned by D005 and L001--L004; an included root `CLAUDE.md` also seeds D004 |
 | `inline-path-prefixes` | string array | Repository-relative prefixes, each ending in `/`, recognized by D005 |
 | `script-inventory` | string | Repository-relative newline-delimited inventory used by G009-G011 |
 
 Closure limits are disabled when omitted. The two D004 limits may be used
-independently. Import and Markdown-reference traversal is recursive, bounded,
-and counts each file once.
+independently. D004 follows only readable UTF-8 regular files reached through
+repository-local, source-relative `@` imports and counts each source once.
+Absolute and `~/` imports, and excluded imported files, are intentionally
+outside this repository-local budget.
 
 S015 models Claude Code's per-entry listing cap only. Its separate global
 listing budget can truncate entries below that cap when many skills are
