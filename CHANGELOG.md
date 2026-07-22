@@ -49,12 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   P017 while P012 still applies to `sse`) and documented `${VAR}` /
   `${VAR:-default}` URL templates such as
   `${API_BASE_URL:-https://api.example.com}/mcp`. Templates are judged only on
-  facts decidable from the source text — defaults are substituted, malformed
+  facts decidable from the source text — defaults are substituted in a single
+  pass (default text is never rescanned as new reference syntax), malformed
   `${` fragments get no template rescue, and transport-inappropriate literal
   schemes remain P010. P017 (`mcp-insecure-url`) now fires on a URL template
   only when its insecure scheme and non-local authority are decidable from the
-  source; a reference-supplied host or base is locality-unknown and is no
-  longer speculatively flagged. Cursor URL ownership is unchanged.
+  source; a host or base supplied by a documented `${VAR}` reference is
+  locality-unknown and is no longer speculatively flagged. Plugin
+  `${user_config.KEY}` references are outside the documented URL expansion
+  grammar and keep concrete-URL treatment. Cursor URL ownership is unchanged.
 
 ### Changed
 

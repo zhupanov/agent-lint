@@ -1140,19 +1140,24 @@ string, and a null or non-string value remain P010. Documented `${VAR}` and
 parsing: a template is valid when a leading reference supplies the URL or base
 URL (`${MCP_URL}`, `${BASE}/path`, `${API_BASE_URL:-https://api.example.com}/mcp`)
 or when a transport-appropriate literal scheme prefix is followed by tokens in
-later URL components (`https://${HOST}/mcp`, `wss://${HOST}/socket`).
-Templates are judged only on facts decidable from the source text, without
-reading environment values: `${NAME:-DEFAULT}` tokens are checked with their
-defaults substituted (`${BASE:-ftp://x}/mcp` stays P010 for HTTP), stray or
-unclosed `${` fragments never make an unparseable value valid, and junk
-literal prefixes or transport-inappropriate literal schemes (`ftp://${HOST}`
-for HTTP, `https://${HOST}` for `ws`) remain P010. P017 applies to a template
-only when its insecure scheme and non-local authority are both decidable from
-the source: a concrete non-local `http://` host with only path or query tokens
-(`http://remote.example/${PATH}`) or a decidable default
-(`http://${HOST:-remote.example}/x`) still errors, while a reference-supplied
-host or base is locality-unknown and is never speculatively flagged. Empty
-placeholder and expansion semantics follow the
+later URL components (`https://${HOST}/mcp`, `wss://${HOST}/socket`; WHATWG
+parsing treats zero, one, or two separator slashes after a special scheme
+identically). Templates are judged only on facts decidable from the source
+text, without reading environment values: `${NAME:-DEFAULT}` tokens are
+checked with their single-pass defaults substituted (`${BASE:-ftp://x}/mcp`
+stays P010 for HTTP, and default text is never rescanned as new reference
+syntax), stray or unclosed `${` fragments never make an unparseable value
+valid, and junk literal prefixes or transport-inappropriate literal schemes
+(`ftp://${HOST}` for HTTP, `https://${HOST}` for `ws`) remain P010. P017
+applies to a template only when its insecure scheme and non-local authority
+are both decidable from the source: a concrete non-local `http://` host with
+only path or query tokens (`http://remote.example/${PATH}`) or a decidable
+default (`http://${HOST:-remote.example}/x`) still errors, while a host or
+base supplied by a documented `${VAR}` reference is locality-unknown and is
+never speculatively flagged. This URL grammar is exactly the documented
+environment expansion on every Claude adapter; plugin `${user_config.KEY}`
+references are not part of the documented URL expansion contract and keep
+concrete-URL treatment. Empty placeholder and expansion semantics follow the
 [Claude MCP documentation](https://code.claude.com/docs/en/mcp) (retrieved
 2026-07-22).
 

@@ -643,9 +643,17 @@ fn mcp_empty_placeholders_and_url_templates_are_clean_for_focused_p010_p017() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
     std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    // Array-form mcpServers exercises the inline-plugin (issue reproduction
+    // placeholder) and plugin-referenced surfaces in one manifest.
     std::fs::write(
         tmp.path().join(".claude-plugin/plugin.json"),
-        r#"{"name":"empty-url-plugin","mcpServers":{"placeholder":{"type":"http","url":""}}}"#,
+        r#"{"name":"empty-url-plugin","mcpServers":[{"placeholder":{"type":"http","url":""}},"./servers/mcp-servers.json"]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("servers")).unwrap();
+    std::fs::write(
+        tmp.path().join("servers/mcp-servers.json"),
+        r#"{"mcpServers":{"http-off":{"type":"http","url":""},"streamable-off":{"type":"streamable-http","url":""},"sse-off":{"type":"sse","url":""},"ws-off":{"type":"ws","url":""}}}"#,
     )
     .unwrap();
     std::fs::write(
@@ -669,7 +677,8 @@ fn mcp_empty_placeholders_and_url_templates_are_clean_for_focused_p010_p017() {
         );
     }
 
-    // The empty sse placeholder still carries the transport deprecation.
+    // The empty sse placeholders still carry the transport deprecation on the
+    // standalone and plugin-referenced surfaces.
     let sse = run_in(
         tmp.path(),
         &["--format", "json", "--all", "--only", "P012", "."],
@@ -677,9 +686,21 @@ fn mcp_empty_placeholders_and_url_templates_are_clean_for_focused_p010_p017() {
     assert_eq!(sse.status.code(), Some(1), "stderr: {}", stderr(&sse));
     let report = json(&sse);
     let diagnostics = report["diagnostics"].as_array().unwrap();
-    assert_eq!(diagnostics.len(), 1, "{report:#}");
-    assert_eq!(diagnostics[0]["code"], "P012", "{report:#}");
-    assert_eq!(diagnostics[0]["subject_path"], ".mcp.json", "{report:#}");
+    assert_eq!(diagnostics.len(), 2, "{report:#}");
+    let subjects: std::collections::BTreeSet<_> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            assert_eq!(diagnostic["code"], "P012", "{report:#}");
+            diagnostic["subject_path"].as_str().unwrap()
+        })
+        .collect();
+    assert_eq!(
+        subjects,
+        [".mcp.json", "servers/mcp-servers.json"]
+            .into_iter()
+            .collect(),
+        "{report:#}"
+    );
 }
 
 #[test]
