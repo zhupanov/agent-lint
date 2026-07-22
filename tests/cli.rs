@@ -6071,6 +6071,325 @@ fn cx060_cli_covers_modes_platform_policy_locations_and_autofix() {
 }
 
 #[test]
+fn cx046_to_cx063_plugin_manifest_cli_covers_modes_policy_locations_and_autofix() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest_dir = tmp.path().join(".codex-plugin");
+    std::fs::create_dir(&manifest_dir).unwrap();
+    let manifest_path = manifest_dir.join("plugin.json");
+    let secret = "s3cr3tPassw0rd";
+    let long_prompt = "x".repeat(129);
+    let original = format!(
+        r#"{{
+  "name": "Bad_Name",
+  "description": "",
+  "skills": "skills",
+  "apps": "./",
+  "commands": "../escape",
+  "mcpServers": 123,
+  "hooks": "./hooks/hooks.json",
+  "interface": {{
+    "defaultPrompt": ["", "{long_prompt}", "ok", "extra"],
+    "default_prompt": "legacy",
+    "websiteUrl": "https://alice:{secret}@example.com",
+    "logo": "./",
+    "screenshots": ["/etc/passwd.png"]
+  }}
+}}
+"#
+    );
+    std::fs::write(&manifest_path, &original).unwrap();
+
+    let rule_filter =
+        "CX046,CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX058,CX059,CX063";
+    let expected_codes = [
+        "CX047", "CX049", "CX050", "CX051", "CX052", "CX053", "CX054", "CX055", "CX056", "CX057",
+        "CX057", "CX059", "CX063",
+    ];
+
+    for arguments in [
+        vec!["--format", "json", "--only", rule_filter, "."],
+        vec!["--format", "json", "--pedantic", "--only", rule_filter, "."],
+        vec!["--format", "json", "--all", "--only", rule_filter, "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        let codes: Vec<_> = diagnostics
+            .iter()
+            .map(|item| item["code"].as_str().unwrap())
+            .collect();
+        assert_eq!(codes, expected_codes, "{report}");
+
+        let elevated = arguments.contains(&"--all") || arguments.contains(&"--pedantic");
+        for diagnostic in diagnostics {
+            let code = diagnostic["code"].as_str().unwrap();
+            let default_warning = matches!(
+                code,
+                "CX053" | "CX054" | "CX055" | "CX056" | "CX059" | "CX063"
+            );
+            let severity = if elevated || !default_warning {
+                "error"
+            } else {
+                "warning"
+            };
+            assert_eq!(diagnostic["severity"], severity, "{diagnostic}");
+            assert_eq!(diagnostic["subject_path"], ".codex-plugin/plugin.json");
+            assert!(diagnostic["location"]["start"]["line"].as_u64().unwrap() >= 1);
+            assert!(diagnostic["location"]["start"]["column"].as_u64().unwrap() >= 1);
+            assert!(diagnostic["suggestion"].as_str().unwrap().len() > 3);
+            assert!(diagnostic["evidence"].is_string() || diagnostic["evidence"].is_null());
+        }
+
+        let serialized = report.to_string();
+        assert!(!serialized.contains(secret), "secret leaked: {serialized}");
+        assert!(
+            !serialized.contains(tmp.path().to_string_lossy().as_ref()),
+            "absolute path leaked: {serialized}"
+        );
+        assert!(!codes.contains(&"CX046"));
+        assert!(!codes.contains(&"CX058"));
+    }
+
+    let by_code = run_in(tmp.path(), &["--format", "json", "--only", "CX049", "."]);
+    let by_name = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "codex-name-invalid", "."],
+    );
+    assert_eq!(by_code.stdout, by_name.stdout);
+    assert_eq!(json(&by_code)["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(json(&by_code)["diagnostics"][0]["code"], "CX049");
+
+    for (selector, code, name) in [
+        ("CX046", "CX046", "codex-plugin-path"),
+        ("CX058", "CX058", "codex-plugin-hooks"),
+        ("codex-plugin-path", "CX046", "codex-plugin-path"),
+        ("codex-plugin-hooks", "CX058", "codex-plugin-hooks"),
+    ] {
+        let output = run_in(tmp.path(), &["--format", "json", "--only", selector, "."]);
+        assert!(
+            output.status.success(),
+            "selector {selector}: {}",
+            stderr(&output)
+        );
+        let report = json(&output);
+        assert_eq!(report["diagnostics"], serde_json::json!([]));
+        assert_eq!(
+            report["selected_rules"],
+            serde_json::json!([{ "code": code, "name": name }])
+        );
+    }
+
+    let first = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", rule_filter, "."],
+    );
+    let second = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", rule_filter, "."],
+    );
+    assert_eq!(first.stdout, second.stdout);
+
+    let type_error = diagnostics_by_code(&first, "CX047");
+    assert_eq!(type_error["evidence"], "mcpServers = 123");
+    assert!(
+        type_error["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("mcpServers")
+    );
+
+    let name_error = diagnostics_by_code(&first, "CX049");
+    assert_eq!(name_error["evidence"], "name = Bad_Name");
+    assert_eq!(name_error["location"]["start"]["line"], 2);
+
+    let prefix = diagnostics_by_code(&first, "CX050");
+    assert!(prefix["evidence"].as_str().unwrap().contains("skills"));
+
+    let traversal = diagnostics_by_code(&first, "CX051");
+    assert!(
+        traversal["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("../escape")
+    );
+
+    let bare = diagnostics_by_code(&first, "CX052");
+    assert!(bare["evidence"].as_str().unwrap().contains("apps"));
+
+    let prompt_count = diagnostics_by_code(&first, "CX053");
+    assert!(prompt_count["suggestion"].as_str().unwrap().len() > 3);
+
+    let prompt_len = diagnostics_by_code(&first, "CX054");
+    assert!(
+        prompt_len["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("defaultPrompt")
+    );
+
+    let prompt_empty = diagnostics_by_code(&first, "CX055");
+    assert!(
+        prompt_empty["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("defaultPrompt")
+    );
+
+    let url = diagnostics_by_code(&first, "CX056");
+    assert_eq!(url["evidence"], "[redacted: possible secret]");
+
+    let first_report = json(&first);
+    let assets: Vec<_> = first_report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["code"] == "CX057")
+        .collect();
+    assert_eq!(assets.len(), 2);
+    assert!(
+        assets
+            .iter()
+            .any(|item| item["evidence"].as_str().unwrap().contains("logo"))
+    );
+    assert!(
+        assets
+            .iter()
+            .any(|item| item["evidence"].as_str().unwrap().contains("screenshots"))
+    );
+
+    let description = diagnostics_by_code(&first, "CX059");
+    assert!(
+        description["suggestion"]
+            .as_str()
+            .unwrap()
+            .contains("description")
+    );
+
+    let ignored_alias = diagnostics_by_code(&first, "CX063");
+    assert!(
+        ignored_alias["evidence"]
+            .as_str()
+            .unwrap()
+            .contains("default_prompt")
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = false\n",
+    )
+    .unwrap();
+    let off = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", rule_filter, "."],
+    );
+    assert!(off.status.success(), "stderr: {}", stderr(&off));
+    assert!(json(&off)["diagnostics"].as_array().unwrap().is_empty());
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = true\n",
+    )
+    .unwrap();
+    assert_eq!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", rule_filter, "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        expected_codes.len()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\".codex-plugin/**\"]\n",
+    )
+    .unwrap();
+    let excluded = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", rule_filter, "."],
+    );
+    assert!(excluded.status.success(), "stderr: {}", stderr(&excluded));
+    assert!(
+        json(&excluded)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".codex-plugin/plugin.json\"]\nsuppress = [\"CX049\",\"CX050\",\"CX051\",\"CX052\",\"CX047\",\"CX053\",\"CX054\",\"CX055\",\"CX056\",\"CX057\",\"CX059\",\"CX063\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", rule_filter, "."],
+    );
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert!(
+        json(&suppressed)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        json(&suppressed)["counts"]["suppressed"].as_u64().unwrap(),
+        expected_codes.len() as u64
+    );
+    assert_eq!(
+        run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", rule_filter, "."]
+        )
+        .status
+        .code(),
+        Some(1)
+    );
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"example","description":"Plugin mode surface."}"#,
+    )
+    .unwrap();
+    let plugin = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", rule_filter, "."],
+    );
+    assert_eq!(plugin.status.code(), Some(1));
+    assert_eq!(json(&plugin)["mode"], "plugin");
+    assert_eq!(
+        json(&plugin)["diagnostics"].as_array().unwrap().len(),
+        expected_codes.len()
+    );
+
+    let _ = run_in(tmp.path(), &["--autofix", "--only", rule_filter, "."]);
+    assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), original);
+    let full_autofix = run_in(tmp.path(), &["--autofix", "."]);
+    let _ = full_autofix;
+    assert_eq!(std::fs::read_to_string(&manifest_path).unwrap(), original);
+}
+
+fn diagnostics_by_code(output: &std::process::Output, code: &str) -> serde_json::Value {
+    json(output)["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["code"] == code)
+        .cloned()
+        .unwrap_or_else(|| panic!("missing diagnostic {code}"))
+}
+
+#[test]
 fn cx013_cli_is_precise_across_modes_suppression_and_plugin_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

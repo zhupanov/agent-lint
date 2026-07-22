@@ -610,34 +610,173 @@ fn cx056_redacts_embedded_credentials() {
 
 #[test]
 #[serial_test::serial]
-fn oversized_manifest_is_cx047_and_not_cascaded() {
-    // A manifest past the size limit is CX047 alone — no per-field cascade.
+fn large_forward_compatible_manifest_is_clean_and_contributes_skill_roots() {
+    // A >64 KiB manifest with valid required fields plus unknown metadata must
+    // not be CX047, and its declared skill roots still feed CX060 discovery.
     let filler = "x".repeat(70 * 1024);
-    let body = format!(r#"{{"name":"Bad_Name","description":"","note":"{filler}"}}"#);
-    let diag = run_manifest(&body);
-    assert!(has_rule(&diag, LintRule::CodexPluginManifestInvalid));
-    assert_eq!(
-        diag.diagnostics().len(),
-        1,
-        "oversized manifest must not cascade"
+    let body = format!(
+        r#"{{"name":"my-plugin","description":"Valid plugin.","note":"{filler}","skills":"./wide-skills"}}"#
+    );
+    let diag = run_in(&[
+        (".codex-plugin/plugin.json", &body),
+        (
+            "wide-skills/late/SKILL.md",
+            "---\nname: late\ndescription: Late skill\ncontext: fork\n---\nbody\n",
+        ),
+    ]);
+    assert!(
+        !has_rule(&diag, LintRule::CodexPluginManifestInvalid),
+        "large valid manifest must not be CX047: {:?}",
+        codes(&diag)
     );
     assert!(!has_rule(&diag, LintRule::CodexPluginNameInvalid));
+    let hits = cx060_hits(&diag);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        hits[0].subject_path.as_deref().map(Path::new),
+        Some(Path::new("wide-skills/late/SKILL.md"))
+    );
 }
 
 #[test]
 #[serial_test::serial]
-fn hostile_wide_array_is_bounded() {
-    // A wide array of bad paths must not emit an unbounded diagnostic count.
-    let elements = std::iter::repeat_n("\"x\"", 5000)
+fn large_manifest_with_late_invalid_field_matches_small_equivalent() {
+    let filler = "x".repeat(70 * 1024);
+    let small = r#"{"name":"my-plugin","description":"Valid plugin.","skills":"../escape"}"#;
+    let large = format!(
+        r#"{{"name":"my-plugin","description":"Valid plugin.","skills":"../escape","note":"{filler}"}}"#
+    );
+    let small_diag = run_manifest(small);
+    let large_diag = run_manifest(&large);
+    let small_hit = small_diag
+        .diagnostics()
+        .iter()
+        .find(|item| item.rule == LintRule::CodexPluginPathTraversal)
+        .expect("small manifest emits CX051");
+    let large_hit = large_diag
+        .diagnostics()
+        .iter()
+        .find(|item| item.rule == LintRule::CodexPluginPathTraversal)
+        .expect("large manifest emits CX051");
+    assert_eq!(small_hit.rule, large_hit.rule);
+    assert_eq!(small_hit.evidence, large_hit.evidence);
+    assert_eq!(small_hit.suggestion, large_hit.suggestion);
+    assert_eq!(
+        small_hit
+            .location
+            .map(|span| (span.start().line_number(), span.start().column_number())),
+        large_hit
+            .location
+            .map(|span| (span.start().line_number(), span.start().column_number()))
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn late_array_entries_are_validated_for_every_path_bearing_field() {
+    // Indices 255/256 and later must participate; take(256) false-negatives are
+    // the defect under regression.
+    let ok = std::iter::repeat_n("\"./ok\"", 256);
+    let cases = [
+        (
+            "skills",
+            ok.clone()
+                .chain(std::iter::once("\"../escape\""))
+                .collect::<Vec<_>>()
+                .join(","),
+            LintRule::CodexPluginPathTraversal,
+            "skills[256]",
+        ),
+        (
+            "commands",
+            ok.clone()
+                .chain(std::iter::once("123"))
+                .collect::<Vec<_>>()
+                .join(","),
+            LintRule::CodexPluginManifestInvalid,
+            "commands[256]",
+        ),
+        (
+            "hooks",
+            ok.clone()
+                .chain(std::iter::once("\"../escape\""))
+                .collect::<Vec<_>>()
+                .join(","),
+            LintRule::CodexPluginPathTraversal,
+            "hooks[256]",
+        ),
+    ];
+    for (field, elements, rule, label) in cases {
+        let body = format!(
+            r#"{{"name":"my-plugin","description":"Valid plugin.","{field}":[{elements}]}}"#
+        );
+        let diag = run_manifest(&body);
+        assert!(
+            has_rule(&diag, rule),
+            "{field} late entry must emit {}: {:?}",
+            rule.code(),
+            codes(&diag)
+        );
+        let hit = diag
+            .diagnostics()
+            .iter()
+            .find(|item| item.rule == rule)
+            .unwrap();
+        assert!(
+            hit.message.contains(label)
+                || hit.evidence.as_deref().is_some_and(|e| e.contains(label)),
+            "{field}: message/evidence must identify {label}: message={} evidence={:?}",
+            hit.message,
+            hit.evidence
+        );
+    }
+
+    let prompts = std::iter::repeat_n("\"ok\"", 256)
+        .chain(std::iter::once("\"\""))
         .collect::<Vec<_>>()
         .join(",");
-    let body = only_skills(&format!("[{elements}]"));
+    let body = format!(
+        r#"{{"name":"my-plugin","description":"Valid plugin.","interface":{{"defaultPrompt":[{prompts}]}}}}"#
+    );
     let diag = run_manifest(&body);
-    let prefix_count = count_rule(&diag, LintRule::CodexPluginPathPrefix);
-    assert!(prefix_count > 0, "some CX050 must fire");
+    assert!(has_rule(&diag, LintRule::CodexPluginDefaultPromptEmpty));
+    assert!(has_rule(&diag, LintRule::CodexPluginDefaultPromptCount));
+
+    let shots = std::iter::repeat_n("\"./ok.png\"", 256)
+        .chain(std::iter::once("\"/etc/passwd.png\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let body = format!(
+        r#"{{"name":"my-plugin","description":"Valid plugin.","interface":{{"screenshots":[{shots}]}}}}"#
+    );
+    let diag = run_manifest(&body);
+    assert!(has_rule(&diag, LintRule::CodexPluginInterfaceAssetPath));
+}
+
+#[test]
+#[serial_test::serial]
+fn hostile_wide_array_diagnoses_late_defects() {
+    // Wide arrays must not hide late defects or produce a falsely clean --only.
+    let mut elements = std::iter::repeat_n("\"./ok\"", 300)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    elements.push("\"../escape\"".to_string());
+    elements.push("123".to_string());
+    let body = only_skills(&format!("[{}]", elements.join(",")));
+    let diag = run_manifest(&body);
+    assert!(has_rule(&diag, LintRule::CodexPluginPathTraversal));
+    assert!(has_rule(&diag, LintRule::CodexPluginManifestInvalid));
+    let traversal = diag
+        .diagnostics()
+        .iter()
+        .find(|item| item.rule == LintRule::CodexPluginPathTraversal)
+        .unwrap();
     assert!(
-        prefix_count <= super::MAX_VALIDATED_ARRAY_ELEMENTS,
-        "per-array diagnostics must be bounded, got {prefix_count}"
+        traversal.message.contains("skills[300]")
+            || traversal
+                .evidence
+                .as_deref()
+                .is_some_and(|e| e.contains("skills[300]"))
     );
 }
 
@@ -753,6 +892,12 @@ fn cx060_reports_unquoted_and_quoted_top_level_keys_once() {
         Some(4)
     );
     assert_eq!(
+        hits[0]
+            .location
+            .and_then(|span| span.start().column_number()),
+        Some(1)
+    );
+    assert_eq!(
         hits[1].location.map(|span| span.start().line_number()),
         Some(5)
     );
@@ -760,6 +905,103 @@ fn cx060_reports_unquoted_and_quoted_top_level_keys_once() {
         hits[2].location.map(|span| span.start().line_number()),
         Some(6)
     );
+}
+
+#[test]
+#[serial_test::serial]
+fn cx060_locates_spaced_quoted_escaped_flow_and_unicode_keys() {
+    let cases: &[(&str, &str, usize, usize)] = &[
+        (
+            "spaced",
+            "---\nname: spaced\ndescription: Example\ncontext    : fork\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "zero-space",
+            "---\nname: zero-space\ndescription: Example\ncontext: fork\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "one-space",
+            "---\nname: one-space\ndescription: Example\ncontext : fork\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "multi-space",
+            "---\nname: multi-space\ndescription: Example\ncontext\t  : fork\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "double-quoted",
+            "---\nname: double-quoted\ndescription: Example\n\"context\" : fork\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "single-quoted",
+            "---\nname: single-quoted\ndescription: Example\n'agent'  : Explore\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "escaped-double",
+            "---\nname: escaped-double\ndescription: Example\n\"ag\\x65nt\": Explore\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "escaped-unicode",
+            "---\nname: escaped-unicode\ndescription: Example\n\"con\\u0074ext\": fork\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "crlf",
+            "---\r\nname: crlf\r\ndescription: Example\r\ncontext: fork\r\n---\r\nbody\r\n",
+            4,
+            1,
+        ),
+        (
+            "unicode-prefix",
+            "---\nname: unicode-prefix\ndescription: Example 文字\ncontext: fork\n---\nbody\n",
+            4,
+            1,
+        ),
+        (
+            "flow-single-line",
+            "---\n{name: flow-single-line, description: Example, context: fork}\n---\nbody\n",
+            2,
+            48,
+        ),
+        (
+            "flow-multiline",
+            "---\n{\n  name: flow-multiline,\n  description: Example,\n  agent: Explore\n}\n---\nbody\n",
+            5,
+            3,
+        ),
+        (
+            "flow-unicode-prefix",
+            "---\n{名前: x, context: fork, description: Example, name: flow-unicode-prefix}\n---\nbody\n",
+            2,
+            9,
+        ),
+    ];
+    for (label, content, line, column) in cases {
+        let diag = run_in(&[(&format!(".agents/skills/{label}/SKILL.md"), content)]);
+        let hits = cx060_hits(&diag);
+        assert_eq!(hits.len(), 1, "{label}: {hits:?}");
+        assert_eq!(
+            hits[0]
+                .location
+                .map(|span| (span.start().line_number(), span.start().column_number())),
+            Some((*line, Some(*column))),
+            "{label}"
+        );
+    }
 }
 
 #[test]
