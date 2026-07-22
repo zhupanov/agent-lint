@@ -28,9 +28,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Added U008 (`userconfig-option-invalid`) for non-object `userConfig` option
   entries, unknown option fields, invalid optional field shapes, and type
   semantic combinations on top-level and channel surfaces
+- Added M018 (`plugin-version-missing`), default warning: `plugin.json` omits
+  optional `version`; Claude recommends declaring it there even though effective
+  version resolution next checks the marketplace entry and then uses a Git SHA
+  for git-backed sources.
+- Added M019 (`marketplace-bare-path`), default warning: relative string plugin
+  `source` without `./` while `metadata.pluginRoot` is absent.
+- Added M020 (`author-type-invalid`), default error: present non-object
+  `plugin.json` `author`, which Claude Code rejects at manifest load.
+- Added M021 (`marketplace-name-format`), default warning: marketplace or
+  plugin-entry `name` that is not kebab-case; the claude.ai marketplace sync
+  rejects other forms.
 
 ### Changed
 
+- M001 no longer fires for marketplace-only repositories (a repo with
+  `.claude-plugin/marketplace.json` needs no `plugin.json`).
+- M004 accepts full Semantic Versioning 2.0.0 (pre-release and build metadata)
+  and rejects leading zeros.
+- M005 (`marketplace-json-missing`) re-severitized from error to warning:
+  plugin-only repositories are valid upstream.
+- Marketplace `plugins` shape diagnostics split: absent key is M007
+  `missing required field: plugins`; a present non-array is M008
+  `plugins must be an array (found <type>)`; an empty array keeps the existing
+  M008 message.
+- M009 deep-validates marketplace plugin entries: duplicate names, object
+  source types (`github`/`url`/`git-subdir`/`npm`) with required subfields,
+  `..` traversal, absolute paths, and whitespace-trimmed emptiness.
+- M012/M013 cover all documented component path fields (`commands`, `agents`,
+  `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`,
+  `experimental.themes`, `experimental.monitors`) and the forbidden
+  `.claude-plugin/` component directories.
+- M017 cross-checks each channel `server` against inline `mcpServers` keys.
+- M002/M006 (and H002/H006/H025) invalid-JSON messages use repository-relative
+  paths with structured line/column locations instead of absolute filesystem
+  paths.
 - S040 (`tools-unknown`) and S067 (`bash-unscoped`) now honor every documented
   `allowed-tools` spelling through canonical YAML and one shared tool
   tokenizer: space- or comma-separated strings and YAML lists all validate,
