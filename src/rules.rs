@@ -1091,12 +1091,9 @@ impl LintRule {
             Self::OutputStyleFieldUnknown | Self::OutputStyleBodyEmpty |
             Self::OutputStyleNameTooLong | Self::SettingsPrUrlTemplateInvalid |
             Self::SettingsChannelsEnabledInvalid |
-            Self::CodexUnknownNestedKey | Self::CodexModelType |
-            Self::CodexReasoningSummary | Self::CodexHistoryType |
-            Self::CodexTuiType | Self::CodexFileOpenerType |
+            Self::CodexUnknownNestedKey |
             Self::CodexContextWindow | Self::CodexAutoCompactLimit |
-            Self::CodexApprovalPolicyField | Self::CodexApprovalsReviewer |
-            Self::CodexSkillsType | Self::CodexProfileType |
+            Self::CodexApprovalPolicyField |
             Self::CodexTopLevelKey | Self::CodexFeatureKey |
             Self::CodexNetworkPermissionField |
             Self::CodexAgentsTooLarge | Self::CodexAgentsDocLimit |
@@ -1443,8 +1440,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            130,
-            "Expected 130 default-warning rules, got {}",
+            122,
+            "Expected 122 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1570,8 +1567,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            166,
-            "Expected 166 default-error rules, got {}",
+            174,
+            "Expected 174 default-error rules, got {}",
             errors.len()
         );
     }

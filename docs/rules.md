@@ -659,19 +659,32 @@ schema and are covered by the unknown-key rules.
 | CX013 | `codex-secret-literal` | Codex MCP `env` or `http_headers` contains a literal credential, or another literal MCP value has an explicit token signature | Always | error |
 | CX014 | `codex-cli-credentials` | Invalid credential-store mode | Always | error |
 | CX015 | `codex-workspace-write` | Invalid workspace-write field type | Always | error |
-| CX016–CX024 | — | Invalid Codex scalar/table type or model token limit | Always | warn/error |
+| CX016 | `codex-model-type` | `model` is not a string | Always | error |
+| CX017 | `codex-provider-type` | `model_provider` is not a string | Always | error |
+| CX018 | `codex-reasoning-summary` | Invalid `model_reasoning_summary` | Always | error |
+| CX019 | `codex-history-type` | `history` is not a TOML table | Always | error |
+| CX020 | `codex-tui-type` | `tui` is not a TOML table | Always | error |
+| CX021 | `codex-opener-type` | `file_opener` is not a string | Always | error |
+| CX022 | `codex-mcp-credentials` | Invalid MCP OAuth credential-store mode | Always | error |
+| CX023 | `codex-context-window` | `model_context_window` is not positive | Always | warn |
+| CX024 | `codex-compact-limit` | `model_auto_compact_token_limit` is not positive | Always | warn |
 | CX025 | `codex-approval-field` | Unknown granular approval field | Always | warn |
-| CX026 | `codex-approval-reviewer` | Invalid approvals reviewer | Always | warn |
+| CX026 | `codex-approval-reviewer` | Invalid approvals reviewer | Always | error |
 | CX027 | `codex-service-tier-type` | `service_tier` is not a string | Always | error |
 | CX028 | `codex-bearer-token` | Inline MCP bearer token is forbidden | Always | error |
 | CX029 | `codex-agent-threads` | `agents.max_threads` is not an integer greater than zero | Always | error |
-| CX030–CX032 | — | Invalid app approval mode, skills table, or profile type | Always | error/warn |
+| CX030 | `codex-app-approval` | Invalid app default-tools approval mode | Always | error |
+| CX031 | `codex-skills-type` | `skills` is not a TOML table | Always | error |
+| CX032 | `codex-profile-type` | `profile` is not a string | Always | error |
 | CX033 | `codex-top-key` | Unknown top-level Codex key | Always | warn |
 | CX034 | `codex-feature-key` | Unknown Codex feature flag | Always | warn |
 | CX035 | `codex-network-field` | Unknown `permissions.network` field | Always | warn |
 | CX036 | `codex-windows-sandbox` | Invalid Windows sandbox mode | Always | error |
 | CX061 | `codex-approval-shape` | Granular approval policy has an invalid shape or field type | Always | error |
 | CX062 | `codex-config-container-type` | A structured Codex configuration value is not a table | Always | error |
+
+CX023 and CX024 are advisory positivity checks; they are not claims about a
+Codex parser rejection.
 
 ### Codex Instruction, Plugin, and Skill Rules (CX)
 

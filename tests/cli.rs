@@ -3758,13 +3758,13 @@ fn codex_config_rules_honor_cli_mode_platform_policy_and_autofix_contracts() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
     std::fs::create_dir(tmp.path().join(".codex")).unwrap();
-    let config = "service_tier = true\n[permissions.network]\nfuture_key = true\n";
+    let config = "model = true\nservice_tier = true\n[permissions.network]\nfuture_key = true\n";
     let config_path = tmp.path().join(".codex/config.toml");
     std::fs::write(&config_path, config).unwrap();
 
     let normal = run_in(
         tmp.path(),
-        &["--format", "json", "--only", "CX027,CX035", "."],
+        &["--format", "json", "--only", "CX016,CX027,CX035", "."],
     );
     assert_eq!(normal.status.code(), Some(1));
     let normal = json(&normal);
@@ -3787,6 +3787,7 @@ fn codex_config_rules_honor_cli_mode_platform_policy_and_autofix_contracts() {
             ))
             .collect::<Vec<_>>(),
         vec![
+            ("CX016", "error", ".codex/config.toml"),
             ("CX027", "error", ".codex/config.toml"),
             ("CX035", "warning", ".codex/config.toml"),
         ]

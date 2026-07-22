@@ -13,8 +13,82 @@ use toml_edit::{ImDocument, Item, TableLike};
 
 const CONFIG_PATH: &str = ".codex/config.toml";
 
-fn report_config(diag: &mut DiagnosticCollector, rule: LintRule, message: &str) {
-    diag.report_at(rule, CONFIG_PATH, message);
+struct SourceMap<'a> {
+    content: &'a str,
+    // `ImDocument` is toml_edit's source-preserving document. `DocumentMut`
+    // deliberately drops spans in 0.22, so it cannot satisfy diagnostics.
+    document: ImDocument<&'a str>,
+}
+
+impl<'a> SourceMap<'a> {
+    fn new(content: &'a str) -> Result<Self, toml_edit::TomlError> {
+        Ok(Self {
+            content,
+            document: ImDocument::parse(content)?,
+        })
+    }
+
+    fn item(&self, path: &[&str]) -> Option<&Item> {
+        let (last, parents) = path.split_last()?;
+        let mut table: &dyn TableLike = self.document.as_table();
+        for key in parents {
+            table = table.get(key)?.as_table_like()?;
+        }
+        table.get(last)
+    }
+
+    fn value_span(&self, path: &[&str]) -> Option<SourceSpan> {
+        self.item(path)
+            .and_then(|item| {
+                item.as_value()
+                    .and_then(toml_edit::Value::span)
+                    .or_else(|| item.span())
+            })
+            .and_then(|span| SourceSpan::from_byte_range(self.content, span))
+    }
+
+    fn key_span(&self, path: &[&str]) -> Option<SourceSpan> {
+        let (last, parents) = path.split_last()?;
+        let mut table: &dyn TableLike = self.document.as_table();
+        for key in parents {
+            table = table.get(key)?.as_table_like()?;
+        }
+        table
+            .get_key_value(last)
+            .and_then(|(key, _)| key.span())
+            .and_then(|span| SourceSpan::from_byte_range(self.content, span))
+    }
+}
+
+#[allow(clippy::too_many_arguments)] // keeps each validator's rule, source path, and safe metadata explicit at the call site.
+fn report_config(
+    diag: &mut DiagnosticCollector,
+    source: &SourceMap<'_>,
+    rule: LintRule,
+    message: &str,
+    path: &[&str],
+    key_only: bool,
+    evidence: Option<&str>,
+    suggestion: &str,
+) {
+    let span = if key_only {
+        source.key_span(path)
+    } else {
+        source.value_span(path)
+    };
+    let fallback_evidence = match path {
+        ["mcp_servers", _] | ["apps", _] => None,
+        _ => path.last().copied(),
+    };
+    let evidence = evidence.or(span.and(fallback_evidence));
+    let mut metadata = DiagnosticMetadata::default().with_suggestion(suggestion);
+    if let Some(span) = span {
+        metadata = metadata.with_location(span);
+    }
+    if let Some(evidence) = evidence {
+        metadata = metadata.with_evidence(evidence);
+    }
+    diag.report_at_with(rule, CONFIG_PATH, message, metadata);
 }
 
 /// Validate project-local Codex TOML. The configuration is optional.
@@ -25,22 +99,26 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let bytes = match std::fs::read(CONFIG_PATH) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
-        Err(error) => {
-            diag.report_at(
+        Err(_) => {
+            diag.report_at_with(
                 LintRule::CodexTomlInvalid,
                 CONFIG_PATH,
-                &format!("{CONFIG_PATH} could not be read: {error}"),
+                &format!("{CONFIG_PATH} could not be read as UTF-8 configuration"),
+                DiagnosticMetadata::default()
+                    .with_suggestion("save .codex/config.toml as readable UTF-8 text"),
             );
             return;
         }
     };
     let content = match String::from_utf8(bytes) {
         Ok(content) => content,
-        Err(error) => {
-            diag.report_at(
+        Err(_) => {
+            diag.report_at_with(
                 LintRule::CodexTomlInvalid,
                 CONFIG_PATH,
-                &format!("{CONFIG_PATH} is not valid UTF-8: {error}"),
+                &format!("{CONFIG_PATH} could not be read as UTF-8 configuration"),
+                DiagnosticMetadata::default()
+                    .with_suggestion("save .codex/config.toml as readable UTF-8 text"),
             );
             return;
         }
@@ -56,34 +134,45 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             diag.report_at_with(
                 LintRule::CodexTomlInvalid,
                 CONFIG_PATH,
-                &format!("{CONFIG_PATH} is not valid TOML: {error}"),
-                metadata,
+                &format!("{CONFIG_PATH} is not valid TOML"),
+                metadata.with_suggestion("correct the TOML syntax at the reported location"),
             );
             return;
         }
     };
+    let source = match SourceMap::new(&content) {
+        Ok(source) => source,
+        Err(_) => return,
+    };
     let Some(root) = value.as_table() else { return };
     validate_unknown_keys(
         diag,
+        &source,
         CONFIG_PATH,
         root,
         TOP_LEVEL_KEYS,
         LintRule::CodexTopLevelKey,
+        &[],
     );
-    validate_project_docs(diag, root);
-    validate_scalar_enums(diag, root);
-    validate_types(diag, root);
-    validate_nested(diag, root, &content);
+    validate_project_docs(diag, root, &source);
+    validate_scalar_enums(diag, root, &source);
+    validate_types(diag, root, &source);
+    validate_nested(diag, root, &source);
 }
 
-fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table) {
+fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
     if let Some(value) = root.get("project_doc_max_bytes")
         && (!value.is_integer() || value.as_integer().is_none_or(|n| n < 0))
     {
         report_config(
             diag,
+            source,
             LintRule::CodexProjectDocMaxBytes,
             &format!("{CONFIG_PATH}: 'project_doc_max_bytes' must be a nonnegative integer"),
+            &["project_doc_max_bytes"],
+            false,
+            None,
+            "use a nonnegative integer",
         );
     }
     if let Some(value) = root.get("project_doc_fallback_filenames") {
@@ -93,16 +182,21 @@ fn validate_project_docs(diag: &mut DiagnosticCollector, root: &Table) {
         if !valid {
             report_config(
                 diag,
+                source,
                 LintRule::CodexProjectDocFallbackNames,
                 &format!(
                     "{CONFIG_PATH}: 'project_doc_fallback_filenames' must be an array of strings"
                 ),
+                &["project_doc_fallback_filenames"],
+                false,
+                None,
+                "use an array of strings",
             );
         }
     }
 }
 
-fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table) {
+fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
     for (key, allowed, rule) in [
         (
             "approval_policy",
@@ -143,11 +237,16 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table) {
         {
             report_config(
                 diag,
+                source,
                 rule,
                 &format!(
                     "{CONFIG_PATH}: '{key}' must be one of: {}",
                     allowed.join(", ")
                 ),
+                &[key],
+                false,
+                value.as_str(),
+                "select one of the supported values",
             );
         }
     }
@@ -156,8 +255,13 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table) {
     {
         report_config(
             diag,
+            source,
             LintRule::CodexReasoningEffort,
             &format!("{CONFIG_PATH}: 'model_reasoning_effort' must be a non-empty string"),
+            &["model_reasoning_effort"],
+            false,
+            value.as_str(),
+            "use a non-empty string",
         );
     }
     if let Some(value) = root.get("service_tier")
@@ -165,13 +269,18 @@ fn validate_scalar_enums(diag: &mut DiagnosticCollector, root: &Table) {
     {
         report_config(
             diag,
+            source,
             LintRule::CodexServiceTier,
             &format!("{CONFIG_PATH}: 'service_tier' must be a string"),
+            &["service_tier"],
+            false,
+            value.as_str(),
+            "use a string",
         );
     }
 }
 
-fn validate_types(diag: &mut DiagnosticCollector, root: &Table) {
+fn validate_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
     for (key, rule) in [
         ("model", LintRule::CodexModelType),
         ("model_provider", LintRule::CodexModelProviderType),
@@ -183,8 +292,13 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table) {
         {
             report_config(
                 diag,
+                source,
                 rule,
                 &format!("{CONFIG_PATH}: '{key}' must be a string"),
+                &[key],
+                false,
+                value.as_str(),
+                "use a string",
             );
         }
     }
@@ -198,8 +312,13 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table) {
         {
             report_config(
                 diag,
+                source,
                 rule,
                 &format!("{CONFIG_PATH}: '{key}' must be a TOML table"),
+                &[key],
+                false,
+                None,
+                "use a TOML table",
             );
         }
     }
@@ -215,31 +334,40 @@ fn validate_types(diag: &mut DiagnosticCollector, root: &Table) {
         {
             report_config(
                 diag,
+                source,
                 rule,
                 &format!("{CONFIG_PATH}: '{key}' must be a positive integer"),
+                &[key],
+                false,
+                value.as_str(),
+                "use a positive integer",
             );
         }
     }
 }
 
-fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, content: &str) {
-    validate_container_types(diag, root);
+fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
+    validate_container_types(diag, root, source);
     if let Some(table) = root.get("features").and_then(Value::as_table) {
         validate_unknown_keys(
             diag,
+            source,
             &format!("{CONFIG_PATH} [features]"),
             table,
             FEATURE_KEYS,
             LintRule::CodexFeatureKey,
+            &["features"],
         );
     }
     if let Some(table) = root.get("tui").and_then(Value::as_table) {
         validate_unknown_keys(
             diag,
+            source,
             &format!("{CONFIG_PATH} [tui]"),
             table,
             TUI_KEYS,
             LintRule::CodexUnknownNestedKey,
+            &["tui"],
         );
     }
     if let Some(table) = root
@@ -248,10 +376,12 @@ fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, content: &str) 
     {
         validate_unknown_keys(
             diag,
+            source,
             &format!("{CONFIG_PATH} [shell_environment_policy]"),
             table,
             SHELL_POLICY_KEYS,
             LintRule::CodexUnknownNestedKey,
+            &["shell_environment_policy"],
         );
         if let Some(value) = table.get("inherit")
             && !value
@@ -260,11 +390,16 @@ fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, content: &str) 
         {
             report_config(
                 diag,
+                source,
                 LintRule::CodexShellEnvironmentInherit,
                 &format!(
                     "{CONFIG_PATH}: shell_environment_policy.inherit must be one of: {}",
                     SHELL_INHERIT_VALUES.join(", ")
                 ),
+                &["shell_environment_policy", "inherit"],
+                false,
+                value.as_str(),
+                "select one of the supported values",
             );
         }
     }
@@ -274,10 +409,12 @@ fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, content: &str) 
     {
         validate_unknown_keys(
             diag,
+            source,
             &format!("{CONFIG_PATH} [sandbox_workspace_write]"),
             table,
             SANDBOX_WORKSPACE_WRITE_KEYS,
             LintRule::CodexUnknownNestedKey,
+            &["sandbox_workspace_write"],
         );
         for (key, valid) in [
             (
@@ -306,21 +443,26 @@ fn validate_nested(diag: &mut DiagnosticCollector, root: &Table, content: &str) 
             if !valid {
                 report_config(
                     diag,
+                    source,
                     LintRule::CodexWorkspaceWrite,
                     &format!("{CONFIG_PATH}: sandbox_workspace_write.{key} has an invalid type"),
+                    &["sandbox_workspace_write", key],
+                    false,
+                    None,
+                    "use the required field type",
                 );
             }
         }
     }
-    validate_mcp_servers(diag, root.get("mcp_servers"), content);
-    validate_apps(diag, root.get("apps"));
-    validate_approval_policy(diag, root.get("approval_policy"));
-    validate_agent_thread_limit(diag, root);
-    validate_suppressed_permissions(diag, root.get("permissions"));
-    validate_suppressed_windows(diag, root.get("windows"));
+    validate_mcp_servers(diag, root.get("mcp_servers"), source);
+    validate_apps(diag, root.get("apps"), source);
+    validate_approval_policy(diag, root.get("approval_policy"), source);
+    validate_agent_thread_limit(diag, root, source);
+    validate_suppressed_permissions(diag, root.get("permissions"), source);
+    validate_suppressed_windows(diag, root.get("windows"), source);
 }
 
-fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table) {
+fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table, source: &SourceMap<'_>) {
     for key in [
         "agents",
         "apps",
@@ -336,8 +478,13 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table) {
         {
             report_config(
                 diag,
+                source,
                 LintRule::CodexConfigContainerType,
                 &format!("{CONFIG_PATH}: '{key}' must be a TOML table"),
+                &[key],
+                false,
+                None,
+                "use a TOML table",
             );
         }
     }
@@ -347,13 +494,22 @@ fn validate_container_types(diag: &mut DiagnosticCollector, root: &Table) {
     {
         report_config(
             diag,
+            source,
             LintRule::CodexConfigContainerType,
             &format!("{CONFIG_PATH}: 'permissions.network' must be a TOML table"),
+            &["permissions", "network"],
+            false,
+            None,
+            "use a TOML table",
         );
     }
 }
 
-fn validate_mcp_servers(diag: &mut DiagnosticCollector, value: Option<&Value>, content: &str) {
+fn validate_mcp_servers(
+    diag: &mut DiagnosticCollector,
+    value: Option<&Value>,
+    source: &SourceMap<'_>,
+) {
     let Some(servers) = value.and_then(Value::as_table) else {
         return;
     };
@@ -362,17 +518,24 @@ fn validate_mcp_servers(diag: &mut DiagnosticCollector, value: Option<&Value>, c
         let Some(server) = value.as_table() else {
             report_config(
                 diag,
+                source,
                 LintRule::CodexMcpServerTransport,
                 &format!("{label} must be an object with 'command' or 'url'"),
+                &["mcp_servers", name],
+                false,
+                None,
+                "define a server table with exactly one transport",
             );
             continue;
         };
         validate_unknown_keys(
             diag,
+            source,
             &label,
             server,
             MCP_SERVER_KEYS,
             LintRule::CodexUnknownNestedKey,
+            &["mcp_servers", name],
         );
         let command = server.get("command").and_then(Value::as_str);
         let url = server.get("url").and_then(Value::as_str);
@@ -381,23 +544,41 @@ fn validate_mcp_servers(diag: &mut DiagnosticCollector, value: Option<&Value>, c
         if valid_command == valid_url {
             report_config(
                 diag,
+                source,
                 LintRule::CodexMcpServerTransport,
                 &format!("{label} must define exactly one non-empty string 'command' or 'url'"),
+                &[
+                    "mcp_servers",
+                    name,
+                    if server.contains_key("url") {
+                        "url"
+                    } else {
+                        "command"
+                    },
+                ],
+                false,
+                None,
+                "define exactly one non-empty transport field",
             );
         } else if valid_command {
-            validate_mcp_transport_fields(diag, &label, server, McpTransport::Stdio);
+            validate_mcp_transport_fields(diag, &label, server, source, name, McpTransport::Stdio);
         } else {
-            validate_mcp_transport_fields(diag, &label, server, McpTransport::Http);
+            validate_mcp_transport_fields(diag, &label, server, source, name, McpTransport::Http);
         }
         if server.contains_key("bearer_token") {
             report_config(
                 diag,
+                source,
                 LintRule::CodexInlineBearerToken,
                 &format!("{label}.bearer_token is forbidden; use bearer_token_env_var"),
+                &["mcp_servers", name, "bearer_token"],
+                true,
+                Some("bearer_token"),
+                "replace bearer_token with bearer_token_env_var",
             );
         }
     }
-    validate_mcp_secret_literals(diag, content);
+    validate_mcp_secret_literals(diag, source.content);
 }
 
 #[derive(Clone, Copy)]
@@ -410,6 +591,8 @@ fn validate_mcp_transport_fields(
     diag: &mut DiagnosticCollector,
     label: &str,
     server: &Table,
+    source: &SourceMap<'_>,
+    server_name: &str,
     transport: McpTransport,
 ) {
     for (key, value) in server {
@@ -437,8 +620,13 @@ fn validate_mcp_transport_fields(
         if invalid {
             report_config(
                 diag,
+                source,
                 LintRule::CodexMcpServerTransport,
                 &format!("{label}.{key} is invalid for this transport"),
+                &["mcp_servers", server_name, key],
+                false,
+                None,
+                "use only fields valid for this transport",
             );
         }
     }
@@ -450,7 +638,7 @@ fn is_string_table(value: &Value) -> bool {
         .is_some_and(|table| table.values().all(Value::is_str))
 }
 
-fn validate_apps(diag: &mut DiagnosticCollector, value: Option<&Value>) {
+fn validate_apps(diag: &mut DiagnosticCollector, value: Option<&Value>, source: &SourceMap<'_>) {
     let Some(apps) = value.and_then(Value::as_table) else {
         return;
     };
@@ -459,13 +647,19 @@ fn validate_apps(diag: &mut DiagnosticCollector, value: Option<&Value>) {
         let Some(app) = value.as_table() else {
             report_config(
                 diag,
+                source,
                 LintRule::CodexUnknownNestedKey,
                 &format!("{label} must be a table"),
+                &["apps", name],
+                false,
+                None,
+                "use a TOML table",
             );
             continue;
         };
         validate_unknown_keys(
             diag,
+            source,
             &label,
             app,
             if name == "_default" {
@@ -474,6 +668,7 @@ fn validate_apps(diag: &mut DiagnosticCollector, value: Option<&Value>) {
                 APP_KEYS
             },
             LintRule::CodexUnknownNestedKey,
+            &["apps", name],
         );
         if let Some(mode) = app.get("default_tools_approval_mode")
             && !mode
@@ -482,33 +677,52 @@ fn validate_apps(diag: &mut DiagnosticCollector, value: Option<&Value>) {
         {
             report_config(
                 diag,
+                source,
                 LintRule::CodexAppApprovalMode,
                 &format!(
                     "{label}.default_tools_approval_mode must be one of: {}",
                     APP_APPROVAL_MODES.join(", ")
                 ),
+                &["apps", name, "default_tools_approval_mode"],
+                false,
+                mode.as_str(),
+                "select one of the supported values",
             );
         }
     }
 }
 
-fn validate_approval_policy(diag: &mut DiagnosticCollector, value: Option<&Value>) {
+fn validate_approval_policy(
+    diag: &mut DiagnosticCollector,
+    value: Option<&Value>,
+    source: &SourceMap<'_>,
+) {
     let Some(table) = value.and_then(Value::as_table) else {
         return;
     };
     if table.len() != 1 || !table.contains_key("granular") {
         report_config(
             diag,
+            source,
             LintRule::CodexApprovalPolicyShape,
             &format!("{CONFIG_PATH}: [approval_policy] must contain exactly a 'granular' table"),
+            &["approval_policy"],
+            false,
+            None,
+            "use only the granular approval policy table",
         );
         return;
     }
     let Some(granular) = table.get("granular").and_then(Value::as_table) else {
         report_config(
             diag,
+            source,
             LintRule::CodexApprovalPolicyShape,
             &format!("{CONFIG_PATH}: approval_policy.granular must be a TOML table"),
+            &["approval_policy", "granular"],
+            false,
+            None,
+            "use a TOML table",
         );
         return;
     };
@@ -521,23 +735,34 @@ fn validate_approval_policy(diag: &mut DiagnosticCollector, value: Option<&Value
     ];
     validate_unknown_keys(
         diag,
+        source,
         &format!("{CONFIG_PATH} [approval_policy.granular]"),
         granular,
         REQUIRED_KEYS,
         LintRule::CodexApprovalPolicyField,
+        &["approval_policy", "granular"],
     );
     for key in REQUIRED_KEYS {
         if !granular.get(*key).is_some_and(Value::is_bool) {
             report_config(
                 diag,
+                source,
                 LintRule::CodexApprovalPolicyShape,
                 &format!("{CONFIG_PATH}: approval_policy.granular.{key} must be a boolean"),
+                &["approval_policy", "granular", key],
+                false,
+                None,
+                "use a boolean",
             );
         }
     }
 }
 
-fn validate_agent_thread_limit(diag: &mut DiagnosticCollector, root: &Table) {
+fn validate_agent_thread_limit(
+    diag: &mut DiagnosticCollector,
+    root: &Table,
+    source: &SourceMap<'_>,
+) {
     let Some(agents) = root.get("agents").and_then(Value::as_table) else {
         return;
     };
@@ -546,25 +771,47 @@ fn validate_agent_thread_limit(diag: &mut DiagnosticCollector, root: &Table) {
     {
         report_config(
             diag,
+            source,
             LintRule::CodexAgentThreads,
             &format!("{CONFIG_PATH}: agents.max_threads must be an integer greater than zero"),
+            &["agents", "max_threads"],
+            false,
+            value.as_str(),
+            "use an integer greater than zero",
         );
     }
 }
 
 fn validate_unknown_keys(
     diag: &mut DiagnosticCollector,
+    source: &SourceMap<'_>,
     label: &str,
     table: &Table,
     allowed: &[&str],
     rule: LintRule,
+    parent: &[&str],
 ) {
     for key in table.keys().filter(|key| !allowed.contains(&key.as_str())) {
-        report_config(diag, rule, &format!("{label}: unknown key '{key}'"));
+        let mut path = parent.to_vec();
+        path.push(key);
+        report_config(
+            diag,
+            source,
+            rule,
+            &format!("{label}: unknown key '{key}'"),
+            &path,
+            true,
+            Some(key),
+            "remove or correct this unsupported key",
+        );
     }
 }
 
-fn validate_suppressed_permissions(diag: &mut DiagnosticCollector, value: Option<&Value>) {
+fn validate_suppressed_permissions(
+    diag: &mut DiagnosticCollector,
+    value: Option<&Value>,
+    source: &SourceMap<'_>,
+) {
     let Some(network) = value
         .and_then(Value::as_table)
         .and_then(|table| table.get("network"))
@@ -574,14 +821,20 @@ fn validate_suppressed_permissions(diag: &mut DiagnosticCollector, value: Option
     };
     validate_unknown_keys(
         diag,
+        source,
         &format!("{CONFIG_PATH} [permissions.network]"),
         network,
         NETWORK_PERMISSION_KEYS,
         LintRule::CodexNetworkPermissionField,
+        &["permissions", "network"],
     );
 }
 
-fn validate_suppressed_windows(diag: &mut DiagnosticCollector, value: Option<&Value>) {
+fn validate_suppressed_windows(
+    diag: &mut DiagnosticCollector,
+    value: Option<&Value>,
+    source: &SourceMap<'_>,
+) {
     if let Some(value) = value
         .and_then(Value::as_table)
         .and_then(|table| table.get("sandbox"))
@@ -591,11 +844,16 @@ fn validate_suppressed_windows(diag: &mut DiagnosticCollector, value: Option<&Va
     {
         report_config(
             diag,
+            source,
             LintRule::CodexWindowsSandbox,
             &format!(
                 "{CONFIG_PATH}: windows.sandbox must be one of: {}",
                 WINDOWS_SANDBOX_MODES.join(", ")
             ),
+            &["windows", "sandbox"],
+            false,
+            value.as_str(),
+            "select one of the supported values",
         );
     }
 }
@@ -765,6 +1023,17 @@ mod tests {
         diag
     }
 
+    fn with_default_config(content: &str) -> DiagnosticCollector {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir(".codex").unwrap();
+        std::fs::write(CONFIG_PATH, content).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_config(&mut diag, &ExcludeSet::default());
+        diag
+    }
+
     fn has(diag: &DiagnosticCollector, rule: LintRule) -> bool {
         diag.diagnostics()
             .iter()
@@ -805,6 +1074,91 @@ mod tests {
             rules(&with_config_bytes(b"\xff")),
             vec![LintRule::CodexTomlInvalid]
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cx001_never_echoes_parser_or_secret_text() {
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz";
+        let diag = with_config(&format!("command = \"{secret}"));
+        let finding = diag.diagnostics().first().unwrap();
+        assert_eq!(finding.message, ".codex/config.toml is not valid TOML");
+        assert_eq!(
+            finding.suggestion.as_deref(),
+            Some("correct the TOML syntax at the reported location")
+        );
+        assert!(!finding.message.contains(secret));
+        assert!(finding.evidence.is_none());
+        assert!(finding.location.is_some());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn loader_failures_are_default_errors_with_source_metadata() {
+        let diagnostics = with_default_config(
+            "model = 7\nmodel_reasoning_summary = 'nope'\nhistory = false\ntui = []\nfile_opener = 1\napprovals_reviewer = 'nope'\nskills = false\nprofile = 2\n",
+        );
+        let expected = [
+            LintRule::CodexReasoningSummary,
+            LintRule::CodexApprovalsReviewer,
+            LintRule::CodexModelType,
+            LintRule::CodexFileOpenerType,
+            LintRule::CodexProfileType,
+            LintRule::CodexHistoryType,
+            LintRule::CodexTuiType,
+            LintRule::CodexSkillsType,
+        ];
+        assert_eq!(rules(&diagnostics), expected);
+        for finding in diagnostics.diagnostics() {
+            assert_eq!(finding.severity, crate::diagnostic::Severity::Error);
+            assert_eq!(
+                finding.subject_path.as_deref(),
+                Some(std::path::Path::new(CONFIG_PATH))
+            );
+            assert!(finding.location.is_some(), "{finding:?}");
+            assert!(finding.evidence.is_some(), "{finding:?}");
+            assert!(finding.suggestion.is_some(), "{finding:?}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn source_metadata_uses_structural_spans_and_never_bearer_values() {
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz";
+        let diag = with_config(&format!(
+            "title = 'é'\r\nmodel = 7\r\n[mcp_servers.server]\r\ncommand = 'run'\r\nbearer_token = '{secret}'\r\n[features]\r\nunknown_flag = true\r\n"
+        ));
+        let model = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::CodexModelType)
+            .unwrap();
+        assert_eq!(model.location.unwrap().start().line_number(), 2);
+        let bearer = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::CodexInlineBearerToken)
+            .unwrap();
+        assert_eq!(bearer.evidence.as_deref(), Some("bearer_token"));
+        assert_eq!(
+            bearer.suggestion.as_deref(),
+            Some("replace bearer_token with bearer_token_env_var")
+        );
+        for finding in diag.diagnostics() {
+            assert!(!finding.message.contains(secret));
+            assert!(
+                !finding
+                    .evidence
+                    .as_deref()
+                    .is_some_and(|value| value.contains(secret))
+            );
+            assert!(
+                !finding
+                    .suggestion
+                    .as_deref()
+                    .is_some_and(|value| value.contains(secret))
+            );
+        }
     }
 
     #[test]
