@@ -2,6 +2,13 @@
   "name": "userconfig-broken",
   "version": "1.0.0",
   "userConfig": {
+    "botToken": {
+      "type": "string",
+      "title": "Bot token",
+      "description": "Slack bot token",
+      "sensitive": true,
+      "default": "placeholder"
+    },
     "hyphen-key": {
       "type": "enum",
       "title": "T",

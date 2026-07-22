@@ -3911,6 +3911,108 @@ fn userconfig_rules_cover_modes_focus_suppression_and_exclude_boundary() {
 }
 
 #[test]
+fn u009_userconfig_default_secret_modes_privacy_and_suppression() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    let manifest = tmp.path().join(".claude-plugin/plugin.json");
+    let secret = "xoxb-1clishouldnotecho";
+    let broken = serde_json::json!({
+        "name": "p",
+        "userConfig": {
+            "botToken": {
+                "type": "string", "title": "Bot token", "description": "Slack bot token",
+                "sensitive": true, "default": secret
+            }
+        }
+    })
+    .to_string();
+    std::fs::write(&manifest, &broken).unwrap();
+
+    // Normal mode: U009 is a warning, so a lone U009 exits 0.
+    let normal = run_in(tmp.path(), &["--format", "json", "--only", "U009", "."]);
+    assert_eq!(normal.status.code(), Some(0), "stderr: {}", stderr(&normal));
+    let diagnostics = json(&normal)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0]["code"], "U009");
+    assert_eq!(diagnostics[0]["severity"], "warning");
+    assert_eq!(diagnostics[0]["subject_path"], ".claude-plugin/plugin.json");
+    assert_eq!(diagnostics[0]["evidence"], "/userConfig/botToken/default");
+    // The default value never appears in any output channel.
+    assert!(!String::from_utf8_lossy(&normal.stdout).contains(secret));
+    assert!(!stderr(&normal).contains(secret));
+
+    // Pedantic and all promote U009 to an error (exit 1) and still never echo.
+    for mode in ["--pedantic", "--all"] {
+        let promoted = run_in(
+            tmp.path(),
+            &["--format", "json", mode, "--only", "U009", "."],
+        );
+        assert_eq!(
+            promoted.status.code(),
+            Some(1),
+            "{mode}: {}",
+            stderr(&promoted)
+        );
+        assert_eq!(json(&promoted)["diagnostics"][0]["severity"], "error");
+        assert!(!String::from_utf8_lossy(&promoted.stdout).contains(secret));
+        assert!(!stderr(&promoted).contains(secret));
+    }
+
+    // A sensitive option without a default and a benign default stay clean.
+    let clean = serde_json::json!({
+        "name": "p",
+        "userConfig": {
+            "apiToken": {"type": "string", "title": "API token", "description": "Token", "sensitive": true},
+            "retry": {"type": "number", "title": "Retries", "description": "Count", "default": 3}
+        }
+    })
+    .to_string();
+    std::fs::write(&manifest, &clean).unwrap();
+    let clean_run = run_in(tmp.path(), &["--format", "json", "--only", "U009", "."]);
+    assert!(clean_run.status.success(), "stderr: {}", stderr(&clean_run));
+    assert_eq!(json(&clean_run)["diagnostics"], serde_json::json!([]));
+
+    // Restore the broken manifest for suppression checks.
+    std::fs::write(&manifest, &broken).unwrap();
+
+    // Global suppression silences U009 and counts it as suppressed.
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"U009\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(tmp.path(), &["--format", "json", "--only", "U009", "."]);
+    assert!(
+        suppressed.status.success(),
+        "stderr: {}",
+        stderr(&suppressed)
+    );
+    assert_eq!(json(&suppressed)["diagnostics"], serde_json::json!([]));
+    assert!(json(&suppressed)["counts"]["suppressed"].as_u64().unwrap() >= 1);
+
+    // Per-file override suppresses U009 for the fixed-path manifest.
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".claude-plugin/plugin.json\"]\nsuppress = [\"U009\"]\n",
+    )
+    .unwrap();
+    let per_file = run_in(tmp.path(), &["--format", "json", "--only", "U009", "."]);
+    assert!(per_file.status.success(), "stderr: {}", stderr(&per_file));
+    assert_eq!(json(&per_file)["diagnostics"], serde_json::json!([]));
+
+    // Basic mode (no plugin manifest) is silent for U009.
+    let basic_tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(basic_tmp.path().join(".claude")).unwrap();
+    std::fs::write(basic_tmp.path().join(".claude/settings.json"), "{}").unwrap();
+    let basic = run_in(
+        basic_tmp.path(),
+        &["--format", "json", "--only", "U009", "."],
+    );
+    assert!(basic.status.success(), "stderr: {}", stderr(&basic));
+    assert_eq!(json(&basic)["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
 fn human_readable_output_escapes_control_characters_from_skill_names() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

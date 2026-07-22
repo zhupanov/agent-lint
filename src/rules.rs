@@ -861,6 +861,9 @@ pub enum LintRule {
     /// U008: userConfig option entry is not an object or has an invalid optional field
     #[strum(props(code = "U008", name = "userconfig-option-invalid"))]
     UserconfigOptionInvalid,
+    /// U009: userConfig option `default` ships a secret (sensitive option or secret-shaped literal)
+    #[strum(props(code = "U009", name = "userconfig-default-secret"))]
+    UserconfigDefaultSecret,
 
     // ── Docs (D) ──────────────────────────────────────────────────
     /// D001: docs reference in CLAUDE.md canonical sources not found on disk
@@ -1091,6 +1094,9 @@ impl LintRule {
             Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
             Self::CursorRuleExtension |
 
+            // ── Default-warning: userConfig security convention ─────
+            Self::UserconfigDefaultSecret |
+
             // ── Default-warning: contact metadata ───────────────────
             Self::InvalidEmailFormat |
 
@@ -1246,7 +1252,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            296,
+            297,
             "every enum variant must be registered"
         );
     }
@@ -1413,8 +1419,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            126,
-            "Expected 126 default-warning rules, got {}",
+            127,
+            "Expected 127 default-warning rules, got {}",
             warnings.len()
         );
     }

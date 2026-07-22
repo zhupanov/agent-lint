@@ -1,6 +1,7 @@
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::rules::LintRule;
+use crate::sensitive::contains_sensitive_evidence;
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::sync::LazyLock;
@@ -25,11 +26,13 @@ const KNOWN_OPTION_FIELDS: &[&str] = &[
     "max",
 ];
 
-/// Validate top-level and channel `userConfig` surfaces (U001–U002, U004–U008).
+/// Validate top-level and channel `userConfig` surfaces (U001–U002, U004–U009).
 ///
 /// U003 (scripts-only env-var mapping) was removed: option use is not inferred
 /// from repository text. Title and description enforce a non-empty-after-trim
 /// usability policy that is intentionally stricter than the JSON schema.
+/// U009 forbids a manifest-committed `default` that ships a secret; it is also
+/// stricter than the schema (see [`validate_default_secret`]).
 pub fn validate_user_config(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let val = match &ctx.plugin_json {
         ManifestState::Parsed(v) => v,
@@ -135,6 +138,69 @@ fn validate_option(
     validate_optional_shapes(diag, &option_display, &option_pointer, fields);
     if let Some(type_name) = type_name {
         validate_semantic_combinations(diag, &option_display, &option_pointer, fields, type_name);
+    }
+    validate_default_secret(diag, &option_display, &option_pointer, fields);
+}
+
+/// U009: a `userConfig` option `default` must not commit a secret. At most one
+/// diagnostic per option, first matching branch:
+///
+/// (a) `sensitive: true` declares the value secret (masked input), so any
+/// manifest-committed `default` of any shape contradicts it — the shared default
+/// sits in exactly the public file `sensitive` exists to keep the value out of.
+/// A non-boolean `sensitive` is U004's concern and is skipped here (no cascade).
+///
+/// (b) otherwise a `default` that is a string, or an array containing a string,
+/// for which the shared possible-secret heuristic
+/// ([`contains_sensitive_evidence`]) matches is a committed credential injected
+/// into every `${user_config.KEY}` consumer, even without `sensitive`.
+/// Non-string/non-array `default` shapes are U008's concern and are skipped.
+///
+/// This convention is stricter than the manifest schema. No output channel
+/// (message, evidence, or suggestion) contains any character of the default.
+fn validate_default_secret(
+    diag: &mut DiagnosticCollector,
+    option_display: &str,
+    option_pointer: &str,
+    fields: &Map<String, Value>,
+) {
+    let default_pointer = format!("{option_pointer}/default");
+    let suggestion =
+        "remove the default and let each user supply the value through plugin configuration";
+
+    // (a) sensitive:true with any committed default.
+    if fields.get("sensitive") == Some(&Value::Bool(true)) && fields.contains_key("default") {
+        report(
+            diag,
+            LintRule::UserconfigDefaultSecret,
+            &format!(
+                "{PLUGIN_JSON} {option_display}.default must not be declared for a sensitive option"
+            ),
+            &default_pointer,
+            suggestion,
+        );
+        return;
+    }
+
+    // (b) secret-shaped string or string-array default, regardless of sensitive.
+    let Some(default) = fields.get("default") else {
+        return;
+    };
+    let is_secret_shaped = match default {
+        Value::String(value) => contains_sensitive_evidence(value),
+        Value::Array(items) => items
+            .iter()
+            .any(|item| item.as_str().is_some_and(contains_sensitive_evidence)),
+        _ => false,
+    };
+    if is_secret_shaped {
+        report(
+            diag,
+            LintRule::UserconfigDefaultSecret,
+            &format!("{PLUGIN_JSON} {option_display}.default is a secret-shaped literal"),
+            &default_pointer,
+            suggestion,
+        );
     }
 }
 
@@ -782,5 +848,172 @@ mod tests {
         assert!(reported.contains(&"U002"), "{reported:?}");
         assert!(reported.contains(&"U004"), "{reported:?}");
         assert!(!reported.contains(&"U003"), "{reported:?}");
+    }
+
+    fn u009_count(diag: &DiagnosticCollector) -> usize {
+        diag.diagnostics()
+            .iter()
+            .filter(|d| d.rule.code() == "U009")
+            .count()
+    }
+
+    #[test]
+    fn u009_sensitive_true_with_any_default_shape_fires_once() {
+        for default in [
+            serde_json::json!("value"),
+            serde_json::json!(""),
+            serde_json::json!(5),
+            serde_json::json!(true),
+            serde_json::json!(["a", "b"]),
+        ] {
+            let diag = run(serde_json::json!({
+                "userConfig": {
+                    "opt": {
+                        "type": "string",
+                        "title": "T",
+                        "description": "D",
+                        "sensitive": true,
+                        "default": default
+                    }
+                }
+            }));
+            assert_eq!(
+                u009_count(&diag),
+                1,
+                "default {default:?}: {:?}",
+                codes(&diag)
+            );
+        }
+    }
+
+    #[test]
+    fn u009_non_sensitive_benign_defaults_are_clean() {
+        for opt in [
+            serde_json::json!({"type": "string", "title": "T", "description": "D", "default": "plain-value"}),
+            serde_json::json!({"type": "string", "title": "T", "description": "D", "sensitive": false, "default": "plain-value"}),
+            serde_json::json!({"type": "number", "title": "T", "description": "D", "default": 3}),
+            serde_json::json!({"type": "string", "title": "T", "description": "D", "multiple": true, "default": ["alpha", "beta"]}),
+        ] {
+            let diag = run(serde_json::json!({"userConfig": {"opt": opt}}));
+            assert!(!codes(&diag).contains(&"U009"), "{:?}", codes(&diag));
+        }
+    }
+
+    #[test]
+    fn u009_secret_shaped_default_fires_without_sensitive() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {"type": "string", "title": "T", "description": "D", "default": "xoxb-1abcdefghij"}
+            }
+        }));
+        assert_eq!(u009_count(&diag), 1, "{:?}", codes(&diag));
+
+        // A string element inside an array default is enough (type string +
+        // multiple:true keeps the shape U008-clean so only U009 fires).
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {
+                    "type": "string", "title": "T", "description": "D", "multiple": true,
+                    "default": ["ok", "xoxb-1abcdefghij"]
+                }
+            }
+        }));
+        assert_eq!(u009_count(&diag), 1, "{:?}", codes(&diag));
+        assert!(!codes(&diag).contains(&"U008"), "{:?}", codes(&diag));
+    }
+
+    #[test]
+    fn u009_non_boolean_sensitive_defers_to_u004_then_still_checks_signature() {
+        // Benign default: non-boolean sensitive is U004's; U009 does not cascade.
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {"type": "string", "title": "T", "description": "D", "sensitive": "yes", "default": "plain"}
+            }
+        }));
+        assert!(codes(&diag).contains(&"U004"), "{:?}", codes(&diag));
+        assert!(!codes(&diag).contains(&"U009"), "{:?}", codes(&diag));
+
+        // Secret-shaped default: U004 (non-boolean) plus U009 branch (b).
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {"type": "string", "title": "T", "description": "D", "sensitive": "yes", "default": "sk-abcdefghijklmnopqrstuvwxyz"}
+            }
+        }));
+        assert!(codes(&diag).contains(&"U004"), "{:?}", codes(&diag));
+        assert_eq!(u009_count(&diag), 1, "{:?}", codes(&diag));
+    }
+
+    #[test]
+    fn u009_non_object_default_stays_u008_only() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {"type": "string", "title": "T", "description": "D", "default": {"nested": true}}
+            }
+        }));
+        assert!(codes(&diag).contains(&"U008"), "{:?}", codes(&diag));
+        assert!(!codes(&diag).contains(&"U009"), "{:?}", codes(&diag));
+    }
+
+    #[test]
+    fn u009_covers_both_channel_surfaces() {
+        let secret_option = serde_json::json!({
+            "type": "string", "title": "T", "description": "D", "sensitive": true, "default": "x"
+        });
+
+        let diag = run(serde_json::json!({
+            "channels": [{"server": "slack", "userConfig": {"opt": secret_option}}]
+        }));
+        assert_eq!(u009_count(&diag), 1, "array form: {:?}", codes(&diag));
+
+        let secret_option = serde_json::json!({
+            "type": "string", "title": "T", "description": "D", "sensitive": true, "default": "x"
+        });
+        let diag = run(serde_json::json!({
+            "channels": {"alerts": {"server": "slack", "userConfig": {"opt": secret_option}}}
+        }));
+        assert_eq!(u009_count(&diag), 1, "object form: {:?}", codes(&diag));
+    }
+
+    #[test]
+    fn u009_reproduction_manifest_reports_pointer_and_message() {
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "botToken": {
+                    "type": "string",
+                    "title": "Bot token",
+                    "description": "Slack bot token",
+                    "sensitive": true,
+                    "default": "committed"
+                }
+            }
+        }));
+        let u009: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|d| d.rule.code() == "U009")
+            .collect();
+        assert_eq!(u009.len(), 1, "{:?}", codes(&diag));
+        assert_eq!(
+            u009[0].evidence.as_deref(),
+            Some("/userConfig/botToken/default")
+        );
+        assert_eq!(
+            u009[0].message,
+            ".claude-plugin/plugin.json userConfig.botToken.default must not be declared for a sensitive option"
+        );
+    }
+
+    #[test]
+    fn u009_never_exposes_the_default_value() {
+        let secret = "xoxb-1supersecretliteral";
+        let diag = run(serde_json::json!({
+            "userConfig": {
+                "opt": {"type": "string", "title": "T", "description": "D", "default": secret}
+            }
+        }));
+        assert_eq!(u009_count(&diag), 1, "{:?}", codes(&diag));
+        let text = format!("{:?}", diag.diagnostics());
+        assert!(!text.contains(secret), "{text}");
+        assert!(!text.contains("supersecret"), "{text}");
     }
 }

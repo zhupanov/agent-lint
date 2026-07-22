@@ -4,7 +4,7 @@
   "covers": ["userconfig", "plugin-mode", "normal", "json"],
   "invocation": {
     "mode": "plugin",
-    "arguments": ["--format", "json", "--only", "U001,U002,U004,U005,U006,U007,U008", "."]
+    "arguments": ["--format", "json", "--only", "U001,U002,U004,U005,U006,U007,U008,U009", "."]
   },
   "expected_exit_code": 0,
   "expected_status": "clean",

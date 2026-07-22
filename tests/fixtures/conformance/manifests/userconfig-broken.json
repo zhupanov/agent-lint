@@ -4,7 +4,7 @@
   "covers": ["userconfig", "plugin-mode", "normal", "json"],
   "invocation": {
     "mode": "plugin",
-    "arguments": ["--format", "json", "--only", "U001,U002,U004,U005,U006,U007,U008", "."]
+    "arguments": ["--format", "json", "--only", "U001,U002,U004,U005,U006,U007,U008,U009", "."]
   },
   "expected_exit_code": 1,
   "expected_status": "errors",
@@ -18,7 +18,8 @@
     { "code": "U006", "name": "userconfig-type-missing", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
     { "code": "U007", "name": "userconfig-key-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
     { "code": "U007", "name": "userconfig-key-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
-    { "code": "U008", "name": "userconfig-option-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" }
+    { "code": "U008", "name": "userconfig-option-invalid", "severity": "error", "subject_path": ".claude-plugin/plugin.json" },
+    { "code": "U009", "name": "userconfig-default-secret", "severity": "warning", "subject_path": ".claude-plugin/plugin.json" }
   ],
   "allowed_additional_diagnostics": []
 }

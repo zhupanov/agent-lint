@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 296 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -770,6 +770,14 @@ usability check is intentionally stricter than the upstream JSON schema.
 U003 (`userconfig-env-missing`) was removed: agent-lint does not infer option
 use from repository text.
 
+U009 is an agent-lint security convention stricter than the manifest schema,
+which structurally permits a `default` alongside `sensitive`. A `default` in the
+world-readable manifest is injected into every `${user_config.KEY}` consumer at
+runtime, so a `default` on a `sensitive: true` option, or a secret-shaped
+string/string-array `default` on any option, is treated as a committed
+credential. No output channel (message, evidence, or suggestion) ever echoes the
+default value.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | U001 | `userconfig-not-object` | Present `userConfig` container in `.claude-plugin/plugin.json` (top-level or channel) is not an object | Plugin | error |
@@ -779,6 +787,7 @@ use from repository text.
 | U006 | `userconfig-type-missing` | `userConfig` entry missing or invalid `type` (must be `string`, `number`, `boolean`, `directory`, or `file`) | Plugin | error |
 | U007 | `userconfig-key-invalid` | `userConfig` key is not a valid identifier (`^[A-Za-z_][A-Za-z0-9_]*$`) | Plugin | error |
 | U008 | `userconfig-option-invalid` | `userConfig` option entry is not an object, has an unknown field, or has an invalid optional/semantic field shape | Plugin | error |
+| U009 | `userconfig-default-secret` | `userConfig` option `default` is declared for a `sensitive: true` option, or is a secret-shaped string/string-array literal (shared possible-secret heuristic); the default value is never echoed | Plugin | warn |
 
 ## MCP Configuration Rules (P)
 
@@ -889,7 +898,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 296):**
+**Auto-fixable rules (11 of 297):**
 
 | Rule | Code | Fix |
 |------|------|-----|
