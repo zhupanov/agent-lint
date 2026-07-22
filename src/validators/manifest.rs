@@ -7,8 +7,8 @@ use crate::plugin_paths::{
     safe_component_path,
 };
 use crate::rules::LintRule;
-use crate::validators::json_locate::{JsonScanner, Seg};
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
+use crate::validators::json_locate::{JsonScanner, Seg};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};

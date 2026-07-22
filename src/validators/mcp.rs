@@ -418,7 +418,14 @@ pub fn validate_mcp_configs(
     if let ManifestState::Parsed(value) = &ctx.plugin_json {
         let display = ".claude-plugin/plugin.json";
         if !exclude.is_excluded(display) {
-            validate_inline_plugin_mcp(display, value, value.source(), &ctx.base_path, diag, exclude);
+            validate_inline_plugin_mcp(
+                display,
+                value,
+                value.source(),
+                &ctx.base_path,
+                diag,
+                exclude,
+            );
         }
     }
 }
@@ -522,11 +529,13 @@ fn validate_inline_plugin_mcp(
         None => {}
         Some(Value::Object(_)) => {
             let tokens = source.map(RawMcpTokens::parse);
-            let raw = source.zip(tokens.as_ref()).map(|(source, tokens)| RawDocument {
-                source,
-                keys: None,
-                tokens,
-            });
+            let raw = source
+                .zip(tokens.as_ref())
+                .map(|(source, tokens)| RawDocument {
+                    source,
+                    keys: None,
+                    tokens,
+                });
             diag.with_subject_path(display, |diag| {
                 validate_document(display, value, McpAdapter::ClaudeInlinePlugin, raw, diag);
             });
@@ -550,12 +559,12 @@ fn validate_inline_plugin_mcp(
                     Value::Object(map) => {
                         let label_prefix = format!("{display}: mcpServers[{index}]");
                         let tokens = source.and_then(|source| {
-                            JsonScanner::locate(source, &item_path).map(|range| {
-                                RawMcpTokens::parse_server_map_at(source, range.start)
-                            })
+                            JsonScanner::locate(source, &item_path)
+                                .map(|range| RawMcpTokens::parse_server_map_at(source, range.start))
                         });
-                        let raw =
-                            source.zip(tokens.as_ref()).map(|(source, tokens)| RawDocument {
+                        let raw = source
+                            .zip(tokens.as_ref())
+                            .map(|(source, tokens)| RawDocument {
                                 source,
                                 keys: None,
                                 tokens,
@@ -572,8 +581,7 @@ fn validate_inline_plugin_mcp(
                     }
                     _ => {
                         let location = source.and_then(|source| {
-                            JsonScanner::locate(source, &item_path)
-                                .map(|range| (source, range))
+                            JsonScanner::locate(source, &item_path).map(|range| (source, range))
                         });
                         diag.with_subject_path(display, |diag| {
                             report_structure(
@@ -700,7 +708,11 @@ fn validate_document(
                 Some("remove the duplicate top-level mcpServers key"),
             );
         }
-        for map in raw_keys.server_maps.iter().filter(|map| !map.value_is_object) {
+        for map in raw_keys
+            .server_maps
+            .iter()
+            .filter(|map| !map.value_is_object)
+        {
             report_structure(
                 diag,
                 &format!("{display}: mcpServers must be an object"),

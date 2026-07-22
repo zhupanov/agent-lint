@@ -86,7 +86,13 @@ pub(crate) enum ComponentPathSafety {
 pub(crate) fn declared_component_paths(value: &Value) -> Vec<DeclaredComponentPath<'_>> {
     let mut paths = Vec::new();
     for field in COMPONENT_PATH_FIELDS {
-        let field_path = || field.keys.iter().map(|key| Seg::Key(key)).collect::<Vec<_>>();
+        let field_path = || {
+            field
+                .keys
+                .iter()
+                .map(|key| Seg::Key(key))
+                .collect::<Vec<_>>()
+        };
         let value = field
             .keys
             .iter()

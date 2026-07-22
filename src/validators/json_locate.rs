@@ -287,11 +287,8 @@ mod tests {
     #[test]
     fn json_scanner_locates_key_tokens() {
         let source = r#"{"hooks":{"beforeShellExecution":[{"command":""}],"unknown":[]}}"#;
-        let event = JsonScanner::locate_key(
-            source,
-            &[Seg::Key("hooks"), Seg::Key("unknown")],
-        )
-        .unwrap();
+        let event =
+            JsonScanner::locate_key(source, &[Seg::Key("hooks"), Seg::Key("unknown")]).unwrap();
         assert_eq!(&source[event], "\"unknown\"");
 
         let top = JsonScanner::locate_key(source, &[Seg::Key("hooks")]).unwrap();
