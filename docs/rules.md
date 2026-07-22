@@ -235,7 +235,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| S058 | `skill-invoke-missing` | An active SKILL.md `allowed-tools` includes `Skill` without a clear Skill tool invocation step, or uses ambiguous `Invoke /name` prose | Always | error |
+| S058 | `skill-invoke-missing` | An active SKILL.md whose tokenized `allowed-tools` includes `Skill` lacks an operative Skill-tool invocation step in eligible normalized prose, or uses ambiguous `Invoke /name` prose | Always | error |
 | S059 | `skill-flag-mismatch` | A flag in a fenced shipped-script invocation is not accepted by that script; forwarding scripts are skipped. Use `lint-skill-md-flag-signature: ok <reason>` on the logical command line only for reviewed exceptions. Recognized invocation roots are `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD`; skill-local `scripts/...` paths take precedence over repository-root paths. | Always | error |
 | S060 | `awk-field-ref` | Awk positional fields such as `$0` or `$1` appear inside a `SKILL.md` shell fence | Always | error |
 | S061 | `unsafe-grep-probe` | A shell fence contains unbounded grep-family input, bare top-level `grep`, or a parent-directory ascent | Always | error |

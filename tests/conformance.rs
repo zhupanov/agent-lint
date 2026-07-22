@@ -557,21 +557,24 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
 }
 
 fn assert_expected_suggestions(case: &LoadedCase, report: &OutputReport) {
+    let mut matched_diagnostics = vec![false; report.diagnostics.len()];
     for expected in case
         .manifest
         .expected_diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.suggestion.is_some())
     {
-        let actual = report
+        let (index, actual) = report
             .diagnostics
             .iter()
+            .enumerate()
             .find(|actual| {
-                actual.code == expected.code
-                    && actual.name == expected.name
-                    && actual.severity == expected.severity
-                    && actual.subject_path == expected.subject_path
-                    && actual.related_subjects == expected.related_subjects
+                !matched_diagnostics[actual.0]
+                    && actual.1.code == expected.code
+                    && actual.1.name == expected.name
+                    && actual.1.severity == expected.severity
+                    && actual.1.subject_path == expected.subject_path
+                    && actual.1.related_subjects == expected.related_subjects
             })
             .unwrap_or_else(|| {
                 panic!(
@@ -579,6 +582,7 @@ fn assert_expected_suggestions(case: &LoadedCase, report: &OutputReport) {
                     case.name, expected
                 )
             });
+        matched_diagnostics[index] = true;
         assert_eq!(
             actual.suggestion, expected.suggestion,
             "{}: diagnostic suggestion changed",
