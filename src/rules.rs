@@ -919,7 +919,7 @@ pub enum LintRule {
     /// P025: MCP alwaysLoad is not a boolean
     #[strum(props(code = "P025", name = "mcp-alwaysload-invalid"))]
     McpAlwaysLoadInvalid,
-    /// P026: MCP server name is reserved by Claude Code
+    /// P026: MCP server name is reserved by Claude Code's built-in list
     #[strum(props(code = "P026", name = "mcp-server-reserved"))]
     McpServerReserved,
     /// P027: MCP document or server entry has an invalid structure

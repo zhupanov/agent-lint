@@ -13,7 +13,15 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
 
-const RESERVED_SERVER_NAMES: &[&str] = &["workspace"];
+/// Claude Code reserved MCP server names (exact, case-sensitive literals).
+/// Source: https://code.claude.com/docs/en/mcp (retrieved 2026-07-21).
+const RESERVED_SERVER_NAMES: &[&str] = &[
+    "workspace",
+    "claude-in-chrome",
+    "computer-use",
+    "Claude Preview",
+    "Claude Browser",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum McpTransport {
@@ -172,9 +180,7 @@ pub fn validate_mcp_configs(
     if let ManifestState::Parsed(value) = &ctx.plugin_json {
         let display = ".claude-plugin/plugin.json";
         if !exclude.is_excluded(display) {
-            diag.with_subject_path(display, |diag| {
-                validate_document(display, value, McpAdapter::ClaudeInlinePlugin, None, diag);
-            });
+            validate_inline_plugin_mcp(display, value, &ctx.base_path, diag, exclude);
         }
     }
 }
@@ -253,6 +259,138 @@ fn display_path(base: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// Inline plugin `mcpServers` accepts object maps, string config paths, and
+/// arrays of those (plus inline server-map objects). Path existence/escape is
+/// M-owned; present readable files receive ClaudeStandalone P-rule coverage.
+fn validate_inline_plugin_mcp(
+    display: &str,
+    value: &Value,
+    base_path: &Path,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    let mut validated_refs = Vec::new();
+    match value.get("mcpServers") {
+        None => {}
+        Some(Value::Object(_)) => {
+            diag.with_subject_path(display, |diag| {
+                validate_document(display, value, McpAdapter::ClaudeInlinePlugin, None, diag);
+            });
+        }
+        Some(Value::String(path)) => {
+            validate_referenced_claude_mcp(path, base_path, diag, exclude, &mut validated_refs);
+        }
+        Some(Value::Array(items)) => {
+            for (index, item) in items.iter().enumerate() {
+                match item {
+                    Value::String(path) => {
+                        validate_referenced_claude_mcp(
+                            path,
+                            base_path,
+                            diag,
+                            exclude,
+                            &mut validated_refs,
+                        );
+                    }
+                    Value::Object(map) => {
+                        let label_prefix = format!("{display}: mcpServers[{index}]");
+                        diag.with_subject_path(display, |diag| {
+                            validate_server_map(
+                                &label_prefix,
+                                map,
+                                McpAdapter::ClaudeInlinePlugin,
+                                None,
+                                diag,
+                            );
+                        });
+                    }
+                    _ => {
+                        diag.with_subject_path(display, |diag| {
+                            report_structure(
+                                diag,
+                                &format!(
+                                    "{display}: mcpServers[{index}] must be a string path or inline server-map object"
+                                ),
+                                None,
+                                None,
+                            );
+                        });
+                    }
+                }
+            }
+        }
+        Some(_) => {
+            diag.with_subject_path(display, |diag| {
+                report_structure(
+                    diag,
+                    &format!("{display}: mcpServers must be an object, string path, or array"),
+                    None,
+                    None,
+                );
+            });
+        }
+    }
+}
+
+/// Resolve a plugin-authored MCP config path against the repository root after
+/// substituting a leading `${CLAUDE_PLUGIN_ROOT}/` with the plugin root (the
+/// analysis root for this run). Missing files produce no P diagnostic.
+/// Absolute and `..` paths are M-owned and are not opened here.
+fn validate_referenced_claude_mcp(
+    authored: &str,
+    base_path: &Path,
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    validated: &mut Vec<std::path::PathBuf>,
+) {
+    let relative = authored
+        .strip_prefix("${CLAUDE_PLUGIN_ROOT}/")
+        .unwrap_or(authored);
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return;
+    }
+    let path = normalize_under_base(base_path, relative);
+    if !path.is_file() {
+        return;
+    }
+    // All on-disk `.mcp.json` files are already walked by ClaudeStandalone
+    // discovery; skip to avoid duplicate reports.
+    if path.file_name().and_then(|name| name.to_str()) == Some(".mcp.json") {
+        return;
+    }
+    if validated.iter().any(|seen| seen == &path) {
+        return;
+    }
+    validated.push(path.clone());
+    validate_json_document(
+        &path,
+        McpAdapter::ClaudeStandalone,
+        base_path,
+        diag,
+        exclude,
+    );
+}
+
+/// Join a relative path under `base` while dropping `.` segments so
+/// `./servers.json` and `servers.json` resolve to the same path for dedupe.
+fn normalize_under_base(base: &Path, relative: &str) -> std::path::PathBuf {
+    let mut out = base.to_path_buf();
+    for component in Path::new(relative).components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => out.push(part),
+            // Absolute/`..` forms are filtered before this helper is called.
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 fn validate_document(
@@ -343,8 +481,24 @@ fn validate_document(
         return;
     };
 
+    validate_server_map(
+        &format!("{display}: mcpServers"),
+        servers,
+        adapter,
+        raw_document,
+        diag,
+    );
+}
+
+fn validate_server_map(
+    label_prefix: &str,
+    servers: &serde_json::Map<String, Value>,
+    adapter: McpAdapter,
+    raw_document: Option<(&str, &RawMcpKeys, &RawMcpTokens)>,
+    diag: &mut DiagnosticCollector,
+) {
     for (name, config) in servers {
-        let label = format!("{display}: mcpServers.{name}");
+        let label = format!("{label_prefix}.{name}");
         let token = raw_document.and_then(|(_, _, tokens)| tokens.servers.get(name));
         let source = raw_document.map(|(source, _, _)| source);
         let server_key = token.map(|token| &token.key);
@@ -480,6 +634,22 @@ fn validate_claude_transport(
     server_key: Option<&Range<usize>>,
     diag: &mut DiagnosticCollector,
 ) {
+    // Claude Code treats a missing type as stdio. A present url without type is
+    // therefore a selector contradiction (documented configuration error), owned
+    // by P027 rather than the stdio-command rule.
+    if config.contains_key("url") && !config.contains_key("type") {
+        report(
+            diag,
+            LintRule::McpStructureInvalid,
+            &format!("{label} has a \"url\" but no \"type\""),
+            source,
+            field_value(token, "url").or(server_key),
+            "url",
+            "add \"type\": \"http\" (or \"sse\" / \"ws\") to this entry",
+        );
+        return;
+    }
+
     let transport = McpTransport::parse(config.get("type"));
     let Some(transport) = transport else {
         report(
@@ -558,7 +728,11 @@ fn validate_cursor_selector(
             &format!("{label} must define exactly one of command or url"),
         ),
         (false, true) => {
-            if let Some(url) = config.get("url").and_then(Value::as_str) {
+            if let Some(url) = config
+                .get("url")
+                .and_then(Value::as_str)
+                .filter(|url| !url.trim().is_empty())
+            {
                 validate_url_security(
                     label,
                     url,
@@ -566,9 +740,31 @@ fn validate_cursor_selector(
                     field_value(token, "url").or(server_key),
                     diag,
                 );
+            } else {
+                report(
+                    diag,
+                    LintRule::McpStructureInvalid,
+                    &format!("{label}.url must be a non-empty string"),
+                    source,
+                    field_value(token, "url").or(server_key),
+                    "url",
+                    "set url to a non-empty string",
+                );
             }
         }
-        (true, false) => {}
+        (true, false) => {
+            if !has_nonempty_string(config.get("command")) {
+                report(
+                    diag,
+                    LintRule::McpStructureInvalid,
+                    &format!("{label}.command must be a non-empty string"),
+                    source,
+                    field_value(token, "command").or(server_key),
+                    "command",
+                    "set command to a non-empty string",
+                );
+            }
+        }
     }
 }
 
@@ -1740,7 +1936,42 @@ mod tests {
         );
         assert!(diag.diagnostics().is_empty());
 
-        let mut invalid = DiagnosticCollector::new_all_enabled();
+        for invalid in [
+            serde_json::json!(null),
+            serde_json::json!(1),
+            serde_json::json!(true),
+        ] {
+            let mut invalid_diag = DiagnosticCollector::new_all_enabled();
+            validate_mcp_configs(
+                &LintContext {
+                    base_path: temp.path().to_path_buf(),
+                    mode: LintMode::Plugin,
+                    plugin_json: ManifestState::parsed(serde_json::json!({
+                        "mcpServers": invalid
+                    })),
+                    marketplace_json: ManifestState::Missing,
+                    hooks_json: ManifestState::Missing,
+                    declared_hook_configs: vec![],
+                    settings_json: ManifestState::Missing,
+                    settings_local_json: ManifestState::Missing,
+                },
+                &mut invalid_diag,
+                &ExcludeSet::default(),
+                ValidationTargets::default(),
+            );
+            assert_eq!(
+                invalid_diag
+                    .diagnostics()
+                    .iter()
+                    .map(|diagnostic| diagnostic.rule)
+                    .collect::<Vec<_>>(),
+                vec![LintRule::McpStructureInvalid],
+                "{invalid}"
+            );
+        }
+
+        // Empty array is a valid path/array form with no elements.
+        let mut empty_array = DiagnosticCollector::new_all_enabled();
         validate_mcp_configs(
             &LintContext {
                 base_path: temp.path().to_path_buf(),
@@ -1752,18 +1983,11 @@ mod tests {
                 settings_json: ManifestState::Missing,
                 settings_local_json: ManifestState::Missing,
             },
-            &mut invalid,
+            &mut empty_array,
             &ExcludeSet::default(),
             ValidationTargets::default(),
         );
-        assert_eq!(
-            invalid
-                .diagnostics()
-                .iter()
-                .map(|diagnostic| diagnostic.rule)
-                .collect::<Vec<_>>(),
-            vec![LintRule::McpStructureInvalid]
-        );
+        assert!(empty_array.diagnostics().is_empty());
     }
 
     #[test]
@@ -2302,10 +2526,43 @@ mod tests {
     #[test]
     fn stdio_ignores_stray_url_fields_for_transport_checks() {
         let rules = reported_rules(
-            r#"{"mcpServers":{"stdio":{"type":"stdio","command":"ok","url":"ws://example.com/socket"},"omitted":{"command":"ok","url":"not a URL"}}}"#,
+            r#"{"mcpServers":{"stdio":{"type":"stdio","command":"ok","url":"ws://example.com/socket"}}}"#,
             ".mcp.json",
         );
         assert!(rules.is_empty(), "{rules:?}");
+    }
+
+    #[test]
+    fn claude_url_without_type_is_p027_not_p009() {
+        for content in [
+            r#"{"mcpServers":{"remote":{"url":"https://mcp.example.com/mcp"}}}"#,
+            r#"{"mcpServers":{"remote":{"command":"ok","url":"https://mcp.example.com/mcp"}}}"#,
+            r#"{"mcpServers":{"remote":{"url":5}}}"#,
+        ] {
+            let findings = findings(content);
+            let rules: Vec<_> = findings.iter().map(|item| item.rule).collect();
+            assert!(
+                rules.contains(&LintRule::McpStructureInvalid),
+                "{content}: {rules:?}"
+            );
+            assert!(
+                !rules.contains(&LintRule::McpStdioCommandMissing),
+                "{content}: {rules:?}"
+            );
+            let structure = findings
+                .iter()
+                .find(|item| item.rule == LintRule::McpStructureInvalid)
+                .unwrap();
+            assert!(
+                structure.message.contains("has a \"url\" but no \"type\""),
+                "{}",
+                structure.message
+            );
+            assert_eq!(
+                structure.suggestion.as_deref(),
+                Some("add \"type\": \"http\" (or \"sse\" / \"ws\") to this entry")
+            );
+        }
     }
 
     #[test]
@@ -2324,5 +2581,283 @@ mod tests {
                 "missing {expected}: {errors:?}"
             );
         }
+    }
+
+    #[test]
+    fn all_five_reserved_names_fire_on_claude_surfaces_only() {
+        for name in [
+            "workspace",
+            "claude-in-chrome",
+            "computer-use",
+            "Claude Preview",
+            "Claude Browser",
+        ] {
+            let content = format!(r#"{{"mcpServers":{{"{name}":{{"command":"ok"}}}}}}"#);
+            let rules = reported_rules(&content, ".mcp.json");
+            assert_eq!(rules, vec![LintRule::McpServerReserved], "{name}");
+
+            let temp = tempfile::tempdir().unwrap();
+            let mut plugin = DiagnosticCollector::new_all_enabled();
+            validate_mcp_configs(
+                &LintContext {
+                    base_path: temp.path().to_path_buf(),
+                    mode: LintMode::Plugin,
+                    plugin_json: ManifestState::parsed(serde_json::json!({
+                        "mcpServers": { (name): {"command": "ok"} }
+                    })),
+                    marketplace_json: ManifestState::Missing,
+                    hooks_json: ManifestState::Missing,
+                    declared_hook_configs: vec![],
+                    settings_json: ManifestState::Missing,
+                    settings_local_json: ManifestState::Missing,
+                },
+                &mut plugin,
+                &ExcludeSet::default(),
+                ValidationTargets::default(),
+            );
+            assert!(
+                plugin
+                    .diagnostics()
+                    .iter()
+                    .any(|item| item.rule == LintRule::McpServerReserved),
+                "{name}"
+            );
+
+            let cursor = tempfile::tempdir().unwrap();
+            let path = cursor.path().join(".cursor/mcp.json");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &content).unwrap();
+            let mut cursor_diag = DiagnosticCollector::new_all_enabled();
+            validate_mcp_configs(
+                &context(cursor.path()),
+                &mut cursor_diag,
+                &ExcludeSet::default(),
+                ValidationTargets {
+                    cursor: true,
+                    ..ValidationTargets::default()
+                },
+            );
+            assert!(
+                cursor_diag
+                    .diagnostics()
+                    .iter()
+                    .all(|item| item.rule != LintRule::McpServerReserved),
+                "{name}: {:#?}",
+                cursor_diag.diagnostics()
+            );
+        }
+
+        for near_miss in ["Workspace", "claude-in-chrome2"] {
+            let content = format!(r#"{{"mcpServers":{{"{near_miss}":{{"command":"ok"}}}}}}"#);
+            assert!(
+                reported_rules(&content, ".mcp.json").is_empty(),
+                "{near_miss}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_selector_values_must_be_non_empty_strings() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".cursor/mcp.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"empty-command":{"command":""},"blank-url":{"url":"   "},"typed-url":{"url":5},"ok":{"command":"server"}}}"#,
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                ..ValidationTargets::default()
+            },
+        );
+        let structures: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::McpStructureInvalid)
+            .collect();
+        assert_eq!(structures.len(), 3, "{:#?}", diag.diagnostics());
+        assert!(
+            structures
+                .iter()
+                .any(|item| item.message.contains(".command must be a non-empty string"))
+        );
+        assert_eq!(
+            structures
+                .iter()
+                .filter(|item| item.message.contains(".url must be a non-empty string"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn localhost_subdomains_are_local_for_p017() {
+        let clean = reported_rules(
+            r#"{"mcpServers":{"a":{"type":"http","url":"http://foo.localhost:3000/mcp"},"b":{"type":"ws","url":"ws://a.b.localhost"}}}"#,
+            ".mcp.json",
+        );
+        assert!(clean.is_empty(), "{clean:?}");
+
+        for content in [
+            r#"{"mcpServers":{"a":{"type":"http","url":"http://localhost.example.com/mcp"}}}"#,
+            r#"{"mcpServers":{"a":{"type":"http","url":"http://notlocalhost.example/mcp"}}}"#,
+        ] {
+            assert_eq!(
+                reported_rules(content, ".mcp.json"),
+                vec![LintRule::McpUrlNotHttps],
+                "{content}"
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_path_form_mcp_servers_are_structurally_valid_and_contents_are_checked() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            temp.path().join("servers.json"),
+            r#"{"mcpServers":{"ok":{"command":"server"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("broken.json"), "{").unwrap();
+        std::fs::write(
+            temp.path().join("inner-bad.json"),
+            r#"{"mcpServers":{"bad":{"type":"stdio"}}}"#,
+        )
+        .unwrap();
+
+        for mcp_servers in [
+            serde_json::json!("./servers.json"),
+            serde_json::json!(["./servers.json"]),
+            serde_json::json!("${CLAUDE_PLUGIN_ROOT}/servers.json"),
+        ] {
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_mcp_configs(
+                &LintContext {
+                    base_path: temp.path().to_path_buf(),
+                    mode: LintMode::Plugin,
+                    plugin_json: ManifestState::parsed(serde_json::json!({
+                        "mcpServers": mcp_servers
+                    })),
+                    marketplace_json: ManifestState::Missing,
+                    hooks_json: ManifestState::Missing,
+                    declared_hook_configs: vec![],
+                    settings_json: ManifestState::Missing,
+                    settings_local_json: ManifestState::Missing,
+                },
+                &mut diag,
+                &ExcludeSet::default(),
+                ValidationTargets::default(),
+            );
+            assert!(
+                diag.diagnostics().is_empty(),
+                "{mcp_servers}: {:#?}",
+                diag.diagnostics()
+            );
+        }
+
+        let mut broken = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::parsed(serde_json::json!({
+                    "mcpServers": "./broken.json"
+                })),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut broken,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert!(broken.diagnostics().iter().any(|item| {
+            item.rule == LintRule::McpJsonInvalid
+                && item.subject_path.as_deref() == Some(Path::new("broken.json"))
+        }));
+
+        let mut inner = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::parsed(serde_json::json!({
+                    "mcpServers": ["./inner-bad.json", {"inline": {"type": "stdio"}}]
+                })),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut inner,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert!(inner.diagnostics().iter().any(|item| {
+            item.rule == LintRule::McpStdioCommandMissing
+                && item.subject_path.as_deref() == Some(Path::new("inner-bad.json"))
+        }));
+        assert!(inner.diagnostics().iter().any(|item| {
+            item.rule == LintRule::McpStdioCommandMissing
+                && item.subject_path.as_deref() == Some(Path::new(".claude-plugin/plugin.json"))
+                && item.message.contains("mcpServers[1].inline")
+        }));
+
+        let mut missing = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::parsed(serde_json::json!({
+                    "mcpServers": "./does-not-exist.json"
+                })),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut missing,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        assert!(missing.diagnostics().is_empty());
+
+        let mut mixed = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &LintContext {
+                base_path: temp.path().to_path_buf(),
+                mode: LintMode::Plugin,
+                plugin_json: ManifestState::parsed(serde_json::json!({
+                    "mcpServers": ["./servers.json", 5, null]
+                })),
+                marketplace_json: ManifestState::Missing,
+                hooks_json: ManifestState::Missing,
+                declared_hook_configs: vec![],
+                settings_json: ManifestState::Missing,
+                settings_local_json: ManifestState::Missing,
+            },
+            &mut mixed,
+            &ExcludeSet::default(),
+            ValidationTargets::default(),
+        );
+        let structures: Vec<_> = mixed
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::McpStructureInvalid)
+            .map(|item| item.message.as_str())
+            .collect();
+        assert_eq!(structures.len(), 2, "{:#?}", mixed.diagnostics());
+        assert!(structures.iter().any(|msg| msg.contains("mcpServers[1]")));
+        assert!(structures.iter().any(|msg| msg.contains("mcpServers[2]")));
     }
 }

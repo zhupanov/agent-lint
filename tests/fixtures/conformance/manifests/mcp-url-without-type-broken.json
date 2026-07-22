@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "mcp-url-without-type-broken",
+  "covers": ["mcp", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "P009,P027", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "P027", "name": "mcp-structure-invalid", "severity": "error", "subject_path": ".mcp.json" },
+    { "code": "P027", "name": "mcp-structure-invalid", "severity": "error", "subject_path": ".mcp.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

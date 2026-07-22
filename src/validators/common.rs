@@ -379,7 +379,13 @@ pub(crate) fn is_valid_http_url(value: &str) -> bool {
 
 fn is_local_host(host: Host<&str>) -> bool {
     match host {
-        Host::Domain(host) => host == "localhost",
+        // RFC 6761 §6.3: `localhost` and every name under `.localhost` resolve
+        // to loopback. Compare case-insensitively; require a label boundary so
+        // `localhost.example.com` stays remote.
+        Host::Domain(host) => {
+            let host = host.to_ascii_lowercase();
+            host == "localhost" || host.ends_with(".localhost")
+        }
         Host::Ipv4(address) => address.is_loopback() || address.is_unspecified(),
         Host::Ipv6(address) => {
             address.is_loopback()
@@ -581,6 +587,9 @@ mod url_tests {
         for value in [
             "https://example.com",
             "http://localhost",
+            "http://LocalHost",
+            "http://foo.localhost:3000/mcp",
+            "http://a.b.localhost",
             "http://127.1.2.3",
             "http://0.0.0.0",
             "http://[::1]",
@@ -593,8 +602,19 @@ mod url_tests {
                 "expected {value} to be local or invalid"
             );
         }
+        for value in [
+            "http://localhost.example.com",
+            "http://notlocalhost.example",
+            "http://example.localhost.evil.com",
+        ] {
+            assert!(
+                is_nonlocal_url_with_scheme(value, "http"),
+                "expected {value} to stay non-local (label boundary)"
+            );
+        }
         assert!(is_nonlocal_url_with_scheme("ws://example.com", "ws"));
         assert!(!is_nonlocal_url_with_scheme("ws://localhost", "ws"));
+        assert!(!is_nonlocal_url_with_scheme("ws://a.b.localhost", "ws"));
         assert!(!is_nonlocal_url_with_scheme("wss://example.com", "ws"));
     }
 }
