@@ -118,6 +118,21 @@ enforced independently. Run `agent-lint --closure-report` for deterministic
 JSON rows containing `group`, `source_set`, `scope`, `metric`,
 `measured_value`, and `cap`.
 
+Mandatory transitive references are discovered from the shared Markdown
+adapter. Markdown link destinations always resolve source-relatively.
+Inline-code references whose first normalized component is `skills`,
+`.claude/skills`, `docs`, `agents`, or `scripts` resolve from the repository
+root; every other inline-code relative reference (including `references/...`
+and safe `../...`) resolves from the owning source file. Plain-path extraction
+is limited to those same repository-root prefixes. The selected base is never
+retried against the other base when missing. A clause enters the always-loaded
+closure only for an explicit `@` import or when it contains `read|load|open`
+plus a strength cue (`before|first|completely|always|entire|required|must`)
+and no negation/conditional cue (`do not`, `don't`, `never`, `must not`,
+`need not`, `cannot`, `can't`, `without`, `if`, `when`, `unless`, `as needed`,
+`optional`, `only when`, or `may`). Fenced/indented code, blockquotes, HTML
+comments, and example sections are excluded.
+
 When `script-inventory` is set, blank lines and full-line `#` comments are
 ignored and every other line must name an existing regular supported script
 file beneath the repository root. Supported kinds are `.sh`, `.bash`,

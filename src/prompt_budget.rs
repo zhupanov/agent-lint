@@ -1,25 +1,26 @@
 //! Shared prompt-source discovery and size measurement for D004 and S062.
 
 use crate::config::{PromptMetricCaps, PromptSourceBudget};
+use crate::fence::lines_outside_fences;
+use crate::markdown_refs::{
+    clause_is_mandatory_load, is_root_plain_md_prefix, markdown_references as structured_refs,
+    prompt_resolution_base,
+};
+use crate::repo_path::{
+    normalize_separators, resolve_repo_path, PathProbe, ResolutionBase,
+};
 use regex::Regex;
 use serde::Serialize;
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-pub(crate) static INLINE_CODE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"`([^`\n]+)`").unwrap());
-pub(crate) static MARKDOWN_LINK: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\[[^\]]*\]\(([^)\s]+\.md)(?:#[^)]*)?\)").unwrap());
 static PLAIN_MD_PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?:^|[\s`'(])((?:skills|\.claude/skills|docs|agents|scripts)/[A-Za-z0-9._/-]+\.md)\b",
     )
     .unwrap()
-});
-static ALWAYS_LOAD_DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:\b(?:read|load|open)\b.*\b(?:before|first|completely|always|entire|required|must)\b|\b(?:before|first|always|required|must)\b.*\b(?:read|load|open)\b|^\s*@)").unwrap()
 });
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -57,63 +58,65 @@ pub struct BudgetReportRow {
     pub cap: Option<usize>,
 }
 
+/// Lexical repository-relative normalization used by import-graph callers.
 pub fn normalize_repo_relative(path: &Path) -> Option<PathBuf> {
-    let mut result = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !result.pop() {
-                    return None;
-                }
-            }
-            Component::Normal(value) => result.push(value),
-            Component::RootDir | Component::Prefix(_) => return None,
-        }
-    }
-    Some(result)
-}
-
-pub fn resolve_repo_reference(source: &Path, raw: &str) -> Option<PathBuf> {
-    let direct = PathBuf::from(raw.trim_start_matches("./"));
-    if !direct.is_absolute()
-        && !direct.components().any(|part| part == Component::ParentDir)
-        && direct.is_file()
-    {
-        return normalize_repo_relative(&direct);
-    }
-    normalize_repo_relative(&source.parent().unwrap_or_else(|| Path::new(".")).join(raw))
+    crate::repo_path::normalize_repo_relative(path)
 }
 
 /// Discover mandatory Markdown prompt references in deterministic path order.
 pub fn markdown_references(source_path: &Path, content: &str) -> Vec<PathBuf> {
     let mut refs = BTreeSet::new();
-    for line in crate::fence::lines_outside_fences(content) {
-        if !ALWAYS_LOAD_DIRECTIVE.is_match(line) {
+    for reference in structured_refs(content) {
+        if reference.excluded_from_always_load {
             continue;
         }
-        for capture in INLINE_CODE.captures_iter(line) {
-            add_markdown_reference(source_path, &capture[1], &mut refs);
+        let Some(clause) = reference.clause.as_deref() else {
+            continue;
+        };
+        if !clause_is_mandatory_load(clause) {
+            continue;
         }
-        for capture in MARKDOWN_LINK.captures_iter(line) {
-            add_markdown_reference(source_path, &capture[1], &mut refs);
+        let raw = reference.raw.split(['#', ':']).next().unwrap_or(&reference.raw);
+        if !raw.ends_with(".md") || raw.contains(['$', '{', '}', '<', '>', '*']) {
+            continue;
         }
+        let base = prompt_resolution_base(reference.kind, raw);
+        add_resolved_reference(source_path, raw, base, &mut refs);
+    }
+    for line in lines_outside_fences(content) {
         for capture in PLAIN_MD_PATH.captures_iter(line) {
-            add_markdown_reference(source_path, &capture[1], &mut refs);
+            let raw = &capture[1];
+            if !is_root_plain_md_prefix(raw) {
+                continue;
+            }
+            // Plain paths are only collected from mandatory-looking lines: reuse
+            // the same clause classifier against the full physical line.
+            if !clause_is_mandatory_load(line) {
+                continue;
+            }
+            add_resolved_reference(
+                source_path,
+                raw,
+                ResolutionBase::RepositoryRoot,
+                &mut refs,
+            );
         }
     }
     refs.into_iter().collect()
 }
 
-fn add_markdown_reference(source: &Path, raw: &str, refs: &mut BTreeSet<PathBuf>) {
-    let raw = raw.split(['#', ':']).next().unwrap_or(raw);
-    if !raw.ends_with(".md") || raw.contains(['$', '{', '}', '<', '>', '*']) {
+fn add_resolved_reference(
+    source: &Path,
+    raw: &str,
+    base: ResolutionBase,
+    refs: &mut BTreeSet<PathBuf>,
+) {
+    let normalized = normalize_separators(raw);
+    if !normalized.ends_with(".md") {
         return;
     }
-    if let Some(candidate) = resolve_repo_reference(source, raw) {
-        if candidate.is_file() && !candidate.is_symlink() {
-            refs.insert(candidate);
-        }
+    if let PathProbe::File(path) = resolve_repo_path(source, &normalized, base) {
+        refs.insert(path);
     }
 }
 
@@ -168,8 +171,21 @@ fn measure_paths(
         if excluded.contains(&path) || !seen.insert(path.clone()) {
             continue;
         }
-        let content = fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read prompt source '{}': {error}", path.display()))?;
+        let content = match resolve_repo_path(
+            Path::new("."),
+            &path.to_string_lossy(),
+            ResolutionBase::RepositoryRoot,
+        ) {
+            PathProbe::File(_) => fs::read_to_string(&path).map_err(|error| {
+                format!("cannot read prompt source '{}': {error}", path.display())
+            })?,
+            _ => {
+                return Err(format!(
+                    "cannot read prompt source '{}': missing, unsafe, or unreadable",
+                    path.display()
+                ));
+            }
+        };
         metrics += source_metrics(&content);
         if transitive {
             pending.extend(markdown_references(&path, &content));
@@ -293,5 +309,67 @@ mod tests {
         assert_eq!(rows[8].source_set, "conditional");
         assert_eq!(rows[8].metric, "content_tokens");
         assert_eq!(rows[8].cap, Some(77));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn source_relative_references_are_not_root_shadowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all(".claude/skills/s062/references").unwrap();
+        fs::create_dir_all("references").unwrap();
+        fs::write(
+            ".claude/skills/s062/SKILL.md",
+            "Read `references/shared.md` completely.\n",
+        )
+        .unwrap();
+        fs::write(
+            ".claude/skills/s062/references/shared.md",
+            "one\ntwo\nthree\n",
+        )
+        .unwrap();
+        fs::write("references/shared.md", "shadow\n").unwrap();
+        let refs = markdown_references(
+            Path::new(".claude/skills/s062/SKILL.md"),
+            "Read `references/shared.md` completely.\n",
+        );
+        assert_eq!(
+            refs,
+            vec![PathBuf::from(".claude/skills/s062/references/shared.md")]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn prohibited_references_stay_out_of_closure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo").unwrap();
+        fs::write(
+            "skills/demo/SKILL.md",
+            "Do not read `optional.md` completely.\nline\nline\nline\nline\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/optional.md",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
+        )
+        .unwrap();
+        let budget = PromptSourceBudget {
+            name: "demo".into(),
+            roots: vec!["skills/demo/SKILL.md".into()],
+            conditional_sources: vec![],
+            root_caps: PromptMetricCaps::default(),
+            closure_caps: PromptMetricCaps {
+                lines: Some(8),
+                ..PromptMetricCaps::default()
+            },
+            conditional_caps: PromptMetricCaps::default(),
+        };
+        let result = measure_budget(&budget).unwrap();
+        assert_eq!(result.closure.lines, 5);
+        assert_eq!(result.closure_files.len(), 1);
     }
 }

@@ -5,16 +5,20 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs};
 use crate::frontmatter;
 use crate::markdown::MarkdownDocument;
-use crate::prompt_budget::{
-    INLINE_CODE, MARKDOWN_LINK, normalize_repo_relative, resolve_repo_reference,
+use crate::prompt_budget::normalize_repo_relative;
+use crate::markdown_refs::{
+    SUGGEST_CREATE_OR_CORRECT, SUGGEST_REPLACE_SYMLINK, is_external_or_fragment_destination,
+    markdown_references, percent_decode_once, MarkdownRefKind,
+};
+use crate::repo_path::{
+    PathProbe, ResolutionBase, normalize_path_probe, normalize_separators,
+    normalized_target_key, probe_contains_parent_segment, resolve_repo_path,
 };
 use crate::rules::LintRule;
 use crate::script_paths::{ScriptKind, script_kind};
 use crate::script_paths::{ScriptReference, ScriptReferenceBase, extract_script_token_references};
 use crate::traversal;
-use crate::validators::common::{
-    classify_inline_code_path, is_unsafe_inline_code_path_probe, normalize_inline_code_path_probe,
-};
+use crate::validators::common::classify_inline_code_path;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs;
@@ -1187,36 +1191,67 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         let Some(content) = read_text(path, exclude) else {
             continue;
         };
-        for (number, line) in lines_outside_fences_with_numbers(&content) {
-            if has_reasoned_marker(line, "lint-doc-pointer-paths: ok") {
+        let waived_lines: BTreeSet<usize> = content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                has_reasoned_marker(line, "lint-doc-pointer-paths: ok").then_some(index + 1)
+            })
+            .collect();
+        let mut seen = BTreeSet::new();
+        for reference in markdown_references(&content) {
+            if reference.kind != MarkdownRefKind::InlineCode {
                 continue;
             }
-            for capture in INLINE_CODE.captures_iter(line) {
-                let token_match = capture
-                    .get(1)
-                    .expect("INLINE_CODE always has a token capture");
-                let token = token_match.as_str();
-                if !classify_inline_code_path(token).is_repository_path()
-                    || !prefixes.iter().any(|prefix| token.starts_with(prefix))
-                {
-                    continue;
-                }
-                let probe = normalize_inline_code_path_probe(token);
-                let candidate = Path::new(probe);
-                if is_unsafe_inline_code_path_probe(candidate) || !candidate.exists() {
-                    let start_column = line[..token_match.start()].chars().count() + 1;
-                    let end_column = start_column + token.chars().count();
-                    let metadata = DiagnosticMetadata::default()
-                        .with_location(SourceSpan::range(number, start_column, number, end_column))
-                        .with_evidence(token);
-                    diag.report_at_with(
-                        LintRule::InlinePathMissing,
-                        &relpath,
-                        &format!("{relpath}:{number}: dead or escaping inline path `{token}`"),
-                        metadata,
-                    );
-                }
+            let line = content[..reference.byte_range.start]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1;
+            if waived_lines.contains(&line) {
+                continue;
             }
+            let classified = normalize_separators(&reference.raw);
+            if !classify_inline_code_path(&classified).is_repository_path()
+                || !prefixes
+                    .iter()
+                    .any(|prefix| classified.starts_with(prefix) || reference.raw.starts_with(prefix))
+            {
+                continue;
+            }
+            let probe = normalize_path_probe(&reference.raw);
+            let rejected_parent = probe_contains_parent_segment(&probe);
+            let key = if rejected_parent {
+                format!("unsafe:{probe}")
+            } else {
+                normalized_target_key(path, &reference.raw, ResolutionBase::RepositoryRoot)
+                    .unwrap_or_else(|| probe.clone())
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+            let outcome = if rejected_parent {
+                PathProbe::Rejected
+            } else {
+                resolve_repo_path(path, &reference.raw, ResolutionBase::RepositoryRoot)
+            };
+            let suggestion = match &outcome {
+                PathProbe::File(_) | PathProbe::Directory(_) => continue,
+                PathProbe::Missing(_) => SUGGEST_CREATE_OR_CORRECT,
+                PathProbe::Rejected => SUGGEST_REPLACE_SYMLINK,
+            };
+            let metadata = SourceSpan::from_byte_range(&content, reference.byte_range.clone())
+                .map_or_else(DiagnosticMetadata::default, |location| {
+                    DiagnosticMetadata::default().with_location(location)
+                })
+                .with_evidence(&reference.raw)
+                .with_suggestion(suggestion);
+            diag.report_at_with(
+                LintRule::InlinePathMissing,
+                &relpath,
+                &format!("{relpath}:{line}: dead or escaping inline path `{}`", reference.raw),
+                metadata,
+            );
         }
     }
 }
@@ -1413,13 +1448,12 @@ fn shortest_overdepth_prefix(graph: &InstructionImportGraph, root: &Path) -> Opt
 }
 
 fn is_external_link(target: &str) -> bool {
-    target.contains("://") || target.starts_with("mailto:") || target.starts_with("//")
+    is_external_or_fragment_destination(target)
 }
 
 /// L005: broken relative markdown link `[text](path.md)` in any configured
-/// instruction file. External URLs, pure anchors, and links inside code fences
-/// are skipped; the shared [`MARKDOWN_LINK`] regex already restricts captures
-/// to `.md` targets and strips `#anchor` suffixes.
+/// instruction file. External URLs, pure anchors, image nodes, and non-`.md`
+/// destinations are skipped. Destinations resolve source-relatively only.
 fn validate_markdown_links(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     for relpath in diag.config().instruction_files.clone() {
         if exclude.is_excluded(&relpath) {
@@ -1429,28 +1463,54 @@ fn validate_markdown_links(diag: &mut DiagnosticCollector, exclude: &ExcludeSet)
         let Some(content) = read_text(path, exclude) else {
             continue;
         };
-        for (number, line) in lines_outside_fences_with_numbers(&content) {
-            for capture in MARKDOWN_LINK.captures_iter(line) {
-                let target = &capture[1];
-                if is_external_link(target) {
-                    continue;
-                }
-                let Some(resolved) = resolve_repo_reference(path, target) else {
-                    diag.report_at(
-                        LintRule::BrokenMarkdownLink,
-                        &relpath,
-                        &format!("{relpath}:{number}: broken markdown link target: {target}"),
-                    );
-                    continue;
-                };
-                if !resolved.is_file() {
-                    diag.report_at(
-                        LintRule::BrokenMarkdownLink,
-                        &relpath,
-                        &format!("{relpath}:{number}: broken markdown link target: {target}"),
-                    );
-                }
+        let mut seen = BTreeSet::new();
+        for reference in markdown_references(&content) {
+            if reference.kind != MarkdownRefKind::Link {
+                continue;
             }
+            let raw = &reference.raw;
+            let decoded = percent_decode_once(raw);
+            if is_external_link(&decoded) {
+                continue;
+            }
+            let path_only = decoded
+                .split_once('#')
+                .map_or(decoded.as_str(), |(path, _)| path);
+            if path_only.is_empty()
+                || !path_only
+                    .rsplit_once('.')
+                    .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("md"))
+            {
+                continue;
+            }
+            let key = normalized_target_key(path, path_only, ResolutionBase::SourceRelative)
+                .unwrap_or_else(|| normalize_path_probe(path_only));
+            if !seen.insert(key) {
+                continue;
+            }
+            let outcome = resolve_repo_path(path, path_only, ResolutionBase::SourceRelative);
+            let suggestion = match &outcome {
+                PathProbe::File(_) => continue,
+                PathProbe::Directory(_) | PathProbe::Missing(_) => SUGGEST_CREATE_OR_CORRECT,
+                PathProbe::Rejected => SUGGEST_REPLACE_SYMLINK,
+            };
+            let line = content[..reference.byte_range.start]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1;
+            let metadata = SourceSpan::from_byte_range(&content, reference.byte_range.clone())
+                .map_or_else(DiagnosticMetadata::default, |location| {
+                    DiagnosticMetadata::default().with_location(location)
+                })
+                .with_evidence(raw.as_str())
+                .with_suggestion(suggestion);
+            diag.report_at_with(
+                LintRule::BrokenMarkdownLink,
+                &relpath,
+                &format!("{relpath}:{line}: broken markdown link target: {raw}"),
+                metadata,
+            );
         }
     }
 }
@@ -3732,6 +3792,7 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
             "External [ex](https://example.com/page.md) ok.\n\
              Anchor [an](#section) ok.\n\
              Image ![pic](assets/missing.png) ok.\n\
+             Image md ![architecture](docs/missing-image.md) ok.\n\
              ```text\n\
              [in fence](docs/missing.md)\n\
              ```\n",
@@ -3745,6 +3806,57 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
                 .iter()
                 .any(|item| item.rule == LintRule::BrokenMarkdownLink),
             "external, anchor, image, and fenced links must not trigger L005"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l005_skips_percent_encoded_external_destinations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::write(
+            "CLAUDE.md",
+            "Encoded [ex](http%3A%2F%2Fexample.com/page.md) ok.\n\
+             Proto [cdn](%2F%2Fcdn.example/x.md) ok.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_markdown_links(&mut diag, &ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::BrokenMarkdownLink)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l005_resolves_source_relative_without_root_fallback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("nested").unwrap();
+        fs::write("present.md", "root\n").unwrap();
+        fs::write("nested/CLAUDE.md", "See [details](present.md).\n").unwrap();
+        let config = LintConfig {
+            instruction_files: vec!["nested/CLAUDE.md".into()],
+            ..LintConfig::default()
+        };
+        let mut diag = all_enabled_with(config);
+        validate_markdown_links(&mut diag, &ExcludeSet::default());
+        let broken: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::BrokenMarkdownLink)
+            .collect();
+        assert_eq!(broken.len(), 1);
+        assert_eq!(broken[0].evidence.as_deref(), Some("present.md"));
+        assert!(broken[0].location.is_some());
+        assert_eq!(
+            broken[0].suggestion.as_deref(),
+            Some(SUGGEST_CREATE_OR_CORRECT)
         );
     }
 }
