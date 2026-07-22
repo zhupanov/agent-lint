@@ -1,0 +1,16 @@
+{
+  "class": "broken",
+  "repository": "codex-profiles-broken",
+  "covers": ["codex", "codex-profiles", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CX005,CX016,CX023", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CX005", "name": "codex-approval-policy", "severity": "error", "subject_path": ".codex/config.toml", "suggestion": "select one of the supported values" },
+    { "code": "CX016", "name": "codex-model-type", "severity": "error", "subject_path": ".codex/config.toml", "suggestion": "use a string" },
+    { "code": "CX023", "name": "codex-context-window", "severity": "warning", "subject_path": ".codex/config.toml", "suggestion": "use a positive integer" }
+  ],
+  "allowed_additional_diagnostics": []
+}

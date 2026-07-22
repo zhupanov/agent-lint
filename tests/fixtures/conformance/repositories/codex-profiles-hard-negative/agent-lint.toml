@@ -1,0 +1,4 @@
+[lint]
+[[lint.overrides]]
+files = [".codex/config.toml"]
+suppress = ["CX005"]

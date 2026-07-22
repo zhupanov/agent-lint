@@ -756,7 +756,8 @@ pub enum LintRule {
     /// CX061: approval_policy granular form has an invalid shape
     #[strum(props(code = "CX061", name = "codex-approval-shape"))]
     CodexApprovalPolicyShape,
-    /// CX062: a structured Codex configuration container is not a table
+    /// CX062: a structured Codex configuration container (including `profiles`
+    /// and each profile entry) is not a table
     #[strum(props(code = "CX062", name = "codex-config-container-type"))]
     CodexConfigContainerType,
     /// CX063: interface uses an ignored default-prompt key

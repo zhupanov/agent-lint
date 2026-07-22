@@ -1,0 +1,7 @@
+[profiles.clean]
+approval_policy = "on-failure"
+sandbox_mode = "danger-full-access"
+model_reasoning_effort = "future-value"
+model = "gpt-5"
+model_context_window = 1
+chatgpt_base_url = "x"
