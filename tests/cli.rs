@@ -3898,6 +3898,125 @@ fn codex_config_rules_honor_cli_mode_platform_policy_and_autofix_contracts() {
 }
 
 #[test]
+fn cx060_cli_covers_modes_platform_policy_locations_and_autofix() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".agents/skills/example/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    let original = "---\nname: example\ndescription: Example Codex skill\ncontext: fork\n\"agent\": Explore\n---\nBody\n";
+    std::fs::write(&skill, original).unwrap();
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    std::fs::write(tmp.path().join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+
+    for arguments in [
+        vec!["--format", "json", "--only", "CX060", "."],
+        vec!["--format", "json", "--pedantic", "--only", "CX060", "."],
+        vec!["--format", "json", "--all", "--only", "CX060", "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 2, "{report}");
+        assert_eq!(diagnostics[0]["code"], "CX060");
+        assert_eq!(diagnostics[0]["name"], "codex-skill-frontmatter");
+        assert_eq!(
+            diagnostics[0]["subject_path"],
+            ".agents/skills/example/SKILL.md"
+        );
+        assert_eq!(diagnostics[0]["location"]["start"]["line"], 4);
+        assert_eq!(diagnostics[0]["location"]["start"]["column"], 1);
+        assert_eq!(diagnostics[0]["evidence"], "context (string)");
+        assert_eq!(diagnostics[1]["evidence"], "agent (string)");
+        assert_eq!(diagnostics[1]["location"]["start"]["line"], 5);
+        let elevated = arguments.contains(&"--all") || arguments.contains(&"--pedantic");
+        let severity = if elevated { "error" } else { "warning" };
+        assert_eq!(diagnostics[0]["severity"], severity);
+        assert_eq!(
+            output.status.code(),
+            Some(if elevated { 1 } else { 0 }),
+            "stderr: {}",
+            stderr(&output)
+        );
+    }
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = false\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(tmp.path(), &["--format", "json", "--only", "CX060", "."])
+            .status
+            .success()
+    );
+    assert!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", "CX060", "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[platforms]\ncodex = true\n",
+    )
+    .unwrap();
+    assert_eq!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", "CX060", "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".agents/skills/example/SKILL.md\"]\nsuppress = [\"CX060\"]\n",
+    )
+    .unwrap();
+    assert!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--only", "CX060", "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        json(&run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", "CX060", "."]
+        ))["diagnostics"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"example","description":"Plugin mode surface."}"#,
+    )
+    .unwrap();
+    let plugin = run_in(tmp.path(), &["--format", "json", "--only", "CX060", "."]);
+    assert_eq!(plugin.status.code(), Some(0));
+    assert_eq!(json(&plugin)["mode"], "plugin");
+    assert_eq!(json(&plugin)["diagnostics"].as_array().unwrap().len(), 2);
+
+    let _ = run_in(tmp.path(), &["--autofix", "--only", "CX060", "."]);
+    assert_eq!(std::fs::read_to_string(&skill).unwrap(), original);
+}
+
+#[test]
 fn cx013_cli_is_precise_across_modes_suppression_and_plugin_dispatch() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

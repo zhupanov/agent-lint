@@ -714,7 +714,7 @@ active; the shared instruction rules above run independently.
 | CX057 | `codex-plugin-asset` | Interface asset path (`composerIcon`, `logo`, `logoDark`, `screenshots[]`) is bare `./`, missing `./`, or escapes the plugin root | Always | error |
 | CX058 | `codex-plugin-hooks` | Deprecated — no longer emitted; Codex loads plugin-bundled hooks, and hook path strings participate in CX050–CX052 | Always | warn |
 | CX059 | `codex-plugin-description` | Codex plugin manifest `description` is missing, blank, or not a string (agent-lint install-surface recommendation) | Always | warn |
-| CX060 | `codex-skill-frontmatter` | Codex skill uses Claude-only frontmatter (`context`, `agent`, or `hooks`) | Always | warn |
+| CX060 | `codex-skill-frontmatter` | Codex skill uses ignored behavior frontmatter (`allowed-tools`, `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`). Nested/block-scalar/quoted-portable fields stay clean; surfaces include nested `.agents/skills` and selected plugin skill roots | Always | warn |
 | CX063 | `codex-prompt-field` | `interface.default_prompt` / `interface.default_prompts` are ignored by Codex; rename to `interface.defaultPrompt` | Always | warn |
 
 CX040 uses Codex's default 32,768-byte project-document budget unless
@@ -730,6 +730,17 @@ paths, and the canonical `interface.defaultPrompt` field come from
 and the public [authoring documentation](https://developers.openai.com/codex/plugins/build#plugin-structure),
 checked on 2026-07-21. `interface.default_prompt` and
 `interface.default_prompts` are read by no Codex runtime; each triggers CX063.
+CX060 is a compatibility advisory (default warning, non-autofixable): Codex
+loads the skill but ignores the listed behavior fields. It parses frontmatter
+through the shared strict YAML parser and inspects only top-level mapping keys
+(so nested mappings, block-scalar body text, and comments never count). Hard
+negatives include nested/block-scalar false positives, quoted portable fields,
+and `SKILL.md` nested below a skill directory. Discovery covers every
+repository `.agents/skills/<skill>/SKILL.md` and selected plugin skill roots
+from `platforms::codex_plugin_manifests` (declared `skills` when non-empty,
+otherwise default `skills/`). Sources: Codex skills authoring guide, Agent
+Skills frontmatter spec, Claude Code frontmatter reference, and openai/codex
+`core-skills` loader at `7442f5f` (retrieved 2026-07-21).
 
 ## Cursor Configuration Rules (CU / CR)
 
