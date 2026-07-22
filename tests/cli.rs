@@ -4756,6 +4756,98 @@ fn codex_config_rules_honor_cli_mode_platform_policy_and_autofix_contracts() {
 }
 
 #[test]
+fn cx026_cx030_nested_sites_honor_cli_selection_exclusion_and_autofix() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".codex")).unwrap();
+    let config = "[mcp_servers.x]\ncommand = 's'\ndefault_tools_approval_mode = 'bad'\n[apps.a]\napprovals_reviewer = 'bad'\n[apps._default]\napprovals_reviewer = 'also-bad'\n";
+    let config_path = tmp.path().join(".codex/config.toml");
+    std::fs::write(&config_path, config).unwrap();
+
+    let normal = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CX026,CX030", "."],
+    );
+    assert_eq!(normal.status.code(), Some(1));
+    let normal = json(&normal);
+    assert_eq!(normal["mode"], "basic");
+    let diagnostics = normal["diagnostics"].as_array().unwrap();
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic["code"].as_str().unwrap(),
+                diagnostic["severity"].as_str().unwrap(),
+                diagnostic["subject_path"].as_str().unwrap(),
+                diagnostic["message"].as_str().unwrap(),
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "CX026",
+                "error",
+                ".codex/config.toml",
+                ".codex/config.toml: apps._default.approvals_reviewer must be one of: user, auto_review, guardian_subagent",
+            ),
+            (
+                "CX026",
+                "error",
+                ".codex/config.toml",
+                ".codex/config.toml: apps.a.approvals_reviewer must be one of: user, auto_review, guardian_subagent",
+            ),
+            (
+                "CX030",
+                "error",
+                ".codex/config.toml",
+                ".codex/config.toml: mcp_servers.x.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+            ),
+        ]
+    );
+
+    let only_cx026 = run_in(tmp.path(), &["--format", "json", "--only", "CX026", "."]);
+    assert_eq!(only_cx026.status.code(), Some(1));
+    assert_eq!(
+        json(&only_cx026)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["CX026", "CX026"]
+    );
+
+    let only_cx030 = run_in(tmp.path(), &["--format", "json", "--only", "CX030", "."]);
+    assert_eq!(only_cx030.status.code(), Some(1));
+    assert_eq!(
+        json(&only_cx030)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["CX030"]
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\".codex/**\"]\n",
+    )
+    .unwrap();
+    assert!(
+        run_in(
+            tmp.path(),
+            &["--format", "json", "--all", "--only", "CX026,CX030", "."]
+        )
+        .status
+        .success()
+    );
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    let _ = run_in(tmp.path(), &["--autofix", "--only", "CX026,CX030", "."]);
+    assert_eq!(std::fs::read_to_string(config_path).unwrap(), config);
+}
+
+#[test]
 fn cx060_cli_covers_modes_platform_policy_locations_and_autofix() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

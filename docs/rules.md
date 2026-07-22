@@ -748,7 +748,10 @@ aliases are no longer recognized.
 
 These optional rules validate a project-local `.codex/config.toml` in Basic
 and Plugin modes. The allowlists were rechecked with official `codex-cli 0.144.6`
-on 2026-07-21. Codex's legacy `approvalMode` and `fullAutoErrorMode` keys are
+on 2026-07-21. Nested `apps.*.approvals_reviewer` / `apps._default.approvals_reviewer`
+and `mcp_servers.*.default_tools_approval_mode` were reconfirmed as closed enums
+against the same `codex-cli 0.144.6` (`codex features list` with `CODEX_HOME`)
+during #397. Codex's legacy `approvalMode` and `fullAutoErrorMode` keys are
 not registered as standalone rules because they are absent from the current
 schema and are covered by the unknown-key rules.
 
@@ -778,11 +781,11 @@ schema and are covered by the unknown-key rules.
 | CX023 | `codex-context-window` | `model_context_window` is not positive | Always | warn |
 | CX024 | `codex-compact-limit` | `model_auto_compact_token_limit` is not positive | Always | warn |
 | CX025 | `codex-approval-field` | Unknown granular approval field | Always | warn |
-| CX026 | `codex-approval-reviewer` | Invalid approvals reviewer | Always | error |
+| CX026 | `codex-approval-reviewer` | Invalid `approvals_reviewer` at document root or in `apps.*` / `apps._default` | Always | error |
 | CX027 | `codex-service-tier-type` | `service_tier` is not a string | Always | error |
 | CX028 | `codex-bearer-token` | Inline MCP bearer token is forbidden | Always | error |
 | CX029 | `codex-agent-threads` | `agents.max_threads` is not an integer greater than zero | Always | error |
-| CX030 | `codex-app-approval` | Invalid app default-tools approval mode | Always | error |
+| CX030 | `codex-app-approval` | Invalid `default_tools_approval_mode` in `apps.*` / `apps._default` or `mcp_servers.*` | Always | error |
 | CX031 | `codex-skills-type` | `skills` is not a TOML table | Always | error |
 | CX032 | `codex-profile-type` | `profile` is not a string | Always | error |
 | CX033 | `codex-top-key` | Unknown top-level Codex key | Always | warn |

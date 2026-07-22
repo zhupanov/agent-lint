@@ -626,6 +626,27 @@ fn validate_mcp_servers(
         } else {
             validate_mcp_transport_fields(diag, &label, server, source, name, McpTransport::Http);
         }
+        if let Some(mode) = server.get("default_tools_approval_mode")
+            && !mode
+                .as_str()
+                .is_some_and(|mode| APP_APPROVAL_MODES.contains(&mode))
+        {
+            // Independent of transport discrimination so CX012 never co-fires
+            // on this field (left as `_ => false` in validate_mcp_transport_fields).
+            report_config(
+                diag,
+                source,
+                LintRule::CodexAppApprovalMode,
+                &format!(
+                    "{label}.default_tools_approval_mode must be one of: {}",
+                    APP_APPROVAL_MODES.join(", ")
+                ),
+                &["mcp_servers", name, "default_tools_approval_mode"],
+                false,
+                mode.as_str(),
+                "select one of the supported values",
+            );
+        }
         if server.contains_key("bearer_token") {
             report_config(
                 diag,
@@ -731,6 +752,25 @@ fn validate_apps(diag: &mut DiagnosticCollector, value: Option<&Value>, source: 
             LintRule::CodexUnknownNestedKey,
             &["apps", name],
         );
+        if let Some(reviewer) = app.get("approvals_reviewer")
+            && !reviewer
+                .as_str()
+                .is_some_and(|reviewer| APPROVAL_REVIEWERS.contains(&reviewer))
+        {
+            report_config(
+                diag,
+                source,
+                LintRule::CodexApprovalsReviewer,
+                &format!(
+                    "{label}.approvals_reviewer must be one of: {}",
+                    APPROVAL_REVIEWERS.join(", ")
+                ),
+                &["apps", name, "approvals_reviewer"],
+                false,
+                reviewer.as_str(),
+                "select one of the supported values",
+            );
+        }
         if let Some(mode) = app.get("default_tools_approval_mode")
             && !mode
                 .as_str()
@@ -1504,6 +1544,182 @@ mod tests {
             vec![
                 LintRule::CodexNetworkPermissionField,
                 LintRule::CodexWindowsSandbox
+            ]
+        );
+    }
+
+    fn severity_for(rule: LintRule) -> crate::diagnostic::Severity {
+        match rule.default_severity() {
+            crate::rules::DefaultSeverity::Error => crate::diagnostic::Severity::Error,
+            crate::rules::DefaultSeverity::Warning => crate::diagnostic::Severity::Warning,
+            crate::rules::DefaultSeverity::Suppressed => {
+                panic!("{rule:?} is suppressed by default")
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_approvals_reviewer_and_mcp_approval_mode_follow_codex_0_144_6() {
+        // Rechecked with official `codex-cli 0.144.6` via
+        // `CODEX_HOME=<tmp> codex features list` on 2026-07-22:
+        // - `apps.<name>.approvals_reviewer` and `apps._default.approvals_reviewer`
+        //   reject unknown variants (closed: user, auto_review, guardian_subagent)
+        // - `mcp_servers.<name>.default_tools_approval_mode` rejects unknown
+        //   variants for both stdio and http transports (closed: auto, prompt,
+        //   writes, approve). Contrast: top-level `service_tier` still accepts
+        //   arbitrary strings under the same CLI.
+        for (content, rule, message_needle) in [
+            (
+                "[apps.a]\napprovals_reviewer = 'bad'\n",
+                LintRule::CodexApprovalsReviewer,
+                ".codex/config.toml: apps.a.approvals_reviewer must be one of: user, auto_review, guardian_subagent",
+            ),
+            (
+                "[apps._default]\napprovals_reviewer = 'also-bad'\n",
+                LintRule::CodexApprovalsReviewer,
+                ".codex/config.toml: apps._default.approvals_reviewer must be one of: user, auto_review, guardian_subagent",
+            ),
+            (
+                "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 'bad'\n",
+                LintRule::CodexAppApprovalMode,
+                ".codex/config.toml: mcp_servers.stdio.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+            ),
+            (
+                "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = 'bad'\n",
+                LintRule::CodexAppApprovalMode,
+                ".codex/config.toml: mcp_servers.http.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+            ),
+            (
+                "[apps.a]\napprovals_reviewer = 1\n",
+                LintRule::CodexApprovalsReviewer,
+                ".codex/config.toml: apps.a.approvals_reviewer must be one of: user, auto_review, guardian_subagent",
+            ),
+            (
+                "[apps._default]\napprovals_reviewer = true\n",
+                LintRule::CodexApprovalsReviewer,
+                ".codex/config.toml: apps._default.approvals_reviewer must be one of: user, auto_review, guardian_subagent",
+            ),
+            (
+                "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 1\n",
+                LintRule::CodexAppApprovalMode,
+                ".codex/config.toml: mcp_servers.stdio.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+            ),
+            (
+                "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = []\n",
+                LintRule::CodexAppApprovalMode,
+                ".codex/config.toml: mcp_servers.http.default_tools_approval_mode must be one of: auto, prompt, writes, approve",
+            ),
+        ] {
+            // Use the default collector so severity matches compiled defaults
+            // even if CX026/CX030 land as warning or error relative to #325.
+            let diag = with_default_config(content);
+            assert_eq!(rules(&diag), vec![rule], "{content}");
+            let finding = diag.diagnostics().first().unwrap();
+            assert_eq!(finding.message, message_needle, "{content}");
+            assert_eq!(finding.severity, severity_for(rule), "{content}");
+            assert_eq!(
+                finding.subject_path.as_deref(),
+                Some(std::path::Path::new(CONFIG_PATH))
+            );
+            assert!(!rule.is_autofixable(), "{rule:?}");
+        }
+
+        for content in [
+            "[apps.a]\napprovals_reviewer = 'user'\n",
+            "[apps.a]\napprovals_reviewer = 'auto_review'\n",
+            "[apps.a]\napprovals_reviewer = 'guardian_subagent'\n",
+            "[apps._default]\napprovals_reviewer = 'user'\n",
+            "[apps._default]\napprovals_reviewer = 'auto_review'\n",
+            "[apps._default]\napprovals_reviewer = 'guardian_subagent'\n",
+            "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 'auto'\n",
+            "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 'prompt'\n",
+            "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 'writes'\n",
+            "[mcp_servers.stdio]\ncommand = 's'\ndefault_tools_approval_mode = 'approve'\n",
+            "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = 'auto'\n",
+            "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = 'prompt'\n",
+            "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = 'writes'\n",
+            "[mcp_servers.http]\nurl = 'https://example.com'\ndefault_tools_approval_mode = 'approve'\n",
+            "[apps.a]\n",
+            "[apps._default]\n",
+            "[mcp_servers.stdio]\ncommand = 's'\n",
+            "[mcp_servers.http]\nurl = 'https://example.com'\n",
+        ] {
+            assert_eq!(
+                rules(&with_config(content)),
+                Vec::<LintRule>::new(),
+                "{content}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_approval_fields_do_not_double_report_or_cascade() {
+        let mixed = with_config(
+            "[mcp_servers.broken]\ndefault_tools_approval_mode = 'bad'\n[mcp_servers.ok]\ncommand = 's'\n",
+        );
+        assert_eq!(
+            rules(&mixed),
+            vec![
+                LintRule::CodexMcpServerTransport,
+                LintRule::CodexAppApprovalMode,
+            ]
+        );
+        assert!(
+            mixed
+                .diagnostics()
+                .iter()
+                .filter(|d| d.rule == LintRule::CodexMcpServerTransport)
+                .all(|d| !d.message.contains("default_tools_approval_mode"))
+        );
+
+        assert_eq!(
+            rules(&with_config("mcp_servers = 'bad'\n")),
+            vec![LintRule::CodexConfigContainerType]
+        );
+        assert_eq!(
+            rules(&with_config(
+                "[mcp_servers.broken]\ndefault_tools_approval_mode = 'bad'\n"
+            )),
+            vec![
+                LintRule::CodexMcpServerTransport,
+                LintRule::CodexAppApprovalMode,
+            ]
+        );
+        assert_eq!(
+            rules(&with_config("mcp_servers = { server = 'bad' }\n")),
+            vec![LintRule::CodexMcpServerTransport]
+        );
+
+        let multi = "[apps.z]\napprovals_reviewer = 'bad'\n[apps.a]\napprovals_reviewer = 'worse'\n[apps._default]\napprovals_reviewer = 'nope'\n[mcp_servers.z]\ncommand = 's'\ndefault_tools_approval_mode = 'bad'\n[mcp_servers.a]\nurl = 'https://example.com'\ndefault_tools_approval_mode = 'worse'\n";
+        let first = rules(&with_config(multi));
+        let second = rules(&with_config(multi));
+        assert_eq!(first, second);
+        // validate_mcp_servers runs before validate_apps; each walks BTreeMap key order.
+        assert_eq!(
+            first,
+            vec![
+                LintRule::CodexAppApprovalMode,
+                LintRule::CodexAppApprovalMode,
+                LintRule::CodexApprovalsReviewer,
+                LintRule::CodexApprovalsReviewer,
+                LintRule::CodexApprovalsReviewer,
+            ]
+        );
+        let messages: Vec<_> = with_config(multi)
+            .diagnostics()
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
+        assert_eq!(
+            messages,
+            vec![
+                ".codex/config.toml: mcp_servers.a.default_tools_approval_mode must be one of: auto, prompt, writes, approve".to_string(),
+                ".codex/config.toml: mcp_servers.z.default_tools_approval_mode must be one of: auto, prompt, writes, approve".to_string(),
+                ".codex/config.toml: apps._default.approvals_reviewer must be one of: user, auto_review, guardian_subagent".to_string(),
+                ".codex/config.toml: apps.a.approvals_reviewer must be one of: user, auto_review, guardian_subagent".to_string(),
+                ".codex/config.toml: apps.z.approvals_reviewer must be one of: user, auto_review, guardian_subagent".to_string(),
             ]
         );
     }
