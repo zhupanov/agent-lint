@@ -1,5 +1,5 @@
 use crate::config::ExcludeSet;
-use crate::context::{LintContext, LintMode, ManifestState};
+use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::hook_commands::extract_hook_command_paths;
 use crate::rules::LintRule;
@@ -19,7 +19,7 @@ pub fn validate_dead_scripts(
     exclude: &ExcludeSet,
 ) {
     let mut references = BTreeSet::new();
-    for (source, reference) in collect_references(LintMode::Plugin, exclude) {
+    for (source, reference) in collect_references(ctx, exclude) {
         if reference.path.as_os_str().is_empty()
             || !reference.path.is_file()
             || reference.invocation == Invocation::Mention

@@ -273,9 +273,19 @@ fn next_reference(command: &str, start: usize) -> Option<(String, String, usize,
     } else {
         path_end
     };
+    // Instruction prose commonly terminates an unquoted invocation with a
+    // sentence mark (for example `Run ${CLAUDE_PLUGIN_ROOT}/scripts/check.sh.`).
+    // Keep quoted shell tokens byte-exact, but exclude only terminal prose
+    // punctuation from the lexical path before repository normalization.
+    let normalized_path_end = if whole_path_is_quoted {
+        path_end
+    } else {
+        let raw = &command[path_start..path_end];
+        path_start + raw.trim_end_matches(['.', ',', '!', '?', ':']).len()
+    };
     Some((
-        command[match_start..end].to_string(),
-        command[path_start..path_end].to_string(),
+        command[match_start..normalized_path_end].to_string(),
+        command[path_start..normalized_path_end].to_string(),
         match_start,
         end,
     ))

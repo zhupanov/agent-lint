@@ -246,6 +246,7 @@ pub fn validate_discovered_skills_layout(
             .active_command_files
             .iter()
             .all(|path| path.starts_with(".claude"))
+        && !discovery.has_excluded_plugin_command
         && excluded == 0
     {
         diag.report_at(
@@ -288,14 +289,35 @@ fn validate_root_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &Exc
     let Ok(content) = fs::read_to_string("SKILL.md") else {
         return;
     };
+    let bom_before_delimiter = has_utf8_bom_before_opening_delimiter(&content);
     let document = MarkdownDocument::parse(content);
     let Some(lines) = document.frontmatter() else {
-        diag.report_at_with(LintRule::FrontmatterMalformed, "SKILL.md", "SKILL.md: malformed frontmatter (must start with '---' on line 1, must have closing '---')", DiagnosticMetadata::at_line(1));
+        let mut message = "SKILL.md: malformed frontmatter (must start with '---' on line 1, must have closing '---')".to_string();
+        if bom_before_delimiter {
+            message.push_str(": file starts with a UTF-8 byte-order mark; remove it");
+        }
+        diag.report_at_with(
+            LintRule::FrontmatterMalformed,
+            "SKILL.md",
+            &message,
+            DiagnosticMetadata::at_line(1),
+        );
         super::markdown_structure::check_markdown_document("SKILL.md", &document, diag);
         return;
     };
     let parsed = match frontmatter::parse_yaml_strict(lines) {
-        Ok(value) => Some(value),
+        Ok(value) => {
+            if let Some(hooks) = value.get("hooks") {
+                diag.with_subject_path("SKILL.md", |diag| {
+                    super::hook_schema::validate_frontmatter_hooks(
+                        hooks,
+                        "SKILL.md frontmatter",
+                        diag,
+                    );
+                });
+            }
+            Some(value)
+        }
         Err(error) => {
             diag.report_at_with(
                 LintRule::FrontmatterYamlInvalid,
@@ -314,7 +336,25 @@ fn validate_root_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &Exc
         if !parsed.as_ref().is_some_and(|value| {
             frontmatter::canonical_nonempty_string_field(value, field).is_some()
         }) {
-            diag.report_at(LintRule::FrontmatterFieldMissing, "SKILL.md", &format!("SKILL.md: required frontmatter field '{field}' is missing or not a non-empty string"));
+            diag.report_at_with(
+                LintRule::FrontmatterFieldMissing,
+                "SKILL.md",
+                &format!("SKILL.md: required frontmatter field '{field}' is missing or not a non-empty string"),
+                s005_location(lines, parsed.as_ref(), field),
+            );
+        }
+    }
+    for field in super::skill_content::OPTIONAL_NONEMPTY_SCALAR_FIELDS {
+        if frontmatter::optional_field_is_present(lines, parsed.as_ref(), field)
+            && frontmatter::optional_field_is_empty(lines, parsed.as_ref(), field)
+        {
+            diag.report_at_with(
+                LintRule::FrontmatterFieldEmpty,
+                "SKILL.md",
+                &format!("SKILL.md: optional field '{field}' is present but empty"),
+                frontmatter::simple_top_level_key_line(lines, field)
+                    .map_or_else(DiagnosticMetadata::default, DiagnosticMetadata::at_line),
+            );
         }
     }
 }
@@ -384,7 +424,7 @@ fn validate_skill_frontmatter_in_dir(
         // `skills/shared` is plugin documentation rather than a runnable
         // skill. `.agents/skills/shared`, however, is a valid shared-agent
         // skill and must remain eligible for prompt analysis.
-        if dir_name == "shared" && !platform_neutral {
+        if dir_name == "shared" && !platform_neutral && base_dir != ".claude/skills" {
             continue;
         }
 

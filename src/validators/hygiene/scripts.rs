@@ -1,5 +1,5 @@
 use crate::config::ExcludeSet;
-use crate::context::LintMode;
+use crate::context::{LintContext, LintMode};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::rules::LintRule;
 use crate::script_paths::{
@@ -84,52 +84,32 @@ pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<(String, St
 /// A source-owned reference. The source path remains the G002 diagnostic
 /// subject, while the normalized target is consumed by G003/G004.
 pub(crate) fn collect_references(
-    mode: LintMode,
+    ctx: &LintContext,
     exclude: &ExcludeSet,
 ) -> Vec<(String, ScriptReference)> {
-    let mut sources = match mode {
-        LintMode::Plugin => vec![
-            "skills",
-            "agents",
-            "commands",
-            ".claude/skills",
-            ".claude/agents",
-            ".claude/commands",
-            "scripts",
-            ".github/workflows",
-        ],
-        LintMode::Basic => vec![".claude/skills", ".claude/agents", ".claude/commands"],
-    };
+    let sources = crate::validators::skill_discovery::SkillDiscovery::from_context(ctx, exclude)
+        .hygiene_source_files;
     let mut references = Vec::new();
-    for dir in sources.drain(..) {
-        let base = Path::new(dir);
-        if !base.is_dir() {
+    for path in sources {
+        let source = path.to_string_lossy().replace('\\', "/");
+        let Ok(content) = fs::read_to_string(path) else {
             continue;
-        }
-        for entry in traversal::recursive_files(base, Path::new("."), Some(exclude)).entries {
-            let source = entry.display;
-            if exclude.is_excluded(&source) {
+        };
+        let fragments = if source.ends_with(".md") {
+            markdown_command_fragments(&content)
+        } else if source.ends_with(".yml") || source.ends_with(".yaml") {
+            yaml_command_line_fragments(&strip_yaml_comments(&content))
+        } else {
+            command_line_fragments(&strip_yaml_comments(&content))
+        };
+        for (line, fragment) in fragments {
+            if !is_executable_fragment(&fragment) {
                 continue;
             }
-            let Ok(content) = fs::read_to_string(entry.path) else {
-                continue;
-            };
-            let fragments = if source.ends_with(".md") {
-                markdown_command_fragments(&content)
-            } else if source.ends_with(".yml") || source.ends_with(".yaml") {
-                yaml_command_line_fragments(&strip_yaml_comments(&content))
-            } else {
-                command_line_fragments(&strip_yaml_comments(&content))
-            };
-            for (line, fragment) in fragments {
-                if !is_executable_fragment(&fragment) {
-                    continue;
-                }
-                references.extend(extract_fragment_references(&source, &fragment, line));
-            }
+            references.extend(extract_fragment_references(&source, &fragment, line));
         }
     }
-    if mode == LintMode::Plugin {
+    if ctx.mode == LintMode::Plugin {
         for (source, content) in collect_makefile_contents(exclude) {
             for (line, fragment) in command_line_fragments(&content) {
                 if is_executable_fragment(&fragment) {
@@ -323,16 +303,17 @@ fn wildcard_matches(pattern: &str, value: &str) -> bool {
 /// so collector policy is applied independently for every source file.
 #[cfg(test)]
 pub fn validate_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_script_references_for_mode(LintMode::Plugin, diag, exclude);
+    let ctx = LintContext::new(Path::new("."), LintMode::Plugin);
+    validate_script_references_for_context(&ctx, diag, exclude);
 }
 
-pub fn validate_script_references_for_mode(
-    mode: LintMode,
+pub fn validate_script_references_for_context(
+    ctx: &LintContext,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
 ) {
     let mut seen = HashSet::new();
-    for (source, reference) in collect_references(mode, exclude) {
+    for (source, reference) in collect_references(ctx, exclude) {
         let dedupe_key = if reference.path.as_os_str().is_empty() {
             reference.reference.clone()
         } else {
@@ -365,15 +346,17 @@ pub fn validate_script_references_for_mode(
     }
 }
 
+#[cfg(test)]
 pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_script_references_for_mode(LintMode::Basic, diag, exclude);
+    let ctx = LintContext::new(Path::new("."), LintMode::Basic);
+    validate_script_references_for_context(&ctx, diag, exclude);
 }
 
 /// Direct invocation, not a conventional filename or directory, determines
 /// G003 scope. Interpreter-launched and sourced files need no execute bit.
-pub(crate) fn direct_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<PathBuf> {
+pub(crate) fn direct_script_paths(ctx: &LintContext, exclude: &ExcludeSet) -> Vec<PathBuf> {
     let mut paths = BTreeSet::new();
-    for (_, reference) in collect_references(mode, exclude) {
+    for (_, reference) in collect_references(ctx, exclude) {
         if reference.invocation == Invocation::Direct
             && !reference.path.as_os_str().is_empty()
             && reference.path.is_file()
@@ -387,17 +370,18 @@ pub(crate) fn direct_script_paths(mode: LintMode, exclude: &ExcludeSet) -> Vec<P
 #[cfg(unix)]
 #[cfg(test)]
 pub fn validate_executability(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_executability_for_mode(LintMode::Plugin, diag, exclude);
+    let ctx = LintContext::new(Path::new("."), LintMode::Plugin);
+    validate_executability_for_context(&ctx, diag, exclude);
 }
 
 #[cfg(unix)]
-pub fn validate_executability_for_mode(
-    mode: LintMode,
+pub fn validate_executability_for_context(
+    ctx: &LintContext,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
 ) {
     use std::os::unix::fs::PermissionsExt;
-    for path in direct_script_paths(mode, exclude) {
+    for path in direct_script_paths(ctx, exclude) {
         if let Ok(meta) = path.metadata()
             && meta.permissions().mode() & 0o111 == 0
         {
@@ -417,15 +401,17 @@ pub fn validate_executability_for_mode(
 }
 
 #[cfg(not(unix))]
-pub fn validate_executability_for_mode(
-    _mode: LintMode,
+pub fn validate_executability_for_context(
+    _ctx: &LintContext,
     _diag: &mut DiagnosticCollector,
     _exclude: &ExcludeSet,
 ) {
 }
 
+#[cfg(test)]
 pub fn validate_private_executability(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    validate_executability_for_mode(LintMode::Basic, diag, exclude);
+    let ctx = LintContext::new(Path::new("."), LintMode::Basic);
+    validate_executability_for_context(&ctx, diag, exclude);
 }
 
 pub fn expand_script_dirs(patterns: &[&str]) -> Vec<PathBuf> {

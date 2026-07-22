@@ -410,9 +410,19 @@ values — every frontmatter field except the free-prose `description`,
 > below the four-token floor; the floor applies only to non-exact comparison.
 > Missing, empty, non-string, or under-20-character descriptions, and
 > descriptions in invalid or non-mapping YAML frontmatter, stay owned by
-> existing structural/short/missing rules and are skipped. Claude private and plugin trees that can
-> load together form one runtime-union namespace (`agents/` ∪ manifest-declared
-> agent roots ∪ `.claude/agents/`, `skills/` ∪ `.claude/skills/` in Plugin mode);
+> existing structural/short/missing rules and are skipped. The Basic Claude S074
+> namespace is private `.claude/skills/*/SKILL.md` plus immediate
+> `.claude/commands/*.md`. The Plugin Claude namespace adds conventional
+> `skills/*/SKILL.md`, safe manifest-declared skill roots, the root `SKILL.md`
+> fallback, and the effective default or manifest-selected plugin command export;
+> it also retains the Basic private skill and command surfaces. Skill candidates
+> require strict valid mapping frontmatter and a canonical non-empty description;
+> command candidates require a canonical non-empty `description` and the same
+> 20-character floor. Command files intentionally do not receive the per-file
+> SKILL content rules. Each namespace is path-deduplicated; S074 findings remain
+> global-only (per-file suppression cannot hide one participant). Claude agent
+> trees that can load together form one runtime-union namespace (`agents/` ∪
+> manifest-declared agent roots ∪ `.claude/agents/`);
 > agent roots are scanned recursively, so a nested agent joins the pool and
 > carries its subdirectory path. When Cursor is active, its
 > runtime skill namespace is `**/.cursor/skills/**/SKILL.md` ∪
