@@ -11,6 +11,7 @@
 //! and `.codex/` retain their normal coverage.
 
 use crate::config::{ExcludeSet, normalize_path};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
@@ -34,6 +35,21 @@ impl<'a> DirectoryEntry<'a> {
 /// Directory names skipped by every recursive repository walk.
 pub const IGNORED_DIRECTORY_NAMES: &[&str] =
     &[".git", "node_modules", "vendor", "target", "dist", "build"];
+
+/// Conventional interpreter/tool cache directories excluded from skill script
+/// asset discovery (S030). These are never shipped skill assets.
+pub const CACHE_DIRECTORY_NAMES: &[&str] = &[
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".eggs",
+    ".cache",
+];
+
+/// File extensions treated as conventional bytecode/cache artifacts for S030.
+pub const CACHE_FILE_EXTENSIONS: &[&str] = &["pyc", "pyo", "pyd"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WalkDepth {
@@ -221,6 +237,75 @@ pub fn should_descend_except_git(entry: DirectoryEntry<'_>) -> bool {
     entry.file_name() != ".git"
 }
 
+/// Skip Git metadata and conventional cache directories. Used by S030 so local
+/// interpreter caches never participate in orphan discovery.
+pub fn should_descend_except_git_and_cache(entry: DirectoryEntry<'_>) -> bool {
+    should_descend_except_git(entry)
+        && !CACHE_DIRECTORY_NAMES.contains(&entry.file_name().to_string_lossy().as_ref())
+}
+
+/// True when `path` is a conventional cache/build artifact (cache directory
+/// component or bytecode extension). Symlink identity is irrelevant: callers
+/// pass walk entries that already refused to follow directory symlinks.
+pub fn is_cache_artifact(path: &Path) -> bool {
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Normal(name)
+                if CACHE_DIRECTORY_NAMES.contains(&name.to_string_lossy().as_ref())
+        )
+    }) {
+        return true;
+    }
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            CACHE_FILE_EXTENSIONS
+                .iter()
+                .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+        })
+}
+
+/// Repository-root ignore matcher for skill script asset discovery.
+///
+/// When the analysis root is a Git repository, root `.gitignore` and
+/// `.git/info/exclude` participate. Non-Git fixtures stay on conventional
+/// cache exclusion only so Git and non-Git behavior stay deterministic.
+pub struct SkillScriptNoiseFilter {
+    gitignore: Option<Gitignore>,
+}
+
+impl SkillScriptNoiseFilter {
+    pub fn discover() -> Self {
+        if !Path::new(".git").exists() {
+            return Self { gitignore: None };
+        }
+
+        let mut builder = GitignoreBuilder::new(".");
+        let mut loaded = false;
+        for candidate in [".gitignore", ".git/info/exclude"] {
+            if Path::new(candidate).is_file() {
+                // `add` returns Some(err) on failure; None means the file loaded.
+                if builder.add(candidate).is_none() {
+                    loaded = true;
+                }
+            }
+        }
+        let gitignore = if loaded { builder.build().ok() } else { None };
+        Self { gitignore }
+    }
+
+    pub fn is_noise(&self, path: &Path, display: &str) -> bool {
+        if is_cache_artifact(path) {
+            return true;
+        }
+        self.gitignore.as_ref().is_some_and(|ignore| {
+            ignore
+                .matched_path_or_any_parents(display, false)
+                .is_ignore()
+        })
+    }
+}
 pub fn display_path(root: &Path, path: &Path) -> String {
     let relative = path.strip_prefix(root).unwrap_or(path);
     normalize_path(&relative.to_string_lossy())
@@ -292,6 +377,48 @@ mod tests {
             ["a.md", "z.md"]
         );
         assert!(report.errors.is_empty());
+    }
+
+    #[test]
+    fn cache_artifact_detection_covers_dirs_and_extensions() {
+        assert!(is_cache_artifact(Path::new(
+            "skills/x/scripts/__pycache__/mod.pyc"
+        )));
+        assert!(is_cache_artifact(Path::new("skills/x/scripts/helper.PYC")));
+        assert!(!is_cache_artifact(Path::new("skills/x/scripts/helper.py")));
+        assert!(!is_cache_artifact(Path::new("skills/x/scripts/run.sh")));
+    }
+
+    #[test]
+    fn skill_script_noise_filter_is_deterministic_for_git_and_non_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/x/scripts").unwrap();
+        fs::write("skills/x/scripts/noise.tmp", "tmp").unwrap();
+        fs::write("skills/x/scripts/cache.pyc", "cache").unwrap();
+        fs::write(".gitignore", "*.tmp\n").unwrap();
+
+        let non_git = SkillScriptNoiseFilter::discover();
+        assert!(non_git.is_noise(
+            Path::new("skills/x/scripts/cache.pyc"),
+            "skills/x/scripts/cache.pyc"
+        ));
+        assert!(!non_git.is_noise(
+            Path::new("skills/x/scripts/noise.tmp"),
+            "skills/x/scripts/noise.tmp"
+        ));
+
+        fs::create_dir_all(".git/info").unwrap();
+        let git = SkillScriptNoiseFilter::discover();
+        assert!(git.is_noise(
+            Path::new("skills/x/scripts/cache.pyc"),
+            "skills/x/scripts/cache.pyc"
+        ));
+        assert!(git.is_noise(
+            Path::new("skills/x/scripts/noise.tmp"),
+            "skills/x/scripts/noise.tmp"
+        ));
     }
 
     #[test]

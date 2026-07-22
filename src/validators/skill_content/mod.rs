@@ -2355,6 +2355,226 @@ suppress = ["S014"]
         }));
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_ignores_conventional_cache_artifacts_without_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/__pycache__").unwrap();
+        std::fs::write("skills/my-skill/scripts/__pycache__/mod.pyc", "cache").unwrap();
+        std::fs::write("skills/my-skill/scripts/helper.pyc", "cache").unwrap();
+        std::fs::write("skills/my-skill/scripts/orphan.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing cache artifact exclusion\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::OrphanedSkillFiles)
+            .filter_map(|finding| finding.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(subjects, ["skills/my-skill/scripts/orphan.sh"]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_git_ignored_non_cache_file_is_excluded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".git/info").unwrap();
+        std::fs::write(".gitignore", "*.tmp\n").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write("skills/my-skill/scripts/noise.tmp", "tmp").unwrap();
+        std::fs::write("skills/my-skill/scripts/orphan.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing gitignore exclusion\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::OrphanedSkillFiles)
+            .filter_map(|finding| finding.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(subjects, ["skills/my-skill/scripts/orphan.sh"]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_non_git_gitignore_does_not_hide_non_cache_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write(".gitignore", "*.tmp\n").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write("skills/my-skill/scripts/noise.tmp", "tmp").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing non-git ignore determinism\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(diag.diagnostics().iter().any(|finding| {
+            finding.rule == LintRule::OrphanedSkillFiles
+                && finding.subject_path.as_deref()
+                    == Some(std::path::Path::new("skills/my-skill/scripts/noise.tmp"))
+        }));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_harness_referenced_nested_fixture_is_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/fixtures").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run_tests.py",
+            "from pathlib import Path\ndata = Path('./fixtures/case.json').read_text()\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/fixtures/case.json",
+            "{\"ok\":true}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing harness fixture reachability\n---\nRun `run_tests.py`.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|finding| finding.rule == LintRule::OrphanedSkillFiles),
+            "harness-reachable fixture must be clean: {:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_harness_dot_slash_path_works_with_duplicate_basenames() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/a").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/b").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/run_tests.py",
+            "open('./a/case.json')\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/scripts/a/case.json", "{}\n").unwrap();
+        std::fs::write("skills/my-skill/scripts/b/case.json", "{}\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing dotted harness paths with duplicate basenames\n---\nRun `run_tests.py`.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::OrphanedSkillFiles)
+            .filter_map(|finding| finding.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(subjects, ["skills/my-skill/scripts/b/case.json"]);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_sibling_contract_named_by_owner_is_clean() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/parse-plan-contract.md",
+            "# Contract\n\nInput shape for the parser.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing owner-named sibling contracts\n---\nSee `parse-plan-contract.md`.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|finding| finding.rule == LintRule::OrphanedSkillFiles),
+            "owner-named sibling must be clean: {:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_mutual_unreferenced_harnesses_remain_orphans() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/a.sh",
+            "#!/bin/bash\n# calls b.sh\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/b.sh",
+            "#!/bin/bash\n# calls a.sh\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing mutual orphan harnesses\n---\nNo script refs.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::OrphanedSkillFiles)
+            .filter_map(|finding| finding.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            subjects,
+            [
+                "skills/my-skill/scripts/a.sh",
+                "skills/my-skill/scripts/b.sh"
+            ]
+        );
+    }
+
     // ── S032: hardcoded-secret ──────────────────────────────────────
 
     #[test]

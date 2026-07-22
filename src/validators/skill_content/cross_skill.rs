@@ -2,13 +2,14 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
+use crate::script_paths;
 use crate::traversal;
 use crate::validators::shared_md_refs::{contains_shared_md_ref, find_shared_md_refs};
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 /// S048: denylist for non-descriptive reference file names in skill directories.
@@ -72,6 +73,10 @@ pub(super) fn validate_nested_references(
 }
 
 /// S030: Detect orphaned files in skill scripts/ subdirectories.
+///
+/// Ownership is Markdown-first, then transitive through supported skill-local
+/// harness scripts. Repository-ignored paths and conventional cache artifacts
+/// are excluded from discovery so local build noise cannot affect output.
 pub(super) fn validate_orphaned_skill_files(
     base_dir: &str,
     diag: &mut DiagnosticCollector,
@@ -81,6 +86,8 @@ pub(super) fn validate_orphaned_skill_files(
     if !dir.is_dir() {
         return;
     }
+
+    let noise = traversal::SkillScriptNoiseFilter::discover();
 
     for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
         let path = entry.path;
@@ -104,50 +111,115 @@ pub(super) fn validate_orphaned_skill_files(
 
         let docs = read_skill_markdown_docs(&path);
 
-        let scripts = traversal::recursive_files_with_pruning(
+        let candidates: Vec<ScriptAsset> = traversal::recursive_files_with_pruning(
             &scripts_dir,
             Path::new("."),
             None,
-            traversal::should_descend_except_git,
+            traversal::should_descend_except_git_and_cache,
         )
-        .entries;
-        let basename_counts = scripts.iter().fold(HashMap::new(), |mut counts, script| {
+        .entries
+        .into_iter()
+        .filter(|script| !exclude.is_excluded(&script.display))
+        .filter(|script| !noise.is_noise(&script.path, &script.display))
+        .map(|script| {
+            let relative = traversal::display_path(&path, &script.path);
             let basename = script
                 .path
                 .file_name()
                 .unwrap_or_default()
-                .to_string_lossy();
-            *counts.entry(basename.into_owned()).or_insert(0usize) += 1;
-            counts
-        });
+                .to_string_lossy()
+                .into_owned();
+            ScriptAsset {
+                path: script.path,
+                display: script.display,
+                relative,
+                basename,
+            }
+        })
+        .collect();
 
-        for script in scripts {
-            let script_relative = traversal::display_path(&path, &script.path);
-            let script_name = script
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
-            let display_path = script.display;
-            if exclude.is_excluded(&display_path) {
+        let basename_counts = candidates
+            .iter()
+            .fold(HashMap::new(), |mut counts, script| {
+                *counts.entry(script.basename.clone()).or_insert(0usize) += 1;
+                counts
+            });
+
+        let live = reachable_script_assets(&candidates, &basename_counts, &docs);
+
+        for (index, script) in candidates.iter().enumerate() {
+            if live.contains(&index) {
                 continue;
             }
+            diag.report_at(
+                LintRule::OrphanedSkillFiles,
+                &script.display,
+                &format!(
+                    "{}: not referenced from skill-local Markdown or reachable harness scripts under {base_dir}/{dir_name}",
+                    script.display
+                ),
+            );
+        }
+    }
+}
 
-            let unique_basename = basename_counts.get(script_name.as_ref()) == Some(&1);
-            if !docs.iter().any(|doc| {
-                script_referenced(doc, &script_relative, script_name.as_ref(), unique_basename)
-            }) {
-                diag.report_at(
-                    LintRule::OrphanedSkillFiles,
-                    &display_path,
-                    &format!(
-                        "{}: not referenced from any .md under {base_dir}/{dir_name}",
-                        display_path
-                    ),
-                );
+struct ScriptAsset {
+    path: PathBuf,
+    display: String,
+    relative: String,
+    basename: String,
+}
+
+/// Mark assets reachable from skill-local Markdown, then transitively from
+/// supported harness scripts that are already live.
+fn reachable_script_assets(
+    candidates: &[ScriptAsset],
+    basename_counts: &HashMap<String, usize>,
+    docs: &[String],
+) -> HashSet<usize> {
+    let mut live = HashSet::new();
+    let mut queue = VecDeque::new();
+
+    for (index, script) in candidates.iter().enumerate() {
+        let unique_basename = basename_counts.get(&script.basename) == Some(&1);
+        if docs
+            .iter()
+            .any(|doc| script_referenced(doc, &script.relative, &script.basename, unique_basename))
+        {
+            live.insert(index);
+            queue.push_back(index);
+        }
+    }
+
+    let contents: Vec<Option<String>> = candidates
+        .iter()
+        .map(|script| {
+            if script_paths::script_kind(&script.path).is_some() {
+                fs::read_to_string(&script.path).ok()
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    while let Some(index) = queue.pop_front() {
+        let Some(content) = contents[index].as_deref() else {
+            continue;
+        };
+        let referrer = &candidates[index];
+        for (target_index, target) in candidates.iter().enumerate() {
+            if target_index == index || live.contains(&target_index) {
+                continue;
+            }
+            let unique_basename = basename_counts.get(&target.basename) == Some(&1);
+            if harness_references_asset(content, referrer, target, unique_basename) {
+                live.insert(target_index);
+                queue.push_back(target_index);
             }
         }
     }
+
+    live
 }
 
 /// Read every `*.md` under a skill directory in deterministic sorted order.
@@ -156,7 +228,7 @@ fn read_skill_markdown_docs(skill_dir: &Path) -> Vec<String> {
         skill_dir,
         Path::new("."),
         None,
-        traversal::should_descend_except_git,
+        traversal::should_descend_except_git_and_cache,
     )
     .entries
     .into_iter()
@@ -177,8 +249,42 @@ fn script_referenced(
     basename: &str,
     unique_basename: bool,
 ) -> bool {
-    token_referenced(content, relative_path, true)
+    path_token_referenced(content, relative_path)
         || (unique_basename && token_referenced(content, basename, true))
+}
+
+/// Harness ownership accepts skill-relative paths, `scripts/`-stripped paths,
+/// paths relative to the referring harness directory, and unique basenames.
+fn harness_references_asset(
+    content: &str,
+    referrer: &ScriptAsset,
+    target: &ScriptAsset,
+    unique_basename: bool,
+) -> bool {
+    if script_referenced(content, &target.relative, &target.basename, unique_basename) {
+        return true;
+    }
+    if let Some(stripped) = target.relative.strip_prefix("scripts/") {
+        if path_token_referenced(content, stripped) {
+            return true;
+        }
+    }
+    let Some(referrer_dir) = referrer.path.parent() else {
+        return false;
+    };
+    let Ok(peer_relative) = target.path.strip_prefix(referrer_dir) else {
+        return false;
+    };
+    let peer = peer_relative.to_string_lossy().replace('\\', "/");
+    !peer.is_empty() && path_token_referenced(content, &peer)
+}
+
+/// Match a repository-style path token, including a single `./` prefix form.
+fn path_token_referenced(content: &str, path: &str) -> bool {
+    token_referenced(content, path, true)
+        || (!path.is_empty()
+            && !path.starts_with("./")
+            && token_referenced(content, &format!("./{path}"), true))
 }
 
 /// True when `token` appears in `content` with exact token boundaries. When
