@@ -74,7 +74,13 @@ fn run_basic(
     // V10-adapted: executability for .claude/skills/*/scripts/*.sh
     hygiene::validate_private_executability(diag, exclude);
     // Skill content checks (both-mode subset: excludes S016, S017, S029, S033)
-    skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    skill_content::validate_private_skill_content_with_prompt_pass(
+        diag,
+        exclude,
+        false,
+        &[],
+        &mut prompt_pass,
+    );
     // V7-adapted: private agent frontmatter + field-value rules for .claude/agents/
     agents::validate_private_agents_with_prompt_pass(diag, exclude, &mut prompt_pass, false);
     claude_config::validate_private_config(ctx, diag, exclude);
@@ -196,7 +202,13 @@ fn run_plugin(
         &mut prompt_pass,
     );
     // Private skill content checks (both-mode subset)
-    skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    skill_content::validate_private_skill_content_with_prompt_pass(
+        diag,
+        exclude,
+        true,
+        &declared_agent_roots,
+        &mut prompt_pass,
+    );
     // A030/S074: overlapping routing descriptions (Claude private∪plugin runtime union)
     desc_overlap::validate_agent_desc_overlap(
         diag,

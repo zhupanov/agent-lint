@@ -17,8 +17,10 @@
 //! applies `ExcludeSet` before populating `all_files`.
 
 use crate::config::ExcludeSet;
+use crate::frontmatter::{self, LeadingFrontmatterState};
 use crate::traversal;
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::Path;
 
 /// Two-vector inventory of discovered agent files.
@@ -31,6 +33,19 @@ pub(crate) struct AgentFileInventory {
     pub all_files: Vec<String>,
     /// The subset of `all_files` not matched by `ExcludeSet`.
     pub lint_files: Vec<String>,
+}
+
+/// The runtime agent roots and files visible to a skill.  Basic mode sees only
+/// private agents; Plugin mode sees that private tree alongside the default and
+/// manifest-declared plugin roots.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct RuntimeAgentInventory {
+    /// Deduplicated roots in stable runtime search order.
+    pub roots: Vec<String>,
+    /// Files collected from those roots.
+    pub files: AgentFileInventory,
+    /// Canonical declared names and filename stems from `files.all_files`.
+    pub identities: BTreeSet<String>,
 }
 
 /// One discovered agent root: its normalized repository-relative path, whether
@@ -128,6 +143,71 @@ pub(crate) fn collect(roots: &[&str], exclude: &ExcludeSet) -> AgentFileInventor
         .map(|root| discover_root(root, exclude))
         .collect();
     merge(&discovered)
+}
+
+/// Collect the complete repository-local runtime namespace for a skill.
+///
+/// This is the one root resolver for S065: callers supply only the
+/// manifest-validated plugin roots from `manifest::declared_agent_roots`.
+/// Excluded files intentionally remain available through `all_files`, because
+/// lint exclusion does not make an installed agent unavailable at runtime.
+pub(crate) fn runtime_inventory(
+    plugin_mode: bool,
+    declared_roots: &[String],
+    exclude: &ExcludeSet,
+) -> RuntimeAgentInventory {
+    let mut roots = Vec::new();
+    if plugin_mode {
+        roots.push("agents".to_string());
+    }
+    roots.push(".claude/agents".to_string());
+    if plugin_mode {
+        roots.extend(declared_roots.iter().cloned());
+    }
+    let mut seen = BTreeSet::new();
+    roots.retain(|root| seen.insert(root.clone()));
+    let root_refs = roots.iter().map(String::as_str).collect::<Vec<_>>();
+    let files = collect(&root_refs, exclude);
+    let identities = identities(&files);
+    RuntimeAgentInventory {
+        roots,
+        files,
+        identities,
+    }
+}
+
+/// Return every canonical runtime identity represented by an inventory.
+///
+/// A readable agent contributes its filename stem even when its frontmatter is
+/// missing or malformed, plus a canonical string `name` when available. Agent
+/// validators own defects in that frontmatter; S065 only answers whether a
+/// runtime reference can resolve.
+pub(crate) fn identities(inventory: &AgentFileInventory) -> BTreeSet<String> {
+    let mut identities = BTreeSet::new();
+    for path in &inventory.all_files {
+        if let Some(stem) = Path::new(path).file_stem().and_then(|stem| stem.to_str()) {
+            identities.insert(stem.to_string());
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let LeadingFrontmatterState::Complete(block) = frontmatter::leading_frontmatter(&content)
+        else {
+            continue;
+        };
+        let lines = block.yaml.lines().map(str::to_owned).collect::<Vec<_>>();
+        let Ok(value) = frontmatter::parse_yaml_strict(&lines) else {
+            continue;
+        };
+        if let Some(name) = value
+            .as_mapping()
+            .and_then(|mapping| mapping.get("name"))
+            .and_then(|value| value.as_str())
+        {
+            identities.insert(name.to_string());
+        }
+    }
+    identities
 }
 
 fn is_agent_markdown(display: &str) -> bool {

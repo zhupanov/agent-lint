@@ -1,10 +1,10 @@
 use crate::diagnostic::DiagnosticCollector;
 use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::validators::agent_discovery::RuntimeAgentInventory;
 use crate::validators::common::{RE_NAME_INVALID, is_valid_model_value};
 use crate::validators::skills::SkillInfo;
 use crate::yaml::Mapping;
-use std::path::Path;
 
 use super::KNOWN_SKILL_FRONTMATTER_FIELDS;
 
@@ -16,7 +16,11 @@ const SIDE_EFFECT_SEGMENTS: &[&str] = &[
     "deploy", "ship", "publish", "delete", "drop", "destroy", "remove", "revoke", "purge",
 ];
 
-pub(super) fn check_frontmatter_fields(info: &SkillInfo, diag: &mut DiagnosticCollector) {
+pub(super) fn check_frontmatter_fields(
+    info: &SkillInfo,
+    agents: &RuntimeAgentInventory,
+    diag: &mut DiagnosticCollector,
+) {
     // These rules read canonical YAML values so comments, YAML-1.2 boolean
     // spellings, and quoting cannot leak into the compared value. Invalid or
     // non-mapping frontmatter is owned by X001/S004/S005, so they skip it.
@@ -32,9 +36,11 @@ pub(super) fn check_frontmatter_fields(info: &SkillInfo, diag: &mut DiagnosticCo
         check_unknown_fields(info, map, diag);
         check_paths_empty(info, map, diag);
     }
-    // S065 (agent-unknown) stays line-oriented and is owned separately (#344);
-    // it continues to run regardless of YAML validity.
-    check_agent_value(info, diag);
+    // S065 consumes the same canonical mapping. Invalid/non-mapping YAML is
+    // owned by X001/S004/S005 and must not cascade into a reference diagnostic.
+    if let Some(map) = info.frontmatter_mapping() {
+        check_agent_value(info, map, agents, diag);
+    }
 }
 
 /// S023: `user-invocable` / `disable-model-invocation` must be a YAML boolean
@@ -160,43 +166,42 @@ fn check_agent_context_pairing(info: &SkillInfo, map: &Mapping, diag: &mut Diagn
     }
 }
 
-fn agents_dir_for_skill(skill_path: &str) -> &str {
-    if skill_path.starts_with(".claude/skills/") {
-        ".claude/agents"
-    } else {
-        "agents"
-    }
-}
-
-fn check_agent_value(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    let agent = match frontmatter::get_field_state(&info.fm_lines, "agent") {
-        frontmatter::FieldState::Value(v) => {
-            let trimmed = v.trim();
-            if trimmed.is_empty() {
-                diag.report(
-                    LintRule::AgentUnknown,
-                    &format!("{}: 'agent' is present but empty", info.path),
-                );
-                return;
-            }
-            trimmed.to_string()
-        }
-        frontmatter::FieldState::Empty => {
-            diag.report(
-                LintRule::AgentUnknown,
-                &format!("{}: 'agent' is present but empty", info.path),
-            );
-            return;
-        }
-        frontmatter::FieldState::Missing => return,
+fn check_agent_value(
+    info: &SkillInfo,
+    map: &Mapping,
+    agents: &RuntimeAgentInventory,
+    diag: &mut DiagnosticCollector,
+) {
+    let Some(value) = map.get("agent") else {
+        return;
     };
+    let Some(agent) = value.as_str() else {
+        diag.report(
+            LintRule::AgentUnknown,
+            &format!("{}: 'agent' must be a non-empty string", info.path),
+        );
+        return;
+    };
+    if agent.is_empty() {
+        diag.report(
+            LintRule::AgentUnknown,
+            &format!("{}: 'agent' is present but empty", info.path),
+        );
+        return;
+    }
 
-    if BUILTIN_AGENTS.contains(&agent.as_str()) {
+    if BUILTIN_AGENTS.contains(&agent) {
+        return;
+    }
+
+    // Cross-plugin IDs have no repository-local verification contract. Do not
+    // reject their namespace syntax at error severity.
+    if agent.contains(':') {
         return;
     }
 
     // Custom agents must be kebab-case and exist on disk.
-    if RE_NAME_INVALID.is_match(&agent) || agent.starts_with('-') || agent.ends_with('-') {
+    if RE_NAME_INVALID.is_match(agent) || agent.starts_with('-') || agent.ends_with('-') {
         diag.report(
             LintRule::AgentUnknown,
             &format!(
@@ -207,14 +212,24 @@ fn check_agent_value(info: &SkillInfo, diag: &mut DiagnosticCollector) {
         return;
     }
 
-    let agents_dir = agents_dir_for_skill(&info.path);
-    let agent_path = Path::new(agents_dir).join(format!("{agent}.md"));
-    if !agent_path.is_file() {
+    if !agents.identities.contains(agent) {
+        let roots = agents
+            .roots
+            .iter()
+            .map(|root| {
+                if root.ends_with(".md") {
+                    root.clone()
+                } else {
+                    format!("{root}/")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" or ");
         diag.report(
             LintRule::AgentUnknown,
             &format!(
-                "{}: custom agent '{}' not found in {}/ (expected {}/{}.md)",
-                info.path, agent, agents_dir, agents_dir, agent
+                "{}: custom agent '{}' not found by name or filename under {}",
+                info.path, agent, roots
             ),
         );
     }
