@@ -2,7 +2,7 @@
   "class": "clean",
   "repository": "agent-canonical-yaml-clean",
   "covers": ["basic-mode", "normal", "json", "agent-canonical-yaml"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A002,A003,A008,A009,A010,A011", "."] },
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A002,A003,A008,A009,A010,A011,A017,A019,A020", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",
   "expected_active_platforms": ["claude"],

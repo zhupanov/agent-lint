@@ -5861,3 +5861,68 @@ fn only_s042_is_accepted_and_clean_in_every_mode() {
         );
     }
 }
+
+/// The #342 Problem-1 evidence fixture: a valid, documented block-list
+/// `allowed-tools` with a quoted scoped entry and a trailing comment.
+const S045_EVIDENCE_SKILL: &str = "---\nname: manual\ndescription: Use when exercising documented allowed-tools list forms\nallowed-tools:\n  - \"Bash(git add:*)\"\n  - Read # file reads\n  - Write\n---\nBody content for the manual skill.\n";
+
+#[test]
+fn only_s045_is_accepted_and_clean_in_every_mode() {
+    // S045 is soft-retired (#342): a YAML list is a documented accepted
+    // `allowed-tools` spelling. Its identifiers still parse for `--only`, but
+    // like the other retired rules (O005) it never fires — even on the
+    // block-list fixture that formerly produced it.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    init_git(root);
+    let skill = root.join(".claude/skills/manual/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(&skill, S045_EVIDENCE_SKILL).unwrap();
+
+    for arguments in [
+        vec!["--only", "S045", "."],
+        vec!["--pedantic", "--only", "tools-list-syntax", "."],
+        vec!["--all", "--only", "S045", "."],
+    ] {
+        let output = run_in(root, &arguments);
+        assert!(
+            output.status.success(),
+            "retired S045 must be inert for {arguments:?}: {}",
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).is_empty(),
+            "unexpected S045 output for {arguments:?}"
+        );
+    }
+}
+
+#[test]
+fn autofix_leaves_documented_allowed_tools_list_byte_identical() {
+    // #342: `--autofix` can no longer rewrite tool lists. The Problem-1
+    // fixture (whose S045 autofix used to produce invalid YAML with the
+    // comment swallowed into the value) must stay byte-identical and lint
+    // X001-clean afterwards.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    init_git(root);
+    let skill = root.join(".claude/skills/manual/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(&skill, S045_EVIDENCE_SKILL).unwrap();
+
+    let fix = run_in(root, &["--autofix", "."]);
+    assert_eq!(fix.status.code(), Some(0), "stderr: {}", stderr(&fix));
+    assert_eq!(
+        std::fs::read_to_string(&skill).unwrap(),
+        S045_EVIDENCE_SKILL,
+        "autofix must leave the documented list form byte-identical"
+    );
+
+    let lint = run_in(root, &["--format", "json", "."]);
+    let value = json(&lint);
+    assert_eq!(lint.status.code(), Some(0), "post-autofix lint: {value}");
+    assert!(
+        value["diagnostics"].as_array().unwrap().is_empty(),
+        "the documented list form must lint clean (no X001, S040, or S067): {value}"
+    );
+}

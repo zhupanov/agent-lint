@@ -19,7 +19,7 @@ use crate::rules::LintRule;
 use crate::script_paths::{ScriptKind, script_kind};
 use crate::script_paths::{ScriptReference, ScriptReferenceBase, extract_script_token_references};
 use crate::traversal;
-use crate::validators::common::classify_inline_code_path;
+use crate::validators::common::{classify_inline_code_path, tokenize_tool_scalar};
 use crate::validators::shell;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
@@ -104,6 +104,9 @@ fn read_text(path: &Path, exclude: &ExcludeSet) -> Option<String> {
     fs::read_to_string(path).ok()
 }
 
+/// Line-oriented `allowed-tools` reader for the S058 Skill gate. Scalar values
+/// are split by the shared tool tokenizer in `validators::common`; YAML list
+/// items are already individual entries.
 fn frontmatter_tools(content: &str, key: &str) -> Option<Vec<String>> {
     let lines = frontmatter::extract_frontmatter(content)?;
     let prefix = format!("{key}:");
@@ -128,38 +131,6 @@ fn frontmatter_tools(content: &str, key: &str) -> Option<Vec<String>> {
         return Some(tools);
     }
     None
-}
-
-/// Split a scalar tool field at commas and whitespace outside scoped `(...)`
-/// restrictions. YAML list items are already individual entries.
-fn tokenize_tool_scalar(value: &str) -> Vec<String> {
-    let mut tools = Vec::new();
-    let mut token = String::new();
-    let mut paren_depth = 0usize;
-    let mut push_token = |token: &mut String| {
-        let tool = token.trim().trim_matches(['\'', '"']);
-        if !tool.is_empty() {
-            tools.push(tool.to_string());
-        }
-        token.clear();
-    };
-
-    for character in value.chars() {
-        match character {
-            '(' => {
-                paren_depth += 1;
-                token.push(character);
-            }
-            ')' => {
-                paren_depth = paren_depth.saturating_sub(1);
-                token.push(character);
-            }
-            ',' | ' ' | '\t' if paren_depth == 0 => push_token(&mut token),
-            _ => token.push(character),
-        }
-    }
-    push_token(&mut token);
-    tools
 }
 
 fn tool_base_name(tool: &str) -> &str {

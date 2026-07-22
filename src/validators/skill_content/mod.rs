@@ -3338,6 +3338,112 @@ suppress = ["S033"]
         );
     }
 
+    /// Write one skill with the given frontmatter tool lines and return every
+    /// S040/S067 diagnostic message. Shared by the #342 tool-field tests.
+    fn tool_field_diagnostics(tool_lines: &str) -> Vec<String> {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            format!(
+                "---\nname: my-skill\ndescription: A valid skill description here\n{tool_lines}\n---\nBody content\n"
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        diag.errors()
+            .iter()
+            .filter(|e| e.contains("unrecognized tool") || e.contains("unscoped Bash"))
+            .cloned()
+            .collect()
+    }
+
+    /// #342 regressions: every documented `allowed-tools` spelling parses
+    /// correctly; parenthesized commas/spaces never split entries.
+    #[test]
+    #[serial_test::serial]
+    fn test_s040_documented_forms_are_clean() {
+        for tool_lines in [
+            // Space-separated (documented) — was "unrecognized tool 'Read Write'".
+            "allowed-tools: Read Write",
+            // Comma inside a scope is pattern text, not a separator.
+            "allowed-tools: Bash(npm install, npm test), Read",
+            // The documented space-separated scoped example: three entries,
+            // all recognized, none firing S067.
+            "allowed-tools: Bash(git add *) Bash(git commit *) Bash(git status *)",
+        ] {
+            let findings = tool_field_diagnostics(tool_lines);
+            assert!(
+                findings.is_empty(),
+                "{tool_lines} must be clean, got: {findings:?}"
+            );
+        }
+        // Flow sequence — was two nonsense diagnostics '[Bash' and 'Read]'.
+        // S067 legitimately fires for the exact `Bash` entry; S040 must not.
+        let findings = tool_field_diagnostics("allowed-tools: [Bash, Read]");
+        assert!(
+            !findings.iter().any(|e| e.contains("unrecognized tool")),
+            "flow sequence must not produce S040 nonsense entries: {findings:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s040_unknown_tools_fire_from_both_fields_and_all_forms() {
+        // Scalar allowed-tools typo.
+        let findings = tool_field_diagnostics("allowed-tools: Bsh");
+        assert!(
+            findings
+                .iter()
+                .any(|e| e.contains("allowed-tools lists unrecognized tool 'Bsh'")),
+            "scalar Bsh must fire S040: {findings:?}"
+        );
+        // Block list containing a typo (list users previously got no
+        // validation at all).
+        let findings = tool_field_diagnostics("allowed-tools:\n  - Bsh\n  - Read");
+        assert!(
+            findings
+                .iter()
+                .any(|e| e.contains("allowed-tools lists unrecognized tool 'Bsh'")),
+            "block-list Bsh must fire S040: {findings:?}"
+        );
+        // disallowed-tools is validated too, and the message names the field.
+        let findings = tool_field_diagnostics("disallowed-tools: AskUserQuestin");
+        assert!(
+            findings
+                .iter()
+                .any(|e| e.contains("disallowed-tools lists unrecognized tool 'AskUserQuestin'")),
+            "disallowed-tools typo must fire S040 naming the field: {findings:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s040_duplicate_unknowns_report_once_per_field_and_name() {
+        let findings = tool_field_diagnostics("allowed-tools: Bsh, Bsh");
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|e| e.contains("unrecognized tool 'Bsh'"))
+                .count(),
+            1,
+            "duplicate unknown entries must report once per (field, name): {findings:?}"
+        );
+        // The same unknown name in both fields reports once per field.
+        let findings = tool_field_diagnostics("allowed-tools: Bsh\ndisallowed-tools: Bsh");
+        assert_eq!(
+            findings
+                .iter()
+                .filter(|e| e.contains("unrecognized tool 'Bsh'"))
+                .count(),
+            2,
+            "each field reports its own unknown entry: {findings:?}"
+        );
+    }
+
     // ── S041: fork-no-task ───────────────────────────────────────────
 
     #[test]
@@ -4860,81 +4966,20 @@ suppress = ["S033"]
         );
     }
 
-    // ── S045: tools-list-syntax ────────────────────────────────────
+    // ── S045: tools-list-syntax (soft-retired, #342) ───────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_s045_yaml_list_triggers() {
+    fn test_s045_yaml_list_is_a_documented_form_and_never_fires() {
+        // A YAML list is a documented accepted `allowed-tools` spelling; the
+        // retired S045 must not fire and S007 must not call the list empty.
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all("skills/my-skill").unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools:\n  - Bash\n  - Read\n---\nBody content\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            diag.errors().iter().any(|e| e.contains("list syntax")),
-            "Expected S045 diagnostic about list syntax, got: {:?}",
-            diag.errors()
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s045_scalar_ok() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash, Read\n---\nBody content\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            !diag.errors().iter().any(|e| e.contains("list syntax")),
-            "Unexpected S045 diagnostic for scalar allowed-tools: {:?}",
-            diag.errors()
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s045_absent_no_diagnostic() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\n---\nBody content\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            !diag.errors().iter().any(|e| e.contains("list syntax")),
-            "Unexpected S045 diagnostic when allowed-tools absent: {:?}",
-            diag.errors()
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s045_no_double_report_with_s007() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools:\n  - Bash\n  - Read\n---\nBody content\n",
+            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools:\n  - Bash(git *)\n  - Read\n---\nBody content\n",
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -4944,28 +4989,25 @@ suppress = ["S033"]
             &crate::config::ExcludeSet::default(),
         );
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        // S045 should fire exactly once
-        let s045_count = diag
-            .errors()
-            .iter()
-            .filter(|e| e.contains("list syntax"))
-            .count();
-        assert_eq!(
-            s045_count,
-            1,
-            "Expected exactly 1 S045 diagnostic, got {s045_count}: {:?}",
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("list syntax")),
+            "retired S045 must not fire on a YAML list, got: {:?}",
             diag.errors()
         );
-        // S007 should NOT fire for allowed-tools (suppressed in favor of S045)
-        let s007_allowed_tools = diag
-            .errors()
-            .iter()
-            .filter(|e| e.contains("allowed-tools") && e.contains("present but empty"))
-            .count();
-        assert_eq!(
-            s007_allowed_tools,
-            0,
-            "S007 should not fire for allowed-tools when S045 applies, got: {:?}",
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("allowed-tools") && e.contains("present but empty")),
+            "S007 must not call a documented YAML list empty, got: {:?}",
+            diag.errors()
+        );
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("unrecognized tool") || e.contains("unscoped Bash")),
+            "scoped/recognized list entries must stay clean, got: {:?}",
             diag.errors()
         );
     }
@@ -7574,40 +7616,63 @@ suppress = ["S055"]
 
     #[test]
     #[serial_test::serial]
-    fn test_s067_unscoped_bash() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash, Read\n---\nBody\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+    fn test_s067_unscoped_bash_fires_in_all_three_spellings() {
+        for tool_lines in [
+            "allowed-tools: Bash, Read",
+            "allowed-tools: [Bash]",
+            "allowed-tools:\n  - Bash",
+        ] {
+            let findings = tool_field_diagnostics(tool_lines);
+            assert!(
+                findings.iter().any(|e| e.contains("unscoped Bash")),
+                "S067 should fire for {tool_lines}, got: {findings:?}"
+            );
+        }
+    }
+
+    /// #342: the diagnostic recommends the current permission-rule spelling
+    /// `Bash(git *)`, never the stale `Bash(git:*)` colon form. Full-text
+    /// assertion so the recommendation cannot drift back.
+    #[test]
+    #[serial_test::serial]
+    fn test_s067_message_recommends_current_scoped_form() {
+        let findings = tool_field_diagnostics("allowed-tools: Bash");
         assert!(
-            diag.errors().iter().any(|e| e.contains("unscoped Bash")),
-            "S067 should fire, got: {:?}",
-            diag.errors()
+            findings.iter().any(|e| e
+                == "skills/my-skill/SKILL.md: allowed-tools lists unscoped Bash; prefer scoped form like Bash(git *)"),
+            "S067 must recommend exactly Bash(git *), got: {findings:?}"
+        );
+        assert!(
+            !findings.iter().any(|e| e.contains("Bash(git:*)")),
+            "S067 must not recommend the colon spelling: {findings:?}"
         );
     }
 
     #[test]
     #[serial_test::serial]
     fn test_s067_scoped_bash_ok() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: A valid skill description here\nallowed-tools: Bash(git:*), Read\n---\nBody\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(!diag.errors().iter().any(|e| e.contains("unscoped Bash")));
+        for tool_lines in [
+            "allowed-tools: Bash(git *), Read",
+            "allowed-tools: Bash(git add:*), Read",
+        ] {
+            let findings = tool_field_diagnostics(tool_lines);
+            assert!(
+                !findings.iter().any(|e| e.contains("unscoped Bash")),
+                "scoped Bash must not fire S067 for {tool_lines}: {findings:?}"
+            );
+        }
+    }
+
+    /// Denying all of Bash is not a scoping problem: `disallowed-tools: Bash`
+    /// must not fire S067.
+    #[test]
+    #[serial_test::serial]
+    fn test_s067_disallowed_tools_bash_does_not_fire() {
+        let findings = tool_field_diagnostics("disallowed-tools: Bash");
+        assert!(
+            findings.is_empty(),
+            "disallowed-tools: Bash must stay clean, got: {findings:?}"
+        );
     }
 
     // ── S068: injection-overflow ─────────────────────────────────────

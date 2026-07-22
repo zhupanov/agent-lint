@@ -331,8 +331,9 @@ pub(crate) fn is_valid_model_value(value: &str) -> bool {
         .is_some_and(|rest| rest.contains('-') && !rest.ends_with('-'))
 }
 
-/// Built-in Claude Code tool names (PascalCase). Shared by S040
-/// (skill `allowed-tools`) and A019/A020 (agent `tools`/`disallowedTools`).
+/// Built-in Claude Code tool names (PascalCase). Shared by S040/S067
+/// (skill `allowed-tools`/`disallowed-tools`), S058 (Skill gating), and
+/// A017/A019/A020 (agent `tools`/`disallowedTools`).
 pub(crate) const KNOWN_TOOLS: &[&str] = &[
     "AskUserQuestion",
     "Bash",
@@ -357,6 +358,73 @@ pub(crate) const KNOWN_TOOLS: &[&str] = &[
     "TaskStop",
     "TaskOutput",
 ];
+
+/// Split a scalar tool field at commas and whitespace outside scoped `(...)`
+/// restrictions; text inside parentheses is literal, so
+/// `Bash(npm install, npm test), Read` yields two entries. Surrounding quotes
+/// are trimmed from each entry and empty entries are dropped.
+///
+/// This is the one shared tokenizer for tool declarations (#342): skill
+/// `allowed-tools`/`disallowed-tools` (S040/S067), skill `allowed-tools`
+/// Skill-gating (S058), and agent `tools`/`disallowedTools` (A017/A019/A020)
+/// must all consume it so the accepted spellings cannot drift apart.
+pub(crate) fn tokenize_tool_scalar(value: &str) -> Vec<String> {
+    let mut tools = Vec::new();
+    let mut token = String::new();
+    let mut paren_depth = 0usize;
+    let mut push_token = |token: &mut String| {
+        let tool = token.trim().trim_matches(['\'', '"']);
+        if !tool.is_empty() {
+            tools.push(tool.to_string());
+        }
+        token.clear();
+    };
+
+    for character in value.chars() {
+        match character {
+            '(' => {
+                paren_depth += 1;
+                token.push(character);
+            }
+            ')' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                token.push(character);
+            }
+            character if character == ',' || character.is_whitespace() => {
+                if paren_depth == 0 {
+                    push_token(&mut token);
+                } else {
+                    token.push(character);
+                }
+            }
+            _ => token.push(character),
+        }
+    }
+    push_token(&mut token);
+    tools
+}
+
+/// Tokenize a canonical YAML tool-field value (skill `allowed-tools` /
+/// `disallowed-tools`). A string scalar is split by [`tokenize_tool_scalar`];
+/// a sequence contributes each string item as one entry (comments and quoting
+/// are already resolved by the YAML parser). Non-string sequence items and
+/// every other value shape yield no entries — the tool rules never own
+/// value-shape diagnostics (invalid YAML stays with X001).
+pub(crate) fn tokenize_tool_field(value: &crate::yaml::Value) -> Vec<String> {
+    if let Some(scalar) = value.as_str() {
+        return tokenize_tool_scalar(scalar);
+    }
+    let Some(items) = value.as_sequence() else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| item.as_str())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
 
 /// Whether a single tool entry is recognized by Claude Code.
 ///
@@ -460,6 +528,84 @@ mod model_tests {
                 is_valid_model_value(value),
                 expected,
                 "shared model vocabulary mismatch for {value:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_tokenizer_tests {
+    use super::{tokenize_tool_field, tokenize_tool_scalar};
+
+    /// Scalar tokenizer table (#342): commas and whitespace split outside
+    /// parentheses; parenthesized text is literal; empties are dropped.
+    #[test]
+    fn scalar_forms_split_outside_parentheses_only() {
+        let cases: &[(&str, &[&str])] = &[
+            // Comma form.
+            ("Bash, Read,Write", &["Bash", "Read", "Write"]),
+            // Space form (documented).
+            ("Read Write", &["Read", "Write"]),
+            // Mixed commas and spaces.
+            (
+                "Bash, Read Write,\tGrep",
+                &["Bash", "Read", "Write", "Grep"],
+            ),
+            // Parens containing commas and spaces stay one entry.
+            (
+                "Bash(npm install, npm test), Read",
+                &["Bash(npm install, npm test)", "Read"],
+            ),
+            // The documented space-separated scoped example: three entries.
+            (
+                "Bash(git add *) Bash(git commit *) Bash(git status *)",
+                &[
+                    "Bash(git add *)",
+                    "Bash(git commit *)",
+                    "Bash(git status *)",
+                ],
+            ),
+            // Quoted items lose only their surrounding quotes.
+            ("'Bash(git *)' \"Read\"", &["Bash(git *)", "Read"]),
+            // Empty items are dropped.
+            (", ,  ,", &[]),
+            ("", &[]),
+            ("   ", &[]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                tokenize_tool_scalar(input),
+                *expected,
+                "tokenizer mismatch for {input:?}"
+            );
+        }
+    }
+
+    /// Canonical-value forms: scalar, flow sequence, block sequence, quoted
+    /// items, empty items, and non-string items.
+    #[test]
+    fn canonical_value_forms_yield_string_entries() {
+        let cases: &[(&str, &[&str])] = &[
+            ("allowed-tools: Bash, Read\n", &["Bash", "Read"]),
+            ("allowed-tools: [Bash, Read]\n", &["Bash", "Read"]),
+            (
+                "allowed-tools:\n  - \"Bash(git add:*)\"\n  - Read # file reads\n  - Write\n",
+                &["Bash(git add:*)", "Read", "Write"],
+            ),
+            // Empty string items are dropped; non-string items are ignored.
+            ("allowed-tools: ['', Read, 7, null]\n", &["Read"]),
+            // Non-sequence, non-string shapes yield no entries.
+            ("allowed-tools: 7\n", &[]),
+            ("allowed-tools:\n", &[]),
+            ("allowed-tools: {Bash: true}\n", &[]),
+        ];
+        for (input, expected) in cases {
+            let yaml = crate::yaml::parse(input).unwrap();
+            let value = yaml.as_mapping().unwrap().get("allowed-tools").unwrap();
+            assert_eq!(
+                tokenize_tool_field(value),
+                *expected,
+                "canonical tokenizer mismatch for {input:?}"
             );
         }
     }

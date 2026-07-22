@@ -51,7 +51,6 @@ pub fn apply_fix(
         LintRule::BackslashPath => fix_backslash_path(mode, exclude, config),
         LintRule::NonHttpsUrl => fix_non_https_url(mode, exclude, config),
         LintRule::FrontmatterBackslash => fix_frontmatter_backslash(mode, exclude, config),
-        LintRule::ToolsListSyntax => fix_tools_list_syntax(mode, exclude, config),
         LintRule::PwdInSkill => fix_pwd_in_skill(exclude, config),
         _ => false,
     }
@@ -771,132 +770,6 @@ fn single_line_scalar_raw_line(
     (raw_value.trim_start() == canonical).then(|| raw_line.clone())
 }
 
-// ── S045: YAML list syntax for allowed-tools ────────────────────────────
-
-fn fix_tools_list_syntax(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -> bool {
-    let mut fixed = false;
-    let base_dirs: &[&str] = match mode {
-        LintMode::Plugin => &["skills", ".claude/skills"],
-        LintMode::Basic => &[".claude/skills"],
-    };
-    for base_dir in base_dirs {
-        let skills = collect_skills(base_dir, exclude);
-        for info in &skills {
-            let skill_path = Path::new(base_dir).join(&info.dir_name).join("SKILL.md");
-            if is_suppressed(config, LintRule::ToolsListSyntax, &skill_path) {
-                continue;
-            }
-            if !frontmatter::field_exists(&info.fm_lines, "allowed-tools") {
-                continue;
-            }
-            // Check for YAML list items
-            let at_idx = match info
-                .fm_lines
-                .iter()
-                .position(|l| l.starts_with("allowed-tools:"))
-            {
-                Some(i) => i,
-                None => continue,
-            };
-            let list_items: Vec<String> = info.fm_lines[at_idx + 1..]
-                .iter()
-                .take_while(|l| {
-                    l.is_empty() || l.starts_with(' ') || l.starts_with('\t') || l.starts_with("- ")
-                })
-                .filter(|l| l.trim_start().starts_with("- "))
-                .map(|l| {
-                    l.trim_start()
-                        .strip_prefix("- ")
-                        .unwrap_or(l.trim())
-                        .trim()
-                        .to_string()
-                })
-                .collect();
-
-            if list_items.is_empty() {
-                continue;
-            }
-
-            let content = match fs::read_to_string(&skill_path) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-
-            // Rewrite: replace the allowed-tools: line and subsequent list items
-            // with a single scalar line
-            let comma_list = list_items.join(", ");
-            let new_content = rewrite_yaml_list_to_scalar(&content, "allowed-tools", &comma_list);
-            if let Some(new_content) = new_content {
-                if fs::write(&skill_path, &new_content).is_ok() {
-                    log_fix(
-                        LintRule::ToolsListSyntax,
-                        &format!(
-                            "{base_dir}/{}/SKILL.md: converted allowed-tools to scalar: {comma_list}",
-                            info.dir_name
-                        ),
-                    );
-                    fixed = true;
-                }
-            }
-        }
-    }
-    fixed
-}
-
-fn rewrite_yaml_list_to_scalar(content: &str, key: &str, scalar_value: &str) -> Option<String> {
-    let prefix = format!("{key}:");
-    let lines: Vec<&str> = content.lines().collect();
-    let mut result: Vec<String> = Vec::new();
-    let mut in_frontmatter = false;
-    let mut fm_delim_count = 0;
-    let mut skip_list_items = false;
-    let mut changed = false;
-
-    for line in &lines {
-        if *line == "---" {
-            fm_delim_count += 1;
-            if fm_delim_count == 1 {
-                in_frontmatter = true;
-            } else if fm_delim_count == 2 {
-                in_frontmatter = false;
-                skip_list_items = false;
-            }
-            result.push(line.to_string());
-            continue;
-        }
-
-        if skip_list_items {
-            let trimmed = line.trim();
-            if trimmed.is_empty()
-                || line.starts_with(' ')
-                || line.starts_with('\t')
-                || trimmed.starts_with("- ")
-            {
-                continue; // Skip list item or continuation
-            }
-            skip_list_items = false;
-        }
-
-        if in_frontmatter && line.starts_with(&prefix) {
-            result.push(format!("{key}: {scalar_value}"));
-            skip_list_items = true;
-            changed = true;
-        } else {
-            result.push(line.to_string());
-        }
-    }
-
-    if !changed {
-        return None;
-    }
-
-    let mut output = result.join("\n");
-    if content.ends_with('\n') {
-        output.push('\n');
-    }
-    Some(output)
-}
-
 // ── G001: $PWD in skill content ─────────────────────────────────────────
 
 fn fix_pwd_in_skill(exclude: &ExcludeSet, config: &LintConfig) -> bool {
@@ -1540,20 +1413,5 @@ mod tests {
         ] {
             assert_eq!(replace_http_urls(content), content, "content: {content}");
         }
-    }
-
-    #[test]
-    fn rewrite_yaml_list_to_scalar_basic() {
-        let content = "---\nname: test\nallowed-tools:\n- Bash\n- Read\n- Write\n---\nbody\n";
-        let result =
-            rewrite_yaml_list_to_scalar(content, "allowed-tools", "Bash, Read, Write").unwrap();
-        assert!(result.contains("allowed-tools: Bash, Read, Write"));
-        assert!(!result.contains("- Bash"));
-    }
-
-    #[test]
-    fn rewrite_yaml_list_to_scalar_no_match() {
-        let content = "---\nname: test\n---\nbody\n";
-        assert!(rewrite_yaml_list_to_scalar(content, "allowed-tools", "Bash").is_none());
     }
 }
