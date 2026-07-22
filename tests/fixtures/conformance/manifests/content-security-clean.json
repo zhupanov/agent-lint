@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "content-security-clean",
+  "covers": ["content-security", "json", "basic-mode"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S032", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

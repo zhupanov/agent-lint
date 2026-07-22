@@ -1,6 +1,6 @@
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::rules::LintRule;
-use crate::sensitive::{contains_possible_secret, contains_sensitive_evidence};
+use crate::sensitive::{contains_sensitive_evidence, find_skill_secret};
 use crate::validators::skills::SkillInfo;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -166,10 +166,6 @@ fn scheme_host_path(body: &str, start: usize) -> String {
 }
 
 pub(super) fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    if info.body.trim().is_empty() {
-        return;
-    }
-
     // S031: non-HTTPS URLs. Report once per file at the first flagged match,
     // with line metadata and the offending URL as evidence.
     if let Some(start) = flagged_http_offsets(&info.body).next() {
@@ -208,11 +204,26 @@ pub(super) fn check_content_security(info: &SkillInfo, diag: &mut DiagnosticColl
         );
     }
 
-    // S032: hardcoded secrets
-    if contains_possible_secret(&info.body) {
-        diag.report(
+    // S032 scans the complete source, rather than only the parsed Markdown
+    // body: committed credentials in frontmatter are still credentials. Its
+    // scanner returns source-safe evidence and an offset solely for line
+    // metadata, never for rendering a candidate value.
+    let source = info.document.content();
+    if let Some(finding) = find_skill_secret(source) {
+        let line = source[..finding.location_range.start]
+            .bytes()
+            .filter(|byte| *byte == b'\n')
+            .count()
+            + 1;
+        let metadata = DiagnosticMetadata::at_line(line)
+            .with_evidence(finding.evidence)
+            .with_suggestion(
+                "replace the literal with an environment-variable or secret-store reference",
+            );
+        diag.report_with(
             LintRule::HardcodedSecret,
             &format!("{}: potential hardcoded secret/API key detected", info.path),
+            metadata,
         );
     }
 }
