@@ -48,14 +48,6 @@ const MAX_INTERFACE_URL_LEN: usize = 1024;
 /// Evidence values are truncated to this many Unicode scalars before the shared
 /// secret classifier and the collector's own byte cap run.
 const MAX_EVIDENCE_SCALARS: usize = 80;
-/// Codex plugin manifests are metadata and small in practice (a few KB). A
-/// larger input is treated as unvalidatable rather than parsed, bounding
-/// worst-case work on a hostile manifest (G-Input-1: bound content-heavy work).
-const MAX_MANIFEST_BYTES: usize = 64 * 1024;
-/// Per-array element bound. Real manifests hold a handful of entries per field;
-/// this caps diagnostic volume — and the collector's O(n) ordering insert per
-/// diagnostic — on a hostile array without changing any legitimate outcome.
-const MAX_VALIDATED_ARRAY_ELEMENTS: usize = 256;
 /// Fixed CX060 set: Agent Skills experimental `allowed-tools` plus Claude
 /// behavior fields that Codex's skill loader ignores (reads only `name`,
 /// `description`, and `metadata.short-description`). Verified against
@@ -149,19 +141,6 @@ fn validate_plugin_manifests(diag: &mut DiagnosticCollector, exclude: &ExcludeSe
                 continue;
             }
         };
-        if content.len() > MAX_MANIFEST_BYTES {
-            diag.report_at_with(
-                LintRule::CodexPluginManifestInvalid,
-                &display,
-                &format!(
-                    "{display} exceeds the {MAX_MANIFEST_BYTES}-byte Codex plugin manifest limit and was not validated"
-                ),
-                DiagnosticMetadata::default().with_suggestion(
-                    "keep the plugin manifest small; Codex manifests hold metadata, not content",
-                ),
-            );
-            continue;
-        }
         let value: Value = match serde_json::from_str(&content) {
             Ok(value) => value,
             Err(error) => {
@@ -375,7 +354,7 @@ fn validate_hooks(
         // Inline hook object: valid; Codex owns its runtime schema.
         Some(Value::Object(_)) => {}
         Some(Value::Array(items)) => {
-            for (index, item) in items.iter().take(MAX_VALIDATED_ARRAY_ELEMENTS).enumerate() {
+            for (index, item) in items.iter().enumerate() {
                 match item {
                     Value::String(path) => {
                         let label = format!("hooks[{index}]");
@@ -421,7 +400,7 @@ fn check_string_array_items(
     field: &str,
     items: &[Value],
 ) {
-    for (index, item) in items.iter().take(MAX_VALIDATED_ARRAY_ELEMENTS).enumerate() {
+    for (index, item) in items.iter().enumerate() {
         match item {
             Value::String(path) => {
                 let label = format!("{field}[{index}]");
@@ -581,7 +560,7 @@ fn validate_default_prompt(
         }
         Some(Value::Array(items)) => {
             let mut accepted = Vec::new();
-            for (index, item) in items.iter().take(MAX_VALIDATED_ARRAY_ELEMENTS).enumerate() {
+            for (index, item) in items.iter().enumerate() {
                 match item {
                     Value::String(prompt) => accepted.push((
                         vec![
@@ -792,7 +771,7 @@ fn validate_interface_assets(
     match interface.get("screenshots") {
         None => {}
         Some(Value::Array(items)) => {
-            for (index, item) in items.iter().take(MAX_VALIDATED_ARRAY_ELEMENTS).enumerate() {
+            for (index, item) in items.iter().enumerate() {
                 match item {
                     Value::String(path) => check_asset_path(
                         diag,
@@ -1329,9 +1308,6 @@ fn selected_plugin_skill_roots(exclude: &ExcludeSet) -> Vec<PathBuf> {
         let Ok(content) = std::fs::read_to_string(&manifest.path) else {
             continue;
         };
-        if content.len() > MAX_MANIFEST_BYTES {
-            continue;
-        }
         let Ok(value) = serde_json::from_str::<Value>(&content) else {
             continue;
         };
@@ -1451,22 +1427,297 @@ fn yaml_value_type(value: &crate::yaml::Value) -> &'static str {
     }
 }
 
-/// Locate an unquoted or quoted top-level mapping key in frontmatter lines.
-/// Returns 1-based file line and column of the key start.
+/// Locate a top-level YAML mapping key in frontmatter lines.
+///
+/// Returns 1-based file line and Unicode-scalar column of the key's first
+/// source character. Agrees with the strict parser for plain keys (any legal
+/// spacing before `:`), single/double/escaped quoted keys, root flow mappings,
+/// CRLF-normalized lines, and Unicode content before the key token. Nested
+/// block mappings and value-level flow maps are ignored.
 fn top_level_key_location(fm_lines: &[String], key: &str) -> Option<(usize, usize)> {
+    if fm_lines_are_root_flow_mapping(fm_lines) {
+        return flow_mapping_key_location(fm_lines, key);
+    }
+    block_top_level_key_location(fm_lines, key)
+}
+
+fn fm_lines_are_root_flow_mapping(fm_lines: &[String]) -> bool {
+    fm_lines
+        .iter()
+        .map(|line| line.trim_start_matches('\u{feff}'))
+        .find(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+        .is_some_and(|line| line.trim_start().starts_with('{'))
+}
+
+fn block_top_level_key_location(fm_lines: &[String], key: &str) -> Option<(usize, usize)> {
     for (index, line) in fm_lines.iter().enumerate() {
-        if line.chars().next().is_some_and(char::is_whitespace) {
+        let chars: Vec<char> = line.chars().collect();
+        let mut start = 0usize;
+        if chars.first() == Some(&'\u{feff}') {
+            start = 1;
+        }
+        // Nested block entries are indented; skip them (and comments/blank).
+        if chars.get(start).is_some_and(|ch| ch.is_whitespace()) {
             continue;
         }
-        for form in [key.to_string(), format!("\"{key}\""), format!("'{key}'")] {
-            if let Some(rest) = line.strip_prefix(&form)
-                && (rest.starts_with(':') || rest.starts_with(" :"))
-            {
-                return Some((index + 2, 1));
+        let Some(rest) = chars.get(start..) else {
+            continue;
+        };
+        if rest.first() == Some(&'#') || rest.is_empty() {
+            continue;
+        }
+        if let Some(column) = mapping_key_column(rest, key) {
+            return Some((index + 2, start + column));
+        }
+    }
+    None
+}
+
+fn flow_mapping_key_location(fm_lines: &[String], key: &str) -> Option<(usize, usize)> {
+    let mut flow_depth = 0usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escape = false;
+    let mut expect_key = false;
+
+    for (line_idx, line) in fm_lines.iter().enumerate() {
+        let chars: Vec<char> = line.chars().collect();
+        let mut idx = 0usize;
+        while idx < chars.len() {
+            let ch = chars[idx];
+            if in_double {
+                if escape {
+                    escape = false;
+                } else if ch == '\\' {
+                    escape = true;
+                } else if ch == '"' {
+                    in_double = false;
+                }
+                idx += 1;
+                continue;
+            }
+            if in_single {
+                if ch == '\'' {
+                    if chars.get(idx + 1) == Some(&'\'') {
+                        idx += 2;
+                        continue;
+                    }
+                    in_single = false;
+                }
+                idx += 1;
+                continue;
+            }
+            match ch {
+                '#' if flow_depth == 0 => break,
+                '"' => {
+                    if expect_key && flow_depth == 1 {
+                        if let Some(column) = mapping_key_column(&chars[idx..], key) {
+                            return Some((line_idx + 2, idx + column));
+                        }
+                    }
+                    in_double = true;
+                    expect_key = false;
+                    idx += 1;
+                }
+                '\'' => {
+                    if expect_key && flow_depth == 1 {
+                        if let Some(column) = mapping_key_column(&chars[idx..], key) {
+                            return Some((line_idx + 2, idx + column));
+                        }
+                    }
+                    in_single = true;
+                    expect_key = false;
+                    idx += 1;
+                }
+                '{' => {
+                    flow_depth += 1;
+                    expect_key = flow_depth == 1;
+                    idx += 1;
+                }
+                '}' => {
+                    flow_depth = flow_depth.saturating_sub(1);
+                    expect_key = false;
+                    idx += 1;
+                }
+                '[' => {
+                    flow_depth += 1;
+                    expect_key = false;
+                    idx += 1;
+                }
+                ']' => {
+                    flow_depth = flow_depth.saturating_sub(1);
+                    expect_key = false;
+                    idx += 1;
+                }
+                ',' if flow_depth == 1 => {
+                    expect_key = true;
+                    idx += 1;
+                }
+                ':' if flow_depth == 1 => {
+                    expect_key = false;
+                    idx += 1;
+                }
+                ch if ch.is_whitespace() => idx += 1,
+                _ if expect_key && flow_depth == 1 => {
+                    if let Some(column) = mapping_key_column(&chars[idx..], key) {
+                        return Some((line_idx + 2, idx + column));
+                    }
+                    // Consume a non-matching key token so later keys still scan.
+                    expect_key = false;
+                    idx += 1;
+                }
+                _ => idx += 1,
             }
         }
     }
     None
+}
+
+/// If `chars` begins with mapping key `key` followed by optional whitespace and
+/// `:`, return the 1-based Unicode-scalar column of the key's first character
+/// within `chars`.
+fn mapping_key_column(chars: &[char], key: &str) -> Option<usize> {
+    let (decoded, key_end) = parse_yaml_key_token(chars)?;
+    if decoded != key {
+        return None;
+    }
+    let mut colon_at = key_end;
+    while colon_at < chars.len() && matches!(chars[colon_at], ' ' | '\t') {
+        colon_at += 1;
+    }
+    if chars.get(colon_at) != Some(&':') {
+        return None;
+    }
+    Some(1)
+}
+
+/// Parse a YAML mapping-key token at the start of `chars`.
+/// Returns the decoded key text and the index just past the token.
+fn parse_yaml_key_token(chars: &[char]) -> Option<(String, usize)> {
+    match chars.first()? {
+        '"' => parse_double_quoted_key(chars),
+        '\'' => parse_single_quoted_key(chars),
+        '#' | '{' | '}' | '[' | ']' | ',' | ':' => None,
+        _ => parse_plain_key(chars),
+    }
+}
+
+fn parse_plain_key(chars: &[char]) -> Option<(String, usize)> {
+    let mut end = 0usize;
+    while end < chars.len() {
+        let ch = chars[end];
+        if ch == ':' || ch == '#' || ch == ',' || ch == '{' || ch == '}' || ch == '[' || ch == ']' {
+            break;
+        }
+        if ch == ' ' || ch == '\t' {
+            // Allow internal spaces only when more key text follows before `:`.
+            let mut look = end;
+            while look < chars.len() && matches!(chars[look], ' ' | '\t') {
+                look += 1;
+            }
+            if chars.get(look) == Some(&':') || look == chars.len() {
+                break;
+            }
+        }
+        end += 1;
+    }
+    if end == 0 {
+        return None;
+    }
+    let key: String = chars[..end].iter().collect();
+    if key.chars().all(|ch| ch.is_whitespace()) {
+        return None;
+    }
+    Some((key, end))
+}
+
+fn parse_single_quoted_key(chars: &[char]) -> Option<(String, usize)> {
+    if chars.first() != Some(&'\'') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut idx = 1usize;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if ch == '\'' {
+            if chars.get(idx + 1) == Some(&'\'') {
+                out.push('\'');
+                idx += 2;
+                continue;
+            }
+            return Some((out, idx + 1));
+        }
+        out.push(ch);
+        idx += 1;
+    }
+    None
+}
+
+fn parse_double_quoted_key(chars: &[char]) -> Option<(String, usize)> {
+    if chars.first() != Some(&'"') {
+        return None;
+    }
+    let mut out = String::new();
+    let mut idx = 1usize;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        if ch == '"' {
+            return Some((out, idx + 1));
+        }
+        if ch == '\\' {
+            idx += 1;
+            let escaped = chars.get(idx)?;
+            match escaped {
+                '0' => out.push('\0'),
+                'a' => out.push('\u{07}'),
+                'b' => out.push('\u{08}'),
+                't' => out.push('\t'),
+                'n' => out.push('\n'),
+                'v' => out.push('\u{0b}'),
+                'f' => out.push('\u{0c}'),
+                'r' => out.push('\r'),
+                'e' => out.push('\u{1b}'),
+                ' ' => out.push(' '),
+                '"' => out.push('"'),
+                '/' => out.push('/'),
+                '\\' => out.push('\\'),
+                'N' => out.push('\u{85}'),
+                '_' => out.push('\u{a0}'),
+                'L' => out.push('\u{2028}'),
+                'P' => out.push('\u{2029}'),
+                'x' => {
+                    let value = parse_hex_escape(chars, idx + 1, 2)?;
+                    out.push(char::from_u32(value)?);
+                    idx += 2;
+                }
+                'u' => {
+                    let value = parse_hex_escape(chars, idx + 1, 4)?;
+                    out.push(char::from_u32(value)?);
+                    idx += 4;
+                }
+                'U' => {
+                    let value = parse_hex_escape(chars, idx + 1, 8)?;
+                    out.push(char::from_u32(value)?);
+                    idx += 8;
+                }
+                other => out.push(*other),
+            }
+            idx += 1;
+            continue;
+        }
+        out.push(ch);
+        idx += 1;
+    }
+    None
+}
+
+fn parse_hex_escape(chars: &[char], start: usize, width: usize) -> Option<u32> {
+    let slice = chars.get(start..start + width)?;
+    let text: String = slice.iter().collect();
+    u32::from_str_radix(&text, 16).ok()
 }
 
 #[cfg(test)]
