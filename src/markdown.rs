@@ -114,6 +114,7 @@ impl MarkdownDocument {
         let mut excluded_lines = std::collections::HashSet::new();
         let mut inline_exclusions = Vec::new();
         let mut link_exclusions = Vec::new();
+        let mut link_ranges = Vec::new();
         for node in root.descendants() {
             let data = node.data.borrow();
             match &data.value {
@@ -142,6 +143,12 @@ impl MarkdownDocument {
                         end_column: data.sourcepos.end.column,
                     });
                     link_exclusions.push((
+                        data.sourcepos.start.line,
+                        data.sourcepos.start.column,
+                        data.sourcepos.end.line,
+                        data.sourcepos.end.column,
+                    ));
+                    link_ranges.push((
                         data.sourcepos.start.line,
                         data.sourcepos.start.column,
                         data.sourcepos.end.line,
@@ -182,6 +189,8 @@ impl MarkdownDocument {
             }
         }
 
+        let link_destination_exclusions = link_destination_exclusions(&content, &link_ranges);
+
         let body_start_line = if parse_frontmatter {
             body_start
                 .map(|start| content[..start].lines().count() + 1)
@@ -206,6 +215,7 @@ impl MarkdownDocument {
 
                 let mut text = line.to_string();
                 text = mask_column_ranges(&text, line_number, &inline_exclusions);
+                text = mask_column_ranges(&text, line_number, &link_destination_exclusions);
                 text = mask_html_comments(&text, &mut in_html_comment);
                 text = mask_quoted_text(&text);
                 Some(MarkdownProseLine {
@@ -322,6 +332,109 @@ impl MarkdownDocument {
     /// masked so marker words inside labels or destinations stay clean.
     pub fn unfinished_work_lines(&self) -> &[MarkdownProseLine] {
         &self.unfinished_work_lines
+    }
+}
+
+/// Return source-column ranges occupied by inline and autolink destinations.
+///
+/// Comrak exposes a link node's full source span but not a separate span for
+/// its destination. Restricting this source scan to those parsed link spans
+/// keeps Markdown syntax in code or ordinary prose from being mistaken for a
+/// link while preserving visible link labels for prose validators.
+fn link_destination_exclusions(
+    content: &str,
+    link_ranges: &[(usize, usize, usize, usize)],
+) -> Vec<(usize, usize, usize, usize)> {
+    let chars: Vec<char> = content.chars().collect();
+    let mut positions = Vec::with_capacity(chars.len());
+    let mut line = 1;
+    let mut column = 1;
+    for character in &chars {
+        positions.push((line, column));
+        if *character == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+
+    let in_link_range = |index: usize| {
+        let (line, column) = positions[index];
+        link_ranges
+            .iter()
+            .any(|&(start_line, start_column, end_line, end_column)| {
+                (line > start_line || (line == start_line && column >= start_column))
+                    && (line < end_line || (line == end_line && column <= end_column))
+            })
+    };
+    let mut exclusions = Vec::new();
+    let mut index = 0;
+    while index + 1 < chars.len() {
+        if chars[index] == ']' && chars[index + 1] == '(' && in_link_range(index) {
+            let start = index + 2;
+            let mut cursor = start;
+            let mut depth = 1;
+            while cursor < chars.len() {
+                if chars[cursor] == '\\' {
+                    cursor += 2;
+                    continue;
+                }
+                match chars[cursor] {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            add_character_ranges(&mut exclusions, &positions, start, cursor);
+                            index = cursor;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                cursor += 1;
+            }
+        } else if chars[index] == '<' && in_link_range(index) {
+            if let Some(end) = ((index + 1)..chars.len()).find(|&cursor| chars[cursor] == '>') {
+                add_character_ranges(&mut exclusions, &positions, index + 1, end);
+                index = end;
+            }
+        }
+        index += 1;
+    }
+    exclusions
+}
+
+fn add_character_ranges(
+    ranges: &mut Vec<(usize, usize, usize, usize)>,
+    positions: &[(usize, usize)],
+    start: usize,
+    end: usize,
+) {
+    if start >= end {
+        return;
+    }
+    let mut range_start = None;
+    let mut previous = None;
+    for index in start..end {
+        let (line, column) = positions[index];
+        if previous.is_some_and(|(previous_line, previous_column)| {
+            line != previous_line || column != previous_column + 1
+        }) {
+            let (start_line, start_column) = range_start.expect("range has a start");
+            let (end_line, end_column) = previous.expect("range has a previous position");
+            ranges.push((start_line, start_column, end_line, end_column));
+            range_start = None;
+        }
+        if range_start.is_none() {
+            range_start = Some((line, column));
+        }
+        previous = Some((line, column));
+    }
+    if let (Some((start_line, start_column)), Some((end_line, end_column))) =
+        (range_start, previous)
+    {
+        ranges.push((start_line, start_column, end_line, end_column));
     }
 }
 
@@ -573,6 +686,27 @@ mod tests {
                 "Don't be verbose.",
                 ""
             ]
+        );
+    }
+
+    #[test]
+    fn prose_masks_link_destinations_but_preserves_labels() {
+        let source = "Use [endpoint route URL](https://example.test/endpoint/route/url) now.\n";
+        let doc = MarkdownDocument::parse_body(source);
+        let prose = &doc.body_prose()[0].text;
+        assert!(prose.contains("endpoint route URL"));
+        assert!(!prose.contains("example.test"));
+        assert_eq!(prose.chars().count(), source.trim_end().chars().count());
+        assert_eq!(
+            prose.as_str(),
+            format!(
+                "Use [endpoint route URL]({}) now.",
+                " ".repeat("https://example.test/endpoint/route/url".chars().count())
+            )
+        );
+        assert_eq!(
+            doc.links()[0].destination,
+            "https://example.test/endpoint/route/url"
         );
     }
 

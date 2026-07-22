@@ -132,12 +132,24 @@ static RE_ALTERNATIVES_SUPPRESS: LazyLock<Regex> = LazyLock::new(|| {
         .unwrap()
 });
 
+// S056: A choice must be explicitly framed as selecting alternatives rather
+// than merely mentioning alternatives in ordinary prose.
+static RE_CHOICE_CUE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:use|using|choose|choosing|pick|select|option|options|alternatively|either|tool|tools|library|libraries|approach|approaches|method|methods)\b").unwrap()
+});
+
+static RE_MARKDOWN_HEADING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s{0,3}#{1,6}\s+").unwrap());
+static RE_MARKDOWN_LIST_ITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:[-+*]|\d+[.)])\s+").unwrap());
+
 // S057: Magic number assignment pattern (identifier = digits)
 static RE_MAGIC_ASSIGN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b[A-Za-z_][A-Za-z0-9_]*\s*=\s*(\d+)").unwrap());
 
 // S057: Preceding-line comment detection (anchored to line start)
-static RE_COMMENT_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\s*(?:#|//|--)").unwrap());
+static RE_COMMENT_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:#|//|--(?:\s|$))").unwrap());
 
 // S057: Well-known values that don't need documentation
 const WELL_KNOWN_VALUES: &[u64] = &[
@@ -204,10 +216,10 @@ pub(super) fn check_body_content(
         );
     }
 
-    // S038: time-sensitive (plugin-only) -- date/year patterns outside code fences
+    // S038: time-sensitive (plugin-only) -- date/year patterns in authored prose
     if plugin_mode {
-        for line in crate::fence::lines_outside_fences(&info.body) {
-            if RE_YEAR.is_match(line) {
+        for line in info.document.body_prose() {
+            if RE_YEAR.is_match(&line.text) {
                 diag.report(
                     LintRule::TimeSensitive,
                     &format!(
@@ -288,7 +300,7 @@ pub(super) fn check_body_content(
         }
     }
 
-    // S053: terminology consistency (plugin-only) — outside code fences only
+    // S053: terminology consistency (plugin-only) — authored prose only
     if plugin_mode {
         check_terminology_consistency(info, diag);
     }
@@ -322,19 +334,7 @@ pub(super) fn check_body_content(
 
     // S056: body-no-default (plugin-only) — alternatives without stated default
     if plugin_mode {
-        for line in crate::fence::lines_outside_fences(&info.body) {
-            if RE_OR_CHAIN.is_match(line) && !RE_ALTERNATIVES_SUPPRESS.is_match(line) {
-                diag.report(
-                    LintRule::BodyNoDefault,
-                    &format!(
-                        "{}: body lists multiple alternatives without stating a default; \
-                         pick a recommended option or add conditional context",
-                        info.path
-                    ),
-                );
-                break; // Report once per file
-            }
-        }
+        check_body_no_default(info, diag);
     }
 
     // S057: magic-number-undoc (plugin-only) — undocumented magic numbers in code blocks
@@ -387,10 +387,14 @@ fn is_script_backed(info: &SkillInfo) -> bool {
 }
 
 fn check_terminology_consistency(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    // Collect all words outside code fences into a set
+    // Collect words from the shared authored-prose view into a set.
     let mut words = HashSet::new();
-    for line in crate::fence::lines_outside_fences(&info.body) {
-        for token in line.to_lowercase().split(|c: char| !c.is_alphanumeric()) {
+    for line in info.document.body_prose() {
+        for token in line
+            .text
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+        {
             if !token.is_empty() {
                 words.insert(token.to_string());
             }
@@ -416,6 +420,55 @@ fn check_terminology_consistency(info: &SkillInfo, diag: &mut DiagnosticCollecto
             );
         }
     }
+}
+
+fn check_body_no_default(info: &SkillInfo, diag: &mut DiagnosticCollector) {
+    let mut paragraph = Vec::new();
+    let mut previous_line = None;
+    let source_lines: Vec<_> = info.document.content().lines().collect();
+    for line in info.document.body_prose() {
+        let source_is_blank = source_lines
+            .get(line.line - 1)
+            .is_some_and(|source| source.trim().is_empty());
+        let starts_group = source_is_blank
+            || RE_MARKDOWN_HEADING.is_match(&line.text)
+            || RE_MARKDOWN_LIST_ITEM.is_match(&line.text)
+            || previous_line.is_some_and(|previous| line.line != previous + 1);
+        if starts_group && !paragraph.is_empty() {
+            if paragraph_has_unframed_choice(&paragraph) {
+                report_body_no_default(info, diag);
+                return;
+            }
+            paragraph.clear();
+        }
+        if !line.text.trim().is_empty() {
+            paragraph.push(line.text.as_str());
+        }
+        previous_line = Some(line.line);
+    }
+    if paragraph_has_unframed_choice(&paragraph) {
+        report_body_no_default(info, diag);
+    }
+}
+
+fn paragraph_has_unframed_choice(paragraph: &[&str]) -> bool {
+    !paragraph
+        .iter()
+        .any(|line| RE_ALTERNATIVES_SUPPRESS.is_match(line))
+        && paragraph
+            .iter()
+            .any(|line| RE_CHOICE_CUE.is_match(line) && RE_OR_CHAIN.is_match(line))
+}
+
+fn report_body_no_default(info: &SkillInfo, diag: &mut DiagnosticCollector) {
+    diag.report(
+        LintRule::BodyNoDefault,
+        &format!(
+            "{}: body lists multiple alternatives without stating a default; \
+             pick a recommended option or add conditional context",
+            info.path
+        ),
+    );
 }
 
 fn check_consecutive_bash(info: &SkillInfo, diag: &mut DiagnosticCollector) {
@@ -562,14 +615,18 @@ fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                     continue;
                 }
 
-                if let Some(caps) = RE_MAGIC_ASSIGN.captures(trimmed) {
+                for caps in RE_MAGIC_ASSIGN.captures_iter(trimmed) {
+                    if caps.get(0).is_some_and(|matched| {
+                        matched.start() > 0 && trimmed.as_bytes()[matched.start() - 1] == b'-'
+                    }) {
+                        continue;
+                    }
                     if let Some(num_match) = caps.get(1) {
                         // Float guard: skip if the character after the digits is '.' or 'e'/'E'
                         let after_pos = num_match.end();
                         if after_pos < trimmed.len() {
                             let next_char = trimmed.as_bytes()[after_pos];
                             if next_char == b'.' || next_char == b'e' || next_char == b'E' {
-                                prev_is_comment = false;
                                 continue;
                             }
                         }
@@ -631,6 +688,20 @@ mod tests {
             "Inspect templates/default before writing output.",
         ] {
             assert!(has_reference(body), "expected reference in: {body}");
+        }
+    }
+
+    #[test]
+    fn magic_assignment_pattern_iterates_each_assignment() {
+        for (line, expected) in [
+            ("enabled=1 timeout=47", vec!["enabled=1", "timeout=47"]),
+            ("--max-count=50 timeout=47", vec!["count=50", "timeout=47"]),
+        ] {
+            let matches: Vec<_> = RE_MAGIC_ASSIGN
+                .find_iter(line)
+                .map(|matched| matched.as_str())
+                .collect();
+            assert_eq!(matches, expected);
         }
     }
 
