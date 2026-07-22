@@ -13,7 +13,9 @@ pub(crate) use description::{description_contains_xml_tags, strip_description_xm
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
-use crate::validators::skills::{SkillInfo, collect_skills};
+use crate::validators::skills::{
+    SkillInfo, collect_agent_skills, collect_cursor_runtime_skills, collect_skills,
+};
 use regex::Regex;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -163,7 +165,12 @@ pub(crate) fn validate_agent_skills_name_contract(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
 ) {
-    for info in collect_skills(base_dir, exclude) {
+    let skills = if base_dir == ".agents/skills" {
+        collect_agent_skills(exclude)
+    } else {
+        collect_skills(base_dir, exclude)
+    };
+    for info in skills {
         let Some(name) = crate::frontmatter::get_strict_string_field(&info.fm_lines, "name") else {
             continue;
         };
@@ -183,7 +190,40 @@ pub(crate) fn validate_agent_skills_content_security(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
 ) {
-    for info in collect_skills(base_dir, exclude) {
+    let skills = if base_dir == ".agents/skills" {
+        collect_agent_skills(exclude)
+    } else {
+        collect_skills(base_dir, exclude)
+    };
+    for info in skills {
+        diag.with_subject_path(&info.path, |diag| {
+            security::check_content_security(&info, diag);
+        });
+    }
+}
+
+/// Run Cursor's shared runtime inventory through the Agent Skills contracts.
+/// Keeping this inventory alongside CR-SK-001 prevents nested Cursor skills
+/// from receiving platform-schema checks but missing S009/S031/S032.
+pub(crate) fn validate_cursor_runtime_skills_name_contract(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    for info in collect_cursor_runtime_skills(exclude) {
+        let Some(name) = crate::frontmatter::get_strict_string_field(&info.fm_lines, "name") else {
+            continue;
+        };
+        diag.with_subject_path(&info.path, |diag| {
+            name::check_agent_skills_name_contract(&info, &name, diag);
+        });
+    }
+}
+
+pub(crate) fn validate_cursor_runtime_skills_content_security(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+) {
+    for info in collect_cursor_runtime_skills(exclude) {
         diag.with_subject_path(&info.path, |diag| {
             security::check_content_security(&info, diag);
         });

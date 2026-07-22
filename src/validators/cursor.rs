@@ -32,8 +32,9 @@ const RULE_KEYS: &[&str] = &["description", "globs", "alwaysApply"];
 const CURSOR_SKILL_KEYS: &[&str] = &[
     "name",
     "description",
+    "paths",
     "disable-model-invocation",
-    "user-invocable",
+    "metadata",
 ];
 const HOOK_EVENTS: &[&str] = &[
     "sessionStart",
@@ -720,29 +721,22 @@ fn validate_skills(
     exclude: &ExcludeSet,
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let root = Path::new(".cursor/skills");
-    if !root.is_dir() {
-        return;
-    }
-    for entry in traversal::shallow_directories(root, Path::new("."), None).entries {
-        let path = entry.path.join("SKILL.md");
-        if !path.is_file() {
-            continue;
-        }
-        let display_path = path.to_string_lossy().replace('\\', "/");
-        if exclude.is_excluded(&display_path) {
-            continue;
-        }
-        let Ok(content) = fs::read_to_string(&path) else {
+    for entry in crate::platforms::cursor_runtime_skill_candidates(exclude) {
+        // Shared Agent Skills receive their prompt-content pass through their
+        // independent shared-surface dispatch. Only Cursor-unique paths are
+        // validated here so activating both surfaces cannot duplicate Q rules.
+        let Ok(content) = fs::read_to_string(&entry.path) else {
             continue;
         };
         let markdown = MarkdownDocument::parse(&content);
-        let document = LiveInstructionDocument::new(
-            Path::new(&display_path),
-            InstructionSurfaceKind::CursorSkill,
-            &markdown,
-        );
-        prompt_pass.validate(&document, diag);
+        if crate::platforms::is_cursor_skill_path(&entry.path) {
+            let document = LiveInstructionDocument::new(
+                Path::new(&entry.display),
+                InstructionSurfaceKind::CursorSkill,
+                &markdown,
+            );
+            prompt_pass.validate(&document, diag);
+        }
         let Some(lines) = frontmatter::extract_frontmatter(&content) else {
             continue;
         };
@@ -754,7 +748,7 @@ fn validate_skills(
                 report(
                     diag,
                     LintRule::CursorSkillFieldUnsupported,
-                    &display_path,
+                    &entry.display,
                     &format!("'{key}' is not supported by Cursor skills"),
                 );
             }
@@ -1235,6 +1229,26 @@ mod tests {
         assert_eq!(
             yaml_parse_constraint("token: 'this-is-a-sensitive-value'"),
             "invalid syntax"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_skill_allowlist_uses_the_documented_fields_and_rejects_user_invocable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let skill = tmp.path().join(".cursor/skills/reviewer/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::write(
+            skill,
+            "---\nname: reviewer\ndescription: Reviews changes when verification is requested.\npaths:\n  - src/**\ndisable-model-invocation: true\nmetadata:\n  owner: platform\nuser-invocable: false\ncontext: fork\nagent: Explore\nhooks: {}\nfuture-field: true\n---\nBody\n",
+        )
+        .unwrap();
+
+        let codes = codes_for(tmp.path());
+        assert_eq!(
+            codes.iter().filter(|code| **code == "CR-SK-001").count(),
+            5,
+            "only user-invocable, context, agent, hooks, and future-field are unsupported"
         );
     }
 

@@ -78,7 +78,13 @@ fn run_basic(
     validate_optional_surfaces(diag, exclude, targets, &mut prompt_pass);
     // A030/S074: overlapping routing descriptions within simultaneously available namespaces
     desc_overlap::validate_agent_desc_overlap(diag, exclude, false, targets.cursor);
-    desc_overlap::validate_skill_desc_overlap(diag, exclude, false, targets.agent_skills);
+    desc_overlap::validate_skill_desc_overlap(
+        diag,
+        exclude,
+        false,
+        targets.agent_skills,
+        targets.cursor,
+    );
     prompt_content::validate_claude_md_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // X002–X005: CLAUDE.md structure (when present)
     docs::validate_claudemd_structure(diag, exclude);
@@ -182,7 +188,13 @@ fn run_plugin(
     skill_content::validate_private_skill_content_with_prompt_pass(diag, exclude, &mut prompt_pass);
     // A030/S074: overlapping routing descriptions (Claude private∪plugin runtime union)
     desc_overlap::validate_agent_desc_overlap(diag, exclude, true, targets.cursor);
-    desc_overlap::validate_skill_desc_overlap(diag, exclude, true, targets.agent_skills);
+    desc_overlap::validate_skill_desc_overlap(
+        diag,
+        exclude,
+        true,
+        targets.agent_skills,
+        targets.cursor,
+    );
     // D002: CLAUDE.md size
     docs::validate_claudemd_size(diag, exclude);
     // D003: TODO/FIXME in CLAUDE.md
@@ -213,8 +225,10 @@ fn validate_optional_surfaces(
     }
     if targets.agent_skills {
         skills::validate_agent_skill_frontmatter_with_prompt_pass(diag, exclude, prompt_pass);
-        skill_content::validate_agent_skills_name_contract(".agents/skills", diag, exclude);
-        skill_content::validate_agent_skills_content_security(".agents/skills", diag, exclude);
+        if !targets.cursor {
+            skill_content::validate_agent_skills_name_contract(".agents/skills", diag, exclude);
+            skill_content::validate_agent_skills_content_security(".agents/skills", diag, exclude);
+        }
     }
     if targets.codex {
         diag.with_subject_path(".codex/config.toml", |diag| {
@@ -223,8 +237,8 @@ fn validate_optional_surfaces(
         codex_surfaces::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
     if targets.cursor {
-        skill_content::validate_agent_skills_name_contract(".cursor/skills", diag, exclude);
-        skill_content::validate_agent_skills_content_security(".cursor/skills", diag, exclude);
+        skill_content::validate_cursor_runtime_skills_name_contract(diag, exclude);
+        skill_content::validate_cursor_runtime_skills_content_security(diag, exclude);
         cursor::validate_with_prompt_pass(diag, exclude, prompt_pass);
     }
 }
@@ -235,6 +249,7 @@ mod tests {
     use crate::config::{ExcludeSet, PlatformOverrides};
     use crate::context::ManifestState;
     use serde_json::json;
+    use std::path::Path;
 
     // Integration test: Basic mode dispatches correct validators
     #[test]
@@ -623,6 +638,74 @@ mod tests {
             2,
             "platform-gated surfaces must respect resolved activation"
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_runtime_inventory_covers_nested_shared_skills_and_honors_activation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let nested_cursor = "packages/api/.cursor/skills/group/Invalid/SKILL.md";
+        let shared = "packages/api/.agents/skills/shared/SKILL.md";
+        for (path, name) in [(nested_cursor, "Invalid"), (shared, "Shared")] {
+            std::fs::create_dir_all(Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                format!(
+                    "---\nname: {name}\ndescription: A valid skill description here\nuser-invocable: false\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+        }
+        let ctx = LintContext::new(tmp.path(), LintMode::Basic);
+        let mut enabled = DiagnosticCollector::new_all_enabled();
+        run_all_with_targets(
+            &ctx,
+            &mut enabled,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                codex: false,
+                claude_md: false,
+                agents_md: false,
+                agent_skills: true,
+            },
+        );
+        for path in [nested_cursor, shared] {
+            assert!(enabled.diagnostics().iter().any(|item| {
+                item.rule == crate::rules::LintRule::CursorSkillFieldUnsupported
+                    && item.subject_path.as_deref() == Some(Path::new(path))
+            }));
+        }
+        assert!(enabled.diagnostics().iter().any(|item| {
+            item.rule == crate::rules::LintRule::NameInvalidChars
+                && item.subject_path.as_deref() == Some(Path::new(nested_cursor))
+        }));
+
+        let mut disabled = DiagnosticCollector::new_all_enabled();
+        run_all_with_targets(
+            &ctx,
+            &mut disabled,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: false,
+                codex: false,
+                claude_md: false,
+                agents_md: false,
+                agent_skills: true,
+            },
+        );
+        assert!(
+            !disabled
+                .diagnostics()
+                .iter()
+                .any(|item| { item.rule == crate::rules::LintRule::CursorSkillFieldUnsupported })
+        );
+        assert!(disabled.diagnostics().iter().any(|item| {
+            item.rule == crate::rules::LintRule::NameInvalidChars
+                && item.subject_path.as_deref() == Some(Path::new(shared))
+        }));
     }
 
     #[test]

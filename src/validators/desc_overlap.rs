@@ -2,9 +2,9 @@
 //!
 //! Comparison is namespace-aware. Claude private and plugin surfaces that can be
 //! loaded together in the same lint run share one runtime-union namespace.
-//! Cursor `.cursor/agents/**/*.md` is a separate namespace when the Cursor
-//! target is active. Cross-client `.agents/skills/` remains a separate
-//! namespace. Agents are never compared with skills.
+//! When Cursor is active, its `.cursor/skills/` and `.agents/skills/` runtime
+//! union is a separate namespace, as are Cursor `.cursor/agents/**/*.md`.
+//! Agents are never compared with skills.
 //!
 //! Findings are pathless multi-source diagnostics with structured
 //! `related_subjects`. Per-file overrides therefore cannot suppress them;
@@ -15,7 +15,9 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::traversal;
-use crate::validators::skills::collect_skills;
+use crate::validators::skills::{
+    collect_agent_skills, collect_cursor_runtime_skills, collect_skills,
+};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
@@ -89,13 +91,15 @@ pub fn validate_agent_desc_overlap(
 /// Validate overlapping skill routing descriptions.
 ///
 /// Claude private/plugin skill trees that are simultaneously available share
-/// one namespace. `.agents/skills/` is compared only within itself when that
-/// surface is active.
+/// one namespace. When Cursor is active, its complete `.cursor/skills/` and
+/// `.agents/skills/` runtime inventory is compared as one namespace. Otherwise
+/// `.agents/skills/` is compared only within itself when that surface is active.
 pub fn validate_skill_desc_overlap(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     plugin_mode: bool,
     include_agent_skills: bool,
+    include_cursor: bool,
 ) {
     let mut claude_dirs = Vec::new();
     if plugin_mode {
@@ -108,13 +112,23 @@ pub fn validate_skill_desc_overlap(
         LintRule::SkillDescOverlap,
     );
 
-    if include_agent_skills {
+    if include_cursor {
+        report_overlaps(
+            diag,
+            collect_cursor_runtime_skill_candidates(exclude),
+            LintRule::SkillDescOverlap,
+        );
+    } else if include_agent_skills {
         report_overlaps(
             diag,
             collect_skill_candidates(&[".agents/skills"], exclude),
             LintRule::SkillDescOverlap,
         );
     }
+}
+
+fn collect_cursor_runtime_skill_candidates(exclude: &ExcludeSet) -> Vec<DescCandidate> {
+    collect_skill_candidates_from_infos(collect_cursor_runtime_skills(exclude))
 }
 
 fn collect_agent_candidates(dirs: &[&str], exclude: &ExcludeSet) -> Vec<DescCandidate> {
@@ -178,17 +192,27 @@ fn collect_cursor_agent_candidates(exclude: &ExcludeSet) -> Vec<DescCandidate> {
 }
 
 fn collect_skill_candidates(dirs: &[&str], exclude: &ExcludeSet) -> Vec<DescCandidate> {
+    let candidates = dirs.iter().flat_map(|dir| {
+        if *dir == ".agents/skills" {
+            collect_agent_skills(exclude)
+        } else {
+            collect_skills(dir, exclude)
+        }
+    });
+    collect_skill_candidates_from_infos(candidates)
+}
+
+fn collect_skill_candidates_from_infos(
+    infos: impl IntoIterator<Item = crate::validators::skills::SkillInfo>,
+) -> Vec<DescCandidate> {
     let mut candidates = Vec::new();
-    for dir in dirs {
-        for info in collect_skills(dir, exclude) {
-            let Some(description) =
-                frontmatter::get_strict_string_field(&info.fm_lines, "description")
-            else {
-                continue;
-            };
-            if let Some(candidate) = candidate_from_description(info.path, &description) {
-                candidates.push(candidate);
-            }
+    for info in infos {
+        let Some(description) = frontmatter::get_strict_string_field(&info.fm_lines, "description")
+        else {
+            continue;
+        };
+        if let Some(candidate) = candidate_from_description(info.path, &description) {
+            candidates.push(candidate);
         }
     }
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
@@ -481,7 +505,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
+        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, false, false);
         assert!(
             diag.diagnostics()
                 .iter()
@@ -548,12 +572,52 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, true);
+        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, true, false);
         assert!(
             diag.diagnostics()
                 .iter()
                 .all(|item| item.rule != LintRule::SkillDescOverlap),
             "cross-namespace duplicates must not fire"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_runtime_union_compares_nested_cursor_and_shared_skills_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let description = "Reviews pull requests for security vulnerabilities and injection flaws";
+        for (path, name) in [
+            (".cursor/skills/group/cursor-one/SKILL.md", "cursor-one"),
+            (
+                "packages/api/.agents/skills/shared-one/SKILL.md",
+                "shared-one",
+            ),
+        ] {
+            let path = Path::new(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                format!("---\nname: {name}\ndescription: {description}\n---\nBody\n"),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new();
+        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, true, true);
+        let findings = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::SkillDescOverlap)
+            .collect::<Vec<_>>();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].related_subjects,
+            vec![
+                std::path::PathBuf::from(".cursor/skills/group/cursor-one/SKILL.md"),
+                std::path::PathBuf::from("packages/api/.agents/skills/shared-one/SKILL.md"),
+            ]
         );
     }
 
@@ -606,7 +670,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
+        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, false, false);
         let finding = diag
             .diagnostics()
             .iter()
@@ -637,7 +701,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
+        validate_skill_desc_overlap(&mut diag, &ExcludeSet::default(), false, false, false);
         let finding = diag
             .diagnostics()
             .iter()

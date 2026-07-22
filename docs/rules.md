@@ -346,11 +346,14 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > descriptions in invalid or non-mapping YAML frontmatter, stay owned by
 > existing structural/short/missing rules and are skipped. Claude private and plugin trees that can
 > load together form one runtime-union namespace (`agents/` ∪ `.claude/agents/`,
-> `skills/` ∪ `.claude/skills/` in Plugin mode). When the Cursor target is
-> active, `.cursor/agents/**/*.md` forms a separate Cursor-only agent namespace
-> that reuses the same scorer; omitted Cursor `description` fields are legal
-> and skip A030. Cross-client `.agents/skills/`
-> stays separate. Agents are never compared with skills. Findings are pathless
+> `skills/` ∪ `.claude/skills/` in Plugin mode). When Cursor is active, its
+> runtime skill namespace is `**/.cursor/skills/**/SKILL.md` ∪
+> `**/.agents/skills/**/SKILL.md`; it includes nested project locations and
+> compares cross-tree pairs exactly once. When Cursor is inactive, shared
+> `.agents/skills/` stays separate. The Cursor target also has a separate
+> `.cursor/agents/**/*.md` namespace for A030; omitted Cursor `description`
+> fields are legal and stay out of that overlap pool. Agents are never compared
+> with skills. Findings are pathless
 > multi-source diagnostics that name both repository-relative paths in
 > `related_subjects` and the score in the message; global `suppress` works, but per-file overrides
 > cannot match them.
@@ -402,8 +405,9 @@ These shared, source-aware checks run on root and nested `CLAUDE.md`, Claude
 and shared-agent skill bodies (`.claude/skills`, `skills`, and
 `.agents/skills`), Claude, Cursor, and plugin agent bodies, every included
 `AGENTS.md`, `AGENTS.override.md`, and active Cursor rule and skill bodies
-(`**/.cursor/rules/**/*.mdc`, `.cursorrules`, and
-`.cursor/skills/*/SKILL.md`) in both Basic and Plugin modes. They skip
+(`**/.cursor/rules/**/*.mdc`, `.cursorrules`, and the active Cursor runtime
+skill inventory: `**/.cursor/skills/**/SKILL.md` plus
+`**/.agents/skills/**/SKILL.md`) in both Basic and Plugin modes. They skip
 frontmatter where the surface defines it, fenced and inline code, and
 identifiable quoted examples. Missing frontmatter, and malformed frontmatter
 with a closing delimiter, do not exempt the remaining live prose. An exact
@@ -716,7 +720,7 @@ They run in both Basic and Plugin modes.
 | CU018 | `cursor-prompt-missing` | Prompt hook lacks a non-empty string `prompt` | Always | error |
 | CU019 | `cursor-model-invalid` | Present prompt hook `model` is not a non-empty string | Always | error |
 | CU020 | `cursor-rule-extension` | A `.md` file below a repository-wide `.cursor/rules/` directory is not a live Cursor rule; rename it to the same basename with `.mdc` | Always | warn |
-| CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses frontmatter unsupported by Cursor | Always | warn |
+| CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses a frontmatter key other than `name`, `description`, `paths`, `disable-model-invocation`, or `metadata`; it checks the active recursive Cursor runtime inventory, including shared `.agents/skills` locations | Always | warn |
 
 ## Hygiene / Scripts Rules (G)
 
