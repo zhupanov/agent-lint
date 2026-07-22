@@ -110,11 +110,12 @@ shape, required properties, value types, and nested arrays or objects. Keep
 cross-field semantics, security policy, filesystem checks, and product-specific
 rules in explicit Rust validators.
 
-An embedded schema must be compiled once with `LazyLock`, use `jsonschema` with
-default features disabled, and contain no external `$ref`. This prevents
-linting from reading local schema files or making network requests. The adapter
-must map each schema error back to an existing `LintRule` and a stable,
-user-facing instance path.
+An embedded or vendored schema must be compiled once with `LazyLock`, use
+`jsonschema` with default features disabled, and contain no external `$ref`.
+Vendored schemas must record their upstream URL, retrieval date, and a reviewed
+refresh command next to the artifact. This prevents linting from reading local
+schema files or making network requests. The adapter must map each schema error
+back to an existing `LintRule` and a stable, user-facing instance path.
 
 Migrate another surface only after a pilot preserves its accepted and rejected
 fixtures and demonstrates a maintenance or production-line reduction after

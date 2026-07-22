@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "cursor-environment-plugin-broken",
+  "covers": ["cursor-environment", "cursor-environment-plugin", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "CU016", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CU016", "name": "cursor-environment-invalid", "severity": "error", "subject_path": ".cursor/environment.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

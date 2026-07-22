@@ -1,0 +1,1 @@
+{"name":"development","user":"agent","install":"npm ci","start":"npm start","repositoryDependencies":["github.com/acme/api"],"ports":[{"port":3000,"name":"web"}],"terminals":[{"command":"npm start","name":"web","description":"serve"}],"build":{"dockerfile":"Dockerfile","context":"."},"snapshot":"snapshot-20260212-00000000","agentCanUpdateSnapshot":true}
