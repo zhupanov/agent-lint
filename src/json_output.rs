@@ -312,9 +312,8 @@ fn active_platforms(mode: Option<LintMode>, targets: ValidationTargets) -> Vec<&
 }
 
 fn selected_rules(run_policy: &RunPolicy) -> Option<Vec<OutputRule>> {
-    run_policy.is_focused().then(|| {
-        run_policy
-            .effective_rules()
+    run_policy.requested_rules().map(|rules| {
+        rules
             .iter()
             .map(|rule| OutputRule {
                 code: rule.code(),

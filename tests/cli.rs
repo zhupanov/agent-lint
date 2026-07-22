@@ -2159,6 +2159,117 @@ fn json_reports_focused_rule_selection_and_only_emits_selected_rules() {
 }
 
 #[test]
+fn json_focused_retired_rules_are_reported_but_remain_inert() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/tools/SKILL.md");
+    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+    std::fs::write(
+        skill,
+        "---\nname: tools\ndescription: Use when exercising focused active and retired tool-rule selection\nallowed-tools: UnknownTool\n---\nBody\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join(".claude/output-styles")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude/output-styles/long.md"),
+        format!(
+            "---\nname: {}\ndescription: Good\n---\nBody\n",
+            "long".repeat(17)
+        ),
+    )
+    .unwrap();
+
+    for (arguments, expected_code, expected_name) in [
+        (
+            vec!["--format", "json", "--only", "S045", "."],
+            "S045",
+            "tools-list-syntax",
+        ),
+        (
+            vec![
+                "--format",
+                "json",
+                "--pedantic",
+                "--only",
+                "tools-list-syntax",
+                ".",
+            ],
+            "S045",
+            "tools-list-syntax",
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "S045", "."],
+            "S045",
+            "tools-list-syntax",
+        ),
+        (
+            vec!["--format", "json", "--only", "O005", "."],
+            "O005",
+            "style-name-long",
+        ),
+        (
+            vec![
+                "--format",
+                "json",
+                "--pedantic",
+                "--only",
+                "style-name-long",
+                ".",
+            ],
+            "O005",
+            "style-name-long",
+        ),
+        (
+            vec!["--format", "json", "--all", "--only", "O005", "."],
+            "O005",
+            "style-name-long",
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert!(
+            output.status.success(),
+            "arguments {arguments:?}: {}",
+            stderr(&output)
+        );
+        let report = json(&output);
+        assert_eq!(report["diagnostics"], serde_json::json!([]));
+        assert_eq!(report["counts"]["suppressed"], 0);
+        let selected = report["selected_rules"].as_array().unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0]["code"], expected_code);
+        assert_eq!(selected[0]["name"], expected_name);
+    }
+
+    let arguments = [
+        "--format",
+        "json",
+        "--all",
+        "--only",
+        "S045,S040,tools-list-syntax,S045",
+        ".",
+    ];
+    let first = run_in(tmp.path(), &arguments);
+    let second = run_in(tmp.path(), &arguments);
+    assert_eq!(first.status.code(), Some(1), "stderr: {}", stderr(&first));
+    assert_eq!(first.stdout, second.stdout);
+    let report = json(&first);
+    assert_eq!(
+        report["selected_rules"],
+        serde_json::json!([
+            { "code": "S040", "name": "tools-unknown" },
+            { "code": "S045", "name": "tools-list-syntax" }
+        ])
+    );
+    assert!(
+        report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|diagnostic| diagnostic["code"] == "S040")
+    );
+}
+
+#[test]
 fn json_mixed_run_has_structured_rule_fields_and_unchanged_exit_status() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
