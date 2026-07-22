@@ -2376,7 +2376,7 @@ fn only_accepts_codes_names_commas_repetition_and_orders_by_registry() {
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
     std::fs::write(
         tmp.path().join(".claude-plugin/plugin.json"),
-        r#"{"hooks":"config/missing.json"}"#,
+        r#"{"hooks":"./config/missing.json"}"#,
     )
     .unwrap();
 
@@ -2886,7 +2886,7 @@ fn only_excludes_unselected_rules_from_suppressed_and_unused_counts() {
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
     std::fs::write(
         tmp.path().join(".claude-plugin/plugin.json"),
-        r#"{"name":"hooks-test","hooks":"config/missing.json"}"#,
+        r#"{"name":"hooks-test","hooks":"./config/missing.json"}"#,
     )
     .unwrap();
     std::fs::write(
@@ -2913,7 +2913,7 @@ fn only_reports_unused_overrides_for_selected_rule_entries() {
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
     std::fs::write(
         tmp.path().join(".claude-plugin/plugin.json"),
-        r#"{"name":"hooks-test","hooks":"config/missing.json"}"#,
+        r#"{"name":"hooks-test","hooks":"./config/missing.json"}"#,
     )
     .unwrap();
     std::fs::write(
@@ -3212,6 +3212,42 @@ fn s032_scans_complete_skill_source_with_safe_structured_metadata() {
     let output = run_in(tmp.path(), &["--format", "json", "--only", "S032", "."]);
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn m013_component_prefix_is_structured_and_never_autofixes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    let manifest = tmp.path().join(".claude-plugin/plugin.json");
+    let content = r#"{
+  "name": "demo",
+  "commands": {"bad": {"source": "commands/bad.md"}}
+}"#;
+    std::fs::write(&manifest, content).unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "M013", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let finding = &report["diagnostics"].as_array().unwrap()[0];
+    assert_eq!(finding["code"], "M013");
+    assert_eq!(finding["subject_path"], ".claude-plugin/plugin.json");
+    assert_eq!(finding["location"]["start"]["line"], 3);
+    assert_eq!(finding["evidence"], "commands.bad.source");
+    assert_eq!(
+        finding["suggestion"],
+        "use a plugin-root-relative './' component path"
+    );
+    assert!(
+        finding["message"]
+            .as_str()
+            .unwrap()
+            .contains("must start with './'")
+    );
+
+    let output = run_in(tmp.path(), &["--autofix", "--only", "M013", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    assert_eq!(std::fs::read_to_string(manifest).unwrap(), content);
 }
 
 #[test]
@@ -3926,7 +3962,7 @@ fn plugin_hook_declarations_load_all_surfaces_with_their_real_subjects() {
     std::fs::write(tmp.path().join("config/two.json"), "{").unwrap();
     std::fs::write(
         &manifest,
-        r#"{"name":"hooks-test","hooks":["./config/one.json","config/two.json"]}"#,
+        r#"{"name":"hooks-test","hooks":["./config/one.json","./config/two.json"]}"#,
     )
     .unwrap();
     let output = run_in(tmp.path(), &["--format", "json", "--only", "H002", "."]);

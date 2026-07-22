@@ -1,5 +1,7 @@
+use crate::plugin_paths::safe_component_path;
 use serde_json::Value;
 use std::collections::HashSet;
+use std::fs;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
@@ -243,9 +245,9 @@ impl LintContext {
 }
 
 /// Load hook configurations declared by the parsed plugin manifest. Component
-/// paths use the same lexical safety contract as M013: they must be relative
-/// and must not contain a parent-directory segment. Unsafe raw values are left
-/// to M013 and are never probed on disk here.
+/// paths use the same lexical safety contract as M013: they must use the
+/// plugin-root-relative `./` form and cannot escape it. Unsafe raw values and
+/// symlinked targets are left to validation and are never loaded here.
 fn collect_declared_hook_configs(
     base_path: &Path,
     plugin_json: &ManifestState,
@@ -294,6 +296,9 @@ fn push_declared_hook_file(
     let Some(subject_path) = safe_component_path(raw_path) else {
         return;
     };
+    if has_symlink_component(base_path, &subject_path) {
+        return;
+    }
     if !seen.insert(subject_path.clone()) {
         return;
     }
@@ -304,30 +309,19 @@ fn push_declared_hook_file(
     });
 }
 
-fn safe_component_path(raw_path: &str) -> Option<PathBuf> {
-    let is_absolute = raw_path.starts_with('/')
-        || raw_path.starts_with('\\')
-        || raw_path
-            .as_bytes()
-            .get(1)
-            .is_some_and(|separator| *separator == b':')
-            && raw_path
-                .as_bytes()
-                .get(2)
-                .is_some_and(|separator| matches!(*separator, b'/' | b'\\'));
-    if is_absolute {
-        return None;
-    }
-
-    let mut path = PathBuf::new();
-    for segment in raw_path.split(['/', '\\']) {
-        match segment {
-            "" | "." => {}
-            ".." => return None,
-            segment => path.push(segment),
+/// Reject a declared component if any existing path component is a symlink.
+/// This runs only after lexical validation, so it cannot probe an untrusted
+/// absolute or escaping path.
+fn has_symlink_component(base_path: &Path, relative_path: &Path) -> bool {
+    let mut candidate = base_path.to_path_buf();
+    for component in relative_path.components() {
+        candidate.push(component.as_os_str());
+        if fs::symlink_metadata(&candidate).is_ok_and(|metadata| metadata.file_type().is_symlink())
+        {
+            return true;
         }
     }
-    Some(path)
+    false
 }
 
 #[cfg(test)]
@@ -496,6 +490,26 @@ mod tests {
         // This verifies manifest loading uses base_path, not process CWD
         let ctx = LintContext::new(tmp.path(), LintMode::Basic);
         assert!(matches!(ctx.settings_json, ManifestState::Parsed(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn declared_hook_config_does_not_follow_symlinked_components() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+        std::fs::write(
+            tmp.path().join(".claude-plugin/plugin.json"),
+            r#"{"name":"test","hooks":"./linked/hooks.json"}"#,
+        )
+        .unwrap();
+        std::fs::write(outside.path().join("hooks.json"), r#"{"hooks":{}}"#).unwrap();
+        symlink(outside.path(), tmp.path().join("linked")).unwrap();
+
+        let ctx = LintContext::new(tmp.path(), LintMode::Plugin);
+        assert!(ctx.declared_hook_configs.is_empty());
     }
 
     // ── collect_json_strings ────────────────────────────────────────

@@ -12,6 +12,7 @@ mod live_instructions;
 mod markdown;
 mod markdown_commands;
 mod platforms;
+mod plugin_paths;
 mod prompt_budget;
 mod pwd_hygiene;
 mod rules;
