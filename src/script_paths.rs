@@ -68,6 +68,11 @@ impl ScriptReference {
     /// True for the shipped-script kinds whose flag signatures S059 can
     /// inspect. Keeping this classification here prevents consumers from
     /// drifting on path spellings or file kinds.
+    ///
+    /// Deliberately narrower than `script_kind`'s shell matrix: S059's
+    /// documented contract covers `.sh` and `.py` flag signatures only, so
+    /// admitting `.bash` here would broaden a rule contract rather than fix a
+    /// dispatch gap (see #551, which scoped `.bash` parity to G008-G011).
     pub(crate) fn is_flag_signature_script(&self) -> bool {
         matches!(
             self.path

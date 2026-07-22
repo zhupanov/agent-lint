@@ -4105,6 +4105,48 @@ in_function() {
 
     #[test]
     #[serial_test::serial]
+    fn empty_array_boundaries_ignore_expansion_punctuation_and_isolate_subshells() {
+        // Review finding 1: `${...}` operator punctuation (`${sep%;}`,
+        // `${PATH//:/;}`) is data, not a boundary — it must neither clear
+        // state nor swallow the expansion on its own line, so the
+        // straight-line warning is preserved.
+        let punctuation = r#"#!/usr/bin/env bash
+set -u
+items=()
+sep=${sep%;}
+printf '%s\n' "${items[@]}" "${PATH//:/;}"
+"#;
+        let findings: Vec<_> = run_script_contracts(punctuation, "scripts/punct.sh")
+            .into_iter()
+            .filter(|item| item.rule == LintRule::Bash32Incompatible)
+            .map(|item| item.message)
+            .collect();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains(":5:"), "{findings:?}");
+
+        // Review finding 2: subshells isolate their state with or without
+        // separators around the parentheses — no false positive on the
+        // non-empty top-level array.
+        let subshell = r#"#!/usr/bin/env bash
+set -u
+arr=(safe)
+(arr=())
+printf '%s\n' "${arr[@]}"
+(
+  arr=()
+  true )
+printf '%s\n' "${arr[@]}"
+"#;
+        assert!(
+            !run_script_contracts(subshell, "scripts/subshell.sh")
+                .iter()
+                .any(|item| item.rule == LintRule::Bash32Incompatible),
+            "subshell-local facts must not leak to the top level"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn awk_in_program_constant_regex_flow_fires_and_ambiguity_stays_clean() {
         // #550: the exact reproduction — a definite in-program assignment
         // reaching a later regex use, with the use inside a branch.
@@ -4118,6 +4160,8 @@ awk 'BEGIN { msg="—"; print msg }'
 awk 'BEGIN { re="—"; re="x"; if ($0 ~ re) print }'
 awk 'BEGIN { if (c) re="—"; if ($0 ~ re) print }'
 awk 'BEGIN { re = "—" tail; if ($0 ~ re) print }'
+awk 'BEGIN { c && (re = "—"); if ($0 ~ re) print }'
+awk 'BEGIN { switch (x) { case 1: re = "—"; break } if ($0 ~ re) print }'
 awk 'BEGIN { re="—"; if ($0 ~ re) print }' # lint-awk-multibyte-regex: ok reviewed shim
 "#;
         let findings: Vec<_> = run_script_contracts(content, "scripts/flow.sh")
@@ -4132,7 +4176,7 @@ awk 'BEGIN { re="—"; if ($0 ~ re) print }' # lint-awk-multibyte-regex: ok revi
                 "missing definite-flow finding on line {line}: {findings:?}"
             );
         }
-        for line in [7, 8, 9, 10, 11] {
+        for line in [7, 8, 9, 10, 11, 12, 13] {
             assert!(
                 !findings
                     .iter()

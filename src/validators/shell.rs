@@ -365,21 +365,51 @@ fn has_live_expansion(replacement: &str) -> bool {
 /// substitution — a backtick outside single/double quotes and not escaped. Its
 /// result lands unquoted in replacement position exactly like `$(cmd)`, so it
 /// can introduce an unquoted `&`; a quoted `` "`cmd`" `` substitution produces
-/// a quoted result and stays safe.
+/// a quoted result and stays safe. The quote states mirror the scanner's
+/// context rules: plain `'...'` takes no escapes, while ANSI-C `$'...'` and
+/// `"..."` honor a backslash before the closing quote.
 fn has_live_backtick(replacement: &str) -> bool {
-    let mut in_single = false;
-    let mut in_double = false;
+    #[derive(PartialEq)]
+    enum Quote {
+        None,
+        Single,
+        Ansi,
+        Double,
+    }
+    let mut state = Quote::None;
+    let mut prev_dollar = false;
     let mut chars = replacement.chars();
     while let Some(c) = chars.next() {
-        match c {
-            '\\' if !in_single => {
-                chars.next();
+        match state {
+            Quote::Single => {
+                if c == '\'' {
+                    state = Quote::None;
+                }
             }
-            '\'' if !in_double => in_single = !in_single,
-            '"' if !in_single => in_double = !in_double,
-            '`' if !in_single && !in_double => return true,
-            _ => {}
+            Quote::Ansi | Quote::Double => {
+                if c == '\\' {
+                    chars.next();
+                } else if c == if state == Quote::Ansi { '\'' } else { '"' } {
+                    state = Quote::None;
+                }
+            }
+            Quote::None => match c {
+                '\\' => {
+                    chars.next();
+                }
+                '\'' => {
+                    state = if prev_dollar {
+                        Quote::Ansi
+                    } else {
+                        Quote::Single
+                    };
+                }
+                '"' => state = Quote::Double,
+                '`' => return true,
+                _ => {}
+            },
         }
+        prev_dollar = state == Quote::None && c == '$';
     }
     false
 }
@@ -651,16 +681,15 @@ static CONTROL_FLOW: LazyLock<Regex> = LazyLock::new(|| {
 static FUNCTION_OPEN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[\s;&])(?:function\s+)?[A-Za-z_][A-Za-z0-9_]*\s*\(\s*\)").unwrap()
 });
-// A command group `{ ...` or subshell `( ...` at command position — but not the
-// `{` of a `${...}` expansion (which is always preceded by `$`).
-static GROUP_OR_SUBSHELL_OPEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|[\s;&|])[({](?:\s|$)").unwrap());
-// A closing `}` or `)` in command position ends a function body, group, or
-// subshell. Requiring line start or a real separator before the closer keeps
-// the `)` of `arr=( )` initializers and of mid-line `$( ... )` substitutions
-// from being read as a scope exit.
-static GROUP_OR_SUBSHELL_CLOSE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|[;&|])\s*[)}](?:[\s;&|]|$)").unwrap());
+// A command group `{ ...` at command position — but not the `{` of a `${...}`
+// expansion (always preceded by `$`). Bash grammar requires whitespace after
+// the group opener, unlike a subshell's `(`.
+static GROUP_OPEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:^|[\s;&|])\{(?:\s|$)").unwrap());
+// A subshell opens on `(` at command position with no whitespace requirement
+// (`(cmd)` is valid), while `=(`, `$(`, `<(`, and `>(` are initializers and
+// substitutions, not scope entries.
+static SUBSHELL_OPEN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[\s;&|])\(").unwrap());
 
 /// Array assignments in the live code of `line`, in source order. Emptiness is
 /// judged from the raw initializer text, not the masked projection, so a
@@ -710,16 +739,38 @@ pub(crate) fn unguarded_array_expansions(line: &str) -> Vec<(String, Span)> {
 /// The empty-array analysis treats any such boundary as making array contents
 /// ambiguous, so facts never leak across function, group, or branch scopes in
 /// either direction.
+///
+/// The interior of every `${...}` expansion is blanked before matching:
+/// parameter-expansion punctuation (`${sep%;}`, `${PATH//:/;}`) is data, never
+/// shell control flow, and a substitution result cannot mutate parent arrays.
+/// Scope exits are detected by paren/brace imbalance — a line with more
+/// closers than openers ends a scope opened on an earlier line (`}`, `true )`)
+/// — which leaves balanced forms like `arr=( )` and `x=$( cmd )` alone.
 pub(crate) fn control_flow_boundary(line: &str) -> bool {
-    let masked = scan(line).masked;
+    let scan = scan(line);
+    let mut bytes = scan.masked.into_bytes();
+    for span in &scan.param_exps {
+        for byte in &mut bytes[span.start..span.end] {
+            *byte = b' ';
+        }
+    }
+    let masked = String::from_utf8(bytes).expect("space-blanking preserves UTF-8");
+    let count = |byte: u8| {
+        masked
+            .bytes()
+            .filter(|candidate| *candidate == byte)
+            .count()
+    };
     masked.contains("&&")
         || masked.contains("||")
         || masked.contains(";;")
         || masked.contains(";&")
         || CONTROL_FLOW.is_match(&masked)
         || FUNCTION_OPEN.is_match(&masked)
-        || GROUP_OR_SUBSHELL_OPEN.is_match(&masked)
-        || GROUP_OR_SUBSHELL_CLOSE.is_match(&masked)
+        || GROUP_OPEN.is_match(&masked)
+        || SUBSHELL_OPEN.is_match(&masked)
+        || count(b')') > count(b'(')
+        || count(b'}') > count(b'{')
 }
 
 // ── G011: non-ASCII awk regex operands ──────────────────────────────────────
@@ -1098,12 +1149,16 @@ fn awk_definite_constant_regex_flows(program: &str) -> Vec<(usize, String)> {
         }
     });
     let counts = assignment_like_counts(&tokens);
+    let shadowed = awk_function_parameters(&tokens);
     simple_unconditional_assignments(program, &tokens)
         .into_iter()
         .filter(|assignment| {
             // `FS = "..."` is already reported as a direct operand; the flow
-            // path covers every other variable exactly once.
+            // path covers every other variable exactly once. A name that is
+            // also a function parameter resolves to the caller's value inside
+            // that function, so its flow is never definite (review finding 5).
             assignment.name != "FS"
+                && !shadowed.contains(&assignment.name)
                 && counts.get(&assignment.name).copied().unwrap_or(0) == 1
                 && uses
                     .iter()
@@ -1111,6 +1166,40 @@ fn awk_definite_constant_regex_flows(program: &str) -> Vec<(usize, String)> {
         })
         .map(|assignment| (assignment.offset, assignment.value))
         .collect()
+}
+
+/// Names declared as user-function parameters anywhere in the program. A use
+/// of such a name inside a function body resolves to the (caller-supplied)
+/// parameter, not the global, so constant flow through it stays ambiguous.
+fn awk_function_parameters(tokens: &[AwkToken]) -> HashSet<String> {
+    let mut parameters = HashSet::new();
+    for (index, token) in tokens.iter().enumerate() {
+        let AwkTok::Ident(keyword) = &token.tok else {
+            continue;
+        };
+        if keyword != "function" && keyword != "func" {
+            continue;
+        }
+        // `function NAME ( p1, p2, ... )` — collect the comma-separated names.
+        let Some(AwkTok::Ident(_)) = tokens.get(index + 1).map(|t| &t.tok) else {
+            continue;
+        };
+        if !matches!(tokens.get(index + 2).map(|t| &t.tok), Some(AwkTok::Punct(op)) if op == "(") {
+            continue;
+        }
+        let mut cursor = index + 3;
+        while let Some(candidate) = tokens.get(cursor) {
+            match &candidate.tok {
+                AwkTok::Ident(parameter) => {
+                    parameters.insert(parameter.clone());
+                }
+                AwkTok::Punct(op) if op == "," => {}
+                _ => break,
+            }
+            cursor += 1;
+        }
+    }
+    parameters
 }
 
 /// One `name = "value"` statement whose RHS is a single string literal.
@@ -1169,7 +1258,12 @@ fn simple_unconditional_assignments(program: &str, tokens: &[AwkToken]) -> Vec<S
             pending = Pending::None;
         }
         match &token.tok {
-            AwkTok::Ident(name) if matches!(name.as_str(), "if" | "while" | "for" | "function") => {
+            AwkTok::Ident(name)
+                if matches!(
+                    name.as_str(),
+                    "if" | "while" | "for" | "switch" | "function" | "func"
+                ) =>
+            {
                 pending = Pending::Condition { depth: paren_depth };
             }
             AwkTok::Ident(name) if matches!(name.as_str(), "else" | "do") => {
@@ -1188,6 +1282,10 @@ fn simple_unconditional_assignments(program: &str, tokens: &[AwkToken]) -> Vec<S
                         pending = Pending::Body;
                     }
                 }
+                // `&&`/`||` short-circuits (and `|` pipes/co-processes) make
+                // everything after them on the statement conditional (review
+                // finding 3); the tokenizer emits them as single characters.
+                "&" | "|" => pending = Pending::Body,
                 "{" => {
                     // A nested `{` is a plain group when nothing conditional is
                     // pending; a top-level `{` is unconditional only for the
@@ -1257,13 +1355,28 @@ fn simple_unconditional_assignments(program: &str, tokens: &[AwkToken]) -> Vec<S
 
 /// How many times each variable is assigned or modified anywhere in the
 /// program: plain and compound assignments, increments/decrements, `getline`
-/// targets, and the in-place target of `sub`/`gsub`. Comparison operators are
-/// not modifications. Used to reject reassignment ambiguity.
+/// targets, `for (var in array)` loop variables, and the in-place target of
+/// `sub`/`gsub`. Comparison operators are not modifications. Used to reject
+/// reassignment ambiguity.
 fn assignment_like_counts(tokens: &[AwkToken]) -> HashMap<String, usize> {
     let mut counts: HashMap<String, usize> = HashMap::new();
     let punct = |token: Option<&AwkToken>, expected: &str| matches!(token.map(|t| &t.tok), Some(AwkTok::Punct(op)) if op == expected);
     for (index, token) in tokens.iter().enumerate() {
         match &token.tok {
+            AwkTok::Ident(name) if name == "for" => {
+                // `for (var in array)` assigns the loop variable on every
+                // iteration (review finding 4).
+                if punct(tokens.get(index + 1), "(") {
+                    if let (Some(AwkTok::Ident(target)), Some(AwkTok::Ident(keyword))) = (
+                        tokens.get(index + 2).map(|t| &t.tok),
+                        tokens.get(index + 3).map(|t| &t.tok),
+                    ) {
+                        if keyword == "in" {
+                            *counts.entry(target.clone()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
             AwkTok::Ident(name) if name == "getline" => {
                 // `getline var` (also `cmd | getline var`) assigns the target.
                 if let Some(AwkTok::Ident(target)) = tokens.get(index + 1).map(|t| &t.tok) {
@@ -1575,6 +1688,14 @@ mod tests {
         assert!(hazardous_replacements(r#"out=${text//TOKEN/"`cmd`"}"#).is_empty());
         assert!(hazardous_replacements("out=${text//TOKEN/'`cmd`'}").is_empty());
         assert!(hazardous_replacements(r"out=${text//TOKEN/\`}").is_empty());
+        // ANSI-C `$'...'` honors `\'` escapes, so the quote does not end early
+        // and the backtick after it is live (review finding 7); a backtick
+        // inside the ANSI-C body stays inert.
+        assert_eq!(
+            hazardous_replacements(r#"out=${text/TOKEN/$'a\'b'`echo LIVE`}"#).len(),
+            1
+        );
+        assert!(hazardous_replacements(r"out=${text//TOKEN/$'\x60'}").is_empty());
         // Inert contexts never fire: single quotes and comments.
         assert!(hazardous_replacements("printf '%s' '${text/TOKEN/`cmd`}'").is_empty());
         assert!(hazardous_replacements("true # out=${text/TOKEN/`cmd`}").is_empty());
@@ -1699,12 +1820,24 @@ mod tests {
         // Case-arm terminators end a branch.
         assert!(control_flow_boundary("printf ok ;;"));
         assert!(control_flow_boundary(": ;&"));
+        // A subshell opens without a following space and closes on a bare `)`
+        // even after a plain word (review finding 2).
+        assert!(control_flow_boundary("(arr=())"));
+        assert!(control_flow_boundary("  true )"));
         // The `)` of an initializer, a mid-line command substitution, or a
         // `${...}` expansion is not a scope exit.
         assert!(!control_flow_boundary("arr=( )"));
         assert!(!control_flow_boundary("x=$( cmd )"));
         assert!(!control_flow_boundary("y=$(( 1 + 2 ))"));
         assert!(!control_flow_boundary(r#"printf '%s' "${items[@]}""#));
+        // `${...}` operator punctuation is data, never a separator, case-arm
+        // terminator, or scope closer (review finding 1).
+        assert!(!control_flow_boundary("sep=${sep%;}"));
+        assert!(!control_flow_boundary("x=${v//;;/,}"));
+        assert!(!control_flow_boundary("y=${v/;&/x}"));
+        assert!(!control_flow_boundary(
+            r#"printf '%s\n' "${items[@]}" "${PATH//:/;}""#
+        ));
         // A closer inside a comment or string is inert.
         assert!(!control_flow_boundary("true # }"));
         assert!(!control_flow_boundary("echo '}'"));
@@ -1924,6 +2057,24 @@ END { if ($0 ~ re) print }"#
 BEGIN { if ($0 ~ re) print }"#
             )
             .is_empty()
+        );
+        // Short-circuit branches, for-in clobbering, gawk switch arms, and
+        // function-parameter shadowing (review findings 3-6).
+        assert!(findings(r#"BEGIN { c && (re = "—"); if ($0 ~ re) print }"#).is_empty());
+        assert!(findings(r#"BEGIN { c || (re = "—"); if ($0 ~ re) print }"#).is_empty());
+        assert!(
+            findings(
+                "BEGIN { re=\"—\" }\n{ for (re in seen) mark[re] = 1 }\nEND { if ($0 ~ re) print }"
+            )
+            .is_empty()
+        );
+        assert!(
+            findings(r#"BEGIN { switch (x) { case 1: re = "—"; break } if ($0 ~ re) print }"#)
+                .is_empty()
+        );
+        assert!(
+            findings("BEGIN { re=\"—\"; f(\"x\") }\nfunction f(re) { if ($0 ~ re) print }")
+                .is_empty()
         );
         // Computed values: concatenation and command results.
         assert!(findings(r#"BEGIN { re = "—" tail; if ($0 ~ re) print }"#).is_empty());
