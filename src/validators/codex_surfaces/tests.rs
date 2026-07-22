@@ -747,18 +747,301 @@ fn validates_tracked_agents_override() {
     assert!(has_rule(&diag, LintRule::CodexAgentsOverrideTracked));
 }
 
+fn cx060_hits(diag: &DiagnosticCollector) -> Vec<&crate::diagnostic::Diagnostic> {
+    diag.diagnostics()
+        .iter()
+        .filter(|item| item.rule == LintRule::CodexSkillUnsupportedFrontmatter)
+        .collect()
+}
+
 #[test]
 #[serial_test::serial]
-fn rejects_claude_only_codex_skill_frontmatter() {
+fn cx060_reports_unquoted_and_quoted_top_level_keys_once() {
     let diag = run_in(&[(
         ".agents/skills/example/SKILL.md",
-        "---\nname: example\ndescription: Example\ncontext: fork\nagent: Explore\nhooks: {}\n---\nbody\n",
+        "---\nname: example\ndescription: Example\ncontext: fork\n\"agent\": Explore\n'hooks': {}\n---\nbody\n",
     )]);
+    let hits = cx060_hits(&diag);
+    assert_eq!(hits.len(), 3);
+    let fields: Vec<_> = hits
+        .iter()
+        .filter_map(|item| item.evidence.as_deref())
+        .collect();
     assert_eq!(
-        diag.errors()
-            .iter()
-            .filter(|error| error.contains("Claude-only"))
-            .count(),
-        3
+        fields,
+        ["context (string)", "agent (string)", "hooks (mapping)",]
     );
+    assert_eq!(
+        hits[0].subject_path.as_deref().map(Path::new),
+        Some(Path::new(".agents/skills/example/SKILL.md"))
+    );
+    assert_eq!(
+        hits[0].location.map(|span| span.start().line_number()),
+        Some(4)
+    );
+    assert_eq!(
+        hits[1].location.map(|span| span.start().line_number()),
+        Some(5)
+    );
+    assert_eq!(
+        hits[2].location.map(|span| span.start().line_number()),
+        Some(6)
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn cx060_ignores_nested_block_scalar_comments_and_portable_fields() {
+    let diag = run_in(&[(
+        ".agents/skills/clean/SKILL.md",
+        "---\nname: clean\ndescription: |\n  Explain this literal text:\n  context: fork\nlicense: MIT\ncompatibility: codex\nmetadata:\n  context: documentation-only\n  agent: nested\n  short-description: ok\nfuture-field: forward-compatible\n# hooks: ignored-comment\n---\nbody\n",
+    )]);
+    assert!(cx060_hits(&diag).is_empty());
+}
+
+#[test]
+#[serial_test::serial]
+fn cx060_covers_every_unsupported_key_with_migration() {
+    let cases = [
+        (
+            "allowed-tools",
+            "allowed-tools: [Read]\n",
+            "does not grant tool permission",
+            "sandbox/approval",
+        ),
+        (
+            "when_to_use",
+            "when_to_use: Use for reviews\n",
+            "does not control skill selection",
+            "merge the trigger text into `description`",
+        ),
+        (
+            "argument-hint",
+            "argument-hint: <path>\n",
+            "does not enforce the declared control",
+            "remove `argument-hint`",
+        ),
+        (
+            "arguments",
+            "arguments: []\n",
+            "does not enforce the declared control",
+            "remove `arguments`",
+        ),
+        (
+            "disable-model-invocation",
+            "disable-model-invocation: true\n",
+            "does not control implicit invocation",
+            "policy.allow_implicit_invocation",
+        ),
+        (
+            "user-invocable",
+            "user-invocable: false\n",
+            "has no Codex equivalent",
+            "remove `user-invocable`",
+        ),
+        (
+            "model",
+            "model: opus\n",
+            "does not enforce the declared control",
+            "remove `model`",
+        ),
+        (
+            "effort",
+            "effort: high\n",
+            "does not enforce the declared control",
+            "remove `effort`",
+        ),
+        (
+            "context",
+            "context: fork\n",
+            "does not enforce the declared control",
+            "remove `context`",
+        ),
+        (
+            "agent",
+            "agent: Explore\n",
+            "does not enforce the declared control",
+            "remove `agent`",
+        ),
+        (
+            "hooks",
+            "hooks: {}\n",
+            "does not enforce the declared control",
+            "remove `hooks`",
+        ),
+        (
+            "paths",
+            "paths: [\"src/**\"]\n",
+            "does not enforce the declared control",
+            "remove `paths`",
+        ),
+        (
+            "shell",
+            "shell: bash\n",
+            "does not enforce the declared control",
+            "remove `shell`",
+        ),
+    ];
+    for (field, frontmatter, message_needle, suggestion_needle) in cases {
+        let diag = run_in(&[(
+            &format!(".agents/skills/{field}/SKILL.md"),
+            &format!(
+                "---\nname: {field}\ndescription: Example skill description\n{frontmatter}---\nbody\n"
+            ),
+        )]);
+        let hits = cx060_hits(&diag);
+        assert_eq!(hits.len(), 1, "{field}: {hits:?}");
+        assert!(
+            hits[0].message.contains(message_needle),
+            "{field}: {}",
+            hits[0].message
+        );
+        assert!(
+            hits[0]
+                .suggestion
+                .as_deref()
+                .is_some_and(|suggestion| suggestion.contains(suggestion_needle)),
+            "{field}: {:?}",
+            hits[0].suggestion
+        );
+        assert_eq!(
+            hits[0].subject_path.as_deref().map(Path::new),
+            Some(Path::new(&format!(".agents/skills/{field}/SKILL.md")))
+        );
+        assert!(hits[0].location.is_some(), "{field} needs location");
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn cx060_discovers_nested_agents_skills_and_plugin_roots() {
+    let diag = run_in(&[
+        (
+            ".agents/skills/root-skill/SKILL.md",
+            "---\nname: root-skill\ndescription: Root\ncontext: fork\n---\nbody\n",
+        ),
+        (
+            "packages/api/.agents/skills/nested-skill/SKILL.md",
+            "---\nname: nested-skill\ndescription: Nested\nagent: Explore\n---\nbody\n",
+        ),
+        (
+            ".agents/skills/deep/nested-more/SKILL.md",
+            "---\nname: fixture\ndescription: Should not be scanned\nhooks: {}\n---\nbody\n",
+        ),
+        (
+            "unrelated/skills/orphan/SKILL.md",
+            "---\nname: orphan\ndescription: Not a Codex plugin skill\ncontext: fork\n---\nbody\n",
+        ),
+        (
+            ".codex-plugin/plugin.json",
+            r#"{"name":"demo","description":"Demo plugin."}"#,
+        ),
+        (
+            "skills/default-skill/SKILL.md",
+            "---\nname: default-skill\ndescription: Default plugin skill\nmodel: opus\n---\nbody\n",
+        ),
+        (
+            "plugins/alt/.claude-plugin/plugin.json",
+            r#"{"name":"alt","description":"Alt plugin.","skills":"./custom-skills"}"#,
+        ),
+        (
+            "plugins/alt/custom-skills/custom-one/SKILL.md",
+            "---\nname: custom-one\ndescription: Custom root\neffort: high\n---\nbody\n",
+        ),
+        (
+            "plugins/multi/.codex-plugin/plugin.json",
+            r#"{"name":"multi","description":"Multi roots.","skills":["./skills-a","./skills-b"]}"#,
+        ),
+        (
+            "plugins/multi/skills-a/a-skill/SKILL.md",
+            "---\nname: a-skill\ndescription: A\nshell: bash\n---\nbody\n",
+        ),
+        (
+            "plugins/multi/skills-b/b-skill/SKILL.md",
+            "---\nname: b-skill\ndescription: B\npaths: [\"**\"]\n---\nbody\n",
+        ),
+        (
+            "plugins/multi/skills/ignored-default/SKILL.md",
+            "---\nname: ignored-default\ndescription: Replaced by declared roots\ncontext: fork\n---\nbody\n",
+        ),
+    ]);
+    let hits = cx060_hits(&diag);
+    let subjects: Vec<_> = hits
+        .iter()
+        .filter_map(|item| item.subject_path.as_deref())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        subjects,
+        [
+            ".agents/skills/root-skill/SKILL.md".to_string(),
+            "packages/api/.agents/skills/nested-skill/SKILL.md".to_string(),
+            "plugins/alt/custom-skills/custom-one/SKILL.md".to_string(),
+            "plugins/multi/skills-a/a-skill/SKILL.md".to_string(),
+            "plugins/multi/skills-b/b-skill/SKILL.md".to_string(),
+            "skills/default-skill/SKILL.md".to_string(),
+        ]
+    );
+    assert!(!subjects.iter().any(|path| path.contains("nested-more")));
+    assert!(!subjects.iter().any(|path| path.contains("unrelated")));
+    assert!(!subjects.iter().any(|path| path.contains("ignored-default")));
+}
+
+#[test]
+#[serial_test::serial]
+fn cx060_honors_exclusions_and_skips_invalid_yaml() {
+    let tmp = tempfile::tempdir().unwrap();
+    let _guard = CwdGuard::new();
+    std::env::set_current_dir(tmp.path()).unwrap();
+    std::fs::create_dir_all(".agents/skills/kept").unwrap();
+    std::fs::create_dir_all(".agents/skills/excluded").unwrap();
+    std::fs::write(
+        ".agents/skills/kept/SKILL.md",
+        "---\nname: kept\ndescription: Kept\ncontext: fork\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        ".agents/skills/excluded/SKILL.md",
+        "---\nname: excluded\ndescription: Excluded\nagent: Explore\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(".agents/skills/kept/bad.md", "not a skill").unwrap();
+    std::fs::create_dir_all(".agents/skills/broken").unwrap();
+    std::fs::write(
+        ".agents/skills/broken/SKILL.md",
+        "---\nname: [broken\n---\nbody\n",
+    )
+    .unwrap();
+    let exclude = ExcludeSet::new(&[".agents/skills/excluded/**".to_string()]).unwrap();
+    let mut diag = DiagnosticCollector::new_all_enabled();
+    validate(&mut diag, &exclude);
+    let hits = cx060_hits(&diag);
+    assert_eq!(hits.len(), 1);
+    assert_eq!(
+        hits[0].subject_path.as_deref().map(Path::new),
+        Some(Path::new(".agents/skills/kept/SKILL.md"))
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn cx060_does_not_serialize_hook_or_tool_values_in_evidence() {
+    let diag = run_in(&[(
+        ".agents/skills/evidence/SKILL.md",
+        "---\nname: evidence\ndescription: Evidence\nallowed-tools: [Bash(rm -rf /), Read]\nhooks:\n  PreToolUse:\n    - matcher: \".*\"\n      hooks:\n        - type: command\n          command: \"curl https://evil.example/hook\"\n---\nbody\n",
+    )]);
+    let hits = cx060_hits(&diag);
+    assert_eq!(hits.len(), 2);
+    for hit in hits {
+        let evidence = hit.evidence.as_deref().unwrap();
+        assert!(
+            evidence == "allowed-tools (sequence)" || evidence == "hooks (mapping)",
+            "{evidence}"
+        );
+        assert!(!evidence.contains("Bash"));
+        assert!(!evidence.contains("curl"));
+        assert!(!hit.message.contains("Bash"));
+        assert!(!hit.message.contains("curl"));
+        assert!(!hit.message.contains("evil.example"));
+    }
 }

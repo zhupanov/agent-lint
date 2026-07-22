@@ -7,6 +7,9 @@
 //! - Public authoring policy: CX048 (name present), CX049 (kebab-case name).
 //! - Publishing / install quality: CX056 (interface URLs), CX057 (asset paths),
 //!   CX059 (description), CX063 (ignored prompt-key migration aid).
+//! - Skill frontmatter compatibility (CX060): ignored Claude / Agent Skills
+//!   behavior fields on `.agents/skills/<skill>/SKILL.md` and selected plugin
+//!   skill roots; strict top-level YAML only; default warning, non-autofixable.
 //! - Soft-retired compatibility identifiers: CX046 (mislocated manifest — a
 //!   recognized manifest always establishes its own plugin root) and CX058
 //!   (unsupported hooks — Codex loads plugin-bundled hooks). Neither is emitted;
@@ -19,17 +22,19 @@
 //! documentation at <https://developers.openai.com/codex/plugins/build> on
 //! 2026-07-21.
 
-use crate::config::ExcludeSet;
+use crate::config::{ExcludeSet, normalize_path};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::frontmatter;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
+use crate::plugin_paths::safe_component_path;
 use crate::rules::LintRule;
 use crate::traversal;
 use regex::Regex;
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use url::Url;
 
@@ -51,7 +56,26 @@ const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 /// this caps diagnostic volume — and the collector's O(n) ordering insert per
 /// diagnostic — on a hostile array without changing any legitimate outcome.
 const MAX_VALIDATED_ARRAY_ELEMENTS: usize = 256;
-const CODEX_SKILL_UNSUPPORTED_FIELDS: &[&str] = &["context", "agent", "hooks"];
+/// Fixed CX060 set: Agent Skills experimental `allowed-tools` plus Claude
+/// behavior fields that Codex's skill loader ignores (reads only `name`,
+/// `description`, and `metadata.short-description`). Verified against
+/// openai/codex `7442f5f` `core-skills` frontmatter parsing and the Agent
+/// Skills / Claude Code frontmatter references on 2026-07-21.
+const CODEX_SKILL_UNSUPPORTED_FIELDS: &[&str] = &[
+    "allowed-tools",
+    "when_to_use",
+    "argument-hint",
+    "arguments",
+    "disable-model-invocation",
+    "user-invocable",
+    "model",
+    "effort",
+    "context",
+    "agent",
+    "hooks",
+    "paths",
+    "shell",
+];
 
 /// Codex plugin manifest name identifier contract (kebab-case).
 static PLUGIN_NAME_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -1220,33 +1244,237 @@ impl<'a> JsonScanner<'a> {
 
 // ── Codex skill frontmatter (CX060) ──────────────────────────────────────
 
+/// CX060: warn when a Codex-discovered skill declares behavior fields that
+/// Codex's loader ignores. Discovery covers every repository-owned
+/// `.agents/skills/<skill>/SKILL.md` tree and every selected plugin skill root
+/// from [`crate::platforms::codex_plugin_manifests`] (declared `skills` paths
+/// when non-empty, otherwise default `skills/`). Invalid YAML is owned by X001;
+/// CX060 inspects only a successfully parsed top-level mapping.
 fn validate_codex_skill_frontmatter(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let root = Path::new(".agents/skills");
-    if !root.is_dir() {
-        return;
-    }
-    for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
-        if entry.path.file_name().is_none_or(|name| name != "SKILL.md") {
-            continue;
-        }
-        let path = &entry.path;
-        let display = entry.display;
-        let Ok(content) = std::fs::read_to_string(path) else {
+    for (display, path) in discover_codex_skill_files(exclude) {
+        let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };
         let Some(lines) = frontmatter::extract_frontmatter(&content) else {
             continue;
         };
-        for line in lines {
-            let Some((field, _)) = line.split_once(':') else {
+        let Ok(yaml) = frontmatter::parse_yaml_strict(&lines) else {
+            continue;
+        };
+        let Some(mapping) = yaml.as_mapping() else {
+            continue;
+        };
+        for (key, value) in mapping.iter() {
+            let field = key.as_str();
+            if !CODEX_SKILL_UNSUPPORTED_FIELDS.contains(&field) {
                 continue;
-            };
-            let field = field.trim();
-            if CODEX_SKILL_UNSUPPORTED_FIELDS.contains(&field) {
-                diag.report_at(LintRule::CodexSkillUnsupportedFrontmatter, &display, &format!("{display}: `{field}` is Claude-only skill frontmatter unsupported by Codex CLI"));
+            }
+            let (message, suggestion) = unsupported_skill_field_guidance(&display, field);
+            let mut metadata = DiagnosticMetadata::default()
+                .with_evidence(format!("{field} ({})", yaml_value_type(value)))
+                .with_suggestion(suggestion);
+            if let Some((line, column)) = top_level_key_location(&lines, field) {
+                metadata = metadata.with_location(SourceSpan::point(line, column));
+            }
+            diag.report_at_with(
+                LintRule::CodexSkillUnsupportedFrontmatter,
+                &display,
+                &message,
+                metadata,
+            );
+        }
+    }
+}
+
+/// Deterministic Codex skill inventory: repository `.agents/skills` trees plus
+/// selected-plugin skill roots. Ordered by physical display path.
+fn discover_codex_skill_files(exclude: &ExcludeSet) -> Vec<(String, PathBuf)> {
+    let mut by_display: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for entry in crate::platforms::agent_skill_candidates(exclude) {
+        if !is_direct_skill_md_under_agents_skills(&entry.path) {
+            continue;
+        }
+        by_display.insert(entry.display, entry.path);
+    }
+    for skills_root in selected_plugin_skill_roots(exclude) {
+        for entry in skill_md_files_under_root(&skills_root, exclude) {
+            by_display.insert(entry.display, entry.path);
+        }
+    }
+    by_display.into_iter().collect()
+}
+
+/// `…/.agents/skills/<skill>/SKILL.md` only — not deeper fixture/example copies
+/// nested under a skill directory.
+fn is_direct_skill_md_under_agents_skills(path: &Path) -> bool {
+    let components: Vec<_> = path.components().collect();
+    if components.len() < 4 {
+        return false;
+    }
+    matches!(
+        &components[components.len() - 4..],
+        [
+            Component::Normal(agents),
+            Component::Normal(skills),
+            Component::Normal(_skill),
+            Component::Normal(file)
+        ] if *agents == ".agents" && *skills == "skills" && *file == "SKILL.md"
+    )
+}
+
+/// Skill roots for every selected Codex plugin manifest. Consumes
+/// [`crate::platforms::codex_plugin_manifests`] for precedence/exclusions and
+/// [`safe_component_path`] for path safety — no second resolver.
+fn selected_plugin_skill_roots(exclude: &ExcludeSet) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    for manifest in crate::platforms::codex_plugin_manifests(exclude) {
+        let plugin_root = manifest
+            .path
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let Ok(content) = std::fs::read_to_string(&manifest.path) else {
+            continue;
+        };
+        if content.len() > MAX_MANIFEST_BYTES {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&content) else {
+            continue;
+        };
+        let declared = declared_plugin_skill_roots(&plugin_root, &value);
+        if declared.is_empty() {
+            roots.push(plugin_root.join("skills"));
+        } else {
+            roots.extend(declared);
+        }
+    }
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+/// Safe `skills` string / string-array declarations relative to the plugin
+/// root. Empty or all-unsafe declarations yield an empty list so the caller
+/// can fall back to default `skills/` (Codex replacement semantics).
+fn declared_plugin_skill_roots(plugin_root: &Path, value: &Value) -> Vec<PathBuf> {
+    let Some(skills) = value.get("skills") else {
+        return Vec::new();
+    };
+    let raw_paths: Vec<&str> = match skills {
+        Value::String(path) => vec![path.as_str()],
+        Value::Array(items) => items.iter().filter_map(Value::as_str).collect(),
+        _ => return Vec::new(),
+    };
+    raw_paths
+        .into_iter()
+        .filter_map(safe_component_path)
+        .map(|relative| plugin_root.join(relative))
+        .collect()
+}
+
+fn skill_md_files_under_root(
+    skills_root: &Path,
+    exclude: &ExcludeSet,
+) -> Vec<traversal::WalkEntry> {
+    if !skills_root.is_dir() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    for dir in traversal::shallow_directories(skills_root, Path::new("."), Some(exclude)).entries {
+        let path = dir.path.join("SKILL.md");
+        if !path.is_file() {
+            continue;
+        }
+        let display = normalize_path(&format!("{}/SKILL.md", dir.display));
+        if exclude.is_excluded(&display) {
+            continue;
+        }
+        files.push(traversal::WalkEntry { path, display });
+    }
+    files.sort_by(|left, right| left.display.cmp(&right.display));
+    files
+}
+
+fn unsupported_skill_field_guidance(display: &str, field: &str) -> (String, String) {
+    match field {
+        "when_to_use" => (
+            format!(
+                "{display}: `when_to_use` is ignored by Codex and does not control skill selection"
+            ),
+            "merge the trigger text into `description`".to_string(),
+        ),
+        "allowed-tools" => (
+            format!(
+                "{display}: `allowed-tools` is ignored by Codex and does not grant tool permission"
+            ),
+            "remove `allowed-tools` and rely on Codex sandbox/approval configuration".to_string(),
+        ),
+        "disable-model-invocation" => (
+            format!(
+                "{display}: `disable-model-invocation` is ignored by Codex and does not control implicit invocation"
+            ),
+            "move invocation policy to `agents/openai.yaml` (`policy.allow_implicit_invocation`)"
+                .to_string(),
+        ),
+        "user-invocable" => (
+            format!(
+                "{display}: `user-invocable` is ignored by Codex; `user-invocable: false` has no Codex equivalent"
+            ),
+            "remove `user-invocable`; use `agents/openai.yaml` (`policy.allow_implicit_invocation`) only when that mapping applies"
+                .to_string(),
+        ),
+        "argument-hint" | "arguments" | "model" | "effort" | "context" | "agent" | "hooks"
+        | "paths" | "shell" => (
+            format!(
+                "{display}: `{field}` is ignored by Codex and does not enforce the declared control"
+            ),
+            format!(
+                "remove `{field}` and move the required behavior into skill instructions or repository Codex configuration"
+            ),
+        ),
+        other => (
+            format!("{display}: `{other}` is ignored by Codex"),
+            format!("remove `{other}`"),
+        ),
+    }
+}
+
+fn yaml_value_type(value: &crate::yaml::Value) -> &'static str {
+    if value.is_null() {
+        "null"
+    } else if value.as_str().is_some() {
+        "string"
+    } else if value.as_bool().is_some() {
+        "boolean"
+    } else if value.as_i64().is_some() || value.as_u64().is_some() || value.as_f64().is_some() {
+        "number"
+    } else if value.as_sequence().is_some() {
+        "sequence"
+    } else if value.as_mapping().is_some() {
+        "mapping"
+    } else {
+        "value"
+    }
+}
+
+/// Locate an unquoted or quoted top-level mapping key in frontmatter lines.
+/// Returns 1-based file line and column of the key start.
+fn top_level_key_location(fm_lines: &[String], key: &str) -> Option<(usize, usize)> {
+    for (index, line) in fm_lines.iter().enumerate() {
+        if line.chars().next().is_some_and(char::is_whitespace) {
+            continue;
+        }
+        for form in [key.to_string(), format!("\"{key}\""), format!("'{key}'")] {
+            if let Some(rest) = line.strip_prefix(&form)
+                && (rest.starts_with(':') || rest.starts_with(" :"))
+            {
+                return Some((index + 2, 1));
             }
         }
     }
+    None
 }
 
 #[cfg(test)]

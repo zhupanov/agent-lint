@@ -731,7 +731,12 @@ pub enum LintRule {
     /// CX059: Codex plugin manifest description is missing or blank
     #[strum(props(code = "CX059", name = "codex-plugin-description"))]
     CodexPluginDescriptionMissing,
-    /// CX060: a Codex skill uses Claude-only frontmatter
+    /// CX060: a Codex skill uses behavior-bearing frontmatter that Codex ignores
+    /// (`allowed-tools`, `when_to_use`, `argument-hint`, `arguments`,
+    /// `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`,
+    /// `agent`, `hooks`, `paths`, `shell`). Portable `license` / `compatibility` /
+    /// `metadata` stay clean. Surfaces: every `.agents/skills/<skill>/SKILL.md`
+    /// and selected plugin skill roots from `codex_plugin_manifests`.
     #[strum(props(code = "CX060", name = "codex-skill-frontmatter"))]
     CodexSkillUnsupportedFrontmatter,
     /// CX061: approval_policy granular form has an invalid shape

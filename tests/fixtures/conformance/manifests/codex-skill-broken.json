@@ -1,0 +1,17 @@
+{
+  "class": "broken",
+  "repository": "codex-skill-broken",
+  "covers": ["codex-plugin", "codex", "json", "normal"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CX060", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CX060", "name": "codex-skill-frontmatter", "severity": "warning", "subject_path": ".agents/skills/shared/SKILL.md" },
+    { "code": "CX060", "name": "codex-skill-frontmatter", "severity": "warning", "subject_path": ".agents/skills/shared/SKILL.md" },
+    { "code": "CX060", "name": "codex-skill-frontmatter", "severity": "warning", "subject_path": "plugins/demo/skills/plugin-skill/SKILL.md" },
+    { "code": "CX060", "name": "codex-skill-frontmatter", "severity": "warning", "subject_path": "plugins/demo/skills/plugin-skill/SKILL.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}
