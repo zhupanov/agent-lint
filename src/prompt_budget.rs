@@ -6,9 +6,7 @@ use crate::markdown_refs::{
     clause_is_mandatory_load, is_root_plain_md_prefix, markdown_references as structured_refs,
     prompt_resolution_base,
 };
-use crate::repo_path::{
-    normalize_separators, resolve_repo_path, PathProbe, ResolutionBase,
-};
+use crate::repo_path::{PathProbe, ResolutionBase, normalize_separators, resolve_repo_path};
 use regex::Regex;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -76,7 +74,11 @@ pub fn markdown_references(source_path: &Path, content: &str) -> Vec<PathBuf> {
         if !clause_is_mandatory_load(clause) {
             continue;
         }
-        let raw = reference.raw.split(['#', ':']).next().unwrap_or(&reference.raw);
+        let raw = reference
+            .raw
+            .split(['#', ':'])
+            .next()
+            .unwrap_or(&reference.raw);
         if !raw.ends_with(".md") || raw.contains(['$', '{', '}', '<', '>', '*']) {
             continue;
         }
@@ -94,12 +96,7 @@ pub fn markdown_references(source_path: &Path, content: &str) -> Vec<PathBuf> {
             if !clause_is_mandatory_load(line) {
                 continue;
             }
-            add_resolved_reference(
-                source_path,
-                raw,
-                ResolutionBase::RepositoryRoot,
-                &mut refs,
-            );
+            add_resolved_reference(source_path, raw, ResolutionBase::RepositoryRoot, &mut refs);
         }
     }
     refs.into_iter().collect()
@@ -352,11 +349,7 @@ mod tests {
             "Do not read `optional.md` completely.\nline\nline\nline\nline\n",
         )
         .unwrap();
-        fs::write(
-            "skills/demo/optional.md",
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n",
-        )
-        .unwrap();
+        fs::write("skills/demo/optional.md", "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n").unwrap();
         let budget = PromptSourceBudget {
             name: "demo".into(),
             roots: vec!["skills/demo/SKILL.md".into()],

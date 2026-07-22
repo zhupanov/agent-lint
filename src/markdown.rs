@@ -165,11 +165,8 @@ impl MarkdownDocument {
                 }
                 NodeValue::Link(link) => {
                     let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
-                    let (raw_destination, destination_byte_range) = destination_from_link_span(
-                        &content,
-                        byte_range.clone(),
-                        &link.url,
-                    );
+                    let (raw_destination, destination_byte_range) =
+                        destination_from_link_span(&content, byte_range.clone(), &link.url);
                     links.push(MarkdownLink {
                         destination: link.url.clone(),
                         raw_destination,
@@ -195,11 +192,8 @@ impl MarkdownDocument {
                 }
                 NodeValue::Image(image) => {
                     let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
-                    let (raw_destination, destination_byte_range) = destination_from_link_span(
-                        &content,
-                        byte_range.clone(),
-                        &image.url,
-                    );
+                    let (raw_destination, destination_byte_range) =
+                        destination_from_link_span(&content, byte_range.clone(), &image.url);
                     images.push(MarkdownImage {
                         destination: image.url.clone(),
                         raw_destination,
@@ -231,8 +225,11 @@ impl MarkdownDocument {
                         data.sourcepos.end.column,
                     ));
                     let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
-                    let (raw_literal, literal_byte_range) =
-                        inline_code_literal_from_span(&content, byte_range.clone(), code.num_backticks);
+                    let (raw_literal, literal_byte_range) = inline_code_literal_from_span(
+                        &content,
+                        byte_range.clone(),
+                        code.num_backticks,
+                    );
                     inline_code.push(MarkdownInlineCode {
                         literal: code.literal.clone(),
                         raw_literal,
@@ -661,10 +658,13 @@ fn fence_facts(content: &str) -> (Vec<MarkdownFence>, Option<usize>) {
 }
 
 /// Convert a Comrak sourcepos (1-based inclusive columns) into a UTF-8 byte range.
-fn byte_range_for_sourcepos(content: &str, sourcepos: comrak::nodes::Sourcepos) -> std::ops::Range<usize> {
+fn byte_range_for_sourcepos(
+    content: &str,
+    sourcepos: comrak::nodes::Sourcepos,
+) -> std::ops::Range<usize> {
     let start = offset_for_line_column(content, sourcepos.start.line, sourcepos.start.column);
-    let end = offset_for_line_column(content, sourcepos.end.line, sourcepos.end.column)
-        .map(|offset| {
+    let end =
+        offset_for_line_column(content, sourcepos.end.line, sourcepos.end.column).map(|offset| {
             content[offset..]
                 .chars()
                 .next()
@@ -828,7 +828,10 @@ mod tests {
         assert_eq!(link.start_column, 1);
         assert_eq!(link.end_line, 5);
         assert_eq!(link.end_column, 17);
-        assert_eq!(&doc.content()[link.destination_byte_range.clone()], "docs/a.md");
+        assert_eq!(
+            &doc.content()[link.destination_byte_range.clone()],
+            "docs/a.md"
+        );
         assert_eq!(doc.fences().len(), 1);
     }
 

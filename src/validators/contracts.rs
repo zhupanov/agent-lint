@@ -5,14 +5,14 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::fence::{CodeFenceTracker, LineClass, consecutive_bash_pairs};
 use crate::frontmatter;
 use crate::markdown::MarkdownDocument;
-use crate::prompt_budget::normalize_repo_relative;
 use crate::markdown_refs::{
-    SUGGEST_CREATE_OR_CORRECT, SUGGEST_REPLACE_SYMLINK, is_external_or_fragment_destination,
-    markdown_references, percent_decode_once, MarkdownRefKind,
+    MarkdownRefKind, SUGGEST_CREATE_OR_CORRECT, SUGGEST_REPLACE_SYMLINK,
+    is_external_or_fragment_destination, markdown_references, percent_decode_once,
 };
+use crate::prompt_budget::normalize_repo_relative;
 use crate::repo_path::{
-    PathProbe, ResolutionBase, normalize_path_probe, normalize_separators,
-    normalized_target_key, probe_contains_parent_segment, resolve_repo_path,
+    PathProbe, ResolutionBase, normalize_path_probe, normalize_separators, normalized_target_key,
+    probe_contains_parent_segment, resolve_repo_path,
 };
 use crate::rules::LintRule;
 use crate::script_paths::{ScriptKind, script_kind};
@@ -1213,9 +1213,9 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             }
             let classified = normalize_separators(&reference.raw);
             if !classify_inline_code_path(&classified).is_repository_path()
-                || !prefixes
-                    .iter()
-                    .any(|prefix| classified.starts_with(prefix) || reference.raw.starts_with(prefix))
+                || !prefixes.iter().any(|prefix| {
+                    classified.starts_with(prefix) || reference.raw.starts_with(prefix)
+                })
             {
                 continue;
             }
@@ -1249,7 +1249,10 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             diag.report_at_with(
                 LintRule::InlinePathMissing,
                 &relpath,
-                &format!("{relpath}:{line}: dead or escaping inline path `{}`", reference.raw),
+                &format!(
+                    "{relpath}:{line}: dead or escaping inline path `{}`",
+                    reference.raw
+                ),
                 metadata,
             );
         }

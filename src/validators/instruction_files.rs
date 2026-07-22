@@ -5,11 +5,11 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::markdown_refs::{
-    SUGGEST_CREATE_OR_CORRECT, SUGGEST_REPLACE_SYMLINK, markdown_references, MarkdownRefKind,
+    MarkdownRefKind, SUGGEST_CREATE_OR_CORRECT, SUGGEST_REPLACE_SYMLINK, markdown_references,
 };
 use crate::repo_path::{
-    PathProbe, ResolutionBase, normalize_path_probe, normalize_separators,
-    normalized_target_key, probe_contains_parent_segment, resolve_repo_path,
+    PathProbe, ResolutionBase, normalize_path_probe, normalize_separators, normalized_target_key,
+    probe_contains_parent_segment, resolve_repo_path,
 };
 use crate::rules::LintRule;
 use crate::sensitive::find_instruction_secret;
@@ -180,12 +180,8 @@ fn validate_inline_paths(
         let key = if rejected_parent {
             format!("unsafe:{probe}")
         } else {
-            normalized_target_key(
-                agents_path,
-                &reference.raw,
-                ResolutionBase::SourceRelative,
-            )
-            .unwrap_or_else(|| probe.clone())
+            normalized_target_key(agents_path, &reference.raw, ResolutionBase::SourceRelative)
+                .unwrap_or_else(|| probe.clone())
         };
         if !seen.insert(key) {
             continue;
@@ -783,10 +779,7 @@ mod tests {
             .filter(|item| item.rule == LintRule::InstructionFilePathMissing)
             .collect();
         assert_eq!(findings.len(), 1);
-        assert_eq!(
-            findings[0].evidence.as_deref(),
-            Some("docs/../outside.md")
-        );
+        assert_eq!(findings[0].evidence.as_deref(), Some("docs/../outside.md"));
         assert_eq!(
             findings[0].suggestion.as_deref(),
             Some(SUGGEST_REPLACE_SYMLINK)
@@ -799,8 +792,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        let content =
-            "See `docs/first-missing.md` and ``docs/third-missing.md`` plus `docs/first-missing.md` again.\n";
+        let content = "See `docs/first-missing.md` and ``docs/third-missing.md`` plus `docs/first-missing.md` again.\n";
         let mut diag = DiagnosticCollector::new_all_enabled();
         diag.with_subject_path("AGENTS.md", |diag| {
             validate_inline_paths(diag, Path::new("AGENTS.md"), "AGENTS.md", content)
@@ -850,10 +842,7 @@ mod tests {
             finding.evidence.as_deref(),
             Some("docs/external/present.md")
         );
-        assert_eq!(
-            finding.suggestion.as_deref(),
-            Some(SUGGEST_REPLACE_SYMLINK)
-        );
+        assert_eq!(finding.suggestion.as_deref(), Some(SUGGEST_REPLACE_SYMLINK));
     }
 
     #[test]

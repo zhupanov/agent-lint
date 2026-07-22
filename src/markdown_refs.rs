@@ -129,10 +129,7 @@ pub fn prompt_resolution_base(kind: MarkdownRefKind, raw: &str) -> ResolutionBas
         MarkdownRefKind::InlineCode => {
             let normalized = normalize_separators(raw.trim_start_matches("./"));
             let first = normalized.split('/').next().unwrap_or("");
-            if matches!(
-                first,
-                "skills" | "docs" | "agents" | "scripts" | ".claude"
-            ) {
+            if matches!(first, "skills" | "docs" | "agents" | "scripts" | ".claude") {
                 // `.claude/skills/...` shares the `.claude` first component.
                 if first == ".claude" {
                     let mut parts = normalized.split('/');
@@ -152,15 +149,9 @@ pub fn prompt_resolution_base(kind: MarkdownRefKind, raw: &str) -> ResolutionBas
 /// Explicit repository-root plain-path prefixes retained for S062.
 pub fn is_root_plain_md_prefix(path: &str) -> bool {
     let normalized = normalize_separators(path);
-    [
-        "skills/",
-        ".claude/skills/",
-        "docs/",
-        "agents/",
-        "scripts/",
-    ]
-    .iter()
-    .any(|prefix| normalized.starts_with(prefix))
+    ["skills/", ".claude/skills/", "docs/", "agents/", "scripts/"]
+        .iter()
+        .any(|prefix| normalized.starts_with(prefix))
 }
 
 /// Classify whether a clause mandates loading the referenced prompt source.
@@ -473,7 +464,9 @@ mod tests {
         let content = "Do not read `a.md` completely; always read `b.md` first.\n";
         let refs = markdown_references(content);
         assert_eq!(refs.len(), 2);
-        assert!(!clause_is_mandatory_load(refs[0].clause.as_deref().unwrap()));
+        assert!(!clause_is_mandatory_load(
+            refs[0].clause.as_deref().unwrap()
+        ));
         assert!(clause_is_mandatory_load(refs[1].clause.as_deref().unwrap()));
     }
 

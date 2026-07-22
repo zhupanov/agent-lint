@@ -148,11 +148,7 @@ fn stays_inside_repository(path: &Path) -> bool {
 }
 
 /// Dedupe key for equivalent slash/backslash, fragment, and symbol spellings.
-pub fn normalized_target_key(
-    source: &Path,
-    raw: &str,
-    base: ResolutionBase,
-) -> Option<String> {
+pub fn normalized_target_key(source: &Path, raw: &str, base: ResolutionBase) -> Option<String> {
     let probe = normalize_path_probe(raw);
     if probe.is_empty() || Path::new(&probe).is_absolute() {
         return None;
