@@ -448,6 +448,47 @@ pub fn yaml_to_json(value: &crate::yaml::Value) -> Option<serde_json::Value> {
 mod tests {
     use super::*;
 
+    const LEGACY_FRONTMATTER_HELPER_FILES: &[&str] = &[
+        "frontmatter.rs",       // Definitions and internal use.
+        "validators/skills.rs", // Raw fallback on invalid YAML; absorb, then privatize.
+    ];
+
+    #[test]
+    fn legacy_helper_call_sites_are_pinned() {
+        const QUALIFIED_TOKENS: &[&str] = &[
+            "frontmatter::get_field",
+            "frontmatter::get_field_state",
+            "frontmatter::field_exists",
+        ];
+        const IMPORTED_NAMES: &[&str] = &["get_field", "get_field_state", "field_exists"];
+
+        for (path, content) in crate::test_helpers::source_files() {
+            for token in QUALIFIED_TOKENS {
+                if content.contains(token) {
+                    assert!(
+                        LEGACY_FRONTMATTER_HELPER_FILES.contains(&path.as_str()),
+                        "legacy frontmatter helper call site {path} matches {token} but is not pinned"
+                    );
+                }
+            }
+            for import_root in ["use crate::frontmatter", "use super::frontmatter"] {
+                for (_, suffix) in content.match_indices(import_root) {
+                    let statement = suffix
+                        .split_once(';')
+                        .map_or(suffix, |(statement, _)| statement);
+                    for name in IMPORTED_NAMES {
+                        if statement.contains(name) {
+                            assert!(
+                                LEGACY_FRONTMATTER_HELPER_FILES.contains(&path.as_str()),
+                                "legacy frontmatter helper call site {path} imports {name} in `{statement}` but is not pinned"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn leading_frontmatter_handles_logical_delimiters_and_body_only_files() {
         let body_only = "Instructions without metadata\n";

@@ -1282,6 +1282,31 @@ mod tests {
     // ── H023: dangerous commands ────────────────────────────────────
 
     #[test]
+    fn h023_shared_argv_semantics() {
+        for case in crate::test_helpers::argv_hard_negative_corpus() {
+            let Some(expected) = case.expect_h023_diagnostic else {
+                continue;
+            };
+            let command = std::iter::once(case.command)
+                .chain(case.args.iter().copied())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut diagnostics = DiagnosticCollector::new_all_enabled();
+            validate_hook_schema(
+                &wrap("PreToolUse", json!({"type": "command", "command": command})),
+                "test",
+                true,
+                &mut diagnostics,
+            );
+            let found = diagnostics
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::HookCommandDangerous);
+            assert_eq!(found, expected, "shared argv case: {case:?}");
+        }
+    }
+
+    #[test]
     fn h023_flags_destructive_commands() {
         for (cmd, category) in [
             ("rm -rf /tmp/x", DangerousCommandCategory::RecursiveForceRm),
