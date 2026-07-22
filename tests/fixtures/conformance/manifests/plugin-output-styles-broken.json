@@ -1,0 +1,17 @@
+{
+  "class": "broken",
+  "repository": "plugin-output-styles-broken",
+  "covers": ["output-styles-plugin", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "O001,O002,O003,O004,O006", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "O001", "name": "style-description-missing", "severity": "warning", "subject_path": "declared-styles/missing-desc.md", "suggestion": "add a non-empty string description frontmatter field" },
+    { "code": "O003", "name": "style-field-unsupported", "severity": "warning", "subject_path": "output-styles/accepted-force.md", "suggestion": "remove the unsupported field or relocate it to a plugin-bundled output style" },
+    { "code": "O003", "name": "style-field-unsupported", "severity": "warning", "subject_path": "output-styles/nested/unknown-field.md", "suggestion": "remove the unsupported field or relocate it to a plugin-bundled output style" },
+    { "code": "O006", "name": "style-frontmatter-invalid", "severity": "error", "subject_path": "output-styles/root-invalid.md", "suggestion": "repair the attempted frontmatter or remove it to use a body-only style" }
+  ],
+  "allowed_additional_diagnostics": []
+}

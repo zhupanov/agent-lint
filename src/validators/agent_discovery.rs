@@ -1,4 +1,4 @@
-//! Shared recursive agent-file discovery.
+//! Shared recursive Markdown-file discovery across repository-relative roots.
 //!
 //! One collector feeds every agent rule: private `.claude/agents/`, the plugin
 //! default `agents/`, and manifest-declared plugin agent roots. Discovery is
@@ -7,6 +7,12 @@
 //! subdirectory path. Traversal reuses [`crate::traversal::recursive_files`], so
 //! it never follows symlinked directories and skips repository metadata,
 //! dependency, and build trees.
+//!
+//! The discovery, dedup, and symlink-safety behavior is generic `.md`-across-roots
+//! collection, so plugin-shipped output-style discovery
+//! ([`super::claude_config::validate_plugin_output_styles`]) reuses the same
+//! [`collect`] entry point rather than duplicating the security-sensitive
+//! symlink-root handling.
 //!
 //! The returned [`AgentFileInventory`] carries two deterministic, normalized,
 //! repository-relative, path-deduplicated vectors: `all_files` (every discovered
@@ -69,14 +75,14 @@ pub(crate) struct AgentRoot {
 /// `ExcludeSet`; `lint_files` applies it.
 pub(crate) fn discover_root(root: &str, exclude: &ExcludeSet) -> AgentRoot {
     let base = Path::new(root);
-    // The shared traversal policy never follows a symlinked directory. Apply the
-    // same rule to the root itself: `WalkDir` would otherwise descend into a
-    // symlinked root and pull files from outside the repository. A symlinked root
-    // is therefore treated as absent (an unusable in-repository agent root).
-    let is_symlink = base
-        .symlink_metadata()
-        .is_ok_and(|meta| meta.file_type().is_symlink());
-    let (exists, all_files) = if is_symlink {
+    // A root must resolve strictly inside the repository. `WalkDir` would
+    // otherwise descend through a symlinked root — or through a symlinked
+    // ancestor of a declared multi-segment root, which the OS dereferences — and
+    // pull files from outside the repository. The shared containment primitive
+    // checks every path component (final and intermediate) for symlinks plus
+    // canonical containment, so an escaping root is treated as absent: an
+    // unusable in-repository root.
+    let (exists, all_files) = if !crate::repo_path::is_repo_contained(base) {
         (false, Vec::new())
     } else if base.is_dir() {
         let files = traversal::recursive_files(base, Path::new("."), None)
@@ -338,6 +344,32 @@ mod tests {
         assert!(
             root.inventory.all_files.is_empty(),
             "outside-repository files must never be discovered through a symlinked root: {:?}",
+            root.inventory.all_files
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn a_symlinked_ancestor_of_a_declared_root_never_escapes_the_repository() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("agents")).unwrap();
+        std::fs::write(outside.path().join("agents/leak.md"), "").unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // `via` is an intermediate symlink to an outside directory; the declared
+        // root is `via/agents`. The OS dereferences `via`, so a guard that only
+        // inspects the final component would walk outside the repository.
+        symlink(outside.path(), tmp.path().join("via")).unwrap();
+
+        let root = discover_root("via/agents", &ExcludeSet::default());
+        assert!(
+            root.inventory.all_files.is_empty(),
+            "a symlinked ancestor must never pull in outside-repository files: {:?}",
             root.inventory.all_files
         );
     }

@@ -625,6 +625,18 @@ body-only file is valid: its whole content is the effective body. O005
 Claude Code has no output-style name-length limit, so it has no active rule
 row or finding.
 
+In Plugin mode the same O001-O006 checks additionally lint plugin-shipped
+output styles: the plugin-root `output-styles/` directory and every
+`plugin.json` `outputStyles` path (string or array; a declared `.md` file or a
+directory scanned recursively). Declared paths use the M012/M013 safety
+contract — absolute, `..`-traversal, and `.claude-plugin/`-nested paths are
+never read, and nonexistent paths are skipped silently — and files reached
+through more than one surface are linted once. The rules are identical to the
+private surface with one exception: `force-for-plugin` is a recognized field on
+plugin-shipped styles (no O003), whereas under `.claude/output-styles/` it
+reports O003 as ignored placement. Basic mode never scans these plugin
+surfaces.
+
 | T001 | `pr-template-invalid` | `prUrlTemplate` must be a trimmed non-empty string, use a documented placeholder only, and render to an absolute HTTP(S) URL with a host | Always | warn |
 | T002 | `channels-enabled-unsupported` | Repository `channelsEnabled` is ignored; configure this managed-policy-only field through organization policy instead | Always | warn |
 

@@ -158,6 +158,14 @@ fn run_plugin(
         &declared_agent_roots,
         &mut prompt_pass,
     );
+    // O001-O006: plugin-shipped output styles — the plugin-root `output-styles/`
+    // directory plus every manifest-declared `outputStyles` path. Plugin mode
+    // only; `.claude/output-styles/` is covered by validate_private_config above.
+    claude_config::validate_plugin_output_styles(
+        diag,
+        exclude,
+        &manifest::declared_output_style_roots(ctx),
+    );
     // V8: PWD hygiene
     hygiene::validate_pwd_hygiene(diag, exclude);
     // V9: script reference integrity
