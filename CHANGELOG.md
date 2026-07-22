@@ -42,6 +42,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   scoped to the flat top-level `agents/*.md` convention. Exclusions and per-file
   overrides match the full nested path, and a symlinked root is never followed
   out of the repository
+- **BREAKING**: G010 (`bash32-incompatible`) and G011 (`awk-regex-nonascii`) are
+  now compiled-default warnings instead of errors, so a run that only trips them
+  no longer exits non-zero; a repository targeting Bash 3.2 or ASCII-only
+  portable awk restores the failure with `error = ["G010", "G011"]`. G009
+  (`bash-replacement-unsafe`) stays a default error. G009-G011 were rebuilt on a
+  shared shell/awk lexical layer (`validators/shell.rs`) that masks comments,
+  quoting, and inert text rather than matching raw lines: G009 now covers
+  positional/special/braced/command/arithmetic replacements and the single-slash
+  `${v/pat/$rep}` form while sparing quoted, ANSI-C, escaped, and literal
+  replacements; G010 flags a probe-verified Bash-3.2 matrix (adding `;&`, `;;&`,
+  `|&`, `declare -g`, `shopt -s globstar`, `wait -n`), gates the `if command
+  <cmd>` errexit hazard on lexical `set -e`/`.inc.bash` and the empty-array
+  hazard on `set -u`/`.inc.bash` with conservative function-scoped analysis, and
+  no longer flags Bash-3.2-supported forms; G011 analyzes the actual awk regex
+  operand (regex literals, `~`/`match`/`sub`/`gsub`/`split` operands, `-F`/`FS`
+  values, and `-v` variables traced to a regex use), sparing display-only text
+  and ASCII regexes. All three now emit structured source locations, evidence,
+  and suggestions
 - Narrowed D003/G006/G007 unfinished-work detection to a shared syntactic
   marker grammar (`TODO:` / `FIXME(owner):` / comment and unchecked-task
   forms) with Markdown context exclusions, structured span/evidence/suggestion
