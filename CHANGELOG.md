@@ -289,6 +289,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   extraction, so a frontmatter block whose final line is a bare `key:` (a valid
   null value) no longer reports X001 (`frontmatter-yaml-invalid`)
 
+### Fixed
+
+- P027 raw duplicate-map validation is order-independent: every raw top-level
+  `mcpServers` occurrence is validated, emitting all duplicate-key diagnostics
+  first and then one invalid-map-value diagnostic per non-object occurrence in
+  source order, so both duplicate orders produce the same sequence
+- Every concrete-token P027 now carries its bound structured location,
+  evidence, and fixed suggestion (duplicate key, invalid map value, invalid
+  server entry, plugin path-array item, Cursor selector value and neither/both
+  contradiction, url-without-type, and the inline plugin selector); the
+  missing-map case remains the documented file-level exception
+- Inline plugin `mcpServers` validation reads the already-valid manifest
+  source for token recovery, so field-backed P diagnostics (including P018 and
+  P019) on inline maps expose accurate narrow source locations
+- Cursor hook diagnostics (CU010–CU013, CU017–CU019) attach structured
+  locations and bounded structural-path evidence (for example
+  `hooks.beforeShellExecution[3].command`); invalid JSON reports the parser
+  point
+- CU016 union failures surface the narrowest leaf property path (for example
+  `terminals[1].command` instead of a generic `terminals[1]` union error) with
+  one-based indices at every array level, drop the redundant union-parent
+  `unevaluatedProperties` cascade, and attach the property path as evidence
+  with a source span
+- M009, M012, M013, and H026 manifest diagnostics resolve source spans through
+  the owning JSON path, so repeated equal values in different fields, array
+  positions, or marketplace entries no longer point at the first document-wide
+  occurrence
+
 ### Deprecated
 
 - Soft-retired S042 (`dmi-empty-desc`): the rule no longer emits in any mode

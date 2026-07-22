@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "alpha": { "type": "stdio", "command": "alpha-server" }
+  }
+}

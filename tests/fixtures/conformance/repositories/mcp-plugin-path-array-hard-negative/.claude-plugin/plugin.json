@@ -1,0 +1,7 @@
+{
+  "name": "path-array-plugin",
+  "mcpServers": [
+    "./servers/a.json",
+    { "inline": { "type": "stdio", "command": "inline-server" } }
+  ]
+}

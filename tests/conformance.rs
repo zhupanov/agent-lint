@@ -94,6 +94,8 @@ struct DiagnosticIdentity {
     related_subjects: Vec<String>,
     #[serde(default)]
     suggestion: Option<String>,
+    #[serde(default)]
+    evidence: Option<String>,
     #[serde(default, rename = "location")]
     expected_location: Option<ExpectedLocation>,
 }
@@ -102,6 +104,8 @@ struct DiagnosticIdentity {
 #[serde(deny_unknown_fields)]
 struct ExpectedLocation {
     line: usize,
+    #[serde(default)]
+    column: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -142,6 +146,7 @@ struct OutputDiagnostic {
     #[serde(default)]
     related_subjects: Vec<String>,
     suggestion: Option<String>,
+    evidence: Option<String>,
     location: Option<OutputLocation>,
 }
 
@@ -153,6 +158,8 @@ struct OutputLocation {
 #[derive(Debug, Deserialize)]
 struct OutputPosition {
     line: usize,
+    #[serde(default)]
+    column: Option<usize>,
 }
 
 impl From<&OutputDiagnostic> for DiagnosticIdentity {
@@ -164,6 +171,7 @@ impl From<&OutputDiagnostic> for DiagnosticIdentity {
             subject_path: diagnostic.subject_path.clone(),
             related_subjects: diagnostic.related_subjects.clone(),
             suggestion: diagnostic.suggestion.clone(),
+            evidence: diagnostic.evidence.clone(),
             expected_location: None,
         }
     }
@@ -520,6 +528,7 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
     );
 
     assert_expected_suggestions(case, report);
+    assert_expected_evidence(case, report);
     assert_expected_locations(case, report);
 
     let diagnostics: Vec<_> = report
@@ -528,6 +537,7 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
         .map(DiagnosticIdentity::from)
         .map(|mut diagnostic| {
             diagnostic.suggestion = None;
+            diagnostic.evidence = None;
             diagnostic.expected_location = None;
             diagnostic
         })
@@ -539,6 +549,7 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
         .cloned()
         .map(|mut diagnostic| {
             diagnostic.suggestion = None;
+            diagnostic.evidence = None;
             diagnostic.expected_location = None;
             diagnostic
         })
@@ -617,6 +628,21 @@ fn assert_expected_locations(case: &LoadedCase, report: &OutputReport) {
             "{}: diagnostic source line changed",
             case.name
         );
+        if let Some(column) = expected
+            .expected_location
+            .as_ref()
+            .and_then(|location| location.column)
+        {
+            assert_eq!(
+                actual
+                    .location
+                    .as_ref()
+                    .and_then(|location| location.start.column),
+                Some(column),
+                "{}: diagnostic source column changed",
+                case.name
+            );
+        }
     }
 }
 
@@ -650,6 +676,41 @@ fn assert_expected_suggestions(case: &LoadedCase, report: &OutputReport) {
         assert_eq!(
             actual.suggestion, expected.suggestion,
             "{}: diagnostic suggestion changed",
+            case.name
+        );
+    }
+}
+
+fn assert_expected_evidence(case: &LoadedCase, report: &OutputReport) {
+    let mut matched_diagnostics = vec![false; report.diagnostics.len()];
+    for expected in case
+        .manifest
+        .expected_diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.evidence.is_some())
+    {
+        let (index, actual) = report
+            .diagnostics
+            .iter()
+            .enumerate()
+            .find(|actual| {
+                !matched_diagnostics[actual.0]
+                    && actual.1.code == expected.code
+                    && actual.1.name == expected.name
+                    && actual.1.severity == expected.severity
+                    && actual.1.subject_path == expected.subject_path
+                    && actual.1.related_subjects == expected.related_subjects
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: cannot find diagnostic for expected evidence {:?}",
+                    case.name, expected
+                )
+            });
+        matched_diagnostics[index] = true;
+        assert_eq!(
+            actual.evidence, expected.evidence,
+            "{}: diagnostic evidence changed",
             case.name
         );
     }

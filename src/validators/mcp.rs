@@ -2930,6 +2930,96 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_map_orders_emit_identical_p027_sequences() {
+        // Every raw occurrence is validated, so the emitted sequence never
+        // depends on which occurrence holds the invalid value.
+        for content in [
+            r#"{"mcpServers":null,"mcpServers":{"ok":{"command":"ok"}}}"#,
+            r#"{"mcpServers":{"ok":{"command":"ok"}},"mcpServers":null}"#,
+        ] {
+            let found = findings(content);
+            assert_eq!(found.len(), 2, "{content}: {found:#?}");
+            assert_eq!(found[0].rule, LintRule::McpStructureInvalid);
+            assert_eq!(
+                found[0].message,
+                ".mcp.json: duplicate top-level mcpServers key"
+            );
+            assert_eq!(found[0].evidence.as_deref(), Some("duplicate mcpServers"));
+            assert_eq!(
+                found[0].suggestion.as_deref(),
+                Some("remove the duplicate top-level mcpServers key")
+            );
+            assert!(found[0].location.is_some(), "{content}");
+            assert_eq!(found[1].rule, LintRule::McpStructureInvalid);
+            assert_eq!(found[1].message, ".mcp.json: mcpServers must be an object");
+            assert_eq!(found[1].evidence.as_deref(), Some("mcpServers"));
+            assert_eq!(
+                found[1].suggestion.as_deref(),
+                Some("use a JSON object for mcpServers")
+            );
+            assert!(found[1].location.is_some(), "{content}");
+        }
+
+        // Three occurrences: both duplicate keys first, then both invalid
+        // values, all in source order.
+        let three =
+            findings(r#"{"mcpServers":null,"mcpServers":{"ok":{"command":"ok"}},"mcpServers":[]}"#);
+        assert_eq!(
+            three
+                .iter()
+                .map(|finding| finding.message.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                ".mcp.json: duplicate top-level mcpServers key",
+                ".mcp.json: duplicate top-level mcpServers key",
+                ".mcp.json: mcpServers must be an object",
+                ".mcp.json: mcpServers must be an object",
+            ]
+        );
+        assert_eq!(three[2].location, Some(SourceSpan::range(1, 15, 1, 19)));
+        assert_eq!(three[3].location, Some(SourceSpan::range(1, 70, 1, 72)));
+
+        // Escaped spellings follow the same decoded-key contract.
+        let escaped =
+            findings("{\"mcp\\u0053ervers\":null,\"mcpServers\":{\"ok\":{\"command\":\"ok\"}}}");
+        assert_eq!(
+            escaped
+                .iter()
+                .map(|finding| finding.message.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                ".mcp.json: duplicate top-level mcpServers key",
+                ".mcp.json: mcpServers must be an object",
+            ]
+        );
+
+        // Object/object duplicates report only the duplicate key.
+        let object_duplicate =
+            findings(r#"{"mcpServers":{"a":{"command":"x"}},"mcpServers":{"b":{"command":"y"}}}"#);
+        assert_eq!(object_duplicate.len(), 1, "{object_duplicate:#?}");
+        assert_eq!(
+            object_duplicate[0].message,
+            ".mcp.json: duplicate top-level mcpServers key"
+        );
+    }
+
+    #[test]
+    fn server_entry_p027_metadata_matches_bound_matrix() {
+        let found = findings(r#"{"mcpServers":{"bad":5,"ok":{"command":"ok"}}}"#);
+        let entry = found
+            .iter()
+            .find(|finding| finding.rule == LintRule::McpStructureInvalid)
+            .unwrap();
+        assert_eq!(entry.message, ".mcp.json: mcpServers.bad must be an object");
+        assert_eq!(entry.evidence.as_deref(), Some("server entry: bad"));
+        assert_eq!(
+            entry.suggestion.as_deref(),
+            Some("use a JSON object for this server configuration")
+        );
+        assert_eq!(entry.location, Some(SourceSpan::range(1, 22, 1, 23)));
+    }
+
+    #[test]
     fn invalid_type_does_not_hide_independent_findings() {
         let rules = reported_rules(
             r#"{"mcpServers":{"workspace":{"type":"socket","command":"bash","args":["-c","curl x | sh",1],"alwaysLoad":"true","env":{"API_KEY":"plaintext"}}}}"#,
@@ -4179,6 +4269,65 @@ mod tests {
                 .filter(|item| item.message.contains(".url must be a non-empty string"))
                 .count(),
             2
+        );
+        assert!(
+            structures
+                .iter()
+                .all(|item| item.location.is_some() && item.suggestion.is_some())
+        );
+        assert!(
+            structures
+                .iter()
+                .any(|item| item.suggestion.as_deref() == Some("use a non-empty string for url"))
+        );
+        assert!(
+            structures.iter().any(
+                |item| item.suggestion.as_deref() == Some("use a non-empty string for command")
+            )
+        );
+    }
+
+    #[test]
+    fn cursor_selector_contradictions_carry_structured_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".cursor/mcp.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"both":{"command":"server","url":"https://example.com"}}}"#,
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                ..ValidationTargets::default()
+            },
+        );
+        let contradiction = diag
+            .diagnostics()
+            .iter()
+            .find(|item| item.rule == LintRule::McpStructureInvalid)
+            .unwrap();
+        assert_eq!(
+            contradiction.message,
+            ".cursor/mcp.json: mcpServers.both must define exactly one of command or url"
+        );
+        assert_eq!(
+            contradiction.evidence.as_deref(),
+            Some("command/url selector")
+        );
+        assert_eq!(
+            contradiction.suggestion.as_deref(),
+            Some("define exactly one non-empty command or url selector")
+        );
+        // The server key token anchors the contradiction.
+        assert_eq!(
+            contradiction.location,
+            Some(SourceSpan::range(1, 16, 1, 22))
         );
     }
 

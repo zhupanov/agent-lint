@@ -1,0 +1,5 @@
+{
+  "mcpServers": {
+    "docs": { "type": "stdio", "command": "docs-server" }
+  }
+}
