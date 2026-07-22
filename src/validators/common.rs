@@ -5,6 +5,20 @@ use std::ops::Range;
 use std::sync::LazyLock;
 use url::{Host, Url};
 
+pub(crate) fn executable_basename(command: &str) -> String {
+    let name = command
+        .rsplit(['/', '\\'])
+        .find(|component| !component.is_empty())
+        .unwrap_or_default();
+    let lower = name.to_ascii_lowercase();
+    for ext in [".exe", ".cmd", ".bat"] {
+        if let Some(stripped) = lower.strip_suffix(ext) {
+            return stripped.to_string();
+        }
+    }
+    lower
+}
+
 /// Convert a manifest loader failure's structured parse location into the
 /// renderer-independent metadata used by every manifest-owning validator.
 pub(crate) fn manifest_error_metadata(error: &ManifestError) -> DiagnosticMetadata {

@@ -1,4 +1,6 @@
 use crate::rules::{ACTIVE_RULES, ALL_RULES, LintRule};
+#[cfg(test)]
+use crate::rules::{RETIRED_IDENTIFIERS, SOFT_RETIRED_IDENTIFIERS};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -1350,20 +1352,7 @@ suppress = ["S033"]
     #[serial_test::serial]
     fn retired_rules_are_invalid_config_identifiers() {
         let tmp = tempfile::tempdir().unwrap();
-        for identifier in [
-            "S012",
-            "S013",
-            "name-reserved-word",
-            "name-has-xml",
-            "K001",
-            "slack-fallback-mismatch",
-            "U003",
-            "userconfig-env-missing",
-            "I005",
-            "instruction-file-structure",
-            "CX044",
-            "codex-agents-structure",
-        ] {
+        for identifier in RETIRED_IDENTIFIERS {
             std::fs::write(
                 tmp.path().join("agent-lint.toml"),
                 format!("[lint]\nsuppress = [\"{identifier}\"]\n"),
@@ -1381,16 +1370,7 @@ suppress = ["S033"]
         // S042/S045/S049/O005 are soft-retired: they never fire, but their
         // registry identifiers keep parsing so existing configuration loads.
         let tmp = tempfile::tempdir().unwrap();
-        for identifier in [
-            "S042",
-            "dmi-empty-desc",
-            "S045",
-            "tools-list-syntax",
-            "S049",
-            "name-not-gerund",
-            "O005",
-            "style-name-long",
-        ] {
+        for identifier in SOFT_RETIRED_IDENTIFIERS {
             std::fs::write(
                 tmp.path().join("agent-lint.toml"),
                 format!("[lint]\nsuppress = [\"{identifier}\"]\n"),
@@ -2266,7 +2246,7 @@ root-max-lines = 10
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 299);
+        assert_eq!(config.error.len(), 297);
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }

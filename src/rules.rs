@@ -8,6 +8,8 @@ use std::sync::LazyLock;
 use strum::{EnumProperty as StrumEnumProperty, VariantArray as StrumVariantArray};
 use strum_macros::{EnumIter, EnumProperty, VariantArray};
 
+include!("retired_identifiers.rs");
+
 /// Compiled-in default severity for a rule. Used as fallback when the user's
 /// config does not mention the rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1014,6 +1016,9 @@ impl LintRule {
     /// Look up a rule by its code (e.g. `"M001"`) or human-readable name
     /// (e.g. `"plugin-json-missing"`).
     pub fn from_code_or_name(s: &str) -> Option<Self> {
+        if RETIRED_IDENTIFIERS.contains(&s) {
+            return None;
+        }
         let migrated = match s {
             "channels-enabled-invalid" => Some(Self::SettingsChannelsEnabledInvalid),
             "style-field-unknown" => Some(Self::OutputStyleFieldUnknown),
@@ -1188,10 +1193,9 @@ pub static ACTIVE_RULES: LazyLock<Vec<LintRule>> = LazyLock::new(|| {
         .iter()
         .copied()
         .filter(|rule| {
-            !matches!(
-                rule,
-                LintRule::OutputStyleNameTooLong | LintRule::ToolsListSyntax
-            )
+            !SOFT_RETIRED_IDENTIFIERS
+                .iter()
+                .any(|identifier| *identifier == rule.code() || *identifier == rule.name())
         })
         .collect()
 });
@@ -1399,20 +1403,19 @@ mod tests {
     }
 
     #[test]
-    fn retired_s045_stays_a_config_only_identifier() {
-        // #342: S045 is soft-retired — both identifiers still resolve so
-        // existing configuration keeps parsing, it is not autofixable, and it
-        // no longer participates in active selection or documentation.
-        assert_eq!(
-            LintRule::from_code_or_name("S045"),
-            Some(LintRule::ToolsListSyntax)
-        );
-        assert_eq!(
-            LintRule::from_code_or_name("tools-list-syntax"),
-            Some(LintRule::ToolsListSyntax)
-        );
-        assert!(!LintRule::ToolsListSyntax.is_autofixable());
-        assert!(!ACTIVE_RULES.contains(&LintRule::ToolsListSyntax));
+    fn soft_retired_rules_stay_config_only_identifiers() {
+        for identifier in SOFT_RETIRED_IDENTIFIERS {
+            let rule = LintRule::from_code_or_name(identifier)
+                .unwrap_or_else(|| panic!("{identifier} must keep resolving"));
+            assert!(
+                !ACTIVE_RULES.contains(&rule),
+                "{identifier} must stay inactive"
+            );
+            assert!(
+                !rule.is_autofixable(),
+                "{identifier} must not be autofixable"
+            );
+        }
     }
 
     #[test]
@@ -1429,16 +1432,11 @@ mod tests {
         ] {
             assert_eq!(LintRule::from_code_or_name(identifier), Some(expected));
         }
-        for retired in [
-            "I005",
-            "instruction-file-structure",
-            "CX044",
-            "codex-agents-structure",
-        ] {
+        for retired in RETIRED_IDENTIFIERS {
             assert_eq!(
                 LintRule::from_code_or_name(retired),
                 None,
-                "{retired} must not resolve after I005 removal"
+                "{retired} must not resolve after retirement"
             );
         }
     }
@@ -1539,8 +1537,8 @@ mod tests {
             .collect();
         assert_eq!(
             suppressed.len(),
-            3,
-            "Expected 3 default-suppressed rules, got {}",
+            2,
+            "Expected 2 default-suppressed rules, got {}",
             suppressed.len()
         );
     }
@@ -1713,8 +1711,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            175,
-            "Expected 175 default-error rules, got {}",
+            174,
+            "Expected 174 default-error rules, got {}",
             errors.len()
         );
     }
