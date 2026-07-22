@@ -291,6 +291,23 @@ mod tests {
     }
 
     #[test]
+    fn xml_placeholders_in_list_indented_fence_are_ignored() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(
+            "f.md",
+            "- Result envelope:\n    ```text\n    <token> <N> <repo-relative-path>\n    <mergedAt-or-closedAt-ISO>\n    ```\n\n<live-tag>\n",
+            &mut diag,
+        );
+
+        let reported = diag.diagnostics();
+        assert_eq!(codes(&diag), vec!["X003"]);
+        assert_eq!(
+            reported[0].location.map(|location| location.start()),
+            Some(crate::diagnostic::SourcePosition::line(7))
+        );
+    }
+
+    #[test]
     fn xml_in_inline_code_ignored() {
         let mut diag = DiagnosticCollector::new_all_enabled();
         check_markdown_structure("f.md", "Use `<div>` as an example.\n", &mut diag);

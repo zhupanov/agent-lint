@@ -13,9 +13,9 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 use super::common::{
-    NEVER_INVENT_PROHIBITION, RE_NAME_INVALID, has_bound_or_fallback, is_known_tool_name,
-    is_valid_model_value, normalize_description_suffix, normalize_emphasis_for_gates,
-    sentence_ranges,
+    NEVER_INVENT_PROHIBITION, RE_NAME_INVALID, TERMINAL_RESULT_ASSIGNMENT_PATTERN,
+    has_bound_or_fallback, is_known_tool_name, is_valid_model_value, normalize_description_suffix,
+    normalize_emphasis_for_gates, sentence_ranges,
 };
 
 /// Jaccard similarity threshold (strict greater-than).
@@ -60,8 +60,8 @@ static OPERATIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
             (?:if|when|after|before|unless|for|during|on|upon)\b[^.!?;,:]*[,;:]\s*
                 (?:(?:you|the\s+agent|this\s+agent|agents?|assistant|model)\s+
                     (?:must|should|shall|will|need\s+to|are\s+to)\s+)?
-                (?:make|use|set|limit|cap|retry|abort|give\s+up|halt|stop|report|escalate|ask|handoff|return)\b |
-            (?:make|use|set|limit|cap|retry|abort|give\s+up|halt|stop|report|escalate|ask|handoff|return)\b |
+                (?:make|use|set|limit|cap|retry|abort|give\s+up|halt|stop|leave|report|escalate|ask|handoff|return)\b |
+            (?:make|use|set|limit|cap|retry|abort|give\s+up|halt|stop|leave|report|escalate|ask|handoff|return)\b |
             (?:timeout|deadline|time[-\s]?(?:limit|budget)|token[-\s]?budget|cost[-\s]?budget|budget)\s*:
         )",
     )
@@ -71,6 +71,19 @@ static OPERATIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
 static DESCRIPTIVE_CONTROL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\s*(?:use\s+of\b|(?:timeout|deadline|budget|max(?:imum)?|limit|cap)\b.{0,80}\b(?:was|were|had|used\s+to|once\s+forced)\b)")
         .expect("A029 descriptive-control prefix regex is valid")
+});
+
+/// An explicit machine result/status value is itself an operative terminal
+/// contract when it opens a live list item and is defined with a colon (or as
+/// a standalone assignment). Historical prose mentioning the same token does
+/// not satisfy this prefix grammar.
+static OPERATIVE_TERMINAL_RESULT_CONTRACT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?ix)^\s*(?:[-*+]\s*)?`?
+            {TERMINAL_RESULT_ASSIGNMENT_PATTERN}
+            `?\s*(?::|$)"
+    ))
+    .expect("A029 terminal result-contract regex is valid")
 });
 
 const CURRENT_AGENT_SUBJECT: &str = r"(?:you|the\s+agent|this\s+agent|agents?|assistant|model)";
@@ -1001,7 +1014,7 @@ fn has_operative_body_control(document: &LiveInstructionDocument<'_>) -> bool {
     let mut scope = Vec::new();
     let mut previous_line = None;
 
-    for (line, is_example) in document.prose_lines().iter().zip(example_scopes) {
+    for (line, is_example) in document.control_prose_lines().iter().zip(example_scopes) {
         let boundary = is_example
             || line.text.trim().is_empty()
             || heading_lines.contains(&line.line)
@@ -1023,8 +1036,9 @@ fn has_operative_body_control(document: &LiveInstructionDocument<'_>) -> bool {
         sentence_ranges(&scope).into_iter().any(|range| {
             let sentence = &scope[range];
             let gate_view = normalize_emphasis_for_gates(sentence);
-            OPERATIVE_CONTROL_PREFIX.is_match(&gate_view)
+            (OPERATIVE_CONTROL_PREFIX.is_match(&gate_view)
                 && !DESCRIPTIVE_CONTROL_PREFIX.is_match(&gate_view)
+                || OPERATIVE_TERMINAL_RESULT_CONTRACT.is_match(&gate_view))
                 && has_bound_or_fallback(&gate_view)
         })
     })
@@ -3538,6 +3552,29 @@ Body ## Reviewer
 
     #[test]
     #[serial_test::serial]
+    fn test_a029_recognizes_live_terminal_result_contracts() {
+        for body in [
+            "If you could not produce a fix, report `CODER_RESULT=no-progress`.",
+            "Leave the tree unchanged and report `CODER_RESULT=bail` for an unsupported class.",
+            "- `SELF_REVIEW_RESULT=bail`: unsupported class; leave the tree unchanged.",
+            "- `RUN_STATUS=blocked`: report the blocker and stop.",
+        ] {
+            let content =
+                format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\n{body}\n");
+            run_agent(&content, |diag| {
+                assert!(
+                    !diag
+                        .diagnostics()
+                        .iter()
+                        .any(|diagnostic| diagnostic.rule == LintRule::AgentStopMissing),
+                    "A029 must accept live terminal result contract: {body}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_a029_rejects_vague_and_nonoperative_controls() {
         for content in [
             format!(
@@ -3573,6 +3610,10 @@ Body ## Reviewer
             "Use of a timeout of 10 minutes was common in the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
             "Budget pressures once forced a timeout of 10 minutes on the legacy runner.\n\nInvestigate the failure and implement the repair.\n",
             "**Use of a timeout of 10 minutes was common in the legacy runner.**\n\nInvestigate the failure and implement the repair.\n",
+            "The legacy runner emitted `CODER_RESULT=no-progress` after failures.\n\nInvestigate the failure and implement the repair.\n",
+            "`CODER_RESULT=bail` meant the previous runner had stopped.\n\nInvestigate the failure and implement the repair.\n",
+            "# Examples\n- `CODER_RESULT=bail`: unsupported class.\n\n# Task\nInvestigate the failure and implement the repair.\n",
+            "```text\nCODER_RESULT=no-progress|bail\n```\nInvestigate the failure and implement the repair.\n",
         ] {
             let content =
                 format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash\n---\n{body}");

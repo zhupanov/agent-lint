@@ -514,6 +514,10 @@ values — every frontmatter field except the free-prose `description`,
 > Attempt counts accept digits and small word numbers, including `limit of 5
 > attempts`, `retry at most 3 times`, and `stop after three attempts`.
 > Failure fallbacks include `on`/`upon failure` and `cannot make progress`.
+> Live machine result/status contracts with terminal values such as `bail`,
+> `blocked`, `failed`, or `no-progress` also satisfy the rule, including an
+> operative instruction to report such a value. Result-envelope examples in
+> fences and descriptive or historical mentions remain inert.
 > A body control must be an operative instruction for the current agent;
 > example scopes and historical or descriptive mentions do not satisfy the
 > rule. Frontmatter other than `maxTurns`, code, and quoted examples are
@@ -549,7 +553,7 @@ the matched source range, bounded masked evidence, and a concrete suggestion.
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | Q001 | `prompt-generic-filler` | Generic instruction that adds no actionable guidance, matched only inside an operative directive | Always | warn |
-| Q002 | `prompt-negative-only` | Operative style/behavior negative without an operative `instead`/`rather`/`prefer` alternative in the same Markdown instruction scope (same paragraph or list item, no heading/example/fence/blank boundary, within three source lines); precise safety and integrity prohibitions are exempt | Always | error |
+| Q002 | `prompt-negative-only` | Operative style/behavior negative without a positive imperative in the same Markdown instruction scope (same paragraph or list item, no heading/example/fence/blank boundary, within three source lines); precise safety and integrity prohibitions are exempt | Always | error |
 | Q003 | `prompt-weak-critical` | Operative `should`/`try to`/`consider`/`maybe` inside a live critical or important Markdown section | Always | error |
 | Q004 | `claude-readme-duplicate` | More than 40% of eligible `CLAUDE.md` live-prose lines are duplicated in `README.md`, counted as a multiset (at least three matched lines) | Always | warn |
 | Q005 | `prompt-unbounded-retry` | Operative unbounded retry or continuation instruction without an applicable bound or concrete failure outcome | Always | error |
@@ -567,13 +571,16 @@ elsewhere in a sentence do not exempt an unrelated style negative. A conjoined
 negative after a safety-exempt one (`Never expose credentials, and never
 apologize.`) is still evaluated. A positive alternative repairs a negative only
 within the same instruction scope, never across a heading, example, fence, or
-blank boundary. Its imperative form begins with a documented directive verb:
+blank boundary. `Instead`, `rather`, and `prefer` remain accepted cues but are
+not required when the alternative is already a direct imperative. Its
+imperative form begins with a documented directive verb:
 `acknowledge`, `add`, `answer`, `apply`, `ask`, `build`, `call`, `check`,
 `clarify`, `commit`, `communicate`, `confirm`, `correct`, `create`, `describe`,
 `document`, `edit`, `ensure`, `explain`, `fix`, `follow`, `give`, `include`,
-`keep`, `list`, `make`, `offer`, `prefer`, `preserve`, `provide`, `record`, `report`,
-`respond`, `return`, `review`, `run`, `save`, `serialize`, `set`, `state`,
-`summarize`, `tell`, `update`, `use`, `verify`, or `write`; current-agent
+`keep`, `list`, `make`, `offer`, `prefer`, `preserve`, `provide`, `put`, `record`,
+`report`, `respond`, `return`, `review`, `run`, `save`, `serialize`, `set`,
+`state`, `summarize`, `surface`, `tell`, `treat`, `update`, `use`, `verify`,
+`wait`, or `write`; current-agent
 modal and allowed setup-clause forms remain operative.
 
 Q003 activates only under a live `critical` or `important` heading whose example

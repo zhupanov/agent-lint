@@ -102,6 +102,12 @@ pub struct MarkdownDocument {
     images: Vec<MarkdownImage>,
     inline_code: Vec<MarkdownInlineCode>,
     body_prose: Vec<MarkdownProseLine>,
+    /// Live prose for control validators that intentionally consume inline
+    /// machine-result tokens. All other prose exclusions still apply.
+    body_control_prose: Vec<MarkdownProseLine>,
+    /// Source lines owned by parsed Markdown code blocks. Unlike the streaming
+    /// fence tracker, this includes fences nested under list indentation.
+    code_block_lines: std::collections::HashSet<usize>,
     /// Candidate lines for unfinished-work marker scanning (D003/G006/G007).
     /// Same exclusions as `body_prose`, except HTML comments stay visible and
     /// Markdown link/image spans are masked so label/destination prose cannot
@@ -167,6 +173,7 @@ impl MarkdownDocument {
         let mut images = Vec::new();
         let mut inline_code = Vec::new();
         let mut excluded_lines = std::collections::HashSet::new();
+        let mut code_block_lines = std::collections::HashSet::new();
         let mut inline_exclusions = Vec::new();
         let mut link_exclusions = Vec::new();
         let mut link_ranges = Vec::new();
@@ -237,11 +244,13 @@ impl MarkdownDocument {
                         data.sourcepos.end.column,
                     ));
                 }
-                NodeValue::BlockQuote
-                | NodeValue::MultilineBlockQuote(_)
-                | NodeValue::Alert(_)
-                | NodeValue::CodeBlock(_) => {
+                NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) | NodeValue::Alert(_) => {
                     excluded_lines.extend(data.sourcepos.start.line..=data.sourcepos.end.line);
+                }
+                NodeValue::CodeBlock(_) => {
+                    let lines = data.sourcepos.start.line..=data.sourcepos.end.line;
+                    excluded_lines.extend(lines.clone());
+                    code_block_lines.extend(lines);
                 }
                 NodeValue::Code(code) => {
                     inline_exclusions.push((
@@ -281,37 +290,23 @@ impl MarkdownDocument {
         } else {
             1
         };
-        let mut prose_tracker = CodeFenceTracker::new();
         let mut debt_tracker = CodeFenceTracker::new();
-        let mut in_html_comment = false;
-        let body_prose = content
-            .lines()
-            .enumerate()
-            .filter_map(|(index, line)| {
-                let line_number = index + 1;
-                if line_number < body_start_line
-                    || prose_tracker.process_line(line) != LineClass::Outside
-                    || excluded_lines.contains(&line_number)
-                {
-                    return None;
-                }
-
-                let mut text = line.to_string();
-                text = mask_column_ranges(&text, line_number, &inline_exclusions);
-                text = mask_column_ranges(&text, line_number, &link_destination_exclusions);
-                text = mask_html_comments(&text, &mut in_html_comment);
-                text = mask_quoted_text(&text);
-                Some(MarkdownProseLine {
-                    line: line_number,
-                    text,
-                    masked_inline_code_columns: masked_ranges_for_line(
-                        line,
-                        line_number,
-                        &inline_exclusions,
-                    ),
-                })
-            })
-            .collect();
+        let body_prose = collect_body_prose(
+            &content,
+            body_start_line,
+            &excluded_lines,
+            &inline_exclusions,
+            &link_destination_exclusions,
+            true,
+        );
+        let body_control_prose = collect_body_prose(
+            &content,
+            body_start_line,
+            &excluded_lines,
+            &inline_exclusions,
+            &link_destination_exclusions,
+            false,
+        );
 
         let unfinished_work_lines = content
             .lines()
@@ -353,6 +348,8 @@ impl MarkdownDocument {
             images,
             inline_code,
             body_prose,
+            body_control_prose,
+            code_block_lines,
             unfinished_work_lines,
         }
     }
@@ -415,6 +412,12 @@ impl MarkdownDocument {
         &self.body_prose
     }
 
+    /// Live prose that retains inline code for validators whose contract
+    /// explicitly includes machine-readable result/status tokens.
+    pub(crate) fn body_control_prose(&self) -> &[MarkdownProseLine] {
+        &self.body_control_prose
+    }
+
     /// Body lines suitable for structural scanners. Inline code and HTML
     /// comments are masked from their source-positioned CommonMark facts, but
     /// ordinary quoted prose is retained because it can be part of a tag's
@@ -441,6 +444,7 @@ impl MarkdownDocument {
                 let line_number = index + 1;
                 if line_number < self.body_start_line()
                     || tracker.process_line(line) != LineClass::Outside
+                    || self.code_block_lines.contains(&line_number)
                 {
                     return None;
                 }
@@ -571,6 +575,51 @@ fn add_character_ranges(
     {
         ranges.push((start_line, start_column, end_line, end_column));
     }
+}
+
+/// Build live prose from the canonical Markdown exclusions. Control-oriented
+/// consumers may retain inline code because result/status assignments are part
+/// of their grammar; ordinary prompt consumers keep it masked.
+fn collect_body_prose(
+    content: &str,
+    body_start_line: usize,
+    excluded_lines: &std::collections::HashSet<usize>,
+    inline_exclusions: &[(usize, usize, usize, usize)],
+    link_destination_exclusions: &[(usize, usize, usize, usize)],
+    mask_inline_code: bool,
+) -> Vec<MarkdownProseLine> {
+    let mut tracker = CodeFenceTracker::new();
+    let mut in_html_comment = false;
+    content
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line_number = index + 1;
+            if line_number < body_start_line
+                || tracker.process_line(line) != LineClass::Outside
+                || excluded_lines.contains(&line_number)
+            {
+                return None;
+            }
+
+            let mut text = line.to_string();
+            if mask_inline_code {
+                text = mask_column_ranges(&text, line_number, inline_exclusions);
+            }
+            text = mask_column_ranges(&text, line_number, link_destination_exclusions);
+            text = mask_html_comments(&text, &mut in_html_comment);
+            text = mask_quoted_text(&text);
+            Some(MarkdownProseLine {
+                line: line_number,
+                text,
+                masked_inline_code_columns: if mask_inline_code {
+                    masked_ranges_for_line(line, line_number, inline_exclusions)
+                } else {
+                    Vec::new()
+                },
+            })
+        })
+        .collect()
 }
 
 fn mask_column_ranges(
@@ -1011,6 +1060,22 @@ mod tests {
             doc.links()[0].destination,
             "https://example.test/endpoint/route/url"
         );
+    }
+
+    #[test]
+    fn control_prose_retains_inline_result_tokens_but_not_quoted_examples() {
+        let doc = MarkdownDocument::parse_body(
+            "Report `CODER_RESULT=no-progress` when no fix is possible.\n\
+             The guide says \"Report `CODER_RESULT=bail`.\"\n",
+        );
+
+        assert!(!doc.body_prose()[0].text.contains("CODER_RESULT"));
+        assert!(
+            doc.body_control_prose()[0]
+                .text
+                .contains("`CODER_RESULT=no-progress`")
+        );
+        assert!(!doc.body_control_prose()[1].text.contains("CODER_RESULT"));
     }
 
     #[test]

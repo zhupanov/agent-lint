@@ -69,6 +69,11 @@ pub(crate) static NEVER_INVENT_PROHIBITION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:never|do\s+not|don't)\s+(?:invent|fabricate|guess)\b").unwrap()
 });
 
+/// Machine-readable terminal outcome assignment shared by A029 and Q005.
+/// The key is either bare `result`/`status` or an underscore-qualified machine
+/// key, which avoids treating arbitrary prose identifiers as contracts.
+pub(crate) const TERMINAL_RESULT_ASSIGNMENT_PATTERN: &str = r"(?:result|status|[a-z][a-z0-9_]*_(?:result|status))\s*=\s*(?:no[-_ ]?progress|bail|blocked|fail(?:ed|ure)?|error|unsupported)";
+
 /// Shared recognition vocabulary for concrete retry bounds and stop controls.
 ///
 /// Q005 and A029 deliberately have different applicability and operativity
@@ -94,6 +99,7 @@ static BOUND_OR_FALLBACK_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         r"(?i)\b(?:if|when|after|on|upon)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no\s+progress|cannot\s+make\s+progress|unable\s+to\s+(?:make\s+progress|continue))\b.{0,120}\b(?:stop|abort|return|report|escalat(?:e|ion)|ask\s+(?:for\s+)?help|handoff|surface|give\s+up|fall\s+back)\b".to_string(),
         r"(?i)\b(?:stop\s+and\s+report|report\s+and\s+stop|escalat(?:e|ion)|ask\s+(?:for\s+)?help|handoff|return)\b.{0,100}\b(?:if|when|after|on|upon)\b.{0,100}\b(?:fail(?:ed|s|ure)?|no\s+progress|cannot\s+make\s+progress|unable\s+to\s+(?:make\s+progress|continue))\b".to_string(),
         r"(?i)\botherwise\s*,?\s*(?:stop|abort|return|report|escalate|surface|give\s+up|fall\s+back)\b".to_string(),
+        format!(r"(?i)\b{TERMINAL_RESULT_ASSIGNMENT_PATTERN}\b"),
     ]
     .into_iter()
     .map(|pattern| Regex::new(&pattern).expect("shared bound-control regex is valid"))
