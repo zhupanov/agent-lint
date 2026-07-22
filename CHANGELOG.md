@@ -40,6 +40,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   cap, so O005 is now inert in normal, pedantic, all, and focused runs. Existing
   O005 / `style-name-long` selectors remain accepted for compatibility but emit
   no findings; output-style names remain optional and unconstrained.
+- Cursor `.mdc` rule frontmatter (CU002-CU008) is now modeled on Cursor's
+  four value-derived activation states (Always, Auto Attached, Agent
+  Requested, Manual) instead of key presence. Null, empty, and blank `globs`
+  values — including Cursor's own documented empty-`globs` Manual shape — are
+  valid unset values and no longer report CU004; CU007 fires only when an
+  Always rule declares at least one effective, structurally valid glob; a
+  present non-string, non-null `description` is now a CU003 error; a UTF-8 BOM
+  no longer hides a valid opening delimiter; near-openers such as `----` and
+  `---suffix` report CU002 instead of CU003; and CU002-CU008 rule diagnostics
+  carry structured locations, field-scoped evidence, and mechanical
+  suggestions, including a targeted quote-the-pattern suggestion when strict
+  YAML rejects an unquoted glob (`globs: *.ts`) as an unknown anchor/alias on
+  a `globs:` line
 - Agent discovery is now recursive across `.claude/agents/`, the plugin
   `agents/` default, and manifest-declared `plugin.json` `agents` roots, matching
   Claude Code: agents nested in subdirectories are seen by every agent rule
@@ -203,6 +216,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Soft-retired S049 (`name-not-gerund`): the rule no longer emits in any mode
   (including `--all`), while `S049` / `name-not-gerund` remain recognized in
   configuration for compatibility
+
+### Removed
+
+- **BREAKING**: Removed CU009 (`cursor-description-missing`). Description
+  presence is what selects Cursor's Agent Requested mode, so a
+  missing-description diagnostic has no sound positive case and falsely warned
+  on valid Manual rules (including empty frontmatter). Configurations
+  referencing `CU009` or `cursor-description-missing` — in `agent-lint.toml`
+  lists, per-file overrides, or `--only` selections — must delete that
+  identifier; it is not aliased to any other rule and now fails as an invalid
+  rule identifier
 
 ## [3.0.1] - 2026-07-17
 

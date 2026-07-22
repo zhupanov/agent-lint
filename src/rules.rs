@@ -777,9 +777,9 @@ pub enum LintRule {
     /// CU008: alwaysApply is not a boolean
     #[strum(props(code = "CU008", name = "cursor-always-invalid"))]
     CursorAlwaysApplyInvalid,
-    /// CU009: agent-requested Cursor rule lacks a description
-    #[strum(props(code = "CU009", name = "cursor-description-missing"))]
-    CursorRuleDescriptionMissing,
+    // CU009 (`cursor-description-missing`) was removed: description presence
+    // is what selects Agent Requested mode, so its absence has no sound
+    // positive case under Cursor's value-derived activation states (#308).
     /// CU010: .cursor/hooks.json has an invalid schema
     #[strum(props(code = "CU010", name = "cursor-hooks-invalid"))]
     CursorHooksSchemaInvalid,
@@ -1117,7 +1117,7 @@ impl LintRule {
             Self::CodexPluginPromptField | Self::CodexSkillUnsupportedFrontmatter |
             Self::CursorRuleFrontmatterMissing | Self::CursorRuleFieldUnknown |
             Self::CursorLegacyRules | Self::CursorAlwaysApplyGlobs |
-            Self::CursorRuleDescriptionMissing | Self::CursorHookEventUnknown |
+            Self::CursorHookEventUnknown |
             Self::CursorHookFieldTypeInvalid |
             Self::CursorAgentBodyEmpty | Self::CursorSkillFieldUnsupported |
             Self::CursorRuleExtension |
@@ -1296,7 +1296,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            298,
+            297,
             "every enum variant must be registered"
         );
     }
@@ -1355,6 +1355,12 @@ mod tests {
         assert_eq!(LintRule::from_code_or_name("nonexistent"), None);
         assert_eq!(LintRule::from_code_or_name("CX010"), None);
         assert_eq!(LintRule::from_code_or_name("codex-access-ack"), None);
+        // CU009 was removed without a replacement alias (#308).
+        assert_eq!(LintRule::from_code_or_name("CU009"), None);
+        assert_eq!(
+            LintRule::from_code_or_name("cursor-description-missing"),
+            None
+        );
         assert_eq!(
             LintRule::from_code_or_name("channels-enabled-invalid"),
             Some(LintRule::SettingsChannelsEnabledInvalid)
@@ -1494,8 +1500,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            120,
-            "Expected 120 active default-warning rules, got {}",
+            119,
+            "Expected 119 active default-warning rules, got {}",
             warnings.len()
         );
     }

@@ -970,6 +970,160 @@ suppress = ["P018", "P019"]
     );
 }
 
+fn write_cursor_activation_fixture(root: &std::path::Path) {
+    init_git(root);
+    let rules = root.join(".cursor/rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("ignored-globs.mdc"),
+        "---\ndescription: Documented behavior\nglobs: \"*.rs\"\nalwaysApply: true\n---\nUse the repository's established conventions.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rules.join("unquoted.mdc"),
+        "---\ndescription:\nglobs: **/*.gen.ts,src/*.ts\nalwaysApply: false\n---\nUse the repository's established conventions.\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn cursor_mdc_contract_pins_severities_locations_suggestions_and_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cursor_activation_fixture(tmp.path());
+
+    // `--only` accepts the code and the name forms for the retained rules.
+    for (arguments, cu003_severity, cu007_severity, exit_code) in [
+        (
+            vec![
+                "--format",
+                "json",
+                "--only",
+                "CU003,cursor-always-globs",
+                ".",
+            ],
+            "error",
+            "warning",
+            1,
+        ),
+        (
+            vec![
+                "--format",
+                "json",
+                "--pedantic",
+                "--only",
+                "CU003,cursor-always-globs",
+                ".",
+            ],
+            "error",
+            "error",
+            1,
+        ),
+        (
+            vec![
+                "--format",
+                "json",
+                "--all",
+                "--only",
+                "CU003,cursor-always-globs",
+                ".",
+            ],
+            "error",
+            "error",
+            1,
+        ),
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(exit_code), "{arguments:?}");
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 2, "{arguments:?}: {diagnostics:#?}");
+
+        // CU003: the anchor/alias failure on the `globs:` line carries the
+        // parser location and the targeted quote-the-pattern suggestion.
+        let unquoted = &diagnostics[0];
+        assert_eq!(unquoted["code"], "CU003", "{arguments:?}");
+        assert_eq!(unquoted["severity"], cu003_severity, "{arguments:?}");
+        assert_eq!(
+            unquoted["subject_path"], ".cursor/rules/unquoted.mdc",
+            "{arguments:?}"
+        );
+        assert_eq!(unquoted["location"]["start"]["line"], 3, "{arguments:?}");
+        assert_eq!(unquoted["location"]["start"]["column"], 8, "{arguments:?}");
+        assert_eq!(
+            unquoted["suggestion"],
+            "quote the pattern so it is valid YAML, e.g. globs: \"**/*.gen.ts,src/*.ts\"",
+            "{arguments:?}"
+        );
+
+        // CU007: located at the owning `globs` key with field-name evidence.
+        let ignored = &diagnostics[1];
+        assert_eq!(ignored["code"], "CU007", "{arguments:?}");
+        assert_eq!(ignored["severity"], cu007_severity, "{arguments:?}");
+        assert_eq!(
+            ignored["subject_path"], ".cursor/rules/ignored-globs.mdc",
+            "{arguments:?}"
+        );
+        assert_eq!(ignored["location"]["start"]["line"], 3, "{arguments:?}");
+        assert_eq!(ignored["evidence"], "globs", "{arguments:?}");
+        assert_eq!(
+            ignored["suggestion"], "remove 'globs' or set 'alwaysApply: false'",
+            "{arguments:?}"
+        );
+    }
+
+    // Multi-file output is deterministic across repeated runs.
+    let arguments = ["--format", "json", "--only", "CU003,CU007", "."];
+    let first = run_in(tmp.path(), &arguments);
+    let second = run_in(tmp.path(), &arguments);
+    assert_eq!(first.stdout, second.stdout, "output must be deterministic");
+
+    // A per-file override suppresses CU007 for its subject and is counted.
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".cursor/rules/ignored-globs.mdc\"]\nsuppress = [\"CU007\"]\n",
+    )
+    .unwrap();
+    let suppressed = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "cursor-always-globs", "."],
+    );
+    assert_eq!(suppressed.status.code(), Some(0));
+    let report = json(&suppressed);
+    assert_eq!(report["diagnostics"].as_array().unwrap().len(), 0);
+    assert_eq!(report["counts"]["suppressed"], 1);
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+}
+
+#[test]
+fn removed_cu009_identifiers_are_rejected_everywhere() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_cursor_activation_fixture(tmp.path());
+
+    for identifier in ["CU009", "cursor-description-missing"] {
+        let output = run_in(tmp.path(), &["--only", identifier, "."]);
+        assert_eq!(output.status.code(), Some(2), "{identifier}");
+        assert!(
+            stderr(&output).contains(&format!("invalid rule identifier '{identifier}'")),
+            "{identifier}: {}",
+            stderr(&output)
+        );
+    }
+
+    // Invalid explicit configuration never degrades to defaults (I-Config-1).
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"CU009\"]\n",
+    )
+    .unwrap();
+    let output = run_in(tmp.path(), &["."]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("unknown rule in suppress list: 'CU009'"),
+        "{}",
+        stderr(&output)
+    );
+}
+
 #[test]
 fn h023_json_diagnostic_is_secret_safe_across_modes_suppression_and_autofix() {
     let tmp = tempfile::tempdir().unwrap();

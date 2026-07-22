@@ -1,8 +1,8 @@
 {
   "class": "hard-negative",
   "repository": "cursor-hard-negative",
-  "covers": ["cursor-mdc", "cursor-md-extension", "cursor-md-inactive", "cursor-legacy", "pedantic", "json"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "Q005", "."] },
+  "covers": ["cursor-mdc", "cursor-md-extension", "cursor-md-inactive", "cursor-activation-states", "cursor-legacy", "pedantic", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--pedantic", "--only", "CU001,CU002,CU003,CU004,CU005,CU007,CU008,Q005", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",
   "expected_active_platforms": ["claude", "cursor"],

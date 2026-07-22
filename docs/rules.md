@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 296 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -792,14 +792,13 @@ They run in both Basic and Plugin modes.
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | CU001 | `cursor-rule-empty` | A `**/.cursor/rules/**/*.mdc` file or `.cursorrules` has no instructions | Always | error |
-| CU002 | `cursor-frontmatter-missing` | `.mdc` rule lacks YAML frontmatter | Always | warn |
-| CU003 | `cursor-frontmatter-invalid` | `.mdc` frontmatter is invalid YAML | Always | error |
-| CU004 | `cursor-glob-invalid` | `.mdc` `globs` has an invalid pattern | Always | error |
+| CU002 | `cursor-frontmatter-missing` | Non-empty `.mdc` rule's first logical line (after an optional UTF-8 BOM) is not exactly the `---` opening delimiter; near-openers such as `----` and `---suffix` are CU002, not CU003 | Always | warn |
+| CU003 | `cursor-frontmatter-invalid` | `.mdc` frontmatter has no closing `---` delimiter, is not a YAML object, fails strict YAML (syntax or duplicate keys), or holds a `description` that is neither null nor a string | Always | error |
+| CU004 | `cursor-glob-invalid` | `.mdc` `globs` is not null, a string, or a list of strings (one diagnostic for the field), or an effective pattern is invalid globset syntax (one diagnostic per pattern) | Always | error |
 | CU005 | `cursor-field-unknown` | `.mdc` frontmatter uses an unknown field | Always | warn |
 | CU006 | `cursor-legacy-rules` | Legacy `.cursorrules` file is present | Always | warn |
-| CU007 | `cursor-always-globs` | `alwaysApply: true` has redundant `globs` | Always | warn |
-| CU008 | `cursor-always-invalid` | `alwaysApply` is not a boolean | Always | error |
-| CU009 | `cursor-description-missing` | Agent-requested `.mdc` rule lacks a description | Always | warn |
+| CU007 | `cursor-always-globs` | Always rule (`alwaysApply: true`) declares at least one effective, structurally valid glob whose patterns Cursor ignores | Always | warn |
+| CU008 | `cursor-always-invalid` | Present `alwaysApply` is not a boolean (including null and quoted booleans) | Always | error |
 | CU010 | `cursor-hooks-invalid` | `.cursor/hooks.json` top-level or entry schema is invalid | Always | error |
 | CU011 | `cursor-event-unknown` | Cursor hook event is not recognized | Always | warn |
 | CU012 | `cursor-command-missing` | Cursor hook entry lacks a non-empty `command` | Always | error |
@@ -812,6 +811,54 @@ They run in both Basic and Plugin modes.
 | CU019 | `cursor-model-invalid` | Present prompt hook `model` is not a non-empty string | Always | error |
 | CU020 | `cursor-rule-extension` | A `.md` file below a repository-wide `.cursor/rules/` directory is not a live Cursor rule; rename it to the same basename with `.mdc` | Always | warn |
 | CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses a frontmatter key other than `name`, `description`, `paths`, `disable-model-invocation`, or `metadata`; it checks the active recursive Cursor runtime inventory, including shared `.agents/skills` locations | Always | warn |
+
+### Cursor MDC activation states (CU002-CU008)
+
+Cursor derives one rule type from the **effective values** of `alwaysApply`,
+`globs`, and `description`; key presence is never a signal. Sources, retrieved
+2026-07-21: [Cursor Rules](https://cursor.com/docs/context/rules) (its
+canonical MDC example ships an empty `globs:` line), Cursor staff's
+[four-state activation table](https://forum.cursor.com/t/correct-way-to-specify-rules-globs/71752/23),
+and the staff
+[Manual-rule example](https://forum.cursor.com/t/rules-how-to-only-apply-manually/155072/3).
+
+| Precedence | State | Selected by |
+|------------|-------|-------------|
+| 1 | Always | `alwaysApply: true` |
+| 2 | Auto Attached | otherwise, at least one effective glob |
+| 3 | Agent Requested | otherwise, a non-empty trimmed string `description` |
+| 4 | Manual | otherwise |
+
+Accepted field shapes and empty-value semantics:
+
+- `description` accepts null or a string. Null and empty strings are valid
+  unset values; every other shape is a CU003 error at the owning key.
+- `globs` accepts null, a string, or a list of strings. Null, blank strings,
+  and lists holding no non-empty strings are **unset** and produce no
+  diagnostic. Any other container/scalar type, or any non-string list member,
+  is one CU004 error for the field.
+- `alwaysApply` accepts booleans; a missing key behaves as `false`. Every
+  present non-boolean value (including null and quoted booleans such as
+  `"true"`) is a CU008 error and recovers as `false` for state derivation.
+- CU007 warns only for an Always rule with at least one effective,
+  structurally valid glob; unset globs and CU004 field-shape failures never
+  add CU007.
+
+Globset compatibility boundary: effective patterns are validated
+conservatively with globset, one pattern per CU004 diagnostic. A quoted
+comma-joined value such as `globs: "*.ts,*.tsx"` is validated as one single
+globset pattern — agent-lint does not split on commas, because naive splitting
+would corrupt brace groups such as `{a,b}`. An unquoted glob such as
+`globs: *.ts` is not valid YAML under the strict contract in
+[docs/yaml.md](yaml.md) (it parses as an alias); CU003 keeps its error
+severity and carries a targeted suggestion to quote the pattern when the
+anchor/alias failure is reported on a `globs:` line.
+
+CU009 (`cursor-description-missing`) was removed: description presence is what
+selects Agent Requested mode, so an absence diagnostic cannot fire without
+falsely warning on valid Manual rules. Configurations referencing CU009 or
+`cursor-description-missing` must delete that identifier; there is no
+replacement alias.
 
 ## Hygiene / Scripts Rules (G)
 

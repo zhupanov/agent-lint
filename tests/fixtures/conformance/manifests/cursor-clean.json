@@ -1,8 +1,8 @@
 {
   "class": "clean",
   "repository": "cursor-clean",
-  "covers": ["cursor-mdc", "cursor-root-rule", "cursor-legacy", "pedantic", "json"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--pedantic", "--only", "CU001,CU006", "."] },
+  "covers": ["cursor-mdc", "cursor-root-rule", "cursor-activation-states", "cursor-legacy", "pedantic", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--pedantic", "--only", "CU001,CU002,CU003,CU004,CU005,CU006,CU007,CU008", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",
   "expected_active_platforms": ["claude", "cursor"],

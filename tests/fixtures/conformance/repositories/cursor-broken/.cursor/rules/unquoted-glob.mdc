@@ -1,0 +1,6 @@
+---
+description:
+globs: *.ts
+alwaysApply: false
+---
+Use the repository's established conventions.
