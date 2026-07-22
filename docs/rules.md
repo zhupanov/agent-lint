@@ -580,29 +580,40 @@ of safe credential indirection. Literal remainders and non-empty defaults
 remain findings. S032 evidence is only the assignment key token or a fixed
 signature category; it never includes a candidate value or its source line.
 
-I003 scans paired backticks on individual prose lines; fence delimiters and
-fence interiors are ignored. It treats explicit relative paths (for example
-`docs/guide.md`, `missing.md`, `Node.js`, `api.example.com`, or `./script`) as
-filesystem references. A slash-free dotted token is a path only when its final
-component starts with a lowercase ASCII letter and is one to twelve lowercase
-ASCII letters or digits. This excludes version literals such as `3.12`,
-`1.2.3`, and `v20.11.1`. Bare extension and glob notation is prose, not a
-path: a bare extension is one leading dot followed by one to twelve lowercase
-ASCII letters or digits, so markers such as `.ts`, `.java`, `.properties`,
-and `.tsx` do not depend on a fixed extension allowlist. Recognizable dotfile
-and dot-directory entries take precedence and remain existence-sensitive:
-`.env`, `.gitignore`, `.claude`, `.claude-plugin`, `.github`, `.vscode`,
-`.codex`, `.cursor`, `.venv`, `.husky`, `.idea`, and `.devcontainer` are
-reported when missing. Unlisted short lowercase dot tokens remain extension
-notation; uppercase, punctuation-bearing, and over-twelve-character
-dot-prefixed tokens are treated as dotfiles. URLs, variables, placeholders,
-tokens containing whitespace, and non-path words are excluded.
+I003 scans inline-code spans from the shared Comrak Markdown adapter, including
+arbitrary backtick delimiter lengths (for example ``docs/guide.md``). Fence
+delimiters and fence interiors are ignored. It treats explicit relative paths
+(for example `docs/guide.md`, `missing.md`, `Node.js`, `api.example.com`, or
+`./script`) as filesystem references after normalizing `\` to `/`. A slash-free
+dotted token is a path only when its final component starts with a lowercase
+ASCII letter and is one to twelve lowercase ASCII letters or digits. This
+excludes version literals such as `3.12`, `1.2.3`, and `v20.11.1`. Bare
+extension and glob notation is prose, not a path: a bare extension is one
+leading dot followed by one to twelve lowercase ASCII letters or digits, so
+markers such as `.ts`, `.java`, `.properties`, and `.tsx` do not depend on a
+fixed extension allowlist. Recognizable dotfile and dot-directory entries take
+precedence and remain existence-sensitive: `.env`, `.gitignore`, `.claude`,
+`.claude-plugin`, `.github`, `.vscode`, `.codex`, `.cursor`, `.venv`, `.husky`,
+`.idea`, and `.devcontainer` are reported when missing. Unlisted short
+lowercase dot tokens remain extension notation; uppercase,
+punctuation-bearing, and over-twelve-character dot-prefixed tokens are treated
+as dotfiles. URLs, variables, placeholders, tokens containing whitespace, and
+non-path words are excluded.
 
 Before probing a path, I003 and D005 both remove one `#fragment` and one
 `::symbol` suffix while retaining the original token as diagnostic evidence.
-Both report absolute, parent-traversing, and symlink probes. I003 resolves a
-reference relative to the owning `AGENTS.md`; D005 additionally requires a
-configured `inline-path-prefixes` match. The D005-only
+Both resolve through one repository-safe path probe that rejects absolute
+paths, repository-escaping `..`, a symlink in any existing path component, and
+canonical escape. I003 additionally treats any authored `..` segment as unsafe
+(the #241 parent-traversing policy). I003 resolves relative to the owning
+`AGENTS.md`; D005 resolves from the repository root because its
+`instruction-files` and `inline-path-prefixes` are repository-relative
+contracts, and additionally requires a configured `inline-path-prefixes`
+match. Each rule emits once per distinct normalized target per source file,
+ordered by source byte position, using the first spelling and location.
+Findings carry a structured span, bounded original-token evidence, and either
+`correct the path or create the referenced repository file` or
+`replace it with a non-symlinked repository-relative path`. The D005-only
 `<!-- lint-doc-pointer-paths: ok reason -->` marker suppresses its source line
 when it includes a non-empty reason; it does not suppress I003.
 
@@ -893,9 +904,10 @@ P026 reserved names follow Claude Code's documented built-in server list
 | D004 | `claude-import-large` | Repository-local `CLAUDE.md` `@`-import closure exceeds a global, path-specific, or total line budget | Always | warn |
 | D005 | `inline-path-missing` | Path-shaped inline-code pointer in a configured instruction file is dead or escapes the repository | Always | warn |
 
-D005 scans inline-code pointers outside fenced code blocks in the configured
-`instruction-files` (default `AGENTS.md`, `SECURITY.md`, and `CLAUDE.md`). It
-uses the shared I003 lexical and probe policy above after applying its
+D005 scans inline-code pointers from the shared Markdown adapter in the
+configured `instruction-files` (default `AGENTS.md`, `SECURITY.md`, and
+`CLAUDE.md`). It uses the shared I003 lexical classifier after normalizing `\`
+to `/`, then the repository-root-relative safe probe after applying its
 `inline-path-prefixes` scope. Its documented
 `<!-- lint-doc-pointer-paths: ok reason -->` marker is intentionally D005-only.
 
@@ -925,8 +937,17 @@ can report both independently.
 | L002 | `circular-import` | Canonical reachable `@import` cycle detected once per configured root | Always | error |
 | L003 | `import-depth-exceeded` | Longest simple repository-local `@import` path exceeds 5 hops | Always | error |
 | L004 | `duplicate-import` | Duplicate normalized direct `@import` edge within one instruction file | Always | warn |
-| L005 | `broken-markdown-link` | Broken relative `[text](path.md)` link target in a configured instruction file; external URLs, anchors, and links inside code fences are skipped | Plugin | warn |
+| L005 | `broken-markdown-link` | Broken relative `[text](path.md)` link target in a configured instruction file; external URLs, anchors, image nodes, and non-`.md` destinations are skipped | Always | warn |
 | L006 | `npm-script-missing` | Actionable `npm run` / `npm run-script` commands in configured instruction files whose script is missing from the root `package.json` `scripts` object. Scans inline code, shell fences (`bash`/`sh`/`shell`/`zsh`/`console`, with one leading `$` or `>` console prompt plus its trailing space stripped), and live prose `npm` tokens after line start/whitespace/opening punctuation; skips non-shell fences, quotes, example scopes, same-clause prose negation, package-qualified flags (`--workspace`/`-w`/`--workspaces`/`--prefix`/`--global`/`-g`), substitutions/heredocs/malformed shell, and value-taking non-qualifier flags. Silent when root `package.json` is absent, unreadable, invalid, or has no object-valued `scripts`. One diagnostic per missing script per file at the first command span, with script-name evidence and a correction suggestion. Not autofixable. | Always | warn |
+
+L005 uses the shared Comrak Markdown adapter so image nodes are never treated
+as links. Destinations may use CommonMark angle brackets, titles, escaped
+parentheses, fragments, and percent-encoded bytes; percent-decoding happens
+exactly once before the source-relative safe probe. There is no repository-root
+fallback, so a same-named root file cannot shadow a missing nested link. One
+finding is emitted per distinct normalized `.md` target per source at the
+destination span, with bounded evidence and the same create-or-replace
+suggestions as I003/D005.
 
 ## Auto-Fixable Rules
 

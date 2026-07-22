@@ -42,7 +42,10 @@ src/
 +-- json_output.rs       # Versioned JSON adapter over structured diagnostics
 +-- frontmatter.rs       # YAML frontmatter extraction
 +-- rules.rs             # Central LintRule enum, codes, names, and defaults
-+-- test_helpers.rs      # Shared test utilities
++-- markdown.rs           # Shared Comrak Markdown facts
++-- markdown_refs.rs      # Source-positioned Markdown reference adapter
++-- repo_path.rs          # Repository-safe path resolution
++-- prompt_budget.rs      # Prompt-source closure measurement (S062/D004)
 +-- validators/
     +-- mod.rs           # run_all -> run_basic / run_plugin dispatch
     +-- manifest.rs      # M001-M021: plugin.json & marketplace.json, component paths

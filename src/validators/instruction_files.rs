@@ -2,15 +2,20 @@
 
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
-use crate::fence::{CodeFenceTracker, LineClass};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
+use crate::markdown_refs::{
+    MarkdownRefKind, SUGGEST_CREATE_OR_CORRECT, SUGGEST_REPLACE_SYMLINK, markdown_references,
+};
+use crate::repo_path::{
+    PathProbe, ResolutionBase, normalize_path_probe, normalize_separators, normalized_target_key,
+    probe_contains_parent_segment, resolve_repo_path,
+};
 use crate::rules::LintRule;
 use crate::sensitive::find_instruction_secret;
 use crate::traversal;
-use crate::validators::common::{
-    classify_inline_code_path, is_unsafe_inline_code_path_probe, normalize_inline_code_path_probe,
-};
+use crate::validators::common::classify_inline_code_path;
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::Path;
 
@@ -161,75 +166,50 @@ fn validate_inline_paths(
     display: &str,
     content: &str,
 ) {
-    for reference in backtick_tokens(content) {
-        if !classify_inline_code_path(reference.value).is_repository_path() {
+    let mut seen = BTreeSet::new();
+    for reference in markdown_references(content) {
+        if reference.kind != MarkdownRefKind::InlineCode {
             continue;
         }
-        let probe = normalize_inline_code_path_probe(reference.value);
-        let candidate = agents_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(probe);
-        if is_unsafe_inline_code_path_probe(&candidate) || !candidate.exists() {
-            let metadata = SourceSpan::from_byte_range(content, reference.range)
-                .map_or_else(DiagnosticMetadata::default, |location| {
-                    DiagnosticMetadata::default().with_location(location)
-                })
-                .with_evidence(reference.value);
-            diag.report_with(
-                LintRule::InstructionFilePathMissing,
-                &format!(
-                    "{display} references missing inline-code path `{}`",
-                    reference.value
-                ),
-                metadata,
-            );
-            break;
+        let classified = normalize_separators(&reference.raw);
+        if !classify_inline_code_path(&classified).is_repository_path() {
+            continue;
         }
-    }
-}
-
-struct BacktickToken<'a> {
-    value: &'a str,
-    range: Range<usize>,
-}
-
-fn backtick_tokens(content: &str) -> Vec<BacktickToken<'_>> {
-    let mut result = Vec::new();
-    let mut offset = 0;
-    let mut fences = CodeFenceTracker::new();
-    for raw_line in content.split_inclusive('\n') {
-        let without_newline = raw_line.strip_suffix('\n').unwrap_or(raw_line);
-        let line = without_newline
-            .strip_suffix('\r')
-            .unwrap_or(without_newline);
-        if fences.process_line(line) == LineClass::Outside {
-            backtick_tokens_in_line(line, offset, &mut result);
-        }
-        offset += raw_line.len();
-    }
-    result
-}
-
-fn backtick_tokens_in_line<'a>(line: &'a str, offset: usize, result: &mut Vec<BacktickToken<'a>>) {
-    let mut line_offset = 0;
-    while let Some(relative_start) = line[line_offset..].find('`') {
-        let raw_start = line_offset + relative_start + 1;
-        let Some(relative_end) = line[raw_start..].find('`') else {
-            break;
+        let probe = normalize_path_probe(&reference.raw);
+        let rejected_parent = probe_contains_parent_segment(&probe);
+        let key = if rejected_parent {
+            format!("unsafe:{probe}")
+        } else {
+            normalized_target_key(agents_path, &reference.raw, ResolutionBase::SourceRelative)
+                .unwrap_or_else(|| probe.clone())
         };
-        let raw_end = raw_start + relative_end;
-        let raw = &line[raw_start..raw_end];
-        let token = raw.trim();
-        if !token.is_empty() && !token.contains(char::is_whitespace) {
-            let leading_whitespace_bytes = raw.len() - raw.trim_start().len();
-            let token_start = offset + raw_start + leading_whitespace_bytes;
-            result.push(BacktickToken {
-                value: token,
-                range: token_start..token_start + token.len(),
-            });
+        if !seen.insert(key) {
+            continue;
         }
-        line_offset = raw_end + 1;
+        let outcome = if rejected_parent {
+            PathProbe::Rejected
+        } else {
+            resolve_repo_path(agents_path, &reference.raw, ResolutionBase::SourceRelative)
+        };
+        let suggestion = match &outcome {
+            PathProbe::File(_) | PathProbe::Directory(_) => continue,
+            PathProbe::Missing(_) => SUGGEST_CREATE_OR_CORRECT,
+            PathProbe::Rejected => SUGGEST_REPLACE_SYMLINK,
+        };
+        let metadata = SourceSpan::from_byte_range(content, reference.byte_range.clone())
+            .map_or_else(DiagnosticMetadata::default, |location| {
+                DiagnosticMetadata::default().with_location(location)
+            })
+            .with_evidence(&reference.raw)
+            .with_suggestion(suggestion);
+        diag.report_with(
+            LintRule::InstructionFilePathMissing,
+            &format!(
+                "{display} references missing inline-code path `{}`",
+                reference.raw
+            ),
+            metadata,
+        );
     }
 }
 
@@ -779,6 +759,90 @@ mod tests {
                 Some(directory)
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn i003_safe_path_does_not_suppress_parent_traversing_duplicate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write("outside.md", "present\n").unwrap();
+        let content = "See `outside.md` and `docs/../outside.md`.\n";
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        diag.with_subject_path("AGENTS.md", |diag| {
+            validate_inline_paths(diag, Path::new("AGENTS.md"), "AGENTS.md", content)
+        });
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::InstructionFilePathMissing)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].evidence.as_deref(), Some("docs/../outside.md"));
+        assert_eq!(
+            findings[0].suggestion.as_deref(),
+            Some(SUGGEST_REPLACE_SYMLINK)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn i003_reports_every_distinct_path_including_double_backticks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let content = "See `docs/first-missing.md` and ``docs/third-missing.md`` plus `docs/first-missing.md` again.\n";
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        diag.with_subject_path("AGENTS.md", |diag| {
+            validate_inline_paths(diag, Path::new("AGENTS.md"), "AGENTS.md", content)
+        });
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::InstructionFilePathMissing)
+            .collect();
+        assert_eq!(findings.len(), 2);
+        assert_eq!(
+            findings[0].evidence.as_deref(),
+            Some("docs/first-missing.md")
+        );
+        assert_eq!(
+            findings[1].evidence.as_deref(),
+            Some("docs/third-missing.md")
+        );
+        assert_eq!(
+            findings[0].suggestion.as_deref(),
+            Some(SUGGEST_CREATE_OR_CORRECT)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn i003_rejects_ancestor_symlink_components() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("outside").unwrap();
+        std::fs::write("outside/present.md", "ok\n").unwrap();
+        std::fs::create_dir_all("docs").unwrap();
+        std::os::unix::fs::symlink("../outside", "docs/external").unwrap();
+        let content = "See `docs/external/present.md`.\n";
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        diag.with_subject_path("AGENTS.md", |diag| {
+            validate_inline_paths(diag, Path::new("AGENTS.md"), "AGENTS.md", content)
+        });
+        let finding = diag
+            .diagnostics()
+            .iter()
+            .find(|item| item.rule == LintRule::InstructionFilePathMissing)
+            .expect("ancestor symlink must report");
+        assert_eq!(
+            finding.evidence.as_deref(),
+            Some("docs/external/present.md")
+        );
+        assert_eq!(finding.suggestion.as_deref(), Some(SUGGEST_REPLACE_SYMLINK));
     }
 
     #[test]

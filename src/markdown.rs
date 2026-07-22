@@ -23,7 +23,12 @@ pub struct MarkdownHeading {
 /// A source-positioned Markdown link destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkdownLink {
+    /// Destination after Comrak's CommonMark decode (not percent-decoded again).
     pub destination: String,
+    /// Authored destination spelling recovered from the source span.
+    pub raw_destination: String,
+    /// UTF-8 byte range of the authored destination only.
+    pub destination_byte_range: std::ops::Range<usize>,
     pub line: usize,
     /// Inclusive one-based start column of the full link node.
     pub start_column: usize,
@@ -31,6 +36,21 @@ pub struct MarkdownLink {
     pub end_line: usize,
     /// Inclusive one-based end column of the full link node.
     pub end_column: usize,
+    /// UTF-8 byte range of the full link node.
+    pub byte_range: std::ops::Range<usize>,
+}
+
+/// A source-positioned Markdown image destination (never treated as a link).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownImage {
+    pub destination: String,
+    pub raw_destination: String,
+    pub destination_byte_range: std::ops::Range<usize>,
+    pub line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub byte_range: std::ops::Range<usize>,
 }
 
 /// A source-positioned inline code span.
@@ -38,6 +58,10 @@ pub struct MarkdownLink {
 pub struct MarkdownInlineCode {
     /// Literal contents after CommonMark fence-space stripping.
     pub literal: String,
+    /// Authored interior spelling recovered from the source span.
+    pub raw_literal: String,
+    /// UTF-8 byte range of the authored interior (excluding delimiters).
+    pub literal_byte_range: std::ops::Range<usize>,
     /// Inclusive one-based start line of the full code span (including backticks).
     pub start_line: usize,
     /// Inclusive one-based start column of the full code span.
@@ -46,6 +70,8 @@ pub struct MarkdownInlineCode {
     pub end_line: usize,
     /// Inclusive one-based end column of the full code span.
     pub end_column: usize,
+    /// UTF-8 byte range of the full code span including backticks.
+    pub byte_range: std::ops::Range<usize>,
     /// Number of opening backticks.
     pub num_backticks: usize,
 }
@@ -72,6 +98,8 @@ pub struct MarkdownDocument {
     unclosed_fence_line: Option<usize>,
     headings: Vec<MarkdownHeading>,
     links: Vec<MarkdownLink>,
+    #[allow(dead_code)] // retained so images never leak into links()
+    images: Vec<MarkdownImage>,
     inline_code: Vec<MarkdownInlineCode>,
     body_prose: Vec<MarkdownProseLine>,
     /// Candidate lines for unfinished-work marker scanning (D003/G006/G007).
@@ -110,6 +138,7 @@ impl MarkdownDocument {
         let root = parse_document(&arena, &content, &options);
         let mut headings = Vec::new();
         let mut links = Vec::new();
+        let mut images = Vec::new();
         let mut inline_code = Vec::new();
         let mut excluded_lines = std::collections::HashSet::new();
         let mut inline_exclusions = Vec::new();
@@ -135,12 +164,18 @@ impl MarkdownDocument {
                     });
                 }
                 NodeValue::Link(link) => {
+                    let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
+                    let (raw_destination, destination_byte_range) =
+                        destination_from_link_span(&content, byte_range.clone(), &link.url);
                     links.push(MarkdownLink {
                         destination: link.url.clone(),
+                        raw_destination,
+                        destination_byte_range,
                         line: data.sourcepos.start.line,
                         start_column: data.sourcepos.start.column,
                         end_line: data.sourcepos.end.line,
                         end_column: data.sourcepos.end.column,
+                        byte_range,
                     });
                     link_exclusions.push((
                         data.sourcepos.start.line,
@@ -155,7 +190,20 @@ impl MarkdownDocument {
                         data.sourcepos.end.column,
                     ));
                 }
-                NodeValue::Image(_) => {
+                NodeValue::Image(image) => {
+                    let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
+                    let (raw_destination, destination_byte_range) =
+                        destination_from_link_span(&content, byte_range.clone(), &image.url);
+                    images.push(MarkdownImage {
+                        destination: image.url.clone(),
+                        raw_destination,
+                        destination_byte_range,
+                        line: data.sourcepos.start.line,
+                        start_column: data.sourcepos.start.column,
+                        end_line: data.sourcepos.end.line,
+                        end_column: data.sourcepos.end.column,
+                        byte_range,
+                    });
                     link_exclusions.push((
                         data.sourcepos.start.line,
                         data.sourcepos.start.column,
@@ -176,12 +224,21 @@ impl MarkdownDocument {
                         data.sourcepos.end.line,
                         data.sourcepos.end.column,
                     ));
+                    let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
+                    let (raw_literal, literal_byte_range) = inline_code_literal_from_span(
+                        &content,
+                        byte_range.clone(),
+                        code.num_backticks,
+                    );
                     inline_code.push(MarkdownInlineCode {
                         literal: code.literal.clone(),
+                        raw_literal,
+                        literal_byte_range,
                         start_line: data.sourcepos.start.line,
                         start_column: data.sourcepos.start.column,
                         end_line: data.sourcepos.end.line,
                         end_column: data.sourcepos.end.column,
+                        byte_range,
                         num_backticks: code.num_backticks,
                     });
                 }
@@ -267,6 +324,7 @@ impl MarkdownDocument {
             unclosed_fence_line,
             headings,
             links,
+            images,
             inline_code,
             body_prose,
             unfinished_work_lines,
@@ -314,6 +372,12 @@ impl MarkdownDocument {
 
     pub fn links(&self) -> &[MarkdownLink] {
         &self.links
+    }
+
+    /// Source-positioned image nodes in document order.
+    #[allow(dead_code)] // consumed by L005 hard-negative coverage via absence from links()
+    pub fn images(&self) -> &[MarkdownImage] {
+        &self.images
     }
 
     /// Source-positioned inline code spans in document order.
@@ -593,6 +657,147 @@ fn fence_facts(content: &str) -> (Vec<MarkdownFence>, Option<usize>) {
     (fences, unclosed_fence_line)
 }
 
+/// Convert a Comrak sourcepos (1-based inclusive columns) into a UTF-8 byte range.
+fn byte_range_for_sourcepos(
+    content: &str,
+    sourcepos: comrak::nodes::Sourcepos,
+) -> std::ops::Range<usize> {
+    let start = offset_for_line_column(content, sourcepos.start.line, sourcepos.start.column);
+    let end =
+        offset_for_line_column(content, sourcepos.end.line, sourcepos.end.column).map(|offset| {
+            content[offset..]
+                .chars()
+                .next()
+                .map_or(offset, |ch| offset + ch.len_utf8())
+        });
+    match (start, end) {
+        (Some(start), Some(end)) if start <= end && end <= content.len() => start..end,
+        _ => 0..0,
+    }
+}
+
+fn offset_for_line_column(content: &str, line: usize, column: usize) -> Option<usize> {
+    if line == 0 || column == 0 {
+        return None;
+    }
+    let mut current_line = 1usize;
+    let mut line_start = 0usize;
+    for (offset, ch) in content.char_indices() {
+        if current_line == line {
+            let mut columns = 1usize;
+            for (rel, line_ch) in content[line_start..].char_indices() {
+                if columns == column {
+                    return Some(line_start + rel);
+                }
+                if line_ch == '\n' {
+                    break;
+                }
+                columns += 1;
+            }
+            return None;
+        }
+        if ch == '\n' {
+            current_line += 1;
+            line_start = offset + ch.len_utf8();
+        }
+    }
+    if current_line == line {
+        let mut columns = 1usize;
+        for (rel, line_ch) in content[line_start..].char_indices() {
+            if columns == column {
+                return Some(line_start + rel);
+            }
+            if line_ch == '\n' {
+                break;
+            }
+            columns += 1;
+        }
+    }
+    None
+}
+
+fn inline_code_literal_from_span(
+    content: &str,
+    byte_range: std::ops::Range<usize>,
+    num_backticks: usize,
+) -> (String, std::ops::Range<usize>) {
+    if byte_range.end > content.len() || byte_range.start >= byte_range.end {
+        return (String::new(), byte_range);
+    }
+    let span = &content[byte_range.clone()];
+    let opener = "`".repeat(num_backticks.max(1));
+    let Some(without_opener) = span.strip_prefix(opener.as_str()) else {
+        return (span.to_string(), byte_range);
+    };
+    let Some(interior) = without_opener.strip_suffix(opener.as_str()) else {
+        return (span.to_string(), byte_range);
+    };
+    let start = byte_range.start + opener.len();
+    let end = start + interior.len();
+    (interior.to_string(), start..end)
+}
+
+fn destination_from_link_span(
+    content: &str,
+    byte_range: std::ops::Range<usize>,
+    fallback: &str,
+) -> (String, std::ops::Range<usize>) {
+    if byte_range.end > content.len() || byte_range.start >= byte_range.end {
+        return (fallback.to_string(), byte_range);
+    }
+    let span = &content[byte_range.clone()];
+    let Some(dest_local_start) = span.find("](").map(|index| index + 2) else {
+        return (fallback.to_string(), byte_range);
+    };
+    let after = &span[dest_local_start..];
+    if let Some(rest) = after.strip_prefix('<') {
+        let Some(close) = rest.find('>') else {
+            return (fallback.to_string(), byte_range);
+        };
+        let raw = &rest[..close];
+        let start = byte_range.start + dest_local_start + 1;
+        return (raw.to_string(), start..start + raw.len());
+    }
+
+    let mut end = 0usize;
+    let mut depth = 0usize;
+    let bytes = after.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' if index + 1 < bytes.len() => {
+                index += 2;
+                end = index;
+            }
+            b'(' => {
+                depth += 1;
+                index += 1;
+                end = index;
+            }
+            b')' if depth == 0 => break,
+            b')' => {
+                depth -= 1;
+                index += 1;
+                end = index;
+            }
+            b' ' | b'\t' | b'\n' | b'\r' if depth == 0 => break,
+            _ => {
+                index += 1;
+                end = index;
+            }
+        }
+    }
+    let mut raw = after.get(..end).unwrap_or("");
+    if let Some((path, _)) = raw.rsplit_once(" \"") {
+        raw = path;
+    } else if let Some((path, _)) = raw.rsplit_once(" '") {
+        raw = path;
+    }
+    raw = raw.trim_end();
+    let start = byte_range.start + dest_local_start;
+    (raw.to_string(), start..start + raw.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,15 +820,17 @@ mod tests {
                 text: "Heading".into(),
             }]
         );
+        assert_eq!(doc.links().len(), 1);
+        let link = &doc.links()[0];
+        assert_eq!(link.destination, "docs/a.md");
+        assert_eq!(link.raw_destination, "docs/a.md");
+        assert_eq!(link.line, 5);
+        assert_eq!(link.start_column, 1);
+        assert_eq!(link.end_line, 5);
+        assert_eq!(link.end_column, 17);
         assert_eq!(
-            doc.links(),
-            [MarkdownLink {
-                destination: "docs/a.md".into(),
-                line: 5,
-                start_column: 1,
-                end_line: 5,
-                end_column: 17,
-            }]
+            &doc.content()[link.destination_byte_range.clone()],
+            "docs/a.md"
         );
         assert_eq!(doc.fences().len(), 1);
     }

@@ -2,7 +2,6 @@ use crate::context::ManifestError;
 use crate::diagnostic::DiagnosticMetadata;
 use regex::Regex;
 use std::ops::Range;
-use std::path::{Component, Path};
 use std::sync::LazyLock;
 use url::{Host, Url};
 
@@ -146,8 +145,8 @@ pub(crate) const VALID_SHELLS: &[&str] = &["bash", "powershell"];
 /// Lexical category for one whitespace-free inline-code token.
 ///
 /// I003 and D005 intentionally share this classifier. Their validation scopes
-/// differ (D005 additionally requires a configured repository-path prefix),
-/// but equivalent tokens must not drift between path and non-path treatment.
+/// and resolution bases differ, but equivalent tokens must not drift between
+/// path and non-path treatment. Filesystem probing lives in `repo_path`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InlineCodePathKind {
     ConcreteRelativePath,
@@ -257,25 +256,6 @@ pub(crate) fn classify_inline_code_path(token: &str) -> InlineCodePathKind {
         return InlineCodePathKind::ConcreteRelativePath;
     }
     InlineCodePathKind::NonPath
-}
-
-/// Remove one Markdown fragment and one `::` symbol suffix before a filesystem
-/// probe. Diagnostics retain the original token as evidence.
-pub(crate) fn normalize_inline_code_path_probe(token: &str) -> &str {
-    let without_fragment = token.split_once('#').map_or(token, |(path, _)| path);
-    without_fragment
-        .split_once("::")
-        .map_or(without_fragment, |(path, _)| path)
-}
-
-/// Whether a filesystem probe is absolute, traverses a parent directory, or
-/// resolves to a symlink. Both I003 and D005 reject these references.
-pub(crate) fn is_unsafe_inline_code_path_probe(path: &Path) -> bool {
-    path.is_absolute()
-        || path
-            .components()
-            .any(|component| component == Component::ParentDir)
-        || path.is_symlink()
 }
 
 /// Model aliases accepted by Claude Code `/model` plus skill/agent `inherit`.
@@ -621,11 +601,8 @@ mod url_tests {
 
 #[cfg(test)]
 mod inline_code_path_tests {
-    use super::{
-        InlineCodePathKind, classify_inline_code_path, is_unsafe_inline_code_path_probe,
-        normalize_inline_code_path_probe,
-    };
-    use std::path::Path;
+    use super::{InlineCodePathKind, classify_inline_code_path};
+    use crate::repo_path::{normalize_path_probe, probe_contains_parent_segment};
 
     #[test]
     fn classifies_concrete_relative_paths() {
@@ -729,22 +706,16 @@ mod inline_code_path_tests {
     #[test]
     fn normalizes_fragments_and_symbol_suffixes_before_probing() {
         assert_eq!(
-            normalize_inline_code_path_probe("docs/README.md#usage"),
+            normalize_path_probe("docs/README.md#usage"),
             "docs/README.md"
         );
+        assert_eq!(normalize_path_probe("src/main.rs::main"), "src/main.rs");
         assert_eq!(
-            normalize_inline_code_path_probe("src/main.rs::main"),
+            normalize_path_probe("src/main.rs::main#usage"),
             "src/main.rs"
         );
-        assert_eq!(
-            normalize_inline_code_path_probe("src/main.rs::main#usage"),
-            "src/main.rs"
-        );
-        assert!(is_unsafe_inline_code_path_probe(Path::new("/tmp/file.md")));
-        assert!(is_unsafe_inline_code_path_probe(Path::new(
-            "docs/../file.md"
-        )));
-        assert!(!is_unsafe_inline_code_path_probe(Path::new("docs/file.md")));
+        assert!(probe_contains_parent_segment("docs/../file.md"));
+        assert!(!probe_contains_parent_segment("docs/file.md"));
     }
 
     #[test]
