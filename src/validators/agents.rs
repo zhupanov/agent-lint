@@ -187,62 +187,88 @@ fn is_desc_redundant(name: &str, desc: &str) -> bool {
 #[cfg(test)]
 pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let mut prompt_pass = super::prompt_content::PromptContentPass::default();
-    validate_agents_with_prompt_pass(diag, exclude, &mut prompt_pass);
+    validate_agents_with_prompt_pass(diag, exclude, &[], &mut prompt_pass);
 }
 
+/// V7: Validate plugin agent frontmatter and field values across the default
+/// `agents/` directory and every manifest-declared agent root.
+///
+/// Discovery is recursive and shared through [`super::agent_discovery`], so an
+/// agent nested in a subdirectory is validated exactly like a top-level one.
+/// A001 fires for an explicitly declared root that is missing; A004 fires for a
+/// present root that holds no agent `.md` files. The implicit default `agents/`
+/// is optional: its absence is clean, and only a present-but-empty default
+/// reports A004. `declared_roots` are the repository-safe, normalized,
+/// deduplicated paths from plugin.json `agents`, in declaration order (the A001
+/// once-per-path guarantee relies on that deduplication).
 pub(crate) fn validate_agents_with_prompt_pass(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
+    declared_roots: &[String],
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    let agents_dir = Path::new("agents");
-    if !agents_dir.is_dir() {
-        diag.report_at(
-            LintRule::AgentsDirMissing,
-            agents_dir,
-            "agents/ directory is missing",
-        );
-        return;
+    use super::agent_discovery;
+
+    // Ordered, path-deduplicated scan set: the implicit default `agents/` first,
+    // then each declared root in declaration order.
+    let mut scan_order: Vec<&str> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    for root in std::iter::once("agents").chain(declared_roots.iter().map(String::as_str)) {
+        if seen.insert(root) {
+            scan_order.push(root);
+        }
+    }
+    let roots: Vec<agent_discovery::AgentRoot> = scan_order
+        .iter()
+        .map(|root| agent_discovery::discover_root(root, exclude))
+        .collect();
+    let exists_by_path: HashMap<&str, bool> = roots
+        .iter()
+        .map(|root| (root.path.as_str(), root.exists))
+        .collect();
+
+    // A001: an explicitly declared agent path that does not exist, once per
+    // distinct normalized path in declaration order. The implicit default's
+    // absence is legal and is never reported here.
+    for declared in declared_roots {
+        if exists_by_path.get(declared.as_str()) == Some(&false) {
+            diag.report_at(
+                LintRule::AgentsDirMissing,
+                Path::new(declared),
+                &format!("plugin.json declares agents path '{declared}' but it does not exist"),
+            );
+        }
     }
 
-    let mut found = 0;
-    let mut excluded_count = 0;
-    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
-        let path = entry.path;
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) if n.ends_with(".md") => n.to_string(),
-            _ => continue,
-        };
-
-        let agent_path = format!("agents/{name}");
-        if exclude.is_excluded(&agent_path) {
-            excluded_count += 1;
-            continue;
+    // A004: a present root (default or declared) holding zero agent files. A root
+    // whose only files are excluded is not empty — its files exist before
+    // exclusion — so all-excluded roots stay silent.
+    for root in &roots {
+        if root.exists && root.inventory.all_files.is_empty() {
+            diag.report_at(
+                LintRule::NoAgentFiles,
+                Path::new(&root.path),
+                &format!("{} contains no agent .md files", root.path),
+            );
         }
+    }
 
-        found += 1;
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
+    // Per-file frontmatter and field-value validation over the merged,
+    // exclusion-filtered set, deduplicated across overlapping roots.
+    for agent_path in &agent_discovery::merge(&roots).lint_files {
+        let content = match fs::read_to_string(agent_path) {
+            Ok(content) => content,
             Err(_) => continue,
         };
-
-        diag.with_subject_path(&agent_path, |diag| {
+        diag.with_subject_path(agent_path, |diag| {
             validate_agent_file(
                 diag,
-                &agent_path,
+                agent_path,
                 &content,
                 prompt_pass,
                 AgentSurface::Plugin,
             );
         });
-    }
-
-    if found == 0 && excluded_count == 0 {
-        diag.report_at(
-            LintRule::NoAgentFiles,
-            agents_dir,
-            "agents/ has no .md files",
-        );
     }
 }
 
@@ -263,43 +289,18 @@ pub(crate) fn validate_private_agents_with_prompt_pass(
     prompt_pass: &mut super::prompt_content::PromptContentPass,
     plugin_runtime: bool,
 ) {
-    let agents_dir = Path::new(".claude/agents");
-    if !agents_dir.is_dir() {
-        return;
-    }
-    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
-        let path = entry.path;
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) if n.ends_with(".md") => n.to_string(),
-            _ => continue,
-        };
-
-        let agent_path = format!(".claude/agents/{name}");
-        if exclude.is_excluded(&agent_path) {
-            continue;
-        }
-
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
+    let surface = AgentSurface::Private { plugin_runtime };
+    // Recursive discovery: agents nested under `.claude/agents/` are validated
+    // exactly like top-level ones. `.claude/agents/` is optional and never
+    // reports A001/A004.
+    let inventory = super::agent_discovery::discover_root(".claude/agents", exclude).inventory;
+    for agent_path in &inventory.lint_files {
+        let content = match fs::read_to_string(agent_path) {
+            Ok(content) => content,
             Err(_) => continue,
         };
-
-        diag.with_subject_path(&agent_path, |diag| {
-            validate_agent_file(
-                diag,
-                &agent_path,
-                &content,
-                prompt_pass,
-                if plugin_runtime {
-                    AgentSurface::Private {
-                        plugin_runtime: true,
-                    }
-                } else {
-                    AgentSurface::Private {
-                        plugin_runtime: false,
-                    }
-                },
-            );
+        diag.with_subject_path(agent_path, |diag| {
+            validate_agent_file(diag, agent_path, &content, prompt_pass, surface);
         });
     }
 }
@@ -1427,15 +1428,16 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn test_v7_missing_agents_dir() {
+    fn test_v7_absent_default_agents_dir_is_clean() {
+        // Narrowed A001: the implicit default `agents/` is optional, so its
+        // absence with no declared roots reports nothing.
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("agents/ directory is missing"));
+        assert_eq!(diag.diagnostics().len(), 0);
     }
 
     #[test]
@@ -1450,7 +1452,396 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_agents(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("no .md files"));
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::NoAgentFiles);
+        assert!(diag.errors()[0].contains("no agent .md files"));
+    }
+
+    // ── #321: recursive discovery, narrowed A001/A004, manifest roots ──
+
+    /// Run the plugin agents validator with explicit manifest-declared roots.
+    fn run_plugin_agents_with(
+        declared: &[&str],
+        exclude: &ExcludeSet,
+        diag: &mut DiagnosticCollector,
+    ) {
+        let declared: Vec<String> = declared.iter().map(|s| (*s).to_string()).collect();
+        let mut prompt_pass = super::super::prompt_content::PromptContentPass::default();
+        validate_agents_with_prompt_pass(diag, exclude, &declared, &mut prompt_pass);
+    }
+
+    fn agents_of(diag: &DiagnosticCollector, rule: LintRule) -> Vec<String> {
+        diag.diagnostics()
+            .iter()
+            .filter(|d| d.rule == rule)
+            .map(|d| {
+                d.subject_path
+                    .as_deref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_private_agent_bad_model_reports_a014() {
+        // The shared recursive collector feeds sibling field-value validators, so
+        // a nested private agent is checked exactly like a top-level one.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents/review").unwrap();
+        std::fs::write(
+            ".claude/agents/review/beta.md",
+            "---\nname: beta\ndescription: A general-purpose reviewer for pull requests\nmodel: not-a-model\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &ExcludeSet::default());
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentModelInvalid),
+            vec![".claude/agents/review/beta.md".to_string()]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_private_agent_malformed_frontmatter_reports_a002() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents/review").unwrap();
+        std::fs::write(".claude/agents/review/beta.md", "no frontmatter at all\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &ExcludeSet::default());
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentFrontmatterMalformed),
+            vec![".claude/agents/review/beta.md".to_string()]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn deeply_nested_private_agent_is_collected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents/a/b/c").unwrap();
+        std::fs::write(
+            ".claude/agents/a/b/c/deep.md",
+            "---\nname: deep\ndescription: A general-purpose reviewer for pull requests\nmodel: not-a-model\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &ExcludeSet::default());
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentModelInvalid),
+            vec![".claude/agents/a/b/c/deep.md".to_string()]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn declared_missing_paths_report_a001_in_declaration_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // No `agents/` directory: its implicit absence must never fire A001.
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["custom-a", "custom-b"], &ExcludeSet::default(), &mut diag);
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentsDirMissing),
+            vec!["custom-a".to_string(), "custom-b".to_string()],
+            "one A001 per declared missing path, in declaration order"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn custom_declared_root_reports_a002_and_no_a001() {
+        // Leaf #256 reproduction: a plugin whose only agent lives under a
+        // manifest-declared root must be validated there, and the absent default
+        // `agents/` must not raise A001.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("custom-agents/nested").unwrap();
+        std::fs::write("custom-agents/nested/broken.md", "no frontmatter\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["custom-agents"], &ExcludeSet::default(), &mut diag);
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentFrontmatterMalformed),
+            vec!["custom-agents/nested/broken.md".to_string()]
+        );
+        assert!(
+            agents_of(&diag, LintRule::AgentsDirMissing).is_empty(),
+            "absent default agents/ must not fire A001"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn declared_direct_markdown_file_root_is_validated() {
+        // A declared path may point directly at a single agent file; a malformed
+        // one still reaches A002 and its existence means no A001.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("custom").unwrap();
+        std::fs::write("custom/agent.md", "no frontmatter\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["custom/agent.md"], &ExcludeSet::default(), &mut diag);
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentFrontmatterMalformed),
+            vec!["custom/agent.md".to_string()]
+        );
+        assert!(agents_of(&diag, LintRule::AgentsDirMissing).is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn default_and_two_declared_roots_validate_each_file_once_in_order() {
+        // Default `agents/` plus two declared roots, one overlapping the default
+        // and one spelled twice: every physical file is validated exactly once,
+        // in stable sorted order.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents/sub").unwrap();
+        std::fs::create_dir_all("extra").unwrap();
+        for path in ["agents/top.md", "agents/sub/nested.md", "extra/e.md"] {
+            std::fs::write(path, "no frontmatter\n").unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        // `agents/sub` overlaps the default `agents/`; `./extra` repeats `extra`.
+        run_plugin_agents_with(
+            &["agents/sub", "extra", "./extra"],
+            &ExcludeSet::default(),
+            &mut diag,
+        );
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentFrontmatterMalformed),
+            vec![
+                "agents/sub/nested.md".to_string(),
+                "agents/top.md".to_string(),
+                "extra/e.md".to_string(),
+            ],
+            "each physical file is validated once, deduplicated across overlapping roots"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn present_empty_default_root_reports_a004() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&[], &ExcludeSet::default(), &mut diag);
+        assert_eq!(
+            agents_of(&diag, LintRule::NoAgentFiles),
+            vec!["agents".to_string()]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn present_empty_declared_root_reports_a004_not_a001() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("custom").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["custom"], &ExcludeSet::default(), &mut diag);
+        assert_eq!(
+            agents_of(&diag, LintRule::NoAgentFiles),
+            vec!["custom".to_string()]
+        );
+        assert!(
+            agents_of(&diag, LintRule::AgentsDirMissing).is_empty(),
+            "an existing declared root is present, not missing"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn declared_non_markdown_file_reports_a004_not_a001() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::write("custom.txt", "not markdown\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["custom.txt"], &ExcludeSet::default(), &mut diag);
+        assert_eq!(
+            agents_of(&diag, LintRule::NoAgentFiles),
+            vec!["custom.txt".to_string()]
+        );
+        assert!(agents_of(&diag, LintRule::AgentsDirMissing).is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn default_and_declared_same_root_emits_single_a004() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["agents"], &ExcludeSet::default(), &mut diag);
+        assert_eq!(
+            agents_of(&diag, LintRule::NoAgentFiles),
+            vec!["agents".to_string()],
+            "a root that is both default and declared reports A004 at most once"
+        );
+        assert!(agents_of(&diag, LintRule::AgentsDirMissing).is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_agent_suppresses_a004() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents/review").unwrap();
+        std::fs::write(
+            "agents/review/nested.md",
+            "---\nname: nested\ndescription: A general-purpose reviewer for pull requests\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&[], &ExcludeSet::default(), &mut diag);
+        assert!(
+            agents_of(&diag, LintRule::NoAgentFiles).is_empty(),
+            "a nested agent makes the default root non-empty"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn all_excluded_root_stays_silent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write("agents/only.md", "no frontmatter\n").unwrap();
+
+        let exclude = ExcludeSet::new(&["agents/**".to_string()]).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&[], &exclude, &mut diag);
+        assert!(
+            diag.diagnostics().is_empty(),
+            "an all-excluded root is neither empty (A004) nor validated: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn excluding_nested_subdir_suppresses_only_nested_findings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents/review").unwrap();
+        let bad = "---\nname: {n}\ndescription: A general-purpose reviewer for pull requests\nmodel: not-a-model\n---\nBody\n";
+        std::fs::write(".claude/agents/top.md", bad.replace("{n}", "top")).unwrap();
+        std::fs::write(
+            ".claude/agents/review/nested.md",
+            bad.replace("{n}", "nested"),
+        )
+        .unwrap();
+
+        let exclude = ExcludeSet::new(&[".claude/agents/review/**".to_string()]).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &exclude);
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentModelInvalid),
+            vec![".claude/agents/top.md".to_string()],
+            "the excluded nested subdirectory is invisible; the top-level file is unchanged"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn non_markdown_nested_entry_is_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents/notes").unwrap();
+        std::fs::write("agents/notes/readme.txt", "just notes\n").unwrap();
+        std::fs::write(
+            "agents/real.md",
+            "---\nname: real\ndescription: A general-purpose reviewer for pull requests\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&[], &ExcludeSet::default(), &mut diag);
+        assert!(
+            agents_of(&diag, LintRule::NoAgentFiles).is_empty(),
+            "the real agent keeps the root non-empty"
+        );
+        assert!(
+            !diag.errors().iter().any(|e| e.contains("readme.txt")),
+            "a non-Markdown entry is never treated as an agent: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_agents_do_not_change_template_arithmetic() {
+        // A005-A007 stay pinned to the flat top-level `agents/*.md` larch
+        // convention; a nested agent neither counts toward A007 nor gets an A006
+        // marker check.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents/nested").unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write("skills/shared/reviewer-templates.md", "## Reviewer\n").unwrap();
+        // One top-level agent with the marker == one reviewer section: aligned.
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\nDerived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
+        // A nested agent lacking the marker must not perturb the convention.
+        std::fs::write(
+            "agents/nested/extra.md",
+            "---\nname: extra\ndescription: desc\n---\nNo marker here\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_template_convention(&mut diag, &ExcludeSet::default());
+        assert_eq!(
+            diag.error_count(),
+            0,
+            "nested agents are invisible to A005-A007: {:?}",
+            diag.errors()
+        );
     }
 
     #[test]

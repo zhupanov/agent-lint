@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Agent discovery is now recursive across `.claude/agents/`, the plugin
+  `agents/` default, and manifest-declared `plugin.json` `agents` roots, matching
+  Claude Code: agents nested in subdirectories are seen by every agent rule
+  (A002-A004, A008-A030) and the A030 overlap pool, and carry their full
+  repository-relative path in diagnostics and `related_subjects`. A001
+  (`agents-dir-missing`) is narrowed to a manifest-declared agent path that does
+  not exist — an absent implicit `agents/` is now clean — and A004
+  (`no-agent-files`) fires only for a present default or declared root that holds
+  no agent files (all-excluded roots stay silent). Template rules A005-A007 stay
+  scoped to the flat top-level `agents/*.md` convention. Exclusions and per-file
+  overrides match the full nested path, and a symlinked root is never followed
+  out of the repository
 - Narrowed D003/G006/G007 unfinished-work detection to a shared syntactic
   marker grammar (`TODO:` / `FIXME(owner):` / comment and unchecked-task
   forms) with Markdown context exclusions, structured span/evidence/suggestion

@@ -283,10 +283,10 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| A001 | `agents-dir-missing` | `agents/` directory is missing | Plugin | error |
+| A001 | `agents-dir-missing` | A manifest-declared plugin agent path (a `plugin.json` `agents` string or array entry) does not exist. The implicit default `agents/` directory is optional, so its absence is never reported | Plugin | error |
 | A002 | `agent-frontmatter-malformed` | Agent `.md` has malformed frontmatter | Always | error |
 | A003 | `agent-field-missing` | Agent `.md` missing required field (`name` or `description`) | Always | error |
-| A004 | `no-agent-files` | `agents/` has no `.md` files | Plugin | error |
+| A004 | `no-agent-files` | A present plugin agent root (default `agents/` or a manifest-declared path) has no agent `.md` files after recursive discovery. An all-excluded root stays silent; an absent root reports nothing (A001 owns declared absence) | Plugin | error |
 | A005 | `template-file-missing` | An opted-in larch agent derives from a missing or unreadable `skills/shared/reviewer-templates.md` | Plugin | warn |
 | A006 | `template-marker-missing` | An opted-in top-level agent lacks the larch derivation marker | Plugin | warn |
 | A007 | `template-count-mismatch` | Opted-in larch agent count differs from semantic reviewer-section count | Plugin | warn |
@@ -345,8 +345,10 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > Missing, empty, non-string, or under-20-character descriptions, and
 > descriptions in invalid or non-mapping YAML frontmatter, stay owned by
 > existing structural/short/missing rules and are skipped. Claude private and plugin trees that can
-> load together form one runtime-union namespace (`agents/` ∪ `.claude/agents/`,
-> `skills/` ∪ `.claude/skills/` in Plugin mode). When Cursor is active, its
+> load together form one runtime-union namespace (`agents/` ∪ manifest-declared
+> agent roots ∪ `.claude/agents/`, `skills/` ∪ `.claude/skills/` in Plugin mode);
+> agent roots are scanned recursively, so a nested agent joins the pool and
+> carries its subdirectory path. When Cursor is active, its
 > runtime skill namespace is `**/.cursor/skills/**/SKILL.md` ∪
 > `**/.agents/skills/**/SKILL.md`; it includes nested project locations and
 > compares cross-tree pairs exactly once. When Cursor is inactive, shared
@@ -357,7 +359,14 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > multi-source diagnostics that name both repository-relative paths in
 > `related_subjects` and the score in the message; global `suppress` works, but per-file overrides
 > cannot match them.
-> **Agent field-value rules (A014-A027).** These spec-grounded checks run on
+> **Agent discovery (A002-A004, A008-A030).** Every agent rule except the larch
+> template convention discovers agent files recursively, matching Claude Code:
+> `.claude/agents/`, the plugin `agents/` default, and every repository-safe
+> `plugin.json` `agents` root (string or array) are scanned into their
+> subdirectories, because an agent's identity comes from its `name` field, not
+> its path. Nested files carry their full repository-relative path, and
+> exclusions and per-file overrides match that full path. **Agent field-value
+> rules (A014-A027).** These spec-grounded checks run on
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
 > (Basic mode). They catch typos and invalid enum values (e.g. `model: sonet`,
 > `permissionMode: yolo`, `tools: [Bsh]`, dangling `skills:` references) with

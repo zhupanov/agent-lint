@@ -1,8 +1,10 @@
+use crate::config::normalize_path;
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::plugin_paths::{
     ComponentPathSafety, classify_component_path, declared_component_paths,
     has_normalized_path_segment, is_absolute_path, path_segments, plugin_root_is_safe,
+    safe_component_path,
 };
 use crate::rules::LintRule;
 use crate::validators::common::{is_valid_http_url, manifest_error_metadata};
@@ -52,6 +54,56 @@ const OBJECT_SOURCE_REQUIRED: &[(&str, &[&str])] = &[
 fn is_non_empty_string(v: Option<&Value>) -> bool {
     v.and_then(Value::as_str)
         .is_some_and(|s| !s.trim().is_empty())
+}
+
+/// The private Claude configuration directory. Plugin component paths that point
+/// into it belong to a separately scanned surface, not to the plugin's own tree.
+const PRIVATE_CLAUDE_DIR: &str = ".claude";
+
+/// Repository-safe agent root paths explicitly declared in plugin.json `agents`.
+///
+/// Returns each distinct safe path once, normalized, in declaration order, for
+/// the shared agent-file collector. Safety (absolute, `..`-escaping, missing
+/// `./` prefix, `.claude-plugin/`-nested) is owned by M012/M013 via the shared
+/// [`safe_component_path`] classifier, so only declarations that pass it reach
+/// discovery — discovery never escapes the repository nor double-reports a
+/// manifest path defect. Paths inside the private `.claude/` tree are also
+/// dropped: that tree is a distinct surface with its own recursive scan and
+/// `Private` per-agent semantics, so admitting it here would validate the same
+/// file twice under two surfaces. Non-string shapes declare no filesystem root
+/// and yield nothing. An absent or invalid manifest, or an undeclared `agents`
+/// field, yields an empty list; the implicit default `agents/` directory is
+/// added by the collector's caller, not here.
+pub(crate) fn declared_agent_roots(ctx: &LintContext) -> Vec<String> {
+    let ManifestState::Parsed(val) = &ctx.plugin_json else {
+        return Vec::new();
+    };
+
+    let mut roots = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for declared in declared_component_paths(val) {
+        // Only the `agents` field declares agent roots: label "agents" (scalar)
+        // or "agents[N]" (array element).
+        if declared.label != "agents" && !declared.label.starts_with("agents[") {
+            continue;
+        }
+        // The shared classifier rejects unsafe shapes before any filesystem probe.
+        let Some(path) = safe_component_path(declared.raw) else {
+            continue;
+        };
+        let canonical = normalize_path(&path.to_string_lossy());
+        // The private `.claude/` tree is scanned separately under its own surface.
+        if canonical.is_empty()
+            || canonical == PRIVATE_CLAUDE_DIR
+            || canonical.starts_with(&format!("{PRIVATE_CLAUDE_DIR}/"))
+        {
+            continue;
+        }
+        if seen.insert(canonical.clone()) {
+            roots.push(canonical);
+        }
+    }
+    roots
 }
 
 /// V1: Validate .claude-plugin/plugin.json
@@ -697,6 +749,74 @@ mod tests {
             _ => unreachable!("component path fields have one or two keys"),
         }
         manifest
+    }
+
+    // ── #321: declared_agent_roots ──────────────────────────────────
+    fn agent_roots(agents: Value) -> Vec<String> {
+        let val = json!({"name": "p", "version": "1.0.0", "agents": agents});
+        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+        declared_agent_roots(&ctx)
+    }
+
+    #[test]
+    fn declared_agent_roots_accepts_scalar_and_array_in_declaration_order() {
+        // Component paths must be `./`-prefixed (M013); the prefix is stripped in
+        // the returned canonical root.
+        assert_eq!(agent_roots(json!("./custom")), vec!["custom".to_string()]);
+        assert_eq!(
+            agent_roots(json!(["./alpha", "./beta"])),
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
+    }
+
+    #[test]
+    fn declared_agent_roots_canonicalize_and_deduplicate_spellings() {
+        // `./custom` and `./custom/` are one normalized root; only safe
+        // (`./`-prefixed) spellings are considered.
+        assert_eq!(
+            agent_roots(json!(["./custom", "./custom/", "./custom//sub"])),
+            vec!["custom".to_string(), "custom/sub".to_string()]
+        );
+    }
+
+    #[test]
+    fn declared_agent_roots_exclude_unsafe_and_private_paths() {
+        // Absolute, traversal, missing-`./`-prefix, and `.claude-plugin/`-nested
+        // paths are owned by M012/M013; the private `.claude/` tree is scanned
+        // under its own surface. Only the plugin-relative safe path survives.
+        assert_eq!(
+            agent_roots(json!([
+                "/abs",
+                "../up",
+                "no-prefix",
+                "./.claude-plugin/agents",
+                "./.claude/agents",
+                "./.claude",
+                "./safe"
+            ])),
+            vec!["safe".to_string()]
+        );
+    }
+
+    #[test]
+    fn declared_agent_roots_ignore_non_string_shapes() {
+        assert!(agent_roots(json!({"inline": "object"})).is_empty());
+        assert!(agent_roots(json!(42)).is_empty());
+        // A non-string array entry is skipped; the safe string survives.
+        assert_eq!(agent_roots(json!(["./ok", 7])), vec!["ok".to_string()]);
+    }
+
+    #[test]
+    fn declared_agent_roots_empty_without_field_or_manifest() {
+        let no_field = json!({"name": "p", "version": "1.0.0"});
+        let ctx = make_ctx(ManifestState::parsed(no_field), ManifestState::Missing);
+        assert!(declared_agent_roots(&ctx).is_empty());
+
+        let missing = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        assert!(declared_agent_roots(&missing).is_empty());
+
+        let invalid = make_ctx(ManifestState::invalid("bad json"), ManifestState::Missing);
+        assert!(declared_agent_roots(&invalid).is_empty());
     }
 
     // V1: validate_plugin_json

@@ -14,13 +14,11 @@ use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::frontmatter;
 use crate::rules::LintRule;
-use crate::traversal;
 use crate::validators::skills::{
     collect_agent_skills, collect_cursor_runtime_skills, collect_skills,
 };
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
 
 use super::cursor::discover_cursor_agent_paths;
 
@@ -59,19 +57,24 @@ struct DescCandidate {
 
 /// Validate overlapping agent routing descriptions.
 ///
-/// In Plugin mode, `agents/` and `.claude/agents/` form one Claude agent
-/// routing namespace. In Basic mode only `.claude/agents/` is compared.
-/// When `include_cursor` is true, `.cursor/agents/**/*.md` is compared in a
-/// separate Cursor-only namespace (missing descriptions skip A030).
+/// In Plugin mode, `agents/`, every manifest-declared agent root, and
+/// `.claude/agents/` form one Claude agent routing namespace. In Basic mode only
+/// `.claude/agents/` is compared. Discovery is recursive, so an agent nested in a
+/// subdirectory joins the overlap pool and carries its full repository-relative
+/// path in `related_subjects`. When `include_cursor` is true,
+/// `.cursor/agents/**/*.md` is compared in a separate Cursor-only namespace
+/// (missing descriptions skip A030).
 pub fn validate_agent_desc_overlap(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     plugin_mode: bool,
+    declared_roots: &[String],
     include_cursor: bool,
 ) {
-    let mut dirs = Vec::new();
+    let mut dirs: Vec<&str> = Vec::new();
     if plugin_mode {
         dirs.push("agents");
+        dirs.extend(declared_roots.iter().map(String::as_str));
     }
     dirs.push(".claude/agents");
     report_overlaps(
@@ -133,34 +136,23 @@ fn collect_cursor_runtime_skill_candidates(exclude: &ExcludeSet) -> Vec<DescCand
 
 fn collect_agent_candidates(dirs: &[&str], exclude: &ExcludeSet) -> Vec<DescCandidate> {
     let mut candidates = Vec::new();
-    for dir in dirs {
-        let root = Path::new(dir);
-        if !root.is_dir() {
+    // The shared collector recurses each root, applies exclusions, and
+    // deduplicates files across overlapping roots. `lint_files` are full
+    // repository-relative paths, so nested agents carry their subdirectory path.
+    for path in crate::validators::agent_discovery::collect(dirs, exclude).lint_files {
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let Some(fm_lines) = frontmatter_lines(&content) else {
             continue;
-        }
-        for entry in traversal::shallow_files(root, Path::new("."), None).entries {
-            let name = match entry.path.file_name().and_then(|n| n.to_str()) {
-                Some(n) if n.ends_with(".md") => n,
-                _ => continue,
-            };
-            let path = format!("{dir}/{name}");
-            if exclude.is_excluded(&path) {
-                continue;
-            }
-            let content = match fs::read_to_string(&entry.path) {
-                Ok(content) => content,
-                Err(_) => continue,
-            };
-            let Some(fm_lines) = frontmatter_lines(&content) else {
-                continue;
-            };
-            let Some(description) = frontmatter::get_strict_string_field(&fm_lines, "description")
-            else {
-                continue;
-            };
-            if let Some(candidate) = candidate_from_description(path, &description) {
-                candidates.push(candidate);
-            }
+        };
+        let Some(description) = frontmatter::get_strict_string_field(&fm_lines, "description")
+        else {
+            continue;
+        };
+        if let Some(candidate) = candidate_from_description(path, &description) {
+            candidates.push(candidate);
         }
     }
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
@@ -323,6 +315,7 @@ pub(crate) fn jaccard_similarity(left: &BTreeSet<String>, right: &BTreeSet<Strin
 mod tests {
     use super::*;
     use crate::diagnostic::DiagnosticCollector;
+    use std::path::Path;
 
     #[test]
     fn normalization_strips_boilerplate_punctuation_and_stopwords() {
@@ -413,7 +406,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, &[], false);
 
         let findings: Vec<_> = diag
             .diagnostics()
@@ -451,7 +444,7 @@ mod tests {
         }
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, &[], false);
         assert_eq!(
             diag.diagnostics()
                 .iter()
@@ -480,7 +473,7 @@ mod tests {
         }
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, &[], false);
         assert!(diag.diagnostics().is_empty());
     }
 
@@ -540,13 +533,123 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), true, false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), true, &[], false);
         assert_eq!(
             diag.diagnostics()
                 .iter()
                 .filter(|item| item.rule == LintRule::AgentDescOverlap)
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_agent_descriptions_overlap_with_subdirectory_path() {
+        // The evidence case: a nested agent joins the overlap pool and carries its
+        // full repository-relative path in `related_subjects`.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents/review").unwrap();
+        let desc = "Reviews pull requests for security vulnerabilities and injection flaws";
+        std::fs::write(
+            ".claude/agents/alpha.md",
+            format!("---\nname: alpha\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/review/beta.md",
+            format!("---\nname: beta\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, &[], false);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::AgentDescOverlap)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].related_subjects,
+            vec![
+                std::path::PathBuf::from(".claude/agents/alpha.md"),
+                std::path::PathBuf::from(".claude/agents/review/beta.md"),
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_plugin_agent_shares_runtime_union_namespace() {
+        // Runtime-union namespace preserved across nesting: a nested plugin agent
+        // and a private agent still compare.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents/review").unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        let desc = "Reviews pull requests for security vulnerabilities and injection flaws";
+        std::fs::write(
+            "agents/review/security.md",
+            format!("---\nname: security\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/private.md",
+            format!("---\nname: private\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), true, &[], false);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::AgentDescOverlap)
+            .collect();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].related_subjects,
+            vec![
+                std::path::PathBuf::from(".claude/agents/private.md"),
+                std::path::PathBuf::from("agents/review/security.md"),
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn excluding_nested_agent_subdir_removes_it_from_overlap_pool() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents/review").unwrap();
+        let desc = "Reviews pull requests for security vulnerabilities and injection flaws";
+        std::fs::write(
+            ".claude/agents/alpha.md",
+            format!("---\nname: alpha\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/review/beta.md",
+            format!("---\nname: beta\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+
+        let exclude = ExcludeSet::new(&[".claude/agents/review/**".to_string()]).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &exclude, false, &[], false);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| item.rule != LintRule::AgentDescOverlap),
+            "excluding the nested agent leaves only one candidate, so no overlap fires"
         );
     }
 
@@ -641,7 +744,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, &[], false);
         assert!(
             diag.diagnostics()
                 .iter()
@@ -754,7 +857,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, true);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, &[], true);
         let findings: Vec<_> = diag
             .diagnostics()
             .iter()
@@ -811,7 +914,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, true);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, &[], true);
         assert!(
             diag.diagnostics()
                 .iter()
@@ -841,7 +944,7 @@ mod tests {
 
         let exclude = ExcludeSet::new(&[".cursor/agents/review/two.md".into()]).unwrap();
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &exclude, false, true);
+        validate_agent_desc_overlap(&mut diag, &exclude, false, &[], true);
         assert!(
             diag.diagnostics()
                 .iter()
