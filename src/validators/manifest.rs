@@ -187,6 +187,12 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             LintRule::MarketplaceFieldMissing,
             &format!("{f} missing required field: name"),
         );
+    } else if mp_name.chars().any(char::is_whitespace) {
+        diag.report_with(
+            LintRule::MarketplaceNameWhitespace,
+            &format!("{f} name contains whitespace"),
+            marketplace_name_metadata(val.source(), None, "whitespace-containing marketplace name"),
+        );
     } else if !RE_MARKETPLACE_KEBAB.is_match(mp_name) {
         // Match the raw value: upstream kebab-case checks do not trim first.
         diag.report(
@@ -239,8 +245,18 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                 if !name_missing {
                     // Duplicate detection keeps trimmed-key semantics (M009).
                     name_indexes.entry(pname.to_string()).or_default().push(i);
+                    if pname_raw.chars().any(char::is_whitespace) {
+                        diag.report_with(
+                            LintRule::MarketplaceNameWhitespace,
+                            &format!("{f} plugins[{i}].name contains whitespace"),
+                            marketplace_name_metadata(
+                                val.source(),
+                                Some(i),
+                                "whitespace-containing plugin name",
+                            ),
+                        );
                     // Match the raw value: upstream kebab-case checks do not trim first.
-                    if !RE_MARKETPLACE_KEBAB.is_match(pname_raw) {
+                    } else if !RE_MARKETPLACE_KEBAB.is_match(pname_raw) {
                         diag.report(
                             LintRule::MarketplaceNameFormat,
                             &format!(
@@ -603,6 +619,176 @@ fn marketplace_value_metadata(
         metadata = metadata.with_location(location);
     }
     metadata
+}
+
+/// Metadata for a marketplace name value. Unlike generic value lookup, this
+/// follows the owning JSON path so repeated string values retain their exact
+/// source token span.
+fn marketplace_name_metadata(
+    source: Option<&str>,
+    plugin_index: Option<usize>,
+    evidence: &str,
+) -> DiagnosticMetadata {
+    let mut metadata = DiagnosticMetadata::default()
+        .with_evidence(evidence)
+        .with_suggestion("replace whitespace with hyphens and use a whitespace-free identifier");
+    if let Some(location) = source.and_then(|source| {
+        marketplace_name_value_range(source, plugin_index)
+            .and_then(|range| SourceSpan::from_byte_range(source, range))
+    }) {
+        metadata = metadata.with_location(location);
+    }
+    metadata
+}
+
+/// Finds the source token for either the marketplace `name` or a particular
+/// `plugins[index].name`. The manifest has already parsed as JSON, so this
+/// small cursor only maps semantic ownership back to the original bytes; it
+/// never accepts or executes repository-controlled input.
+fn marketplace_name_value_range(
+    source: &str,
+    plugin_index: Option<usize>,
+) -> Option<std::ops::Range<usize>> {
+    let root = skip_json_whitespace(source, 0);
+    let root_name = |object_start| json_object_field_value_range(source, object_start, "name");
+    match plugin_index {
+        None => root_name(root),
+        Some(index) => {
+            let plugins = json_object_field_value_range(source, root, "plugins")?;
+            let plugin = json_array_item_value_range(source, plugins.start, index)?;
+            root_name(plugin.start)
+        }
+    }
+}
+
+fn skip_json_whitespace(source: &str, mut offset: usize) -> usize {
+    while source
+        .as_bytes()
+        .get(offset)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        offset += 1;
+    }
+    offset
+}
+
+fn json_object_field_value_range(
+    source: &str,
+    object_start: usize,
+    wanted_key: &str,
+) -> Option<std::ops::Range<usize>> {
+    if source.as_bytes().get(object_start) != Some(&b'{') {
+        return None;
+    }
+    let mut offset = skip_json_whitespace(source, object_start + 1);
+    while source.as_bytes().get(offset) != Some(&b'}') {
+        let key_start = offset;
+        let key_end = json_string_end(source, key_start)?;
+        let key: String = serde_json::from_str(&source[key_start..key_end]).ok()?;
+        offset = skip_json_whitespace(source, key_end);
+        if source.as_bytes().get(offset) != Some(&b':') {
+            return None;
+        }
+        let value_start = skip_json_whitespace(source, offset + 1);
+        let value_end = json_value_end(source, value_start)?;
+        if key == wanted_key {
+            return Some(value_start..value_end);
+        }
+        offset = skip_json_whitespace(source, value_end);
+        match source.as_bytes().get(offset) {
+            Some(b',') => offset = skip_json_whitespace(source, offset + 1),
+            Some(b'}') => break,
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn json_array_item_value_range(
+    source: &str,
+    array_start: usize,
+    wanted_index: usize,
+) -> Option<std::ops::Range<usize>> {
+    if source.as_bytes().get(array_start) != Some(&b'[') {
+        return None;
+    }
+    let mut offset = skip_json_whitespace(source, array_start + 1);
+    let mut index = 0;
+    while source.as_bytes().get(offset) != Some(&b']') {
+        let value_start = offset;
+        let value_end = json_value_end(source, value_start)?;
+        if index == wanted_index {
+            return Some(value_start..value_end);
+        }
+        index += 1;
+        offset = skip_json_whitespace(source, value_end);
+        match source.as_bytes().get(offset) {
+            Some(b',') => offset = skip_json_whitespace(source, offset + 1),
+            Some(b']') => break,
+            _ => return None,
+        }
+    }
+    None
+}
+
+fn json_value_end(source: &str, offset: usize) -> Option<usize> {
+    match source.as_bytes().get(offset)? {
+        b'"' => json_string_end(source, offset),
+        b'{' => {
+            let mut cursor = skip_json_whitespace(source, offset + 1);
+            while source.as_bytes().get(cursor) != Some(&b'}') {
+                cursor = json_string_end(source, cursor)?;
+                cursor = skip_json_whitespace(source, cursor);
+                if source.as_bytes().get(cursor) != Some(&b':') {
+                    return None;
+                }
+                cursor = json_value_end(source, skip_json_whitespace(source, cursor + 1))?;
+                cursor = skip_json_whitespace(source, cursor);
+                match source.as_bytes().get(cursor) {
+                    Some(b',') => cursor = skip_json_whitespace(source, cursor + 1),
+                    Some(b'}') => break,
+                    _ => return None,
+                }
+            }
+            Some(cursor + 1)
+        }
+        b'[' => {
+            let mut cursor = skip_json_whitespace(source, offset + 1);
+            while source.as_bytes().get(cursor) != Some(&b']') {
+                cursor = json_value_end(source, cursor)?;
+                cursor = skip_json_whitespace(source, cursor);
+                match source.as_bytes().get(cursor) {
+                    Some(b',') => cursor = skip_json_whitespace(source, cursor + 1),
+                    Some(b']') => break,
+                    _ => return None,
+                }
+            }
+            Some(cursor + 1)
+        }
+        _ => {
+            let end = source[offset..]
+                .find(|character: char| {
+                    character.is_whitespace() || matches!(character, ',' | ']' | '}')
+                })
+                .map_or(source.len(), |relative| offset + relative);
+            (end > offset).then_some(end)
+        }
+    }
+}
+
+fn json_string_end(source: &str, start: usize) -> Option<usize> {
+    if source.as_bytes().get(start) != Some(&b'"') {
+        return None;
+    }
+    let mut offset = start + 1;
+    while let Some(byte) = source.as_bytes().get(offset) {
+        match byte {
+            b'"' => return Some(offset + 1),
+            b'\\' => offset += 2,
+            _ => offset += 1,
+        }
+    }
+    None
 }
 
 fn json_value_range(source: &str, value: &Value) -> Option<std::ops::Range<usize>> {
@@ -1606,113 +1792,105 @@ mod tests {
     }
 
     #[test]
-    fn test_v2_name_format_warnings() {
-        let cases: &[(&str, serde_json::Value, bool)] = &[
+    fn test_v2_name_rules_are_mutually_exclusive() {
+        let cases: &[(&str, serde_json::Value, &[LintRule])] = &[
             (
                 "top_ok",
                 json!({"name": "a", "owner": {"name": "o"}, "plugins": [{"name": "a-b2", "source": "./p"}]}),
-                false,
+                &[],
             ),
             (
                 "top_ok_my_plugin",
                 json!({"name": "my-plugin", "owner": {"name": "o"}, "plugins": [{"name": "my-plugin", "source": "./p"}]}),
-                false,
+                &[],
             ),
             (
-                "top_bad",
+                "top_uppercase",
                 json!({"name": "My_Plugin", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
-                true,
+                &[LintRule::MarketplaceNameFormat],
             ),
             (
                 "entry_upper",
                 json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "UPPER", "source": "./p"}]}),
-                true,
+                &[LintRule::MarketplaceNameFormat],
             ),
             (
                 "entry_double_hyphen",
                 json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "a--b", "source": "./p"}]}),
-                true,
+                &[LintRule::MarketplaceNameFormat],
             ),
             (
-                "top_padded",
+                "entry_edge_hyphen",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "-a", "source": "./p"}]}),
+                &[LintRule::MarketplaceNameFormat],
+            ),
+            (
+                "entry_non_ascii",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "café", "source": "./p"}]}),
+                &[LintRule::MarketplaceNameFormat],
+            ),
+            (
+                "top_ascii_whitespace",
                 json!({"name": " my-market ", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
-                true,
+                &[LintRule::MarketplaceNameWhitespace],
             ),
             (
-                "entry_padded",
-                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": " my-plugin ", "source": "./p"}]}),
-                true,
+                "top_tab",
+                json!({"name": "my\tmarket", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
+                &[LintRule::MarketplaceNameWhitespace],
             ),
             (
-                "entry_internal_space",
-                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "my plugin", "source": "./p"}]}),
-                true,
+                "entry_newline",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "my\nplugin", "source": "./p"}]}),
+                &[LintRule::MarketplaceNameWhitespace],
+            ),
+            (
+                "entry_non_breaking_space",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "my\u{00a0}plugin", "source": "./p"}]}),
+                &[LintRule::MarketplaceNameWhitespace],
+            ),
+            (
+                "entry_unicode_space",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "my\u{2003}plugin", "source": "./p"}]}),
+                &[LintRule::MarketplaceNameWhitespace],
+            ),
+            (
+                "top_blank",
+                json!({"name": "  ", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
+                &[LintRule::MarketplaceFieldMissing],
+            ),
+            (
+                "top_non_string",
+                json!({"name": 42, "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
+                &[LintRule::MarketplaceFieldMissing],
+            ),
+            (
+                "entry_blank",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "  ", "source": "./p"}]}),
+                &[LintRule::MarketplacePluginInvalid],
+            ),
+            (
+                "entry_non_string",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": 42, "source": "./p"}]}),
+                &[LintRule::MarketplacePluginInvalid],
             ),
         ];
-        for (label, val, expect_warn) in cases {
+        for (label, val, expected) in cases {
             let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val.clone()));
             let mut diag = DiagnosticCollector::new_all_enabled();
             validate_marketplace_json(&ctx, &mut diag);
-            let has = diag
+            let got: Vec<_> = diag
                 .diagnostics()
                 .iter()
-                .any(|d| d.rule == LintRule::MarketplaceNameFormat);
-            assert_eq!(has, *expect_warn, "{label}");
+                .map(|diagnostic| diagnostic.rule)
+                .collect();
+            assert_eq!(got, *expected, "{label}: {:?}", diag.diagnostics());
+            assert!(
+                !(got.contains(&LintRule::MarketplaceNameFormat)
+                    && got.contains(&LintRule::MarketplaceNameWhitespace)),
+                "{label}: M021 and M024 must be mutually exclusive"
+            );
         }
-
-        // Padded names must quote the raw value (including spaces) in the message.
-        let padded = json!({
-            "name": " my-market ",
-            "owner": {"name": "o"},
-            "plugins": [{"name": " my-plugin ", "source": "./p"}]
-        });
-        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(padded));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_marketplace_json(&ctx, &mut diag);
-        let m021: Vec<_> = diag
-            .diagnostics()
-            .iter()
-            .filter(|d| d.rule == LintRule::MarketplaceNameFormat)
-            .collect();
-        assert_eq!(m021.len(), 2, "{:?}", m021);
-        assert!(
-            m021.iter().any(|d| d.message.contains("' my-market '")),
-            "{:?}",
-            m021
-        );
-        assert!(
-            m021.iter().any(|d| d.message.contains("' my-plugin '")),
-            "{:?}",
-            m021
-        );
-        assert!(
-            diag.diagnostics()
-                .iter()
-                .all(|d| d.rule == LintRule::MarketplaceNameFormat),
-            "evidence manifest must produce only M021: {:?}",
-            diag.diagnostics()
-        );
-
-        // Whitespace-only entry name stays M009 only (no M021).
-        let blank_entry = json!({
-            "name": "mp",
-            "owner": {"name": "o"},
-            "plugins": [{"name": "   ", "source": "./p"}]
-        });
-        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(blank_entry));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_marketplace_json(&ctx, &mut diag);
-        let diags = diag.diagnostics();
-        assert_eq!(diags.len(), 1, "{diags:?}");
-        assert_eq!(
-            diags[0].rule,
-            LintRule::MarketplacePluginInvalid,
-            "{diags:?}"
-        );
-        assert!(
-            diags[0].message.contains("missing/invalid name or source"),
-            "{diags:?}"
-        );
     }
 
     // V12: validate_marketplace_enriched

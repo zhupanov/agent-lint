@@ -3983,6 +3983,117 @@ fn m013_component_prefix_is_structured_and_never_autofixes() {
 }
 
 #[test]
+fn m024_whitespace_names_preserve_policy_metadata_and_non_autofix_contracts() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest_dir = tmp.path().join(".claude-plugin");
+    std::fs::create_dir(&manifest_dir).unwrap();
+    let marketplace = manifest_dir.join("marketplace.json");
+    let content = "{\n  \"name\": \"bad market\",\n  \"owner\": {\"name\": \"owner\"},\n  \"plugins\": [\n    {\"name\": \"bad\\tplugin\", \"source\": \"./one\"},\n    {\"name\": \"good\", \"source\": \"./two\"},\n    {\"name\": \"bad plugin\", \"source\": \"./three\"}\n  ]\n}\n";
+    std::fs::write(&marketplace, content).unwrap();
+
+    for arguments in [
+        vec!["--format", "json", "--only", "M021,M024", "."],
+        vec!["--format", "json", "--pedantic", "--only", "M021,M024", "."],
+        vec!["--format", "json", "--all", "--only", "M021,M024", "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        assert_eq!(diagnostics.len(), 3, "{diagnostics:#?}");
+        for (index, diagnostic) in diagnostics.iter().enumerate() {
+            assert_eq!(diagnostic["code"], "M024");
+            assert_eq!(diagnostic["severity"], "error");
+            assert_eq!(
+                diagnostic["subject_path"],
+                ".claude-plugin/marketplace.json"
+            );
+            assert_eq!(
+                diagnostic["suggestion"],
+                "replace whitespace with hyphens and use a whitespace-free identifier"
+            );
+            assert!(
+                !diagnostic["message"].as_str().unwrap().contains("bad"),
+                "M024 must not interpolate raw names"
+            );
+            match index {
+                0 => {
+                    assert_eq!(
+                        diagnostic["evidence"],
+                        "whitespace-containing marketplace name"
+                    );
+                    assert_eq!(diagnostic["location"]["start"]["line"], 2);
+                    assert_eq!(diagnostic["location"]["start"]["column"], 11);
+                    assert_eq!(diagnostic["location"]["end"]["line"], 2);
+                    assert_eq!(diagnostic["location"]["end"]["column"], 23);
+                }
+                1 => {
+                    assert_eq!(diagnostic["evidence"], "whitespace-containing plugin name");
+                    assert_eq!(diagnostic["location"]["start"]["line"], 5);
+                    assert_eq!(diagnostic["location"]["start"]["column"], 14);
+                    assert_eq!(diagnostic["location"]["end"]["line"], 5);
+                    assert_eq!(diagnostic["location"]["end"]["column"], 27);
+                }
+                2 => {
+                    assert_eq!(diagnostic["evidence"], "whitespace-containing plugin name");
+                    assert_eq!(diagnostic["location"]["start"]["line"], 7);
+                    assert_eq!(diagnostic["location"]["start"]["column"], 14);
+                    assert_eq!(diagnostic["location"]["end"]["line"], 7);
+                    assert_eq!(diagnostic["location"]["end"]["column"], 26);
+                }
+                _ => unreachable!("three M024 diagnostics are expected"),
+            }
+        }
+    }
+
+    for config in [
+        "[lint]\nsuppress = [\"M024\"]\n",
+        "[lint]\n[[lint.overrides]]\nfiles = [\".claude-plugin/marketplace.json\"]\nsuppress = [\"M024\"]\n",
+    ] {
+        std::fs::write(tmp.path().join("agent-lint.toml"), config).unwrap();
+        let output = run_in(tmp.path(), &["--format", "json", "--only", "M024", "."]);
+        assert!(output.status.success(), "stderr: {}", stderr(&output));
+        assert_eq!(json(&output)["counts"]["suppressed"], 3);
+        assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+    }
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    let autofix = run_in(tmp.path(), &["--autofix", "--only", "M024", "."]);
+    assert_eq!(
+        autofix.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&autofix)
+    );
+    assert_eq!(std::fs::read_to_string(&marketplace).unwrap(), content);
+
+    std::fs::write(&marketplace, "{\n  invalid\n}").unwrap();
+    let malformed = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M006,M024", "."],
+    );
+    assert_eq!(
+        malformed.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&malformed)
+    );
+    let malformed_report = json(&malformed);
+    let malformed_diagnostics = malformed_report["diagnostics"].as_array().unwrap();
+    assert_eq!(malformed_diagnostics.len(), 1);
+    assert_eq!(malformed_diagnostics[0]["code"], "M006");
+
+    let basic = tempfile::tempdir().unwrap();
+    init_git(basic.path());
+    std::fs::create_dir(basic.path().join(".claude")).unwrap();
+    std::fs::write(basic.path().join(".claude/settings.json"), "{}").unwrap();
+    let output = run_in(basic.path(), &["--format", "json", "--only", "M024", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert_eq!(json(&output)["mode"], "basic");
+    assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn t001_t002_cli_preserve_fixed_path_policy_metadata_and_strictness() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

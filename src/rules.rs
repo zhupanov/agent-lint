@@ -89,6 +89,9 @@ pub enum LintRule {
     /// M022: plugin metadata homepage is present but not a string
     #[strum(props(code = "M022", name = "homepage-type-invalid"))]
     HomepageTypeInvalid,
+    /// M024: marketplace.json marketplace or plugin name contains whitespace
+    #[strum(props(code = "M024", name = "marketplace-name-whitespace"))]
+    MarketplaceNameWhitespace,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
     /// H001: a declared plugin hook configuration file is missing
@@ -1296,7 +1299,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            297,
+            298,
             "every enum variant must be registered"
         );
     }
@@ -1646,8 +1649,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            174,
-            "Expected 174 default-error rules, got {}",
+            175,
+            "Expected 175 default-error rules, got {}",
             errors.len()
         );
     }

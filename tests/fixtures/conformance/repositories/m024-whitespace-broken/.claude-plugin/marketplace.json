@@ -1,0 +1,8 @@
+{
+  "name": "bad market",
+  "owner": {"name": "owner"},
+  "plugins": [
+    {"name": "bad\tplugin", "source": "./one"},
+    {"name": "bad plugin", "source": "./two"}
+  ]
+}

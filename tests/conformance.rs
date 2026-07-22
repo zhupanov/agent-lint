@@ -22,6 +22,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "hook-schema",
     "json",
     "mcp",
+    "m024-whitespace",
     "nested-agents-md",
     "normal",
     "pedantic",

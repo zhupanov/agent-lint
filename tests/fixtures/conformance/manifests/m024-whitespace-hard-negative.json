@@ -1,0 +1,16 @@
+{
+  "class": "hard-negative",
+  "repository": "m024-whitespace-hard-negative",
+  "covers": ["m024-whitespace", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "M021,M024", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "M021", "name": "marketplace-name-format", "severity": "warning", "subject_path": ".claude-plugin/marketplace.json" },
+    { "code": "M021", "name": "marketplace-name-format", "severity": "warning", "subject_path": ".claude-plugin/marketplace.json" },
+    { "code": "M021", "name": "marketplace-name-format", "severity": "warning", "subject_path": ".claude-plugin/marketplace.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

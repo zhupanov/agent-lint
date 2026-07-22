@@ -1,0 +1,8 @@
+{
+  "name": "marketplace",
+  "owner": {"name": "owner"},
+  "plugins": [
+    {"name": "one-plugin", "source": "./one"},
+    {"name": "two-plugin", "source": "./two"}
+  ]
+}
