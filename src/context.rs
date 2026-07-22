@@ -112,6 +112,16 @@ impl ManifestState {
         Self::from_value(value)
     }
 
+    /// Test shorthand for a parsed manifest that retains its exact source, for
+    /// assertions on source token spans.
+    #[cfg(test)]
+    pub fn parsed_with_source(value: Value, source: String) -> Self {
+        Self::Parsed(ParsedManifest {
+            value,
+            source: Some(source),
+        })
+    }
+
     /// Construct a synthetic invalid state for unit tests that do not exercise
     /// the filesystem loader.
     #[cfg(test)]

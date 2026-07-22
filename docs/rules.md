@@ -51,7 +51,7 @@ run only when their platform is auto-detected or force-enabled in
 | M010 | `marketplace-enriched-missing` | `marketplace.json` missing usable `owner.email`, or a basic M009-valid plugin entry missing/blank/non-string `category` | Plugin | warn |
 | M011 | `plugin-enriched-missing` | `plugin.json` missing usable `description`, missing `author.email`, or unusable `keywords` (non-array, empty, or any blank/non-string item) | Plugin | warn |
 | M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a plugin/marketplace component path points there | Plugin | error |
-| M013 | `component-path-unsafe` | A plugin or marketplace component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`), uses `..` traversal, or does not start with exact `./` | Plugin | error |
+| M013 | `component-path-unsafe` | A plugin or marketplace component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`), uses `..` traversal, or does not start with exact `./`; additionally, a lexically safe `plugin.json` `agents`, `outputStyles`, `skills`, `commands`, or `hooks` declaration whose path resolves through a symlinked component, canonically escapes the repository, or names a non-regular entry | Plugin | error |
 | M014 | `author-name-missing` | Plugin or inline marketplace-entry `author` object has a missing or invalid `author.name` | Plugin | error |
 | M015 | `homepage-url-invalid` | Plugin or inline marketplace-entry `homepage` string is not a valid http(s) URL | Plugin | warn |
 | M016 | `lsp-server-invalid` | Plugin or inline marketplace-entry `lspServers` has an unsupported shape or invalid inline server | Plugin | error |
@@ -73,6 +73,25 @@ segment take precedence over a missing-prefix report. This supersedes #278's
 former bare-path concession: current Claude validation rejects bare component
 paths as load errors. The extractor is shared with manifest-declared discovery,
 which never probes an unsafe declaration.
+
+On top of that lexical contract, M013 additionally checks the filesystem shape
+of lexically safe `plugin.json` `agents`, `outputStyles`, `skills`, `commands`
+(including `commands.<name>.source`), and `hooks` declarations — the fields
+whose consumers refuse unsafe filesystem shapes (`agents`/`outputStyles` feed
+the shared symlink-refusing recursive discovery collector; `skills`/`commands`
+roots are gated by the skill-discovery safety helpers; a symlinked declared
+`hooks` config is dropped by the loader). A declaration whose path resolves
+through a symlinked component (final or intermediate, even one pointing inside
+the repository), canonically escapes the repository, or names a non-regular
+entry is unusable as declared: its consumer silently refuses it, so M013
+reports the exact field/index with actionable wording and A001 stays silent
+(A001 owns only a lexically and filesystem-safe declared agent path that is
+genuinely absent). Marketplace entries keep the lexical-only contract because
+their component paths resolve against each entry's own plugin root, which may
+not be the linted repository. `mcpServers` references are not probed — they
+are read through ordinary path resolution, so a symlinked reference is still
+validated rather than silently dropped — and `lspServers`/`experimental.*`
+targets have no consuming validator.
 
 M010 and M011 are agent-lint discovery-quality conventions, not Claude Code
 load-error rules. They require usable enrichment values after Unicode trimming:
@@ -338,10 +357,10 @@ values — every frontmatter field except the free-prose `description`,
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| A001 | `agents-dir-missing` | A manifest-declared plugin agent path (a `plugin.json` `agents` string or array entry) does not exist. The implicit default `agents/` directory is optional, so its absence is never reported | Plugin | error |
+| A001 | `agents-dir-missing` | A safe manifest-declared plugin agent path (a `plugin.json` `agents` string or array entry) genuinely does not exist. The implicit default `agents/` directory is optional, so its absence is never reported; a symlinked or repository-escaping declaration is owned by M013, never reported as missing | Plugin | error |
 | A002 | `agent-frontmatter-malformed` | Agent `.md` frontmatter has no line-1 opener or no closing delimiter | Always | error |
 | A003 | `agent-field-missing` | Agent `.md` frontmatter must be a mapping with nonblank string `name` and `description` fields | Always | error |
-| A004 | `no-agent-files` | A present plugin agent root (default `agents/` or a manifest-declared path) has no agent `.md` files after recursive discovery. An all-excluded root stays silent; an absent root reports nothing (A001 owns declared absence) | Plugin | error |
+| A004 | `no-agent-files` | A present plugin agent root (default `agents/` or a manifest-declared path) has no agent `.md` files after recursive discovery. An all-excluded root stays silent; an absent root reports nothing (A001 owns declared absence); a symlinked/rejected root reports nothing (M013 owns the unsafe declaration) | Plugin | error |
 | A005 | `template-file-missing` | An opted-in larch agent derives from a missing or unreadable `skills/shared/reviewer-templates.md` | Plugin | warn |
 | A006 | `template-marker-missing` | An opted-in top-level agent lacks the larch derivation marker | Plugin | warn |
 | A007 | `template-count-mismatch` | Opted-in larch agent count differs from semantic reviewer-section count | Plugin | warn |
@@ -440,7 +459,10 @@ values — every frontmatter field except the free-prose `description`,
 > name-only identity. Plugin `agents/**` and manifest-declared plugin roots are
 > deliberately excluded: their registered IDs are path-derived, so equal names
 > are not a proven collision. Invalid, missing, blank, or non-string names stay
-> with A002/A003/X001. Each duplicate name yields one deterministic diagnostic:
+> with A002/A003/X001; a whitespace-only canonical string is blank under A003's
+> usable-required-string predicate and never enters the index, while nonblank
+> names (including A010-invalid ones) are grouped exactly, case-sensitively,
+> and untrimmed. Each duplicate name yields one deterministic diagnostic:
 > the lexicographically first file is `subject_path`, every remaining sorted
 > participant is in `related_subjects`, and a per-file override on the primary
 > file can suppress the group.
@@ -462,9 +484,13 @@ values — every frontmatter field except the free-prose `description`,
 > when `skills/shared/reviewer-templates.md` exists or an included agent has a
 > live derivation marker. A marker is a complete non-quoted, non-fenced,
 > non-inline-code prose line (optionally prefixed by a Markdown list marker)
-> that begins case-insensitively with `Derived from` and contains the exact
-> `skills/shared/reviewer-templates.md` token; the same normalized marker is
-> accepted in one complete standalone HTML comment, including a multiline
+> that satisfies the deterministic positive grammar: case-insensitive
+> `Derived from`, whitespace, the exact `skills/shared/reviewer-templates.md`
+> token, and at most one terminal `.` — nothing else. Arbitrary trailing or
+> intervening clauses are not provenance, so negated or descriptive sentences
+> (`… is false`, `… no longer applies`) and benign additions (`… for routing.`)
+> neither satisfy A006 nor activate the convention. The same normalized grammar
+> is accepted in one complete standalone HTML comment, including a multiline
 > comment. Frontmatter, block quotes, examples, filename substrings, and
 > `${CLAUDE_PLUGIN_ROOT}` variants do not activate it. With a readable template,
 > A006 reports each included agent without that marker. A007 counts only live
@@ -665,8 +691,10 @@ output styles: the plugin-root `output-styles/` directory and every
 `plugin.json` `outputStyles` path (string or array; a declared `.md` file or a
 directory scanned recursively). Declared paths use the M012/M013 safety
 contract — absolute, `..`-traversal, and `.claude-plugin/`-nested paths are
-never read, and nonexistent paths are skipped silently — and files reached
-through more than one surface are linted once. The rules are identical to the
+never read, nonexistent paths are skipped silently, and a symlinked or
+repository-escaping declared path is never read either (M013 reports the
+unsafe declaration instead of a silent skip) — and files reached through more
+than one surface are linted once. The rules are identical to the
 private surface with one exception: `force-for-plugin` is a recognized field on
 plugin-shipped styles (no O003), whereas under `.claude/output-styles/` it
 reports O003 as ignored placement. Basic mode never scans these plugin

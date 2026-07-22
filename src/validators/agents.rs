@@ -208,24 +208,39 @@ pub fn validate_agents(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     validate_agents_with_prompt_pass(diag, exclude, &[], &mut prompt_pass);
 }
 
+/// Structured remediation for an A001 declared agent path that does not exist.
+/// Part of the versioned JSON contract; machine consumers present it without
+/// parsing message prose.
+const A001_SUGGESTION: &str =
+    "create the declared agent path or remove its plugin.json agents declaration";
+
+/// Structured remediation for an A004 present-but-empty agent root. One stable
+/// string covers the implicit default and declared roots.
+const A004_SUGGESTION: &str =
+    "add an agent .md file under this root or remove the empty agents declaration or directory";
+
 /// V7: Validate plugin agent frontmatter and field values across the default
 /// `agents/` directory and every manifest-declared agent root.
 ///
 /// Discovery is recursive and shared through [`super::agent_discovery`], so an
 /// agent nested in a subdirectory is validated exactly like a top-level one.
-/// A001 fires for an explicitly declared root that is missing; A004 fires for a
-/// present root that holds no agent `.md` files. The implicit default `agents/`
-/// is optional: its absence is clean, and only a present-but-empty default
-/// reports A004. `declared_roots` are the repository-safe, normalized,
-/// deduplicated paths from plugin.json `agents`, in declaration order (the A001
-/// once-per-path guarantee relies on that deduplication).
+/// A001 fires for an explicitly declared root that is genuinely missing; A004
+/// fires for a present root that holds no agent `.md` files. A root the
+/// containment probe rejects — a symlinked component or a canonical repository
+/// escape — is neither missing nor present here: the manifest path-safety owner
+/// (M013) diagnoses that declaration, so this validator stays silent for it.
+/// The implicit default `agents/` is optional: its absence is clean, and only a
+/// present-but-empty default reports A004. `declared_roots` are the
+/// repository-safe, normalized, deduplicated paths from plugin.json `agents`,
+/// in declaration order (the A001 once-per-path guarantee relies on that
+/// deduplication).
 pub(crate) fn validate_agents_with_prompt_pass(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     declared_roots: &[String],
     prompt_pass: &mut super::prompt_content::PromptContentPass,
 ) {
-    use super::agent_discovery;
+    use super::agent_discovery::{self, RootPresence};
 
     // Ordered, path-deduplicated scan set: the implicit default `agents/` first,
     // then each declared root in declaration order.
@@ -240,33 +255,37 @@ pub(crate) fn validate_agents_with_prompt_pass(
         .iter()
         .map(|root| agent_discovery::discover_root(root, exclude))
         .collect();
-    let exists_by_path: HashMap<&str, bool> = roots
+    let presence_by_path: HashMap<&str, RootPresence> = roots
         .iter()
-        .map(|root| (root.path.as_str(), root.exists))
+        .map(|root| (root.path.as_str(), root.presence))
         .collect();
 
-    // A001: an explicitly declared agent path that does not exist, once per
-    // distinct normalized path in declaration order. The implicit default's
-    // absence is legal and is never reported here.
+    // A001: an explicitly declared agent path that genuinely does not exist,
+    // once per distinct normalized path in declaration order. The implicit
+    // default's absence is legal and is never reported here; a rejected
+    // (symlinked/escaping) declaration is owned by M013, never by A001.
     for declared in declared_roots {
-        if exists_by_path.get(declared.as_str()) == Some(&false) {
-            diag.report_at(
+        if presence_by_path.get(declared.as_str()) == Some(&RootPresence::Missing) {
+            diag.report_at_with(
                 LintRule::AgentsDirMissing,
                 Path::new(declared),
                 &format!("plugin.json declares agents path '{declared}' but it does not exist"),
+                DiagnosticMetadata::default().with_suggestion(A001_SUGGESTION),
             );
         }
     }
 
     // A004: a present root (default or declared) holding zero agent files. A root
     // whose only files are excluded is not empty — its files exist before
-    // exclusion — so all-excluded roots stay silent.
+    // exclusion — so all-excluded roots stay silent. Rejected roots are not
+    // present and stay silent here.
     for root in &roots {
-        if root.exists && root.inventory.all_files.is_empty() {
-            diag.report_at(
+        if root.presence == RootPresence::Present && root.inventory.all_files.is_empty() {
+            diag.report_at_with(
                 LintRule::NoAgentFiles,
                 Path::new(&root.path),
                 &format!("{} contains no agent .md files", root.path),
+                DiagnosticMetadata::default().with_suggestion(A004_SUGGESTION),
             );
         }
     }
@@ -342,10 +361,17 @@ fn validate_private_agent_name_duplicates(diag: &mut DiagnosticCollector, paths:
             continue;
         };
         // A002, A003, and X001 own malformed, missing, blank, and non-string
-        // names. Only their canonical strict-YAML values enter this index.
+        // names. Only their canonical strict-YAML values enter this index; a
+        // whitespace-only canonical string is blank under A003's
+        // usable-required-string predicate (`trim().is_empty()`) and declares
+        // no agent identity, so it never participates in grouping. Nonblank
+        // names are compared exactly, case-sensitively, and untrimmed.
         let Some(name) = frontmatter::get_strict_string_field(frontmatter, "name") else {
             continue;
         };
+        if name.trim().is_empty() {
+            continue;
+        }
         paths_by_name.entry(name).or_default().push(path);
     }
 
@@ -1434,6 +1460,12 @@ fn has_reviewer_template_marker(content: &str) -> bool {
     }) || has_reviewer_template_marker_comment(&document)
 }
 
+/// Deterministic positive marker grammar: after an optional Markdown list
+/// marker, the line must be case-insensitive `Derived from`, whitespace, the
+/// exact repository-relative template token, and at most one terminal `.`.
+/// Negation and description are open-ended, so arbitrary trailing (or
+/// intervening) clauses are never provenance — including benign ones such as
+/// `… for routing.`; a finite negative-word list cannot decide liveness.
 fn is_reviewer_template_marker_line(line: &str) -> bool {
     if line.contains('`') {
         return false;
@@ -1446,8 +1478,19 @@ fn is_reviewer_template_marker_line(line: &str) -> bool {
     if !after_prefix.chars().next().is_some_and(char::is_whitespace) {
         return false;
     }
-    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
-    contains_exact_template_path(&normalized) && !contains_marker_negation(&normalized)
+    // Whitespace normalization keeps a multiline HTML comment body equivalent
+    // to the single-line prose form.
+    let rest = after_prefix
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let Some(tail) = rest.strip_prefix(REVIEWER_TEMPLATE_PATH) else {
+        return false;
+    };
+    // The exact path token must be complete (`….md.bak` leaves a `.bak` tail)
+    // and may be followed only by the allowed terminal punctuation.
+    let tail = tail.trim();
+    tail.is_empty() || tail == "."
 }
 
 fn strip_markdown_list_marker(line: &str) -> &str {
@@ -1473,37 +1516,6 @@ fn strip_ascii_case_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     text.get(..prefix.len())
         .filter(|candidate| candidate.eq_ignore_ascii_case(prefix))
         .and_then(|_| text.get(prefix.len()..))
-}
-
-fn contains_exact_template_path(text: &str) -> bool {
-    let path = REVIEWER_TEMPLATE_PATH;
-    let mut start = 0;
-    while let Some(index) = text[start..].find(path) {
-        let index = start + index;
-        let before = text[..index].chars().next_back();
-        let after = text[index + path.len()..].chars().next();
-        if before.is_none_or(is_template_path_boundary)
-            && after.is_none_or(is_template_path_boundary)
-        {
-            return true;
-        }
-        start = index + path.len();
-    }
-    false
-}
-
-fn is_template_path_boundary(character: char) -> bool {
-    !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-' | '.' | '/')
-}
-
-fn contains_marker_negation(text: &str) -> bool {
-    text.split(|character: char| !character.is_ascii_alphabetic())
-        .any(|word| {
-            matches!(
-                word.to_ascii_lowercase().as_str(),
-                "not" | "never" | "without" | "stale" | "independent" | "example"
-            )
-        })
 }
 
 /// HTML comments are intentionally absent from `body_prose`, so this small
@@ -1859,6 +1871,157 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn whitespace_only_names_report_a003_per_file_and_never_group_into_a031() {
+        // #556 (#526) reproduction: a whitespace-only required string is blank
+        // under A003 and declares no identity, so no cascading A031 advisory.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            ".claude/agents/backend.md",
+            "---\nname: \"   \"\ndescription: Reviews backend pull requests for correctness and regressions\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/agents/frontend.md",
+            "---\nname: \"   \"\ndescription: Audits frontend accessibility and design-system conformance\n---\nBody\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &ExcludeSet::default());
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentFieldMissing),
+            vec![
+                ".claude/agents/backend.md".to_string(),
+                ".claude/agents/frontend.md".to_string(),
+            ],
+            "each blank name stays with its sole owner A003"
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|finding| finding.rule != LintRule::AgentNameDuplicate),
+            "blank names never enter the duplicate-name index: {:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unusable_name_shapes_remain_a031_hard_negatives() {
+        // Missing, null, collection, empty, and invalid-YAML names stay with
+        // A002/A003/X001; none participates in duplicate grouping.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        for (path, frontmatter) in [
+            ("missing-a.md", "description: Reviews backend pull requests"),
+            ("missing-b.md", "description: Audits frontend accessibility"),
+            (
+                "null-a.md",
+                "name: null\ndescription: Reviews backend pull requests",
+            ),
+            (
+                "null-b.md",
+                "name: null\ndescription: Audits frontend accessibility",
+            ),
+            (
+                "seq-a.md",
+                "name: [reviewer]\ndescription: Reviews backend pull requests",
+            ),
+            (
+                "seq-b.md",
+                "name: [reviewer]\ndescription: Audits frontend accessibility",
+            ),
+            (
+                "empty-a.md",
+                "name: \"\"\ndescription: Reviews backend pull requests",
+            ),
+            (
+                "empty-b.md",
+                "name: \"\"\ndescription: Audits frontend accessibility",
+            ),
+            ("bad-a.md", "name: reviewer\ndescription: [unterminated"),
+            ("bad-b.md", "name: reviewer\ndescription: [unterminated"),
+        ] {
+            std::fs::write(
+                format!(".claude/agents/{path}"),
+                format!("---\n{frontmatter}\n---\nBody\n"),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|finding| finding.rule != LintRule::AgentNameDuplicate),
+            "no unusable name shape groups into A031: {:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nonblank_invalid_names_keep_exact_case_sensitive_grouping() {
+        // An A010-invalid but nonblank name still groups exactly and
+        // case-sensitively, without trimming or other normalization.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        for (path, name) in [
+            ("alpha.md", "\"Bad Name\""),
+            ("beta.md", "\"Bad Name\""),
+            ("gamma.md", "\"bad name\""),
+            ("padded.md", "\" reviewer \""),
+            ("plain.md", "reviewer"),
+        ] {
+            std::fs::write(
+                format!(".claude/agents/{path}"),
+                format!(
+                    "---\nname: {name}\ndescription: Reviews pull requests for correctness and regressions\n---\nBody\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_private_agents(&mut diag, &ExcludeSet::default());
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::AgentNameDuplicate)
+            .collect();
+        assert_eq!(
+            findings.len(),
+            1,
+            "only the exact repeated spelling groups: {findings:?}"
+        );
+        assert_eq!(
+            findings[0].subject_path.as_deref(),
+            Some(Path::new(".claude/agents/alpha.md"))
+        );
+        assert_eq!(
+            findings[0].related_subjects,
+            vec![Path::new(".claude/agents/beta.md").to_path_buf()]
+        );
+        assert!(
+            findings[0].message.contains("agent name 'Bad Name'"),
+            "the nonblank name is grouped untrimmed and case-sensitively: {}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn plugin_agent_names_are_deliberately_excluded_from_a031() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -2090,6 +2253,176 @@ mod tests {
         );
     }
 
+    // ── #556 (#537): binding A001/A004 structured suggestions ──────
+
+    #[test]
+    #[serial_test::serial]
+    fn a001_carries_the_binding_structured_suggestion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["missing-agents"], &ExcludeSet::default(), &mut diag);
+        let finding = diag
+            .diagnostics()
+            .iter()
+            .find(|finding| finding.rule == LintRule::AgentsDirMissing)
+            .expect("A001 fires for the missing declared path");
+        assert_eq!(
+            finding.subject_path.as_deref(),
+            Some(Path::new("missing-agents"))
+        );
+        assert_eq!(finding.suggestion.as_deref(), Some(A001_SUGGESTION));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn a004_carries_the_binding_structured_suggestion_on_every_root_shape() {
+        // Present empty default, present empty declared directory, and a
+        // declared non-Markdown file all carry the same stable remediation.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("custom").unwrap();
+        std::fs::write("custom.txt", "not markdown\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["custom", "custom.txt"], &ExcludeSet::default(), &mut diag);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::NoAgentFiles)
+            .collect();
+        assert_eq!(findings.len(), 3, "default plus two declared empty roots");
+        for finding in findings {
+            assert_eq!(
+                finding.suggestion.as_deref(),
+                Some(A004_SUGGESTION),
+                "every A004 shape carries the suggestion: {:?}",
+                finding.subject_path
+            );
+        }
+    }
+
+    // ── #556 (#530): rejected symlinked roots are never A001/A004 ──
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn symlinked_declared_root_reports_no_a001_a004_or_per_agent_findings() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("secret")).unwrap();
+        std::fs::write(outside.path().join("secret/leak.md"), "no frontmatter\n").unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        symlink(
+            outside.path().join("secret"),
+            tmp.path().join("custom-agents"),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["custom-agents"], &ExcludeSet::default(), &mut diag);
+        assert!(
+            diag.diagnostics().is_empty(),
+            "a rejected symlinked declaration is manifest-owned (M013), not A001/A004/per-agent: {:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn symlinked_ancestor_declared_root_reports_no_a001_or_a004() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(outside.path().join("agents")).unwrap();
+        std::fs::write(outside.path().join("agents/leak.md"), "no frontmatter\n").unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        symlink(outside.path(), tmp.path().join("via")).unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(&["via/agents"], &ExcludeSet::default(), &mut diag);
+        assert!(
+            diag.diagnostics().is_empty(),
+            "a symlinked-ancestor declaration is manifest-owned, not A001/A004: {:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn missing_safe_roots_still_report_a001_alongside_a_rejected_one() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("real").unwrap();
+        symlink("real", "linked").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        run_plugin_agents_with(
+            &["missing-dir", "linked", "missing-file.md"],
+            &ExcludeSet::default(),
+            &mut diag,
+        );
+        assert_eq!(
+            agents_of(&diag, LintRule::AgentsDirMissing),
+            vec!["missing-dir".to_string(), "missing-file.md".to_string()],
+            "genuinely missing safe roots keep exactly one A001 each in declaration order"
+        );
+        assert!(
+            agents_of(&diag, LintRule::NoAgentFiles).is_empty(),
+            "the rejected in-repository symlink is neither missing nor present"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn rejected_roots_contribute_nothing_to_runtime_identities() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("real-agents").unwrap();
+        std::fs::write(
+            "real-agents/agent.md",
+            "---\nname: leaked\ndescription: Reviews pull requests for correctness\n---\nBody\n",
+        )
+        .unwrap();
+        symlink("real-agents", "linked-agents").unwrap();
+
+        let inventory = super::super::agent_discovery::runtime_inventory(
+            true,
+            &["linked-agents".to_string()],
+            &ExcludeSet::default(),
+        );
+        assert!(
+            inventory.files.all_files.is_empty() && inventory.files.lint_files.is_empty(),
+            "no rejected root contributes to either inventory vector: {:?}",
+            inventory.files
+        );
+        assert!(
+            inventory.identities.is_empty(),
+            "no rejected root contributes runtime identities: {:?}",
+            inventory.identities
+        );
+    }
+
     #[test]
     #[serial_test::serial]
     fn excluding_nested_subdir_suppresses_only_nested_findings() {
@@ -2316,6 +2649,10 @@ mod tests {
         for content in [
             "Derived from skills/shared/reviewer-templates.md\n",
             "- derived from skills/shared/reviewer-templates.md\n",
+            "1. Derived from skills/shared/reviewer-templates.md\n",
+            // The allowed terminal punctuation: at most one closing period.
+            "Derived from skills/shared/reviewer-templates.md.\n",
+            "- Derived from skills/shared/reviewer-templates.md.\n",
             "<!-- Derived from skills/shared/reviewer-templates.md -->\n",
             "<!--\nDERIVED FROM skills/shared/reviewer-templates.md\n-->\n",
         ] {
@@ -2333,9 +2670,84 @@ mod tests {
             "This example says Derived from skills/shared/reviewer-templates.md\n",
             "Derived from skills/shared/reviewer-templates.md.bak\n",
             "Derived from ${CLAUDE_PLUGIN_ROOT}/skills/shared/reviewer-templates.md\n",
+            // #556 (#528): open-ended denial and description shapes are not
+            // provenance; a finite negative-word list cannot enumerate them.
+            "Derived from skills/shared/reviewer-templates.md is false.\n",
+            "Derived from skills/shared/reviewer-templates.md is incorrect\n",
+            "Derived from skills/shared/reviewer-templates.md no longer applies\n",
+            "Derived from skills/shared/reviewer-templates.md? No\n",
+            "Derived from skills/shared/reviewer-templates.md, but this agent is independent\n",
+            "<!-- Derived from skills/shared/reviewer-templates.md is false. -->\n",
+            "<!-- Derived from skills/shared/reviewer-templates.md is incorrect -->\n",
+            "<!-- Derived from skills/shared/reviewer-templates.md? No -->\n",
+            "<!--\nDerived from skills/shared/reviewer-templates.md\nno longer applies\n-->\n",
+            "<!--\nDerived from skills/shared/reviewer-templates.md,\nbut this agent is independent\n-->\n",
+            // The positive grammar deliberately also rejects benign trailing
+            // clauses the negative-word list used to accept.
+            "Derived from skills/shared/reviewer-templates.md for routing.\n",
+            "Derived from the skills/shared/reviewer-templates.md\n",
+            // Only a single terminal period is allowed punctuation.
+            "Derived from skills/shared/reviewer-templates.md..\n",
+            "Derived from skills/shared/reviewer-templates.md,\n",
+            "Derived from skills/shared/reviewer-templates.md!\n",
         ] {
             assert!(!has_reviewer_template_marker(content), "{content:?}");
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn denial_marker_emits_a006_and_never_suppresses_it() {
+        // #556 (#528) reproduction: the only purported marker denies the
+        // derivation, so with a readable template the agent must report A006.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write("skills/shared/reviewer-templates.md", "## Reviewer\n").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\nDerived from skills/shared/reviewer-templates.md is false.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_template_convention(&mut diag, &ExcludeSet::default());
+        let marker = diag
+            .diagnostics()
+            .iter()
+            .find(|finding| finding.rule == LintRule::TemplateMarkerMissing)
+            .expect("the denial line is not live provenance, so A006 fires");
+        assert_eq!(
+            marker.subject_path.as_deref(),
+            Some(Path::new("agents/general.md"))
+        );
+        assert_eq!(marker.suggestion.as_deref(), Some(TEMPLATE_MARKER));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn denial_marker_does_not_activate_a005_without_a_template() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write(
+            "agents/general.md",
+            "---\nname: general\ndescription: desc\n---\nDerived from skills/shared/reviewer-templates.md is false.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_template_convention(&mut diag, &ExcludeSet::default());
+        assert!(
+            diag.diagnostics().is_empty(),
+            "rejected prose never activates the convention: {:?}",
+            diag.diagnostics()
+        );
     }
 
     #[test]

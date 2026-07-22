@@ -54,55 +54,73 @@ pub(crate) struct RuntimeAgentInventory {
     pub identities: BTreeSet<String>,
 }
 
-/// One discovered agent root: its normalized repository-relative path, whether
-/// it exists on disk, and the agent files found beneath it.
+/// One discovered agent root: its normalized repository-relative path, its
+/// filesystem presence classification, and the agent files found beneath it.
 #[derive(Debug, Clone)]
 pub(crate) struct AgentRoot {
     /// The root path exactly as supplied by the caller (already normalized).
     pub path: String,
-    /// Whether the root exists on disk as a directory or file.
-    pub exists: bool,
+    /// The root's filesystem classification. `Rejected` is deliberately kept
+    /// distinct from `Missing` so an unsafe symlinked declaration is never
+    /// misreported as nonexistent (A001) or empty (A004).
+    pub presence: RootPresence,
     /// Files discovered under this single root (before and after exclusion).
     pub inventory: AgentFileInventory,
+}
+
+/// Filesystem classification of one declared or implicit discovery root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootPresence {
+    /// A safe (symlink-free, repository-contained) file or directory.
+    Present,
+    /// A lexically safe path with no filesystem entry at all.
+    Missing,
+    /// A path that exists in some form but is unusable: a component is a
+    /// symlink, the path canonically escapes the repository, or the entry is
+    /// not a regular file or directory. Never walked, never read through.
+    Rejected,
 }
 
 /// Recursively discover `*.md` agent files under one repository-relative root.
 ///
 /// A directory is walked recursively. A direct `*.md` file is itself one agent.
-/// Any other existing entry (for example a non-Markdown file) exists but yields
-/// no agents, which lets A004 distinguish present-but-empty intent from absence.
-/// A missing path yields an absent, empty root. `all_files` omits the
-/// `ExcludeSet`; `lint_files` applies it.
+/// Any other existing entry (for example a non-Markdown file) is `Present` but
+/// yields no agents, which lets A004 distinguish present-but-empty intent from
+/// absence. A missing path yields an empty `Missing` root. A root rejected by
+/// the repository-containment probe — a symlinked component or a canonical
+/// escape — yields an empty `Rejected` root that is never walked; `WalkDir`
+/// would otherwise descend through a symlinked root, or through a symlinked
+/// ancestor of a declared multi-segment root that the OS dereferences, and pull
+/// files from outside the repository. `Rejected` stays distinct from `Missing`
+/// so the manifest path-safety owner (M013) can diagnose the unsafe shape while
+/// A001 stays truthful. `all_files` omits the `ExcludeSet`; `lint_files`
+/// applies it.
 pub(crate) fn discover_root(root: &str, exclude: &ExcludeSet) -> AgentRoot {
     let base = Path::new(root);
-    // A root must resolve strictly inside the repository. `WalkDir` would
-    // otherwise descend through a symlinked root — or through a symlinked
-    // ancestor of a declared multi-segment root, which the OS dereferences — and
-    // pull files from outside the repository. The shared containment primitive
-    // checks every path component (final and intermediate) for symlinks plus
-    // canonical containment, so an escaping root is treated as absent: an
-    // unusable in-repository root.
-    let (exists, all_files) = if !crate::repo_path::is_repo_contained(base) {
-        (false, Vec::new())
-    } else if base.is_dir() {
-        let files = traversal::recursive_files(base, Path::new("."), None)
-            .entries
-            .into_iter()
-            .map(|entry| entry.display)
-            .filter(|display| is_agent_markdown(display))
-            .collect();
-        (true, files)
-    } else if base.is_file() {
-        // A manifest-declared path may point directly at a single agent file.
-        // A present non-Markdown file exists but contributes no agent.
-        let files = if is_agent_markdown(root) {
-            vec![root.to_string()]
-        } else {
-            Vec::new()
-        };
-        (true, files)
-    } else {
-        (false, Vec::new())
+    // The shared containment primitive checks every path component (final and
+    // intermediate) for symlinks plus canonical containment before any walk.
+    let (presence, all_files) = match crate::repo_path::probe_repo_relative(base) {
+        crate::repo_path::PathProbe::Rejected => (RootPresence::Rejected, Vec::new()),
+        crate::repo_path::PathProbe::Missing(_) => (RootPresence::Missing, Vec::new()),
+        crate::repo_path::PathProbe::Directory(_) => {
+            let files = traversal::recursive_files(base, Path::new("."), None)
+                .entries
+                .into_iter()
+                .map(|entry| entry.display)
+                .filter(|display| is_agent_markdown(display))
+                .collect();
+            (RootPresence::Present, files)
+        }
+        crate::repo_path::PathProbe::File(_) => {
+            // A manifest-declared path may point directly at a single agent
+            // file. A present non-Markdown file exists but contributes no agent.
+            let files = if is_agent_markdown(root) {
+                vec![root.to_string()]
+            } else {
+                Vec::new()
+            };
+            (RootPresence::Present, files)
+        }
     };
 
     let lint_files = all_files
@@ -113,7 +131,7 @@ pub(crate) fn discover_root(root: &str, exclude: &ExcludeSet) -> AgentRoot {
 
     AgentRoot {
         path: root.to_string(),
-        exists,
+        presence,
         inventory: AgentFileInventory {
             all_files,
             lint_files,
@@ -244,7 +262,7 @@ mod tests {
         fs::write(".claude/agents/review/notes.txt", "").unwrap();
 
         let root = discover_root(".claude/agents", &ExcludeSet::default());
-        assert!(root.exists);
+        assert_eq!(root.presence, RootPresence::Present);
         assert_eq!(
             root.inventory.all_files,
             vec![
@@ -296,11 +314,15 @@ mod tests {
         fs::write("custom/notes.txt", "").unwrap();
 
         let md = discover_root("custom/agent.md", &ExcludeSet::default());
-        assert!(md.exists);
+        assert_eq!(md.presence, RootPresence::Present);
         assert_eq!(md.inventory.all_files, vec!["custom/agent.md".to_string()]);
 
         let non_md = discover_root("custom/notes.txt", &ExcludeSet::default());
-        assert!(non_md.exists, "a present non-Markdown file exists");
+        assert_eq!(
+            non_md.presence,
+            RootPresence::Present,
+            "a present non-Markdown file exists"
+        );
         assert!(
             non_md.inventory.all_files.is_empty(),
             "but contributes no agent"
@@ -315,7 +337,7 @@ mod tests {
         std::env::set_current_dir(tmp.path()).unwrap();
 
         let root = discover_root("agents", &ExcludeSet::default());
-        assert!(!root.exists);
+        assert_eq!(root.presence, RootPresence::Missing);
         assert!(root.inventory.all_files.is_empty());
         assert!(root.inventory.lint_files.is_empty());
     }
@@ -346,6 +368,11 @@ mod tests {
             "outside-repository files must never be discovered through a symlinked root: {:?}",
             root.inventory.all_files
         );
+        assert_eq!(
+            root.presence,
+            RootPresence::Rejected,
+            "an existing unsafe symlinked root is rejected, not missing"
+        );
     }
 
     #[cfg(unix)]
@@ -372,6 +399,31 @@ mod tests {
             "a symlinked ancestor must never pull in outside-repository files: {:?}",
             root.inventory.all_files
         );
+        assert_eq!(
+            root.presence,
+            RootPresence::Rejected,
+            "a symlinked-ancestor root is rejected, not missing"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn an_in_repository_symlinked_root_is_rejected_not_missing() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("real-agents").unwrap();
+        std::fs::write("real-agents/agent.md", "").unwrap();
+        // Discovery never follows a symlink, even one pointing inside the
+        // repository, so the declared shape is unusable rather than absent.
+        symlink("real-agents", "linked-agents").unwrap();
+
+        let root = discover_root("linked-agents", &ExcludeSet::default());
+        assert_eq!(root.presence, RootPresence::Rejected);
+        assert!(root.inventory.all_files.is_empty());
     }
 
     #[test]
