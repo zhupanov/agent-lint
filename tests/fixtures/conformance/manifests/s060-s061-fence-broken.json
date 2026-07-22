@@ -24,6 +24,13 @@
       "severity": "error",
       "subject_path": ".claude/skills/demo/SKILL.md",
       "suggestion": "add an explicit search path or pipe/redirect input"
+    },
+    {
+      "code": "S061",
+      "name": "unsafe-grep-probe",
+      "severity": "error",
+      "subject_path": ".claude/skills/demo/SKILL.md",
+      "suggestion": "use a repository-contained path"
     }
   ],
   "allowed_additional_diagnostics": []

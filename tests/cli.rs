@@ -6668,7 +6668,7 @@ fn l006_cli_flags_fenced_npm_run_with_metadata_and_modes() {
     .unwrap();
     std::fs::write(
         tmp.path().join("CLAUDE.md"),
-        "```bash\nnpm run missing-fenced\n```\n\n```json\n{\"scripts\":{\"nope\":\"x\"}}\n```\n\nDo not run npm run also-missing.\n\n`npm --workspace pkg run workspace-only`\n",
+        "```bash\nnpm run --silent missing-fenced target\n```\n\n```json\n{\"scripts\":{\"nope\":\"x\"}}\n```\n\nDo not run npm run also-missing.\n\n`npm --workspace pkg run workspace-only`\n",
     )
     .unwrap();
 
@@ -6739,7 +6739,7 @@ fn l006_cli_flags_fenced_npm_run_with_metadata_and_modes() {
     assert!(autofix.status.success(), "stderr: {}", stderr(&autofix));
     let after = std::fs::read_to_string(tmp.path().join("CLAUDE.md")).unwrap();
     assert!(
-        after.contains("npm run missing-fenced"),
+        after.contains("npm run --silent missing-fenced target"),
         "L006 must remain byte-idempotent under --autofix"
     );
 }

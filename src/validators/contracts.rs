@@ -656,7 +656,8 @@ struct GrepArgAnalysis {
 fn analyze_grep_args(args: &[String]) -> GrepArgAnalysis {
     let mut skip_value = false;
     let mut explicit_pattern = false;
-    let mut positional_count = 0usize;
+    let mut saw_implicit_pattern = false;
+    let mut search_path_count = 0usize;
     let mut stdin_redirected = false;
     let mut path_has_parent_dir = false;
     let mut index = 0usize;
@@ -702,7 +703,14 @@ fn analyze_grep_args(args: &[String]) -> GrepArgAnalysis {
             index += 1;
             continue;
         }
-        positional_count += 1;
+        // Assign semantic roles in one pass: without an explicit pattern source,
+        // the first positional is the implicit pattern and is never a path.
+        if !explicit_pattern && !saw_implicit_pattern {
+            saw_implicit_pattern = true;
+            index += 1;
+            continue;
+        }
+        search_path_count += 1;
         if Path::new(arg)
             .components()
             .any(|part| part == Component::ParentDir)
@@ -712,7 +720,7 @@ fn analyze_grep_args(args: &[String]) -> GrepArgAnalysis {
         index += 1;
     }
     GrepArgAnalysis {
-        has_explicit_path: positional_count >= if explicit_pattern { 1 } else { 2 },
+        has_explicit_path: search_path_count >= 1,
         stdin_redirected,
         path_has_parent_dir,
     }
@@ -3435,8 +3443,36 @@ mod tests {
     fn grep_probe_option_values_are_not_paths() {
         assert_no_s061("command grep -e '../escape' log.txt");
         assert_no_s061("command grep --regexp=../x f");
+        assert_no_s061("command grep -f patterns.txt log.txt");
+        assert_no_s061("command grep --file=patterns.txt log.txt");
+        assert_no_s061("command grep '../escape' log.txt");
+        assert_no_s061("command rg '../escape' log.txt");
+        assert_no_s061("command grep -- '../escape' log.txt");
+        assert_no_s061("command egrep '../escape' log.txt");
+        assert_no_s061("command fgrep '../escape' log.txt");
+        assert_no_s061("command ripgrep '../escape' log.txt");
         assert_s061(
             "grep needle ../shared/config",
+            "grep-family path ascends through a parent directory",
+            "use a repository-contained path",
+        );
+        assert_s061(
+            "command grep needle ../shared/config",
+            "grep-family path ascends through a parent directory",
+            "use a repository-contained path",
+        );
+        assert_s061(
+            "command grep -e needle ../shared/config",
+            "grep-family path ascends through a parent directory",
+            "use a repository-contained path",
+        );
+        assert_s061(
+            "command grep '../escape'",
+            "grep-family probe has no explicit path and may block on stdin",
+            "add an explicit search path or pipe/redirect input",
+        );
+        assert_s061(
+            "command rg -A 2 '../escape' ../up",
             "grep-family path ascends through a parent directory",
             "use a repository-contained path",
         );
