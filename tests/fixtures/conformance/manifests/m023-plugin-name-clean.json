@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "m023-plugin-name-clean",
+  "covers": ["m023-plugin-name", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "M002,M003,M006,M007,M008,M023", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

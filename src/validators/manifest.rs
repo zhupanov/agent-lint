@@ -24,8 +24,8 @@ static RE_SEMVER: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// Marketplace / plugin entry name kebab-case: `[a-z0-9]+(-[a-z0-9]+)*`.
-static RE_MARKETPLACE_KEBAB: LazyLock<Regex> =
+/// Plugin and marketplace name kebab-case: `[a-z0-9]+(-[a-z0-9]+)*`.
+static RE_KEBAB: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-z0-9]+(-[a-z0-9]+)*$").unwrap());
 
 /// The plugin manifest directory. Components must never live under it.
@@ -153,16 +153,82 @@ pub fn validate_plugin_json(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         ManifestState::Parsed(v) => v,
     };
 
-    let name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let Some(root) = val.as_object() else {
+        diag.report_with(
+            LintRule::PluginJsonInvalid,
+            &format!(
+                "{f} manifest root must be a JSON object (found {})",
+                json_type(val)
+            ),
+            metadata_at(
+                val.source(),
+                &[],
+                json_type(val),
+                "make the plugin manifest a JSON object with a required name",
+                false,
+            ),
+        );
+        return;
+    };
 
-    // An absent, empty, or whitespace-only name all mean "no name".
-    if name.trim().is_empty() {
-        diag.report(
+    match root.get("name") {
+        None => diag.report_with(
             LintRule::PluginFieldMissing,
             &format!("{f} missing required field: name"),
-        );
+            DiagnosticMetadata::default()
+                .with_evidence("name missing")
+                .with_suggestion("add a whitespace-free plugin name"),
+        ),
+        Some(Value::String(name)) if name.trim().is_empty() => diag.report_with(
+            LintRule::PluginFieldMissing,
+            &format!("{f} name must be a non-empty string"),
+            metadata_at(
+                val.source(),
+                &[Seg::Key("name")],
+                "blank plugin name",
+                "use a whitespace-free plugin name",
+                false,
+            ),
+        ),
+        Some(Value::String(name)) if name.chars().any(char::is_whitespace) => diag.report_with(
+            LintRule::PluginFieldMissing,
+            &format!("{f} name must not contain whitespace"),
+            metadata_at(
+                val.source(),
+                &[Seg::Key("name")],
+                "whitespace-containing plugin name",
+                "use a whitespace-free plugin name",
+                false,
+            ),
+        ),
+        Some(Value::String(name)) if !RE_KEBAB.is_match(name) => diag.report_with(
+            LintRule::PluginNameFormat,
+            &format!("{f} name is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
+            metadata_at(
+                val.source(),
+                &[Seg::Key("name")],
+                "non-kebab-case plugin name",
+                "use a lowercase kebab-case plugin name, for example my-plugin",
+                false,
+            ),
+        ),
+        Some(Value::String(_)) => {}
+        Some(value) => diag.report_with(
+            LintRule::PluginFieldMissing,
+            &format!(
+                "{f} name must be a non-empty string (found {})",
+                json_type(value)
+            ),
+            metadata_at(
+                val.source(),
+                &[Seg::Key("name")],
+                json_type(value),
+                "set name to a whitespace-free string",
+                false,
+            ),
+        ),
     }
-    match val.get("version") {
+    match root.get("version") {
         None => diag.report(
             LintRule::PluginVersionMissing,
             &format!("{f} omits optional field: version"),
@@ -196,39 +262,135 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
         ManifestState::Parsed(v) => v,
     };
 
-    let mp_name = val.get("name").and_then(|v| v.as_str()).unwrap_or("");
-    let mp_owner = val
-        .get("owner")
-        .and_then(|o| o.get("name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let Some(root) = val.as_object() else {
+        diag.report_with(
+            LintRule::MarketplaceJsonInvalid,
+            &format!(
+                "{f} manifest root must be a JSON object (found {})",
+                json_type(val)
+            ),
+            metadata_at(
+                val.source(),
+                &[],
+                json_type(val),
+                "make the marketplace manifest a JSON object with name, owner, and plugins",
+                false,
+            ),
+        );
+        return;
+    };
 
-    if mp_name.trim().is_empty() {
-        diag.report(
+    match root.get("name") {
+        None => diag.report_with(
             LintRule::MarketplaceFieldMissing,
             &format!("{f} missing required field: name"),
-        );
-    } else if mp_name.chars().any(char::is_whitespace) {
-        diag.report_with(
-            LintRule::MarketplaceNameWhitespace,
-            &format!("{f} name contains whitespace"),
-            marketplace_name_metadata(val.source(), None, "whitespace-containing marketplace name"),
-        );
-    } else if !RE_MARKETPLACE_KEBAB.is_match(mp_name) {
-        // Match the raw value: upstream kebab-case checks do not trim first.
-        diag.report(
-            LintRule::MarketplaceNameFormat,
-            &format!("{f} name '{mp_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
-        );
-    }
-    if mp_owner.trim().is_empty() {
-        diag.report(
+            DiagnosticMetadata::default()
+                .with_evidence("name missing")
+                .with_suggestion("add a non-empty marketplace name"),
+        ),
+        Some(Value::String(name)) if name.trim().is_empty() => diag.report_with(
             LintRule::MarketplaceFieldMissing,
-            &format!("{f} missing required field: owner.name"),
-        );
+            &format!("{f} name must be a non-empty string"),
+            metadata_at(
+                val.source(),
+                &[Seg::Key("name")],
+                "blank marketplace name",
+                "set name to a non-empty string",
+                false,
+            ),
+        ),
+        Some(Value::String(mp_name)) if mp_name.chars().any(char::is_whitespace) => {
+            diag.report_with(
+                LintRule::MarketplaceNameWhitespace,
+                &format!("{f} name contains whitespace"),
+                marketplace_name_metadata(
+                    val.source(),
+                    None,
+                    "whitespace-containing marketplace name",
+                ),
+            );
+        }
+        Some(Value::String(mp_name)) if !RE_KEBAB.is_match(mp_name) => {
+            // Match the raw value: upstream kebab-case checks do not trim first.
+            diag.report(
+                LintRule::MarketplaceNameFormat,
+                &format!("{f} name '{mp_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
+            );
+        }
+        Some(Value::String(_)) => {}
+        Some(value) => diag.report_with(
+            LintRule::MarketplaceFieldMissing,
+            &format!(
+                "{f} name must be a non-empty string (found {})",
+                json_type(value)
+            ),
+            metadata_at(
+                val.source(),
+                &[Seg::Key("name")],
+                json_type(value),
+                "set name to a non-empty string",
+                false,
+            ),
+        ),
     }
 
-    match val.get("plugins") {
+    match root.get("owner") {
+        None => diag.report_with(
+            LintRule::MarketplaceFieldMissing,
+            &format!("{f} missing required field: owner"),
+            DiagnosticMetadata::default()
+                .with_evidence("owner missing")
+                .with_suggestion("add an owner object with a non-empty name"),
+        ),
+        Some(Value::Object(owner)) => match owner.get("name") {
+            None => diag.report_with(
+                LintRule::MarketplaceFieldMissing,
+                &format!("{f} missing required field: owner.name"),
+                DiagnosticMetadata::default()
+                    .with_evidence("owner.name missing")
+                    .with_suggestion("add a non-empty owner.name string"),
+            ),
+            Some(Value::String(name)) if name.trim().is_empty() => diag.report_with(
+                LintRule::MarketplaceFieldMissing,
+                &format!("{f} owner.name must be a non-empty string"),
+                metadata_at(
+                    val.source(),
+                    &[Seg::Key("owner"), Seg::Key("name")],
+                    "blank owner.name",
+                    "set owner.name to a non-empty string",
+                    false,
+                ),
+            ),
+            Some(Value::String(_)) => {}
+            Some(value) => diag.report_with(
+                LintRule::MarketplaceFieldMissing,
+                &format!(
+                    "{f} owner.name must be a non-empty string (found {})",
+                    json_type(value)
+                ),
+                metadata_at(
+                    val.source(),
+                    &[Seg::Key("owner"), Seg::Key("name")],
+                    json_type(value),
+                    "set owner.name to a non-empty string",
+                    false,
+                ),
+            ),
+        },
+        Some(value) => diag.report_with(
+            LintRule::MarketplaceFieldMissing,
+            &format!("{f} owner must be an object (found {})", json_type(value)),
+            metadata_at(
+                val.source(),
+                &[Seg::Key("owner")],
+                json_type(value),
+                "set owner to an object with a non-empty name",
+                false,
+            ),
+        ),
+    }
+
+    match root.get("plugins") {
         None => {
             diag.report(
                 LintRule::MarketplaceFieldMissing,
@@ -236,11 +398,18 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             );
         }
         Some(plugins) if !plugins.is_array() => {
-            diag.report(
-                LintRule::MarketplacePluginsEmpty,
+            diag.report_with(
+                LintRule::MarketplaceFieldMissing,
                 &format!(
                     "{f} plugins must be an array (found {})",
                     json_type(plugins)
+                ),
+                metadata_at(
+                    val.source(),
+                    &[Seg::Key("plugins")],
+                    json_type(plugins),
+                    "set plugins to an array of marketplace entries",
+                    false,
                 ),
             );
         }
@@ -254,7 +423,7 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             let arr = plugins
                 .as_array()
                 .expect("the preceding branch established plugins is an array");
-            let plugin_root = val.get("metadata").and_then(|m| m.get("pluginRoot"));
+            let plugin_root = root.get("metadata").and_then(|m| m.get("pluginRoot"));
             let invalid_plugin_root =
                 plugin_root.is_some_and(|root| !root.as_str().is_some_and(plugin_root_is_safe));
             let mut name_indexes: HashMap<String, Vec<usize>> = HashMap::new();
@@ -277,7 +446,7 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
                             ),
                         );
                     // Match the raw value: upstream kebab-case checks do not trim first.
-                    } else if !RE_MARKETPLACE_KEBAB.is_match(pname_raw) {
+                    } else if !RE_KEBAB.is_match(pname_raw) {
                         diag.report(
                             LintRule::MarketplaceNameFormat,
                             &format!(
@@ -466,7 +635,7 @@ fn json_type(value: &Value) -> &'static str {
 pub fn validate_marketplace_enriched(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/marketplace.json";
     let val = match &ctx.marketplace_json {
-        ManifestState::Parsed(v) => v,
+        ManifestState::Parsed(v) if v.is_object() => v,
         _ => return, // Missing/invalid already reported by V2
     };
     let source = val.source();
@@ -560,7 +729,7 @@ pub fn validate_marketplace_enriched(ctx: &LintContext, diag: &mut DiagnosticCol
 pub fn validate_plugin_enriched(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
-        ManifestState::Parsed(v) => v,
+        ManifestState::Parsed(v) if v.is_object() => v,
         _ => return, // Missing/invalid already reported by V1
     };
     let source = val.source();
@@ -717,7 +886,7 @@ pub fn validate_component_paths(ctx: &LintContext, diag: &mut DiagnosticCollecto
     }
 
     let val = match &ctx.plugin_json {
-        ManifestState::Parsed(v) => v,
+        ManifestState::Parsed(v) if v.is_object() => v,
         _ => return, // Missing/invalid already reported by V1
     };
 
@@ -995,7 +1164,9 @@ fn json_value_range(source: &str, value: &Value) -> Option<std::ops::Range<usize
 /// V30–V32: validate plugin-manifest fields on both directly lintable surfaces.
 /// Marketplace entries are inline metadata, not unavailable remote manifests.
 pub fn validate_plugin_fields(ctx: &LintContext, diag: &mut DiagnosticCollector) {
-    if let ManifestState::Parsed(value) = &ctx.plugin_json {
+    if let ManifestState::Parsed(value) = &ctx.plugin_json
+        && value.is_object()
+    {
         diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
             validate_plugin_fields_surface(
                 ctx,
@@ -1009,6 +1180,7 @@ pub fn validate_plugin_fields(ctx: &LintContext, diag: &mut DiagnosticCollector)
         });
     }
     if let ManifestState::Parsed(marketplace) = &ctx.marketplace_json
+        && marketplace.is_object()
         && let Some(entries) = marketplace.get("plugins").and_then(Value::as_array)
     {
         diag.with_subject_path(".claude-plugin/marketplace.json", |diag| {
@@ -1734,6 +1906,32 @@ mod tests {
     }
 
     #[test]
+    fn marketplace_non_object_roots_are_owned_by_m006_without_cascades() {
+        for value in [
+            json!([]),
+            json!("marketplace"),
+            json!(42),
+            json!(true),
+            Value::Null,
+        ] {
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(value));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_json(&ctx, &mut diag);
+            validate_marketplace_enriched(&ctx, &mut diag);
+            validate_plugin_fields(&ctx, &mut diag);
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .map(|d| d.rule)
+                    .collect::<Vec<_>>(),
+                vec![LintRule::MarketplaceJsonInvalid],
+                "non-object marketplace root must not cascade: {:?}",
+                diag.diagnostics()
+            );
+        }
+    }
+
+    #[test]
     fn test_v2_plugins_shape_failures_have_distinct_diagnostics() {
         let cases = [
             (
@@ -1743,7 +1941,7 @@ mod tests {
             ),
             (
                 json!({"name": "mp", "owner": {"name": "o"}, "plugins": {}}),
-                LintRule::MarketplacePluginsEmpty,
+                LintRule::MarketplaceFieldMissing,
                 "plugins must be an array (found object)",
             ),
             (
@@ -1774,6 +1972,62 @@ mod tests {
             diag.diagnostics()[0].rule,
             LintRule::MarketplacePluginsEmpty
         );
+    }
+
+    #[test]
+    fn marketplace_required_field_types_are_owned_by_m007() {
+        let valid = || json!({"name": "mp", "owner": {"name": "owner"}, "plugins": []});
+        let cases = [
+            (
+                "name wrong type",
+                json!({"name": 1, "owner": {"name": "owner"}, "plugins": []}),
+            ),
+            (
+                "owner wrong type",
+                json!({"name": "mp", "owner": [], "plugins": []}),
+            ),
+            (
+                "owner name wrong type",
+                json!({"name": "mp", "owner": {"name": false}, "plugins": []}),
+            ),
+        ];
+        for (label, value) in cases {
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(value));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_json(&ctx, &mut diag);
+            assert_eq!(
+                diag.diagnostics().len(),
+                2,
+                "{label}: {:?}",
+                diag.diagnostics()
+            );
+            assert_eq!(
+                diag.diagnostics()[0].rule,
+                LintRule::MarketplaceFieldMissing
+            );
+            assert_eq!(
+                diag.diagnostics()[1].rule,
+                LintRule::MarketplacePluginsEmpty
+            );
+        }
+        for plugins in [
+            Value::Null,
+            json!(false),
+            json!(42),
+            json!("plugins"),
+            json!({}),
+        ] {
+            let mut value = valid();
+            value["plugins"] = plugins;
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(value));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_json(&ctx, &mut diag);
+            assert_eq!(diag.diagnostics().len(), 1, "{:?}", diag.diagnostics());
+            assert_eq!(
+                diag.diagnostics()[0].rule,
+                LintRule::MarketplaceFieldMissing
+            );
+        }
     }
 
     #[test]
@@ -2617,7 +2871,88 @@ mod tests {
         assert!(diag.diagnostics().is_empty());
     }
 
-    // ── M003: empty and whitespace-only name ────────────────────────
+    // ── M002/M003/M023: plugin manifest root and name contract ──────
+
+    #[test]
+    fn plugin_non_object_roots_are_owned_by_m002_without_cascades() {
+        for value in [
+            json!([]),
+            json!("plugin"),
+            json!(42),
+            json!(true),
+            Value::Null,
+        ] {
+            let ctx = make_ctx(ManifestState::parsed(value), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_json(&ctx, &mut diag);
+            validate_plugin_enriched(&ctx, &mut diag);
+            validate_plugin_fields(&ctx, &mut diag);
+            assert_eq!(
+                diag.diagnostics()
+                    .iter()
+                    .map(|d| d.rule)
+                    .collect::<Vec<_>>(),
+                vec![LintRule::PluginJsonInvalid],
+                "non-object plugin root must not cascade: {:?}",
+                diag.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn plugin_name_usability_and_format_are_precise_and_exclusive() {
+        let cases: &[(&str, Value, &[LintRule])] = &[
+            ("valid", json!("a-b2"), &[]),
+            (
+                "internal whitespace",
+                json!("my plugin"),
+                &[LintRule::PluginFieldMissing],
+            ),
+            (
+                "leading whitespace",
+                json!(" my-plugin"),
+                &[LintRule::PluginFieldMissing],
+            ),
+            (
+                "trailing whitespace",
+                json!("my-plugin "),
+                &[LintRule::PluginFieldMissing],
+            ),
+            (
+                "unicode whitespace",
+                json!("my\u{2003}plugin"),
+                &[LintRule::PluginFieldMissing],
+            ),
+            (
+                "upper underscore",
+                json!("My_Plugin"),
+                &[LintRule::PluginNameFormat],
+            ),
+            (
+                "double hyphen",
+                json!("a--b"),
+                &[LintRule::PluginNameFormat],
+            ),
+            ("dot", json!("a.b"), &[LintRule::PluginNameFormat]),
+            ("empty", json!(""), &[LintRule::PluginFieldMissing]),
+            ("null", Value::Null, &[LintRule::PluginFieldMissing]),
+            ("boolean", json!(true), &[LintRule::PluginFieldMissing]),
+            ("number", json!(42), &[LintRule::PluginFieldMissing]),
+            ("array", json!([]), &[LintRule::PluginFieldMissing]),
+            ("object", json!({}), &[LintRule::PluginFieldMissing]),
+        ];
+
+        for (label, name, expected) in cases {
+            let ctx = make_ctx(
+                ManifestState::parsed(json!({"name": name, "version": "1.0.0"})),
+                ManifestState::Missing,
+            );
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_json(&ctx, &mut diag);
+            let actual: Vec<_> = diag.diagnostics().iter().map(|d| d.rule).collect();
+            assert_eq!(actual, *expected, "{label}: {:?}", diag.diagnostics());
+        }
+    }
 
     #[test]
     fn test_m003_empty_string_name_fires() {
@@ -2626,7 +2961,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("missing required field: name"));
+        assert!(diag.errors()[0].contains("must be a non-empty string"));
     }
 
     #[test]
@@ -2636,7 +2971,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("missing required field: name"));
+        assert!(diag.errors()[0].contains("must be a non-empty string"));
     }
 
     #[test]
@@ -2646,7 +2981,7 @@ mod tests {
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_json(&ctx, &mut diag);
         assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("missing required field: name"));
+        assert!(diag.errors()[0].contains("must be a non-empty string"));
     }
 
     // ── M013: component-path-unsafe ─────────────────────────────────

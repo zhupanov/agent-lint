@@ -6367,3 +6367,181 @@ fn autofix_leaves_documented_allowed_tools_list_byte_identical() {
         "the documented list form must lint clean (no X001, S040, or S067): {value}"
     );
 }
+
+#[test]
+fn manifest_root_shape_and_required_field_types_preserve_cli_policy_and_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest_dir = tmp.path().join(".claude-plugin");
+    std::fs::create_dir_all(&manifest_dir).unwrap();
+
+    let plugin = manifest_dir.join("plugin.json");
+    std::fs::write(&plugin, "[\n  \"not-an-object\"\n]\n").unwrap();
+    for strictness in ["", "--pedantic", "--all"] {
+        let mut arguments = vec!["--format", "json"];
+        if !strictness.is_empty() {
+            arguments.push(strictness);
+        }
+        arguments.extend(["--only", "M002,M003,M004,M018", "."]);
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic["code"], "M002");
+        assert_eq!(diagnostic["severity"], "error");
+        assert_eq!(diagnostic["subject_path"], ".claude-plugin/plugin.json");
+        assert_eq!(diagnostic["location"]["start"]["line"], 1);
+        assert_eq!(diagnostic["location"]["start"]["column"], 1);
+        assert_eq!(diagnostic["evidence"], "array");
+        assert_eq!(
+            diagnostic["suggestion"],
+            "make the plugin manifest a JSON object with a required name"
+        );
+    }
+
+    std::fs::write(
+        manifest_dir.join("marketplace.json"),
+        "{\n  \"name\": \"market\",\n  \"owner\": {\"name\": \"Owner\"},\n  \"plugins\": {}\n}\n",
+    )
+    .unwrap();
+    for strictness in ["", "--pedantic", "--all"] {
+        let mut arguments = vec!["--format", "json"];
+        if !strictness.is_empty() {
+            arguments.push(strictness);
+        }
+        arguments.extend(["--only", "M007,M008", "."]);
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+        let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+        let diagnostic = &diagnostics[0];
+        assert_eq!(diagnostic["code"], "M007");
+        assert_eq!(diagnostic["severity"], "error");
+        assert_eq!(
+            diagnostic["subject_path"],
+            ".claude-plugin/marketplace.json"
+        );
+        assert_eq!(diagnostic["location"]["start"]["line"], 4);
+        assert_eq!(diagnostic["location"]["start"]["column"], 14);
+        assert_eq!(diagnostic["location"]["end"]["column"], 16);
+        assert_eq!(diagnostic["evidence"], "object");
+        assert_eq!(
+            diagnostic["suggestion"],
+            "set plugins to an array of marketplace entries"
+        );
+    }
+
+    let original = std::fs::read_to_string(&plugin).unwrap();
+    let autofix = run_in(
+        tmp.path(),
+        &[
+            "--autofix",
+            "--only",
+            "M002,M003,M004,M006,M007,M008,M018,M023",
+            ".",
+        ],
+    );
+    assert_eq!(autofix.status.code(), Some(1), "{}", stderr(&autofix));
+    assert_eq!(std::fs::read_to_string(plugin).unwrap(), original);
+}
+
+#[test]
+fn plugin_name_rules_distinguish_unusable_names_from_format_warnings_across_modes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let plugin = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+
+    for (name, code, normal_severity, normal_exit) in [
+        ("my plugin", "M003", "error", 1),
+        ("My_Plugin", "M023", "warning", 0),
+        ("a--b", "M023", "warning", 0),
+        ("a.b", "M023", "warning", 0),
+        ("a-b2", "", "", 0),
+    ] {
+        std::fs::write(
+            &plugin,
+            format!("{{\n  \"name\": \"{name}\",\n  \"version\": \"1.0.0\"\n}}\n"),
+        )
+        .unwrap();
+        for strictness in ["", "--pedantic", "--all"] {
+            let mut arguments = vec!["--format", "json"];
+            if !strictness.is_empty() {
+                arguments.push(strictness);
+            }
+            arguments.extend(["--only", "M003,M023", "."]);
+            let output = run_in(tmp.path(), &arguments);
+            let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+            if code.is_empty() {
+                assert_eq!(output.status.code(), Some(0), "{name} {strictness}");
+                assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+                continue;
+            }
+            let severity = if code == "M023" && !strictness.is_empty() {
+                "error"
+            } else {
+                normal_severity
+            };
+            let exit = if severity == "error" { 1 } else { normal_exit };
+            assert_eq!(output.status.code(), Some(exit), "{}", stderr(&output));
+            assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+            let diagnostic = &diagnostics[0];
+            assert_eq!(diagnostic["code"], code);
+            assert_eq!(diagnostic["severity"], severity);
+            assert_eq!(diagnostic["subject_path"], ".claude-plugin/plugin.json");
+            assert_eq!(diagnostic["location"]["start"]["line"], 2);
+            assert_eq!(diagnostic["location"]["start"]["column"], 11);
+            assert_eq!(diagnostic["location"]["end"]["column"], 11 + name.len() + 2);
+            assert!(diagnostic["suggestion"].is_string(), "{diagnostic:#}");
+            assert!(diagnostic["evidence"].is_string(), "{diagnostic:#}");
+            assert!(
+                !diagnostic["evidence"].as_str().unwrap().contains(name),
+                "metadata must not echo the manifest value: {diagnostic:#}"
+            );
+        }
+    }
+
+    std::fs::write(
+        &plugin,
+        "{\n  \"name\": \"My_Plugin\",\n  \"version\": \"1.0.0\"\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"M023\"]\n",
+    )
+    .unwrap();
+    let globally_suppressed = run_in(tmp.path(), &["--format", "json", "--only", "M023", "."]);
+    assert_eq!(globally_suppressed.status.code(), Some(0));
+    assert!(
+        json(&globally_suppressed)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\".claude-plugin/plugin.json\"]\nsuppress = [\"M023\"]\nreason = \"fixture-specific naming convention\"\n",
+    )
+    .unwrap();
+    let per_file_suppressed = run_in(tmp.path(), &["--format", "json", "--only", "M023", "."]);
+    assert_eq!(per_file_suppressed.status.code(), Some(0));
+    assert!(
+        json(&per_file_suppressed)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let all = run_in(
+        tmp.path(),
+        &["--format", "json", "--all", "--only", "M023", "."],
+    );
+    assert_eq!(all.status.code(), Some(1));
+    let diagnostics = json(&all)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(diagnostics[0]["code"], "M023");
+    assert_eq!(diagnostics[0]["severity"], "error");
+}
