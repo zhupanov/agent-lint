@@ -20,6 +20,7 @@ mod mcp;
 mod npm_scripts;
 mod prompt_content;
 pub(crate) mod shared_md_refs;
+mod shell;
 pub(crate) mod skill_content;
 pub(crate) mod skills;
 mod user_config;

@@ -1123,6 +1123,11 @@ impl LintRule {
             Self::DeadScript | Self::SecurityMdMissing | Self::TodoInSkill | Self::TodoInAgent |
             Self::GhInlineBody |
 
+            // ── Default-warning: shipped-script portability ──────────
+            // G010/G011 target macOS Bash 3.2 and ASCII-only portable awk;
+            // repositories with that requirement promote them to errors.
+            Self::Bash32Incompatible | Self::AwkRegexNonascii |
+
             // ── Default-warning: docs ────────────────────────────────
             Self::ClaudemdTooLarge | Self::TodoInDocs |
             Self::ClaudeImportLarge | Self::InlinePathMissing
@@ -1438,8 +1443,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            128,
-            "Expected 128 default-warning rules, got {}",
+            130,
+            "Expected 130 default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1489,9 +1494,20 @@ mod tests {
     }
 
     #[test]
-    fn issue_162_portability_rules_are_default_errors() {
+    fn issue_296_portability_rules_are_default_warnings() {
+        // G009 stays a default error for a definite renderer hazard; G010/G011
+        // become default warnings that a Bash-3.2/ASCII-awk repository promotes
+        // to errors explicitly.
+        assert_eq!(
+            LintRule::BashReplacementUnsafe.default_severity(),
+            DefaultSeverity::Error
+        );
         for rule in [LintRule::Bash32Incompatible, LintRule::AwkRegexNonascii] {
-            assert_eq!(rule.default_severity(), DefaultSeverity::Error, "{rule:?}");
+            assert_eq!(
+                rule.default_severity(),
+                DefaultSeverity::Warning,
+                "{rule:?}"
+            );
         }
     }
 
@@ -1554,8 +1570,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            168,
-            "Expected 168 default-error rules, got {}",
+            166,
+            "Expected 166 default-error rules, got {}",
             errors.len()
         );
     }
