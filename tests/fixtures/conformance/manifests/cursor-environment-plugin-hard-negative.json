@@ -5,7 +5,7 @@
   "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "CU016", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",
-  "expected_active_platforms": ["claude", "cursor"],
+  "expected_active_platforms": ["claude", "cursor", "codex"],
   "expected_suppressed": 1,
   "expected_diagnostics": [],
   "allowed_additional_diagnostics": []

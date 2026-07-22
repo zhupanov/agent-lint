@@ -1,0 +1,4 @@
+{
+  "name": "widget-plugin",
+  "description": "Codex reads .cursor-plugin when it is the only recognized manifest."
+}

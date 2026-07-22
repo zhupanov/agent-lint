@@ -1,0 +1,15 @@
+{
+  "name": "Bad_Name",
+  "skills": "skills",
+  "apps": "./",
+  "commands": "../escape",
+  "mcpServers": 123,
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "defaultPrompt": ["", "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "ok", "extra"],
+    "default_prompt": "legacy",
+    "websiteUrl": "http://insecure.example.com",
+    "logo": "./",
+    "screenshots": ["/etc/passwd.png"]
+  }
+}

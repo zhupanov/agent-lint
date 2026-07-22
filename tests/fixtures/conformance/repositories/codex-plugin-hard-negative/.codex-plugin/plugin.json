@@ -1,0 +1,7 @@
+{
+  "name": "root-plugin",
+  "description": "Documented hooks and inline MCP are supported and clean.",
+  "mcpServers": { "srv": { "command": "./bin/srv" } },
+  "hooks": [{ "event": "PreToolUse" }, { "event": "PostToolUse" }],
+  "skills": "./skills"
+}

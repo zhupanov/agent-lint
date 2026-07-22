@@ -1,0 +1,12 @@
+{
+  "class": "clean",
+  "repository": "codex-plugin-clean",
+  "covers": ["codex-plugin", "codex", "json", "normal"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CX046,CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX058,CX059,CX063", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}

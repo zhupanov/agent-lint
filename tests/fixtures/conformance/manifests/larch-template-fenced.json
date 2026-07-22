@@ -5,7 +5,7 @@
   "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A005,A006,A007", "."] },
   "expected_exit_code": 0,
   "expected_status": "warnings",
-  "expected_active_platforms": ["claude"],
+  "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
     { "code": "A006", "name": "template-marker-missing", "severity": "warning", "subject_path": "agents/reviewer.md" },

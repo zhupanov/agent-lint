@@ -5,7 +5,7 @@
   "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "I002", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",
-  "expected_active_platforms": ["claude"],
+  "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
     { "code": "I002", "name": "instruction-file-secret", "severity": "error", "subject_path": "AGENTS.md" }

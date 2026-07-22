@@ -1,0 +1,27 @@
+{
+  "class": "broken",
+  "repository": "codex-plugin-broken",
+  "covers": ["codex-plugin", "codex", "json", "normal"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CX046,CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX058,CX059,CX063", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CX047", "name": "codex-plugin-invalid", "severity": "error", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX048", "name": "codex-name-missing", "severity": "error", "subject_path": "second/.codex-plugin/plugin.json" },
+    { "code": "CX049", "name": "codex-name-invalid", "severity": "error", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX050", "name": "codex-path-prefix", "severity": "error", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX051", "name": "codex-path-traversal", "severity": "error", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX052", "name": "codex-path-bare", "severity": "error", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX053", "name": "codex-prompt-count", "severity": "warning", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX054", "name": "codex-prompt-length", "severity": "warning", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX055", "name": "codex-prompt-empty", "severity": "warning", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX056", "name": "codex-plugin-url", "severity": "warning", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX057", "name": "codex-plugin-asset", "severity": "error", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX057", "name": "codex-plugin-asset", "severity": "error", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX059", "name": "codex-plugin-description", "severity": "warning", "subject_path": ".codex-plugin/plugin.json" },
+    { "code": "CX063", "name": "codex-prompt-field", "severity": "warning", "subject_path": ".codex-plugin/plugin.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}
