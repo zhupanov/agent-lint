@@ -8280,6 +8280,73 @@ suppress = ["S055"]
         );
     }
 
+    // ── S041: fork gate reads canonical context (issue #479) ─────────
+
+    #[test]
+    #[serial_test::serial]
+    fn s041_fork_gate_reads_canonical_context() {
+        // (context line, S041 fires on a task-free body?)
+        let cases: &[(&str, bool)] = &[
+            ("context: fork", true),
+            ("context: fork # run forked", true), // comment must not mask the gate
+            ("context: \"fork\"", true),          // quoted spelling
+            ("context: forked", false),           // not fork → S024 owns
+            ("context: [fork]", false),           // non-string → S024 owns
+        ];
+        for (field_line, should_fire) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            let diags = lint_skill_in(
+                "subject",
+                &format!(
+                    "---\nname: subject\ndescription: A valid skill description here\n{field_line}\n---\nThis skill is about weather data.\n"
+                ),
+            );
+            assert_eq!(
+                fires(&diags, LintRule::ForkNoTask),
+                *should_fire,
+                "S041 verdict mismatch for {field_line:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn s041_skips_invalid_frontmatter() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        // Invalid YAML that still contains a raw `context: fork` line: X001
+        // (reported from the skills.rs validation pass) owns the parse
+        // failure; the retired line-oriented reader used to fire S041 from
+        // the raw line anyway.
+        let fm_lines = [
+            "name: subject",
+            "description: A valid skill description here",
+            "context: fork",
+            "bad: [unclosed",
+        ];
+        assert!(
+            crate::frontmatter::parse_yaml_strict(
+                &fm_lines.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            )
+            .is_err(),
+            "fixture must be a strict-YAML parse failure (X001 territory)"
+        );
+        let diags = lint_skill_in(
+            "subject",
+            &format!(
+                "---\n{}\n---\nThis skill is about weather data.\n",
+                fm_lines.join("\n")
+            ),
+        );
+        assert!(
+            !fires(&diags, LintRule::ForkNoTask),
+            "invalid frontmatter is owned by X001; S041 must skip"
+        );
+    }
+
     // ── S064: only a usable string agent gates on context ────────────
 
     #[test]

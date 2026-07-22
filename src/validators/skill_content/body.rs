@@ -1,6 +1,5 @@
 use crate::config::ExcludeSet;
 use crate::diagnostic::DiagnosticCollector;
-use crate::frontmatter;
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::skills::SkillInfo;
@@ -232,10 +231,16 @@ pub(super) fn check_body_content(
         }
     }
 
-    // S041: fork-no-task -- context: fork set but no task instructions in body
-    if frontmatter::get_field(&info.fm_lines, "context").as_deref() == Some("fork")
-        && !RE_IMPERATIVE.is_match(&info.body)
-    {
+    // S041: fork-no-task -- context: fork set but no task instructions in body.
+    // The fork gate reads the canonical mapping (like S024/S064) so comments
+    // and quoting cannot mask `fork`; invalid/non-mapping frontmatter skips
+    // (X001/S004/S005 own those states).
+    let context_is_fork = info
+        .frontmatter_mapping()
+        .and_then(|map| map.get("context"))
+        .and_then(|value| value.as_str())
+        == Some("fork");
+    if context_is_fork && !RE_IMPERATIVE.is_match(&info.body) {
         diag.report(
             LintRule::ForkNoTask,
             &format!(
