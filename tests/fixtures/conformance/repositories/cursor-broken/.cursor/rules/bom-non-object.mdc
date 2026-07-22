@@ -1,0 +1,4 @@
+﻿---
+- not: mapping
+---
+Retry until success.

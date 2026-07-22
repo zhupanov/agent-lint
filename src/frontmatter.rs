@@ -54,6 +54,69 @@ pub fn leading_frontmatter(content: &str) -> LeadingFrontmatterState<'_> {
 }
 
 fn logical_delimiter_end(content: &str, start: usize, require_newline: bool) -> Option<usize> {
+    delimiter_end(content, start, require_newline, false)
+}
+
+/// Split a document at an exact leading YAML frontmatter block.
+///
+/// This is the shared recovery boundary for prompt-content rules and for
+/// Cursor CU002/CU003: an optional UTF-8 BOM may precede the opener, and both
+/// delimiters must be the exact logical line `---` (no trailing whitespace or
+/// suffix). Callers that need whitespace-tolerant delimiters without BOM
+/// awareness continue to use [`leading_frontmatter`].
+pub fn exact_leading_frontmatter(content: &str) -> LeadingFrontmatterState<'_> {
+    let bom_len = match content.strip_prefix('\u{feff}') {
+        Some(_) => '\u{feff}'.len_utf8(),
+        None => 0,
+    };
+    let scanned = &content[bom_len..];
+    let Some(open_end) = exact_delimiter_end(scanned, 0, true) else {
+        return LeadingFrontmatterState::Absent { body: content };
+    };
+    let opening_range = bom_len..(bom_len + open_end);
+    let yaml_start = bom_len + open_end;
+    let mut line_start = open_end;
+    while line_start < scanned.len() {
+        if let Some(close_end) = exact_delimiter_end(scanned, line_start, false) {
+            let yaml_end = bom_len + line_start;
+            let body_start = bom_len + close_end;
+            return LeadingFrontmatterState::Complete(LeadingFrontmatter {
+                yaml: &content[yaml_start..yaml_end],
+                yaml_range: yaml_start..yaml_end,
+                delimiter_range: opening_range,
+                body: &content[body_start..],
+            });
+        }
+        let Some(newline) = scanned[line_start..].find('\n') else {
+            break;
+        };
+        line_start += newline + 1;
+    }
+    LeadingFrontmatterState::Unterminated {
+        delimiter_range: opening_range,
+    }
+}
+
+/// Whether prompt-content rules may analyze `content` under the shared
+/// frontmatter recovery policy.
+///
+/// An exact opener without a closer has no deterministic body boundary, so Q
+/// rules deliberately skip that file. Absent openers and complete blocks
+/// (valid, invalid, or non-object YAML) remain eligible; callers must feed
+/// body-only prose for complete blocks via [`MarkdownDocument::parse_for_prompt_content`].
+#[cfg(test)]
+pub fn allows_prompt_content(content: &str) -> bool {
+    !matches!(
+        exact_leading_frontmatter(content),
+        LeadingFrontmatterState::Unterminated { .. }
+    )
+}
+
+fn exact_delimiter_end(content: &str, start: usize, require_newline: bool) -> Option<usize> {
+    delimiter_end(content, start, require_newline, true)
+}
+
+fn delimiter_end(content: &str, start: usize, require_newline: bool, exact: bool) -> Option<usize> {
     let newline = content[start..].find('\n').map(|offset| start + offset);
     let (line_end, end) = match newline {
         Some(newline) => (newline, newline + 1),
@@ -63,8 +126,12 @@ fn logical_delimiter_end(content: &str, start: usize, require_newline: bool) -> 
     let line = content[start..line_end]
         .strip_suffix('\r')
         .unwrap_or(&content[start..line_end]);
-    (line.starts_with("---") && line[3..].bytes().all(|byte| matches!(byte, b' ' | b'\t')))
-        .then_some(end)
+    let is_delimiter = if exact {
+        line == "---"
+    } else {
+        line.starts_with("---") && line[3..].bytes().all(|byte| matches!(byte, b' ' | b'\t'))
+    };
+    is_delimiter.then_some(end)
 }
 
 /// Extract YAML frontmatter lines from a file's content.
@@ -406,6 +473,47 @@ mod tests {
         ));
         assert!(matches!(
             leading_frontmatter("----\nnot frontmatter\n"),
+            LeadingFrontmatterState::Absent { .. }
+        ));
+    }
+
+    #[test]
+    fn exact_leading_frontmatter_is_bom_aware_and_skips_unterminated_prompt_input() {
+        let body_only = "Retry until success.\n";
+        assert!(matches!(
+            exact_leading_frontmatter(body_only),
+            LeadingFrontmatterState::Absent { body } if body == body_only
+        ));
+        assert!(allows_prompt_content(body_only));
+
+        let complete = "\u{feff}---\nRetry until success.: true\n---\nSafe body.\n";
+        let LeadingFrontmatterState::Complete(block) = exact_leading_frontmatter(complete) else {
+            panic!("BOM-prefixed complete block must be recognized");
+        };
+        assert_eq!(block.yaml, "Retry until success.: true\n");
+        assert_eq!(block.body, "Safe body.\n");
+        assert!(allows_prompt_content(complete));
+
+        let invalid_complete = "\u{feff}---\n- not: mapping\n---\nRetry until success.\n";
+        let LeadingFrontmatterState::Complete(block) = exact_leading_frontmatter(invalid_complete)
+        else {
+            panic!("BOM-prefixed non-object block must still isolate the body");
+        };
+        assert_eq!(block.body, "Retry until success.\n");
+        assert!(allows_prompt_content(invalid_complete));
+
+        let unterminated_punctuated = "---\ndescription: malformed.\n\nRetry until success.\n";
+        assert!(matches!(
+            exact_leading_frontmatter(unterminated_punctuated),
+            LeadingFrontmatterState::Unterminated { .. }
+        ));
+        assert!(!allows_prompt_content(unterminated_punctuated));
+
+        let unterminated_blank = "---\ndescription: malformed\n\nRetry until success.\n";
+        assert!(!allows_prompt_content(unterminated_blank));
+
+        assert!(matches!(
+            exact_leading_frontmatter("--- \nname: spaced\n---\nBody\n"),
             LeadingFrontmatterState::Absent { .. }
         ));
     }

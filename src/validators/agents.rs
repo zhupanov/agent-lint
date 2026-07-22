@@ -380,11 +380,6 @@ fn validate_agent_file(
     surface: AgentSurface,
 ) {
     let markdown = MarkdownDocument::parse(content);
-    let prompt_document = LiveInstructionDocument::new(
-        Path::new(agent_path),
-        InstructionSurfaceKind::Agent,
-        &markdown,
-    );
     let fm_lines: Vec<String> = match frontmatter::leading_frontmatter(content) {
         LeadingFrontmatterState::Absent { .. } => {
             let bom_hint = if starts_with_bom_delimiter(content) {
@@ -400,7 +395,16 @@ fn validate_agent_file(
             );
             // X002–X005 still apply when frontmatter is broken.
             super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
-            prompt_pass.validate(&prompt_document, diag);
+            // Shared exact-delimiter recovery: absent openers keep live prose;
+            // BOM-aware complete blocks are body-only via prompt recovery parse.
+            if let Some(prompt_markdown) = MarkdownDocument::parse_for_prompt_content(content) {
+                let prompt_document = LiveInstructionDocument::new(
+                    Path::new(agent_path),
+                    InstructionSurfaceKind::Agent,
+                    &prompt_markdown,
+                );
+                prompt_pass.validate(&prompt_document, diag);
+            }
             return;
         }
         LeadingFrontmatterState::Unterminated { .. } => {
@@ -411,7 +415,7 @@ fn validate_agent_file(
                     .with_suggestion("insert a closing '---' delimiter after the frontmatter"),
             );
             super::markdown_structure::check_markdown_document(agent_path, &markdown, diag);
-            prompt_pass.validate(&prompt_document, diag);
+            // Exact opener without closer has no body boundary; Q rules skip.
             return;
         }
         LeadingFrontmatterState::Complete(block) => block.yaml.lines().map(str::to_owned).collect(),
@@ -485,7 +489,15 @@ fn validate_agent_file(
             check_unsupported_plugin_fields(diag, agent_path, frontmatter);
         }
     }
-    let prompt_document = prompt_document.with_outer_max_turns(max_turns);
+    let Some(prompt_markdown) = MarkdownDocument::parse_for_prompt_content(content) else {
+        return;
+    };
+    let prompt_document = LiveInstructionDocument::new(
+        Path::new(agent_path),
+        InstructionSurfaceKind::Agent,
+        &prompt_markdown,
+    )
+    .with_outer_max_turns(max_turns);
     if let Some(parsed_frontmatter) = parsed_frontmatter.as_ref() {
         check_agent_evidence_contracts(diag, agent_path, parsed_frontmatter, &prompt_document);
         check_agent_stop_control(
@@ -4218,6 +4230,56 @@ Body ## Reviewer
                 }));
             });
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn prompt_recovery_skips_unterminated_and_bom_metadata_for_agents() {
+        run_private_agent(
+            "---\nname: reviewer\ndescription: malformed.\n\nRetry until success.\n",
+            |diag| {
+                assert!(diag.diagnostics().iter().any(|item| {
+                    item.rule == LintRule::AgentFrontmatterMalformed
+                        && item.message.contains("no closing")
+                }));
+                assert!(
+                    !diag
+                        .diagnostics()
+                        .iter()
+                        .any(|item| item.rule.code() == "Q005")
+                );
+            },
+        );
+
+        run_private_agent(
+            "\u{feff}---\nname: reviewer\ndescription: Reviews changes with concrete test evidence\nRetry until success.: true\n---\nSafe body.\n",
+            |diag| {
+                assert!(diag.diagnostics().iter().any(|item| {
+                    item.rule == LintRule::AgentFrontmatterMalformed
+                        && item.message.contains("byte-order mark")
+                }));
+                assert!(
+                    !diag
+                        .diagnostics()
+                        .iter()
+                        .any(|item| item.rule.code() == "Q005"),
+                    "BOM-prefixed metadata must not emit Q005: {:?}",
+                    diag.diagnostics()
+                );
+            },
+        );
+
+        run_private_agent(
+            "\u{feff}---\nname: reviewer\ndescription: Reviews changes with concrete test evidence\n---\nRetry until success.\n",
+            |diag| {
+                let q005 = diag
+                    .diagnostics()
+                    .iter()
+                    .find(|item| item.rule.code() == "Q005")
+                    .expect("body prose remains live after BOM-prefixed complete block");
+                assert_eq!(q005.location.unwrap().start().line_number(), 5);
+            },
+        );
     }
 
     #[test]

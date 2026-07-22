@@ -1806,6 +1806,82 @@ fn cursor_frontmatter_recovery_keeps_q005_selection_and_suppression_independent(
 }
 
 #[test]
+fn cursor_frontmatter_recovery_skips_unterminated_and_bom_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let rules = tmp.path().join(".cursor/rules");
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(
+        rules.join("unclosed-punctuated.mdc"),
+        "---\ndescription: malformed.\n\nRetry until success.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rules.join("unclosed-blank.mdc"),
+        "---\ndescription: malformed\n\nRetry until success.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rules.join("bom-metadata.mdc"),
+        "\u{feff}---\ndescription: Metadata.\nRetry until success.: true\nalwaysApply: true\n---\nSafe body.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        rules.join("bom-non-object.mdc"),
+        "\u{feff}---\n- not: mapping\n---\nRetry until success.\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join(".claude/agents")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude/agents/unclosed.md"),
+        "---\nname: reviewer\ndescription: malformed.\n\nRetry until success.\n",
+    )
+    .unwrap();
+
+    let report = json(&run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "CU003,CU005,Q005,A002", "."],
+    ));
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    let codes_by_path: std::collections::BTreeMap<_, std::collections::BTreeSet<_>> = diagnostics
+        .iter()
+        .fold(std::collections::BTreeMap::new(), |mut map, diagnostic| {
+            map.entry(diagnostic["subject_path"].as_str().unwrap())
+                .or_default()
+                .insert(diagnostic["code"].as_str().unwrap());
+            map
+        });
+    assert_eq!(
+        codes_by_path[".cursor/rules/unclosed-punctuated.mdc"],
+        ["CU003"].into_iter().collect()
+    );
+    assert_eq!(
+        codes_by_path[".cursor/rules/unclosed-blank.mdc"],
+        ["CU003"].into_iter().collect()
+    );
+    assert_eq!(
+        codes_by_path[".cursor/rules/bom-metadata.mdc"],
+        ["CU005"].into_iter().collect()
+    );
+    assert_eq!(
+        codes_by_path[".cursor/rules/bom-non-object.mdc"],
+        ["CU003", "Q005"].into_iter().collect()
+    );
+    assert_eq!(
+        codes_by_path[".claude/agents/unclosed.md"],
+        ["A002"].into_iter().collect()
+    );
+    let body_line = diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic["code"] == "Q005"
+                && diagnostic["subject_path"] == ".cursor/rules/bom-non-object.mdc"
+        })
+        .and_then(|diagnostic| diagnostic["location"]["start"]["line"].as_u64());
+    assert_eq!(body_line, Some(4));
+}
+
+#[test]
 fn prompt_analysis_excludes_quoted_codex_override_prose() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

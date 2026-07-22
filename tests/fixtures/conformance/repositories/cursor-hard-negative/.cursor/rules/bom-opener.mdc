@@ -1,4 +1,5 @@
 ﻿---
-description: Documented maintenance behavior
+description: Retry until success.
+alwaysApply: true
 ---
 Use focused validation for every change.

@@ -14,6 +14,7 @@ use crate::config::ExcludeSet;
 use crate::context::LintContext;
 use crate::diagnostic::DiagnosticCollector;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
+use crate::markdown::MarkdownDocument;
 use crate::validators::skills::{
     SkillInfo, collect_agent_skills, collect_cursor_runtime_skills, collect_plugin_skill_files,
     collect_skills, collect_skills_including_shared,
@@ -304,12 +305,16 @@ fn run_content_checks(
         name::check_name_format(info, plugin_mode, diag);
         description::check_description_quality(info, plugin_mode, diag);
         body::check_body_content(info, plugin_mode, diag, exclude);
-        let prompt_document = LiveInstructionDocument::new(
-            Path::new(&info.path),
-            InstructionSurfaceKind::Skill,
-            &info.document,
-        );
-        prompt_pass.validate(&prompt_document, diag);
+        if let Some(prompt_markdown) =
+            MarkdownDocument::parse_for_prompt_content(info.document.content())
+        {
+            let prompt_document = LiveInstructionDocument::new(
+                Path::new(&info.path),
+                InstructionSurfaceKind::Skill,
+                &prompt_markdown,
+            );
+            prompt_pass.validate(&prompt_document, diag);
+        }
         frontmatter_fields::check_frontmatter_fields(info, agents, diag);
         frontmatter_extended::check_frontmatter_extended(info, diag);
         cross_field::check_cross_field(info, plugin_mode, diag);
