@@ -1311,6 +1311,12 @@ suppress = ["S033"]
             "name-has-xml",
             "K001",
             "slack-fallback-mismatch",
+            "U003",
+            "userconfig-env-missing",
+            "I005",
+            "instruction-file-structure",
+            "CX044",
+            "codex-agents-structure",
         ] {
             std::fs::write(
                 tmp.path().join("agent-lint.toml"),
