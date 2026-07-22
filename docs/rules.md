@@ -1011,8 +1011,10 @@ text, ANSI-C `$'...'`, and double-quoted literals while keeping executable code
 and live expansions, so an inert construct in a comment or string is never
 mistaken for live code. G009 flags a pattern substitution `${v/pat/repl}` or
 `${v//pat/repl}` only when the replacement still carries a live expansion (a
-bare `$rep`, `${rep}`, `$(cmd)`, positional, or arithmetic form) that can inject
-an unquoted `&`; quoted, ANSI-C, escaped, and literal replacements stay clean.
+bare `$rep`, `${rep}`, `$(cmd)`, legacy `` `cmd` `` command substitution,
+positional, or arithmetic form) that can inject an unquoted `&`; quoted,
+ANSI-C, escaped, and literal replacements — including a double- or
+single-quoted backtick substitution — stay clean.
 G010 flags a sourced, probe-verified matrix of Bash-4+ syntax, builtins, and
 options (`declare -A`/`-g`/`-n`, `typeset -A`, `local -n`, `mapfile`/`readarray`,
 case conversion, negative subscripts, stepped brace expansion, `coproc`, `&>>`,
@@ -1020,21 +1022,29 @@ case conversion, negative subscripts, stepped brace expansion, `coproc`, `&>>`,
 are gated on the option that makes them fatal: an `if`/`elif` `command <cmd>`
 condition fires only when the file lexically enables `set -e` (or is a sourced
 `.inc.bash` library), and an unguarded empty-array `"${arr[@]}"` fires only
-under `set -u` (or `.inc.bash`), analyzed with conservative, function-scoped
-control flow that stays silent on any ambiguous branch. G011 analyzes the actual
+under `set -u` (or `.inc.bash`), analyzed with conservative, scope-isolated
+control flow — tracked array facts never survive a function entry or exit, a
+group or subshell boundary, or a case-arm terminator — that stays silent on
+any ambiguous branch. G011 analyzes the actual
 awk regex operand — a `/.../` or string literal used in `~`/`!~`, `match`,
-`sub`/`gsub`/`gensub`, `split`/`patsplit`, an `FS`/`-F` value, or a `-v`
-variable traced to a regex use — so display-only text and ASCII regexes stay
+`sub`/`gsub`/`gensub`, `split`/`patsplit`, an `FS`/`-F` value, a `-v`
+variable traced to a regex use, or a definite in-program constant (a
+variable's single, unconditional `name = "text"` assignment reaching a later
+regex-operand use; reassigned, branch-dependent, computed, or caller-supplied
+values stay ambiguous) — so display-only text and ASCII regexes stay
 clean.
 
 G008-G011 use conventional script discovery unless `[lint].script-inventory`
 is configured. Script discovery and the inventory use one matrix: `.sh`,
 `.bash`, `.inc.bash`, `.awk`, `.py`, `.js`, `.mjs`, and extensionless files.
 An explicit inventory remains authoritative when global exclusions match an
-entry and is scanned in deterministic order on every run. G009 and G010 analyze
-shell files (`.sh`, `.bash`, `.inc.bash`); G011 analyzes awk commands inside
-shell files plus standalone `.awk` files; `.py`, `.js`, `.mjs`, and
-extensionless files receive only G008. G009 stays a hard error for a definite
+entry and is scanned in deterministic order on every run. G008, G009, and G010
+analyze exactly the files that shared matrix classifies as shell (`.sh`,
+`.bash`, `.inc.bash`); G011 analyzes awk commands inside those shell files plus
+standalone `.awk` files; `.py`, `.js`, `.mjs`, and extensionless files are
+discovered and listed but deliberately receive none of the shell-analysis
+rules — the shell lexer never runs over non-shell languages. G009 stays a hard
+error for a definite
 renderer hazard; G010 and G011 are default warnings, and a repository targeting
 Bash 3.2 or ASCII-only portable awk promotes them explicitly with
 `error = ["G010", "G011"]`. `script-inventory` selects files only and never

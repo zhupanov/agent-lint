@@ -1800,11 +1800,14 @@ fn script_gates(path: &Path, kind: ScriptKind, content: &str) -> ScriptGates {
     gates
 }
 
-/// Conservative, function-scoped tracking of arrays known to be empty on the
-/// current straight-line path. Any control-flow boundary (a conditional, loop,
-/// function body, group, or subshell) makes every tracked array ambiguous, so a
-/// bare `"${arr[@]}"` fires only when the array is provably empty with nothing
-/// between its `arr=()` assignment and the expansion.
+/// Conservative, scope-isolated tracking of arrays known to be empty on the
+/// current straight-line path. Any control-flow or scope boundary (a
+/// conditional, loop, function entry or exit, group or subshell open or close,
+/// or case-arm terminator) makes every tracked array ambiguous, so a bare
+/// `"${arr[@]}"` fires only when the array is provably empty with nothing
+/// between its `arr=()` assignment and the expansion — and facts recorded
+/// inside one scope never leak to the top level, a sibling function, or a
+/// later branch.
 #[derive(Default)]
 struct EmptyArrayTracker {
     known_empty: HashSet<String>,
@@ -1819,7 +1822,7 @@ impl EmptyArrayTracker {
         suppressed: bool,
         diag: &mut DiagnosticCollector,
     ) {
-        if shell::opens_control_flow(line) {
+        if shell::control_flow_boundary(line) {
             self.known_empty.clear();
             return;
         }
@@ -1931,8 +1934,11 @@ fn validate_script_contracts(
         };
         let kind = script_kind(&path).unwrap_or(ScriptKind::Other);
         let lines: Vec<&str> = content.lines().collect();
-        // G008 (owned separately) inspects the whole shell script once.
-        if kind == ScriptKind::Shell && g008_shell_script(&path) {
+        // G008 (owned separately) inspects the whole shell script once. It
+        // dispatches on the shared `ScriptKind` matrix, so every shell suffix
+        // (`.sh`, `.bash`, `.inc.bash`) gets the same gh payload analysis while
+        // non-shell languages never reach the shell lexer.
+        if kind == ScriptKind::Shell {
             validate_gh_inline(&path, &content, diag);
         }
 
@@ -2658,11 +2664,6 @@ fn validate_gh_inline(path: &Path, content: &str, diag: &mut DiagnosticCollector
             }
         }
     }
-}
-
-fn g008_shell_script(path: &Path) -> bool {
-    let path = path.to_string_lossy();
-    path.ends_with(".sh") || path.ends_with(".inc.bash")
 }
 
 fn strip_heredoc_bodies(source: &str) -> String {
@@ -3860,6 +3861,17 @@ EOF
             "value = 'gh pr create --body \"$BODY\"'\n",
         )
         .unwrap();
+        fs::write(
+            "scripts/example.js",
+            "run('gh pr create --body \"$BODY\"');\n",
+        )
+        .unwrap();
+        fs::write(
+            "scripts/example.mjs",
+            "run('gh pr create --body \"$BODY\"');\n",
+        )
+        .unwrap();
+        fs::write("scripts/example", "gh pr create --body \"$BODY\"\n").unwrap();
         fs::write("scripts/example.bash", "gh pr create --body \"$BODY\"\n").unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -3869,11 +3881,25 @@ EOF
             .iter()
             .filter(|item| item.rule == LintRule::GhInlineBody)
             .collect();
-        assert_eq!(findings.len(), 7);
-        assert!(
+        assert_eq!(findings.len(), 8);
+        assert_eq!(
             findings
                 .iter()
-                .all(|item| item.subject_path.as_deref() == Some(Path::new("scripts/cases.sh")))
+                .filter(|item| item.subject_path.as_deref() == Some(Path::new("scripts/cases.sh")))
+                .count(),
+            7
+        );
+        // `.bash` dispatches through the shared shell script-kind matrix
+        // (#549); the Python/JS/extensionless siblings with the same bytes
+        // never reach the shell lexer.
+        assert_eq!(
+            findings
+                .iter()
+                .filter(
+                    |item| item.subject_path.as_deref() == Some(Path::new("scripts/example.bash"))
+                )
+                .count(),
+            1
         );
         for line in [15, 16, 17, 18, 19, 20] {
             assert!(
@@ -3920,6 +3946,251 @@ EOF
                     .any(|message| message.contains(&format!("scripts/unsafe.sh:{line}:")))
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn gh_inline_body_bash_suffix_matches_sh_and_keeps_hard_negatives_clean() {
+        // #549: the exact `.bash` reproduction emits the same single canonical
+        // G008 diagnostic as the `.sh` and `.inc.bash` spellings.
+        for path in [
+            "scripts/publish.sh",
+            "scripts/publish.bash",
+            "scripts/publish.inc.bash",
+        ] {
+            let findings: Vec<_> =
+                run_script_contracts("#!/usr/bin/env bash\ngh pr create -b \"$BODY\"\n", path)
+                    .into_iter()
+                    .filter(|item| item.rule == LintRule::GhInlineBody)
+                    .collect();
+            assert_eq!(findings.len(), 1, "{path} must fire G008 exactly once");
+            assert_eq!(findings[0].subject_path.as_deref(), Some(Path::new(path)));
+            assert!(
+                findings[0].message.contains(":2:"),
+                "{}",
+                findings[0].message
+            );
+            assert!(findings[0].location.is_some());
+            assert_eq!(
+                findings[0].suggestion.as_deref(),
+                Some("use --body-file with a file path or '-' for stdin")
+            );
+        }
+        // The `.bash` hard-negative matrix stays clean: static payloads,
+        // file-backed options, secret/variable/project commands, comments,
+        // and inert strings.
+        let hard_negative = r#"#!/usr/bin/env bash
+# gh pr create --body "$BODY"
+gh pr create --body 'static body'
+gh pr create --body "$BODY" --body-file body.md
+gh release create v1 -n "$NOTES" -F notes.md
+gh secret set TOKEN --body "$TOKEN"
+gh variable set NAME --body "$VALUE"
+gh project item-create 1 --body "$BODY"
+printf '%s\n' 'gh pr create --body "$BODY"'
+"#;
+        assert!(
+            !run_script_contracts(hard_negative, "scripts/negative.bash")
+                .iter()
+                .any(|item| item.rule == LintRule::GhInlineBody),
+            ".bash hard negatives must stay clean"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn bash_replacement_flags_backtick_substitutions_like_dollar_forms() {
+        // #550: the exact backtick reproduction in both `/` and `//` forms,
+        // with the quoted/inert hard negatives staying clean.
+        let content = r#"#!/usr/bin/env bash
+replacement='&'
+out=${text/TOKEN/`printf '%s' "$replacement"`}
+out=${text//TOKEN/`printf '%s' "$replacement"`}
+safe=${text//TOKEN/"`printf '%s' x`"}
+literal=${text//TOKEN/'`cmd`'}
+# comment=${text//TOKEN/`cmd`}
+printf '%s\n' 'inert=${text//TOKEN/`cmd`}'
+cat <<'FIXTURE'
+quoted=${text//TOKEN/`cmd`}
+FIXTURE
+"#;
+        let findings: Vec<_> = run_script_contracts(content, "scripts/render.sh")
+            .into_iter()
+            .filter(|item| item.rule == LintRule::BashReplacementUnsafe)
+            .collect();
+        assert_eq!(findings.len(), 2, "{findings:?}");
+        for (finding, line) in findings.iter().zip([3, 4]) {
+            assert!(
+                finding.message.contains(&format!(":{line}:")),
+                "{}",
+                finding.message
+            );
+            assert!(finding.location.is_some());
+            assert!(finding.evidence.is_some());
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn empty_array_state_never_escapes_function_scope() {
+        // #550: the exact reproduction — an uncalled function's `local` empty
+        // array must not contaminate the non-empty top-level array.
+        let reproduction = r#"#!/usr/bin/env bash
+set -u
+items=(safe)
+populate() {
+  local items=()
+}
+printf '%s\n' "${items[@]}"
+"#;
+        assert!(
+            !run_script_contracts(reproduction, "scripts/scope.sh")
+                .iter()
+                .any(|item| item.rule == LintRule::Bash32Incompatible),
+            "function-local state must not leak to the top level"
+        );
+
+        // The same hazard without the function still warns.
+        let straight_line =
+            "#!/usr/bin/env bash\nset -u\nitems=()\nprintf '%s\\n' \"${items[@]}\"\n";
+        let findings: Vec<_> = run_script_contracts(straight_line, "scripts/straight.sh")
+            .into_iter()
+            .filter(|item| item.rule == LintRule::Bash32Incompatible)
+            .map(|item| item.message)
+            .collect();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains(":4:"));
+
+        // State does not leak between sibling functions, out of nested
+        // functions, or across case-arm branches; straight-line analysis
+        // inside one function body still works.
+        let matrix = r#"#!/usr/bin/env bash
+set -u
+first() {
+  arr=()
+}
+second() {
+  printf '%s\n' "${arr[@]}"
+}
+outer() {
+  inner() {
+    local nested=()
+  }
+  printf '%s\n' "${nested[@]}"
+}
+case $1 in
+a)
+  branch=()
+  ;;
+b)
+  printf '%s\n' "${branch[@]}"
+  ;;
+esac
+in_function() {
+  local mine=()
+  printf '%s\n' "${mine[@]}"
+}
+"#;
+        let findings: Vec<_> = run_script_contracts(matrix, "scripts/matrix.sh")
+            .into_iter()
+            .filter(|item| item.rule == LintRule::Bash32Incompatible)
+            .map(|item| item.message)
+            .collect();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(
+            findings[0].contains(":25:"),
+            "only the straight-line expansion inside its own function fires: {findings:?}"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn empty_array_boundaries_ignore_expansion_punctuation_and_isolate_subshells() {
+        // Review finding 1: `${...}` operator punctuation (`${sep%;}`,
+        // `${PATH//:/;}`) is data, not a boundary — it must neither clear
+        // state nor swallow the expansion on its own line, so the
+        // straight-line warning is preserved.
+        let punctuation = r#"#!/usr/bin/env bash
+set -u
+items=()
+sep=${sep%;}
+printf '%s\n' "${items[@]}" "${PATH//:/;}"
+"#;
+        let findings: Vec<_> = run_script_contracts(punctuation, "scripts/punct.sh")
+            .into_iter()
+            .filter(|item| item.rule == LintRule::Bash32Incompatible)
+            .map(|item| item.message)
+            .collect();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains(":5:"), "{findings:?}");
+
+        // Review finding 2: subshells isolate their state with or without
+        // separators around the parentheses — no false positive on the
+        // non-empty top-level array.
+        let subshell = r#"#!/usr/bin/env bash
+set -u
+arr=(safe)
+(arr=())
+printf '%s\n' "${arr[@]}"
+(
+  arr=()
+  true )
+printf '%s\n' "${arr[@]}"
+"#;
+        assert!(
+            !run_script_contracts(subshell, "scripts/subshell.sh")
+                .iter()
+                .any(|item| item.rule == LintRule::Bash32Incompatible),
+            "subshell-local facts must not leak to the top level"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn awk_in_program_constant_regex_flow_fires_and_ambiguity_stays_clean() {
+        // #550: the exact reproduction — a definite in-program assignment
+        // reaching a later regex use, with the use inside a branch.
+        let content = r#"#!/usr/bin/env bash
+awk 'BEGIN { re="—"; if ($0 ~ re) print "match" }'
+awk 'BEGIN { sep = "—"; FS = sep }'
+awk 'BEGIN { re = "—"; if (match($0, re)) print }'
+awk 'BEGIN { re = "—"; gsub(re, "-") }'
+awk 'BEGIN { re = "—"; n = split($0, parts, re) }'
+awk 'BEGIN { msg="—"; print msg }'
+awk 'BEGIN { re="—"; re="x"; if ($0 ~ re) print }'
+awk 'BEGIN { if (c) re="—"; if ($0 ~ re) print }'
+awk 'BEGIN { re = "—" tail; if ($0 ~ re) print }'
+awk 'BEGIN { c && (re = "—"); if ($0 ~ re) print }'
+awk 'BEGIN { switch (x) { case 1: re = "—"; break } if ($0 ~ re) print }'
+awk 'BEGIN { re="—"; if ($0 ~ re) print }' # lint-awk-multibyte-regex: ok reviewed shim
+"#;
+        let findings: Vec<_> = run_script_contracts(content, "scripts/flow.sh")
+            .into_iter()
+            .filter(|item| item.rule == LintRule::AwkRegexNonascii)
+            .collect();
+        for line in [2, 3, 4, 5, 6] {
+            assert!(
+                findings
+                    .iter()
+                    .any(|item| item.message.contains(&format!(":{line}:"))),
+                "missing definite-flow finding on line {line}: {findings:?}"
+            );
+        }
+        for line in [7, 8, 9, 10, 11, 12, 13] {
+            assert!(
+                !findings
+                    .iter()
+                    .any(|item| item.message.contains(&format!(":{line}:"))),
+                "ambiguous or waived flow must stay clean on line {line}: {findings:?}"
+            );
+        }
+        let repro = findings
+            .iter()
+            .find(|item| item.message.contains(":2:"))
+            .expect("reproduction fires");
+        assert_eq!(repro.evidence.as_deref(), Some("—"));
+        assert!(repro.location.is_some());
+        assert!(repro.suggestion.is_some());
     }
 
     #[test]
