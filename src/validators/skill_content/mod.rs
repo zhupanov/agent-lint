@@ -6514,7 +6514,8 @@ suppress = ["S055"]
                 .iter()
                 .any(|e| e.contains("'model'") && e.contains(model));
             assert_eq!(
-                !fires, expect_valid,
+                !fires,
+                expect_valid,
                 "S063 verdict mismatch for model={model:?}, errors={:?}",
                 diag.errors()
             );

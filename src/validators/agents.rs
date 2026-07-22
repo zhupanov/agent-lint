@@ -2831,9 +2831,8 @@ Body ## Reviewer
     #[test]
     #[serial_test::serial]
     fn test_aPH19PH_powershell_clean() {
-        let content = format!(
-            "---\nname: general\ndescription: {GOOD_DESC}\ntools: PowerShell\n---\nBody\n"
-        );
+        let content =
+            format!("---\nname: general\ndescription: {GOOD_DESC}\ntools: PowerShell\n---\nBody\n");
         run_agent(&content, |diag| {
             assert!(
                 !diag
