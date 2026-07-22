@@ -37,8 +37,7 @@ pub(super) fn check_name_format(
 
     check_agent_skills_name_contract(info, &name, diag);
 
-    // S033: vague name (plugin-only). S049 (`name-not-gerund`) is retired and
-    // never emits; the registry entry remains only for config compatibility.
+    // S033: vague name (plugin-only).
     if plugin_mode && VAGUE_SKILL_NAMES.contains(&name.as_str()) {
         let location = name_field_location(&info.fm_lines);
         diag.report_with(
@@ -317,29 +316,5 @@ mod tests {
             .expect("S033 still fires for decoded name");
         assert_eq!(finding.evidence.as_deref(), Some("tool"));
         assert_eq!(finding.location, None);
-    }
-
-    #[test]
-    fn s049_never_emits_for_non_gerund_names() {
-        for name in [
-            "code-review",
-            "pdf",
-            "docx",
-            "api-conventions",
-            "deploy",
-            "string-utils",
-            "helper",
-        ] {
-            let info = skill_with_name(name);
-            let mut diag = DiagnosticCollector::new_all_enabled();
-            check_name_format(&info, true, &mut diag);
-            assert!(
-                !diag
-                    .diagnostics()
-                    .iter()
-                    .any(|d| d.rule == LintRule::NameNotGerund),
-                "retired S049 must stay inert for '{name}', including under all-enabled"
-            );
-        }
     }
 }

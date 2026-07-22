@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn output_style_long_name_is_clean_and_o005_is_inert() {
+    fn output_style_long_name_is_clean() {
         with_temp_dir(|| {
             fs::create_dir_all(".claude/output-styles").unwrap();
             fs::write(
@@ -1373,12 +1373,7 @@ mod tests {
             )
             .unwrap();
             let diag = validate();
-            assert!(
-                !diag
-                    .diagnostics()
-                    .iter()
-                    .any(|d| d.rule == LintRule::OutputStyleNameTooLong)
-            );
+            assert!(diag.diagnostics().is_empty(), "{:?}", diag.diagnostics());
         });
     }
 

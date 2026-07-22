@@ -190,7 +190,6 @@ pub(crate) fn validate_discovered_skill_content_with_prompt_pass(
 
 /// Validate skill content for private skills (.claude/skills/).
 /// Runs only "both-mode" rules (excludes S016, S017, S029, S033, S036, S037, S038, S046, S047, S050, S051, S052, S053, S054, S055, S056, S057).
-/// Retired S049 never emits from either path; its registry entry is config-only.
 #[cfg(test)]
 pub fn validate_private_skill_content(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let mut prompt_pass = super::prompt_content::PromptContentPass::default();
@@ -2869,14 +2868,11 @@ suppress = ["S033"]
             ("S039", "metadata-not-string"),
             ("S040", "tools-unknown"),
             ("S041", "fork-no-task"),
-            ("S042", "dmi-empty-desc"),
             ("S043", "frontmatter-backslash"),
             ("S044", "mcp-tool-unqualified"),
-            ("S045", "tools-list-syntax"),
             ("S046", "body-no-workflow"),
             ("S047", "body-no-examples"),
             ("S048", "ref-name-generic"),
-            ("S049", "name-not-gerund"),
             ("S050", "desc-vague-content"),
             ("S051", "script-deps-missing"),
             ("S052", "script-verify-missing"),
@@ -3568,73 +3564,6 @@ suppress = ["S033"]
                 .iter()
                 .any(|e| e.contains("fork") && e.contains("task")),
             "S041 should not fire as an error under default config"
-        );
-    }
-
-    // ── S042: dmi-empty-desc (soft-retired) ──────────────────────────
-    // S042 is a strict subset of S005 and no longer fires from any path; S005
-    // remains the sole diagnostic for a missing/empty description.
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s042_retired_dmi_empty_desc_reports_only_s005() {
-        for description in [
-            "description:",
-            "description: \"\"",
-            "description: [not, a, string]",
-        ] {
-            let tmp = tempfile::tempdir().unwrap();
-            let _guard = crate::test_helpers::CwdGuard::new();
-            std::env::set_current_dir(tmp.path()).unwrap();
-            std::fs::create_dir_all("skills/my-skill").unwrap();
-            std::fs::write(
-                "skills/my-skill/SKILL.md",
-                format!(
-                    "---\nname: my-skill\n{description}\ndisable-model-invocation: true\n---\nBody content\n"
-                ),
-            )
-            .unwrap();
-            let exclude = crate::config::ExcludeSet::default();
-            let mut diag = DiagnosticCollector::new_all_enabled();
-            // S005 lives in the frontmatter pass; the (retired) S042 lived in the
-            // content pass. Run both so we see the whole picture on one file.
-            crate::validators::skills::validate_skill_frontmatter(&mut diag, &exclude);
-            validate_skill_content(&mut diag, &exclude);
-            // S005 is the sole diagnostic; S042 never fires.
-            assert!(
-                fires(diag.diagnostics(), LintRule::FrontmatterFieldMissing),
-                "S005 must fire for {description:?}"
-            );
-            assert!(
-                diag.diagnostics()
-                    .iter()
-                    .all(|d| d.rule != LintRule::DmiEmptyDesc),
-                "S042 must not fire for {description:?}, got: {:?}",
-                diag.diagnostics()
-                    .iter()
-                    .map(|d| d.rule.code())
-                    .collect::<Vec<_>>()
-            );
-        }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s042_retired_even_with_dmi_and_valid_desc() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all("skills/my-skill").unwrap();
-        std::fs::write(
-            "skills/my-skill/SKILL.md",
-            "---\nname: my-skill\ndescription: Use when the skill should be user-only\ndisable-model-invocation: true\n---\nBody content\n",
-        ).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            diag.diagnostics()
-                .iter()
-                .all(|d| d.rule != LintRule::DmiEmptyDesc)
         );
     }
 
@@ -4994,13 +4923,13 @@ suppress = ["S033"]
         );
     }
 
-    // ── S045: tools-list-syntax (soft-retired, #342) ───────────────
+    // ── allowed-tools YAML list syntax ──────────────────────────────
 
     #[test]
     #[serial_test::serial]
-    fn test_s045_yaml_list_is_a_documented_form_and_never_fires() {
-        // A YAML list is a documented accepted `allowed-tools` spelling; the
-        // retired S045 must not fire and S007 must not call the list empty.
+    fn allowed_tools_yaml_list_is_a_documented_clean_form() {
+        // A YAML list is a documented accepted `allowed-tools` spelling, and
+        // S007 must not call the list empty.
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -5019,7 +4948,7 @@ suppress = ["S033"]
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
             !diag.errors().iter().any(|e| e.contains("list syntax")),
-            "retired S045 must not fire on a YAML list, got: {:?}",
+            "a valid YAML list must not produce a syntax finding: {:?}",
             diag.errors()
         );
         assert!(
@@ -5612,109 +5541,6 @@ suppress = ["S033"]
             diag.errors()
                 .iter()
                 .any(|e| e.contains("non-descriptive reference file name"))
-        );
-    }
-
-    // ── S049: name-not-gerund (retired; config alias retained) ───────
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s049_never_emits_under_all_for_non_gerund_names() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        write_plugin_skill("code-review");
-        write_plugin_skill("string-utils");
-        write_plugin_skill("pdf");
-
-        let mut all_config = crate::config::LintConfig::default();
-        all_config.apply_cli_mode(crate::config::CliMode::All);
-        assert!(
-            !all_config.error.contains(&LintRule::NameNotGerund),
-            "retired S049 must remain outside active all-mode selection"
-        );
-        let mut diag = DiagnosticCollector::with_config(all_config);
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            !diag
-                .diagnostics()
-                .iter()
-                .any(|d| d.rule == LintRule::NameNotGerund),
-            "retired S049 must stay inert even under --all"
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s049_config_aliases_still_parse() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(
-            tmp.path().join("agent-lint.toml"),
-            r#"
-[lint]
-suppress = ["S049", "name-not-gerund"]
-error = ["S049"]
-warn = ["name-not-gerund"]
-"#,
-        )
-        .unwrap();
-        let config = crate::config::LintConfig::load(tmp.path()).unwrap();
-        assert!(config.suppress.contains(&LintRule::NameNotGerund));
-        // suppress wins over error/warn during load.
-        assert!(!config.error.contains(&LintRule::NameNotGerund));
-        assert!(!config.warn.contains(&LintRule::NameNotGerund));
-        assert_eq!(
-            LintRule::from_code_or_name("S049"),
-            Some(LintRule::NameNotGerund)
-        );
-        assert_eq!(
-            LintRule::from_code_or_name("name-not-gerund"),
-            Some(LintRule::NameNotGerund)
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s049_promoted_via_config_still_inert() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        write_plugin_skill("code-review");
-        let config = crate::config::LintConfig {
-            error: std::collections::HashSet::from([LintRule::NameNotGerund]),
-            ..crate::config::LintConfig::default()
-        };
-        assert!(config.error.contains(&LintRule::NameNotGerund));
-        let mut diag = DiagnosticCollector::with_config(config);
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            !diag
-                .diagnostics()
-                .iter()
-                .any(|d| d.rule == LintRule::NameNotGerund),
-            "promoting retired S049 via config must not resurrect emissions"
-        );
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn test_s049_private_mode_also_inert() {
-        let tmp = tempfile::tempdir().unwrap();
-        let _guard = crate::test_helpers::CwdGuard::new();
-        std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all(".claude/skills/code-review").unwrap();
-        std::fs::write(
-            ".claude/skills/code-review/SKILL.md",
-            "---\nname: code-review\ndescription: A valid skill description here\n---\nBody\n",
-        )
-        .unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_private_skill_content(&mut diag, &crate::config::ExcludeSet::default());
-        assert!(
-            !diag
-                .diagnostics()
-                .iter()
-                .any(|d| d.rule == LintRule::NameNotGerund)
         );
     }
 

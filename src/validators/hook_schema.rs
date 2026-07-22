@@ -838,6 +838,17 @@ mod tests {
         diag.errors()
     }
 
+    fn check_one(val: Value, expected_rule: LintRule) -> String {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hook_schema(&val, "test", true, &mut diag);
+        assert_eq!(diag.diagnostics().len(), 1, "{:?}", diag.diagnostics());
+        let diagnostic = &diag.diagnostics()[0];
+        assert_eq!(diagnostic.rule, expected_rule);
+        assert_eq!(diagnostic.severity, crate::diagnostic::Severity::Error);
+        assert_eq!(diagnostic.subject_path, None);
+        diagnostic.message.clone()
+    }
+
     /// Wrap a single hook object in the canonical event-keyed shape.
     fn wrap(event: &str, hook: Value) -> Value {
         json!({"hooks": {event: [{"hooks": [hook]}]}})
@@ -1097,9 +1108,11 @@ mod tests {
 
     #[test]
     fn h014_http_without_url_fires() {
-        let errors = check(wrap("PreToolUse", json!({"type": "http"})));
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("requires a non-empty 'url'"));
+        let message = check_one(
+            wrap("PreToolUse", json!({"type": "http"})),
+            LintRule::HookUrlRequired,
+        );
+        assert!(message.contains("requires a non-empty 'url'"));
     }
 
     #[test]
@@ -1192,12 +1205,14 @@ mod tests {
             assert!(ok.is_empty(), "model on {hook} must pass: {ok:?}");
         }
 
-        let errors = check(wrap(
-            "PreToolUse",
-            json!({"type": "command", "command": "x", "model": "sonnet"}),
-        ));
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("'model'"));
+        let message = check_one(
+            wrap(
+                "PreToolUse",
+                json!({"type": "command", "command": "x", "model": "sonnet"}),
+            ),
+            LintRule::HookModelInvalid,
+        );
+        assert!(message.contains("'model'"));
     }
 
     // ── H020/H021/H022: field typing ────────────────────────────────
@@ -1265,12 +1280,14 @@ mod tests {
 
     #[test]
     fn h022_bad_shell_fires_and_shares_s026_enum() {
-        let errors = check(wrap(
-            "PreToolUse",
-            json!({"type": "command", "command": "x", "shell": "zsh"}),
-        ));
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("'shell'"));
+        let message = check_one(
+            wrap(
+                "PreToolUse",
+                json!({"type": "command", "command": "x", "shell": "zsh"}),
+            ),
+            LintRule::HookShellInvalid,
+        );
+        assert!(message.contains("'shell'"));
 
         for shell in VALID_SHELLS {
             let errors = check(wrap(

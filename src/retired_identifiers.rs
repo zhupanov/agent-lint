@@ -14,13 +14,8 @@ pub const RETIRED_IDENTIFIERS: &[&str] = &[
     "instruction-file-structure",
     "CX044",
     "codex-agents-structure",
-];
-
-/// Soft-retired identifiers: each resolves through
-/// `LintRule::from_code_or_name` but its rule never fires and is absent
-/// from `ACTIVE_RULES`. A new soft retirement appends its code and name
-/// here and nowhere else.
-pub const SOFT_RETIRED_IDENTIFIERS: &[&str] = &[
+    "S001",
+    "skills-dir-missing",
     "S042",
     "dmi-empty-desc",
     "S045",
@@ -29,4 +24,21 @@ pub const SOFT_RETIRED_IDENTIFIERS: &[&str] = &[
     "name-not-gerund",
     "O005",
     "style-name-long",
+    "CX046",
+    "codex-plugin-path",
+    "CX058",
+    "codex-plugin-hooks",
+    "channels-enabled-invalid",
+    "style-field-unknown",
+    "CX037",
+    "codex-agents-empty",
+    "CX038",
+    "codex-agents-secret",
+    "CX041",
+    "codex-agents-path",
+    "CX043",
+    "codex-agents-generic",
+    "codex-agents-limit",
+    "codex-agents-conflict",
+    "security-md-missing",
 ];

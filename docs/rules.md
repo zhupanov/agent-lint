@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 294 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -207,11 +207,10 @@ would require a block parser.
 
 ## Skills Rules (S)
 
-### Structure and Frontmatter (S001--S008)
+### Structure and Frontmatter (S002--S008)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| S001 | `skills-dir-missing` | `skills/` directory is missing (deprecated — no longer fires; config alias retained) | Plugin | error |
 | S002 | `skill-md-missing` | A conventional or manifest-declared skill directory entry is missing `SKILL.md` | Plugin | error |
 | S003 | `no-exported-skills` | A present conventional `skills/` tree exports no skills through `skills/`, manifest-declared skill roots, commands, or the root fallback | Plugin | error |
 | S004 | `frontmatter-malformed` | `SKILL.md` has malformed frontmatter (must start/end with `---`) | Always | error |
@@ -332,9 +331,7 @@ values — every frontmatter field except the free-prose `description`,
 > YAML parser. S040 reports each unrecognized entry once per field and name;
 > S067 fires only when an `allowed-tools` entry is exactly `Bash`
 > (`disallowed-tools: Bash` denies the whole tool and is not a scoping
-> problem). S045 (`tools-list-syntax`) is retired: a YAML list is a
-> documented accepted form, so the rule no longer fires and has no autofix;
-> its code/name remain accepted in config.
+> problem).
 
 ### Cross-Field and Structural (S028--S032, S036, S048, S054, S068--S069)
 
@@ -679,10 +676,8 @@ is autofixable.
 
 Output styles are discovered recursively below `.claude/output-styles/` using
 the shared exclusion, pruned-directory, and no-symlink traversal policy. A
-body-only file is valid: its whole content is the effective body. O005
-(`style-name-long`) is retired but remains an inert compatibility selector;
-Claude Code has no output-style name-length limit, so it has no active rule
-row or finding.
+body-only file is valid: its whole content is the effective body. Claude Code
+has no output-style name-length limit.
 
 In Plugin mode the same O001-O006 checks additionally lint plugin-shipped
 output styles: the plugin-root `output-styles/` directory and every
@@ -814,10 +809,8 @@ Findings carry a structured span, bounded original-token evidence, and either
 `<!-- lint-doc-pointer-paths: ok reason -->` marker suppresses its source line
 when it includes a non-empty reason; it does not suppress I003.
 
-The former CX037, CX038, CX041, and CX043 identifiers and names remain
-accepted as configuration aliases for these shared rules. The retired I005 /
-`instruction-file-structure` rule and its CX044 / `codex-agents-structure`
-aliases are no longer recognized.
+Only the canonical `I` codes and names in the table above are accepted in
+configuration and focused selectors.
 
 ## Codex Configuration Rules (CX)
 
@@ -886,20 +879,17 @@ active; the shared instruction rules above run independently.
 |------|------|-------------|------|---------|
 | CX040 | `codex-project-doc-budget` | Active Codex project-document chain exceeds its cumulative byte budget | Always | warn |
 | CX045 | `codex-project-doc-conflict` | Live Codex project-document assertion conflicts with `.codex/config.toml` | Always | warn |
-| CX046 | `codex-plugin-path` | Deprecated — no longer emitted; any recognized manifest directory establishes a valid plugin root | Always | error |
 | CX047 | `codex-plugin-invalid` | Codex plugin manifest is unreadable, invalid JSON, a non-object root, or has an invalid field type | Always | error |
 | CX048--CX049 | — | Codex plugin name is missing/blank or not kebab-case | Always | error |
 | CX050--CX052 | — | Component path lacks `./`, escapes the plugin root, or is bare `./` | Always | error |
 | CX053--CX056 | — | Too many/empty/over-long `interface.defaultPrompt` entries or an unusable interface URL | Always | warn |
 | CX057 | `codex-plugin-asset` | Interface asset path (`composerIcon`, `logo`, `logoDark`, `screenshots[]`) is bare `./`, missing `./`, or escapes the plugin root | Always | error |
-| CX058 | `codex-plugin-hooks` | Deprecated — no longer emitted; Codex loads plugin-bundled hooks, and hook path strings participate in CX050–CX052 | Always | warn |
 | CX059 | `codex-plugin-description` | Codex plugin manifest `description` is missing, blank, or not a string (agent-lint install-surface recommendation) | Always | warn |
 | CX060 | `codex-skill-frontmatter` | Codex skill uses ignored behavior frontmatter (`allowed-tools`, `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`). Nested/block-scalar/quoted-portable fields stay clean; surfaces include nested `.agents/skills` and selected plugin skill roots | Always | warn |
 | CX063 | `codex-prompt-field` | `interface.default_prompt` / `interface.default_prompts` are ignored by Codex; rename to `interface.defaultPrompt` | Always | warn |
 
 CX040 uses Codex's default 32,768-byte cumulative project-document budget unless
-`.codex/config.toml` sets `project_doc_max_bytes`; its compatibility lookup alias is
-`codex-agents-limit`. CX045's compatibility lookup alias is `codex-agents-conflict`.
+`.codex/config.toml` sets `project_doc_max_bytes`.
 Codex plugin discovery
 recognizes `.codex-plugin/`, `.claude-plugin/`, and `.cursor-plugin/`
 `plugin.json` beneath every plugin root (Codex precedence order); a manifest
@@ -1036,9 +1026,7 @@ precedence ([supported file types](https://docs.github.com/en/communities/settin
 retrieved 2026-07-21). A directory, a wrong-case name, or a symlink does not
 satisfy the rule. An organization default served from a public `.github`
 repository cannot be observed locally, so G005 stays a warning and normal
-suppression is the escape hatch for that inherited policy. The pre-rename name
-`security-md-missing` is accepted as a legacy alias for selectors and
-configuration.
+suppression is the escape hatch for that inherited policy.
 
 G009-G011 share one shell/awk lexical layer (`validators/shell.rs`) rather than
 matching regexes against raw lines: a scanner masks comments, single-quoted
@@ -1130,8 +1118,6 @@ Top-level `.claude-plugin/plugin.json#userConfig` and every
 `channels[].userConfig` / `channels.<name>.userConfig` share the same schema.
 Title and description require a non-empty string after Unicode trimming; that
 usability check is intentionally stricter than the upstream JSON schema.
-U003 (`userconfig-env-missing`) was removed: agent-lint does not infer option
-use from repository text.
 
 U009 is an agent-lint security convention stricter than the manifest schema,
 which structurally permits a `default` alongside `sensitive`. A `default` in the
@@ -1373,7 +1359,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (10 of 297):**
+**Auto-fixable rules (10 of 294):**
 
 | Rule | Code | Fix |
 |------|------|-----|

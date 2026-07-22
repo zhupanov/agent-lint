@@ -8,7 +8,7 @@
 
 ## Features
 
-- **Complete lint-rule registry**, documented in the
+- **~300 lint rules**, backed by a complete live registry and documented in the
   [rules reference](docs/rules.md)
 - **Two lint modes**:
   - **Basic mode** -- validates detected Claude, Cursor, Codex, and standalone
@@ -89,14 +89,14 @@ checked-in schema and examples are in
 
 ## Lint Rules
 
-Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 294 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
 | Manifest | M | 24 | `plugin.json` and `marketplace.json` validation, component path safety |
 | Hooks | H | 26 | `hooks.json` / `settings.json` hook paths and hook object schema |
-| Skills | S | 69 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
+| Skills | S | 68 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
 | Agents | A | 31 | Agent frontmatter, field values, tool/evidence/stop contracts, templates, description quality |
 | Prompt Content | Q | 6 | Fence-aware quality checks shared by Claude instructions, skill bodies, and agent bodies |
 | Claude Rules | R | 3 | `.claude/rules/` frontmatter, paths contract, and fields |
@@ -106,7 +106,7 @@ is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 | Email | E | 2 | Email metadata type and format validation |
 | User Config | U | 8 | `userConfig` structure, key format, option shapes, and secret-safe defaults |
 | MCP | P | 14 | MCP server configuration, transport, security, and compatibility |
-| Codex | CX | 55 | Codex configuration, instructions, plugins, and skills |
+| Codex | CX | 53 | Codex configuration, instructions, plugins, and skills |
 | Shared Instruction Files | I | 4 | Shared instruction-file content, secrets, path references, and generic-only guidance |
 | Cursor Rules | CU | 19 | Cursor rules, hooks, subagents, and cloud environment configuration |
 | Cursor Skills | CR-SK | 1 | Unsupported Cursor skill frontmatter fields |

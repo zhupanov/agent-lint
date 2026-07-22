@@ -21,13 +21,6 @@ pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut Diagnostic
         check_frontmatter_backslash(info, map, diag);
         check_tool_fields(info, map, diag);
     }
-
-    // S042 (dmi-empty-desc) is soft-retired: it was a strict subset of
-    // S005/frontmatter-field-missing and no longer fires from any path.
-    // S045 (tools-list-syntax) is soft-retired: a YAML list is a documented
-    // accepted `allowed-tools` spelling, not a mistake, and its autofix could
-    // corrupt valid YAML. Both registry codes/names remain as deprecated,
-    // config-only identifiers.
 }
 
 /// S035: cap `compatibility` length, measured in Unicode scalar values so the

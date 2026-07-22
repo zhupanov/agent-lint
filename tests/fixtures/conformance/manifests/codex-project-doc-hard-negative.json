@@ -16,7 +16,7 @@
       "json",
       "--autofix",
       "--only",
-      "CX040,CX045,codex-agents-limit,codex-agents-conflict",
+      "CX040,CX045,codex-project-doc-budget,codex-project-doc-conflict",
       "."
     ]
   },

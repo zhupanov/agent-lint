@@ -517,7 +517,7 @@ impl DiagnosticCollector {
         for (index, entry) in self.config.overrides.iter().enumerate() {
             let mut rules: Vec<_> = if self.run_policy.is_focused() {
                 self.run_policy
-                    .effective_rules()
+                    .selected_rules()
                     .iter()
                     .copied()
                     .filter(|rule| entry.suppress.contains(rule))
@@ -746,8 +746,7 @@ mod tests {
             ..LintConfig::default()
         };
         let mut diag = DiagnosticCollector::with_config(config);
-        // NameNotGerund is default-suppressed — silently skipped, no count.
-        diag.report(LintRule::NameNotGerund, "not gerund");
+        diag.report(LintRule::BodyNoExamples, "no examples");
         assert_eq!(diag.error_count(), 0);
         assert_eq!(diag.warning_count(), 0);
         assert_eq!(diag.suppressed_count(), 0);

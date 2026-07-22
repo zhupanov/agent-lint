@@ -3,8 +3,6 @@
 //! Every lint diagnostic has a unique code (e.g., "M001") and human-readable
 //! name (e.g., "plugin-json-missing"). Rules are grouped by category prefix.
 
-use std::sync::LazyLock;
-
 use strum::{EnumProperty as StrumEnumProperty, VariantArray as StrumVariantArray};
 use strum_macros::{EnumIter, EnumProperty, VariantArray};
 
@@ -20,6 +18,29 @@ pub enum DefaultSeverity {
     Warning,
     /// Rule is silently skipped by default (not reported, not counted).
     Suppressed,
+}
+
+/// The validation surface on which a rule is applicable.
+#[allow(dead_code)] // Canonical metadata is consumed by repository consistency tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleApplicability {
+    /// Runs wherever its owning platform or file type is detected.
+    Always,
+    /// Runs only while validating a plugin repository.
+    Plugin,
+    /// Runs for every supported skill surface, including standalone skills.
+    AllSkillSurfaces,
+}
+
+#[allow(dead_code)] // Canonical metadata is consumed by repository consistency tests.
+impl RuleApplicability {
+    pub const fn documentation_label(self) -> &'static str {
+        match self {
+            Self::Always => "Always",
+            Self::Plugin => "Plugin",
+            Self::AllSkillSurfaces => "All skill surfaces",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumIter, EnumProperty, VariantArray)]
@@ -196,10 +217,6 @@ pub enum LintRule {
     XmlTagOrphan,
 
     // ── Skills (S) ────────────────────────────────────────────────
-    /// S001: skills/ directory is missing (deprecated — no longer fires;
-    /// retained so existing config identifiers keep parsing)
-    #[strum(props(code = "S001", name = "skills-dir-missing"))]
-    SkillsDirMissing,
     /// S002: skills/{name}/ missing SKILL.md
     #[strum(props(code = "S002", name = "skill-md-missing"))]
     SkillMdMissing,
@@ -314,23 +331,12 @@ pub enum LintRule {
     /// S041: context: fork set but body has no task instructions
     #[strum(props(code = "S041", name = "fork-no-task"))]
     ForkNoTask,
-    /// S042: disable-model-invocation: true with empty/missing description
-    /// (deprecated — no longer fires; a strict subset of S005, retained so
-    /// existing config identifiers keep parsing)
-    #[strum(props(code = "S042", name = "dmi-empty-desc"))]
-    DmiEmptyDesc,
     /// S043: Windows-style backslash paths in frontmatter fields
     #[strum(props(code = "S043", name = "frontmatter-backslash"))]
     FrontmatterBackslash,
     /// S044: MCP tool reference without server prefix
     #[strum(props(code = "S044", name = "mcp-tool-unqualified"))]
     McpToolUnqualified,
-    /// S045: allowed-tools uses YAML list syntax (deprecated — no longer
-    /// fires; a YAML list is a documented accepted spelling, so S040/S067
-    /// validate its entries instead; retained so existing config identifiers
-    /// keep parsing)
-    #[strum(props(code = "S045", name = "tools-list-syntax"))]
-    ToolsListSyntax,
     /// S046: Long skill body lacks workflow structure
     #[strum(props(code = "S046", name = "body-no-workflow"))]
     BodyNoWorkflow,
@@ -340,10 +346,6 @@ pub enum LintRule {
     /// S048: non-descriptive reference file name in skill directory
     #[strum(props(code = "S048", name = "ref-name-generic"))]
     RefNameGeneric,
-    /// S049: skill name not in gerund form (deprecated — no longer fires;
-    /// retained so existing config identifiers keep parsing)
-    #[strum(props(code = "S049", name = "name-not-gerund"))]
-    NameNotGerund,
     /// S050: skill description content is too vague/generic
     #[strum(props(code = "S050", name = "desc-vague-content"))]
     DescVagueContent,
@@ -563,9 +565,6 @@ pub enum LintRule {
     /// O004: output style has no body after frontmatter
     #[strum(props(code = "O004", name = "style-body-empty"))]
     OutputStyleBodyEmpty,
-    /// O005: output style name exceeds 64 characters
-    #[strum(props(code = "O005", name = "style-name-long"))]
-    OutputStyleNameTooLong,
     /// O006: output style frontmatter is missing or invalid YAML
     #[strum(props(code = "O006", name = "style-frontmatter-invalid"))]
     OutputStyleFrontmatterInvalid,
@@ -702,12 +701,6 @@ pub enum LintRule {
     /// CX045: a live Codex project document contradicts a local config value
     #[strum(props(code = "CX045", name = "codex-project-doc-conflict"))]
     CodexProjectDocConflict,
-    /// CX046: a Codex plugin manifest is not at the repository root (deprecated —
-    /// no longer fires; any recognized manifest directory establishes a valid
-    /// plugin root, so repository-relative depth is not an error. Retained so
-    /// existing config identifiers keep parsing.)
-    #[strum(props(code = "CX046", name = "codex-plugin-path"))]
-    CodexPluginManifestPath,
     /// CX047: .codex-plugin/plugin.json is not valid JSON
     #[strum(props(code = "CX047", name = "codex-plugin-invalid"))]
     CodexPluginManifestInvalid,
@@ -741,12 +734,6 @@ pub enum LintRule {
     /// CX057: Codex plugin interface asset path is unsafe
     #[strum(props(code = "CX057", name = "codex-plugin-asset"))]
     CodexPluginInterfaceAssetPath,
-    /// CX058: Codex plugin manifest uses the unsupported hooks field (deprecated —
-    /// no longer fires; Codex loads plugin-bundled hooks, and hook path strings
-    /// participate in CX050–CX052. Retained so existing config identifiers keep
-    /// parsing.)
-    #[strum(props(code = "CX058", name = "codex-plugin-hooks"))]
-    CodexPluginHooksUnsupported,
     /// CX059: Codex plugin manifest description is missing or blank
     #[strum(props(code = "CX059", name = "codex-plugin-description"))]
     CodexPluginDescriptionMissing,
@@ -1004,6 +991,91 @@ impl LintRule {
             .expect("every LintRule variant defines its name metadata")
     }
 
+    /// Canonical applicability metadata used by the public rule reference.
+    #[allow(dead_code)] // Canonical metadata is consumed by repository consistency tests.
+    pub const fn applicability(self) -> RuleApplicability {
+        match self {
+            Self::PluginJsonMissing
+            | Self::PluginJsonInvalid
+            | Self::PluginFieldMissing
+            | Self::PluginVersionFormat
+            | Self::MarketplaceJsonMissing
+            | Self::MarketplaceJsonInvalid
+            | Self::MarketplaceFieldMissing
+            | Self::MarketplacePluginsEmpty
+            | Self::MarketplacePluginInvalid
+            | Self::MarketplaceEnrichedMissing
+            | Self::PluginEnrichedMissing
+            | Self::ComponentPathNested
+            | Self::ComponentPathUnsafe
+            | Self::AuthorNameMissing
+            | Self::HomepageUrlInvalid
+            | Self::LspServerInvalid
+            | Self::ChannelServerMissing
+            | Self::PluginVersionMissing
+            | Self::MarketplaceBarePath
+            | Self::AuthorTypeInvalid
+            | Self::MarketplaceNameFormat
+            | Self::HomepageTypeInvalid
+            | Self::PluginNameFormat
+            | Self::MarketplaceNameWhitespace
+            | Self::HooksJsonMissing
+            | Self::HooksJsonInvalid
+            | Self::HooksKeyMissing
+            | Self::HooksArrayEmpty
+            | Self::SkillMdMissing
+            | Self::NoExportedSkills
+            | Self::SharedMdMissing
+            | Self::NameVague
+            | Self::DescUsesPerson
+            | Self::DescNoTrigger
+            | Self::DescVagueContent
+            | Self::BodyNoRefs
+            | Self::TimeSensitive
+            | Self::BodyNoWorkflow
+            | Self::BodyNoExamples
+            | Self::ScriptDepsMissing
+            | Self::ScriptVerifyMissing
+            | Self::TerminologyInconsistent
+            | Self::ScriptErrhandMissing
+            | Self::BodyNoDefault
+            | Self::MagicNumberUndoc
+            | Self::NestedRefDeep
+            | Self::RefNoToc
+            | Self::DescBodyMisalign
+            | Self::AgentsDirMissing
+            | Self::NoAgentFiles
+            | Self::TemplateFileMissing
+            | Self::TemplateMarkerMissing
+            | Self::TemplateCountMismatch
+            | Self::AgentFieldUnsupported
+            | Self::PwdInSkill
+            | Self::DeadScript
+            | Self::SecurityMdMissing
+            | Self::TodoInSkill
+            | Self::TodoInAgent
+            | Self::HardcodedMachinePath
+            | Self::InvalidEmailFormat
+            | Self::EmailTypeInvalid
+            | Self::UserconfigNotObject
+            | Self::UserconfigDescMissing
+            | Self::UserconfigSensitiveType
+            | Self::UserconfigTitleMissing
+            | Self::UserconfigTypeMissing
+            | Self::UserconfigKeyInvalid
+            | Self::UserconfigOptionInvalid
+            | Self::UserconfigDefaultSecret => RuleApplicability::Plugin,
+            Self::NameTooLong
+            | Self::NameInvalidChars
+            | Self::NameBadHyphens
+            | Self::DescTooLong
+            | Self::DescTooShort
+            | Self::NonHttpsUrl
+            | Self::HardcodedSecret => RuleApplicability::AllSkillSurfaces,
+            _ => RuleApplicability::Always,
+        }
+    }
+
     /// Whether this rule is a "too-long" length-cap rule, excluded from
     /// pedantic error promotion.
     pub fn is_too_long(self) -> bool {
@@ -1018,22 +1090,6 @@ impl LintRule {
     pub fn from_code_or_name(s: &str) -> Option<Self> {
         if RETIRED_IDENTIFIERS.contains(&s) {
             return None;
-        }
-        let migrated = match s {
-            "channels-enabled-invalid" => Some(Self::SettingsChannelsEnabledInvalid),
-            "style-field-unknown" => Some(Self::OutputStyleFieldUnknown),
-            "O005" | "style-name-long" => Some(Self::OutputStyleNameTooLong),
-            "CX037" | "codex-agents-empty" => Some(Self::InstructionFileEmpty),
-            "CX038" | "codex-agents-secret" => Some(Self::InstructionFileSecret),
-            "CX041" | "codex-agents-path" => Some(Self::InstructionFilePathMissing),
-            "CX043" | "codex-agents-generic" => Some(Self::InstructionFileGenericGuidance),
-            "codex-agents-limit" => Some(Self::CodexProjectDocBudget),
-            "codex-agents-conflict" => Some(Self::CodexProjectDocConflict),
-            "security-md-missing" => Some(Self::SecurityMdMissing),
-            _ => None,
-        };
-        if migrated.is_some() {
-            return migrated;
         }
         ALL_RULES
             .iter()
@@ -1065,8 +1121,7 @@ impl LintRule {
     pub fn default_severity(self) -> DefaultSeverity {
         match self {
             // ── Default-suppressed ──────────────────────────────────
-            Self::NameNotGerund | Self::BodyNoExamples | Self::BodyTooLong
-                => DefaultSeverity::Suppressed,
+            Self::BodyNoExamples | Self::BodyTooLong => DefaultSeverity::Suppressed,
 
             // ── Default-warning: enriched metadata ───────────────────
             Self::MarketplaceEnrichedMissing | Self::PluginEnrichedMissing |
@@ -1124,7 +1179,7 @@ impl LintRule {
             // ── Default-warning: Claude configuration (advisory) ──
             Self::RulesFieldUnknown | Self::OutputStyleDescriptionMissing |
             Self::OutputStyleFieldUnknown | Self::OutputStyleBodyEmpty |
-            Self::OutputStyleNameTooLong | Self::SettingsPrUrlTemplateInvalid |
+            Self::SettingsPrUrlTemplateInvalid |
             Self::SettingsChannelsEnabledInvalid |
             Self::CodexUnknownNestedKey |
             Self::CodexContextWindow | Self::CodexAutoCompactLimit |
@@ -1136,7 +1191,7 @@ impl LintRule {
             Self::CodexProjectDocConflict |
             Self::CodexPluginDefaultPromptCount | Self::CodexPluginDefaultPromptLength |
             Self::CodexPluginDefaultPromptEmpty | Self::CodexPluginInterfaceUrl |
-            Self::CodexPluginHooksUnsupported | Self::CodexPluginDescriptionMissing |
+            Self::CodexPluginDescriptionMissing |
             Self::CodexPluginPromptField | Self::CodexSkillUnsupportedFrontmatter |
             Self::CursorRuleFrontmatterMissing | Self::CursorRuleFieldUnknown |
             Self::CursorLegacyRules | Self::CursorAlwaysApplyGlobs |
@@ -1182,24 +1237,8 @@ impl LintRule {
     }
 }
 
-/// Every lint-rule identity, including compatibility-only retired rules.
+/// The sole registry of current rules with reachable production validators.
 pub const ALL_RULES: &[LintRule] = LintRule::VARIANTS;
-
-/// Rules that participate in invocation selection, strictness, and public
-/// rule documentation. Retired identities remain in [`ALL_RULES`] so every
-/// `LintRule` retains its canonical registry entry.
-pub static ACTIVE_RULES: LazyLock<Vec<LintRule>> = LazyLock::new(|| {
-    LintRule::VARIANTS
-        .iter()
-        .copied()
-        .filter(|rule| {
-            !SOFT_RETIRED_IDENTIFIERS
-                .iter()
-                .any(|identifier| *identifier == rule.code() || *identifier == rule.name())
-        })
-        .collect()
-});
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1211,6 +1250,8 @@ mod tests {
     struct DocumentedRule {
         line_number: usize,
         name: Option<String>,
+        mode: String,
+        default: String,
     }
 
     fn rule_code_parts(code: &str) -> Option<(&str, u16)> {
@@ -1234,15 +1275,18 @@ mod tests {
 
     fn documented_rule_rows(documentation: &str) -> HashMap<String, DocumentedRule> {
         let mut rules = HashMap::new();
-        let rule_row =
-            Regex::new(r"^\|\s*(.*?)\s*\|\s*(.*?)\s*\|").expect("rule row regex is valid");
-
         for (line_number, line) in documentation.lines().enumerate() {
-            let Some(captures) = rule_row.captures(line) else {
+            if !line.starts_with('|') {
                 continue;
-            };
-            let code_cell = captures.get(1).expect("rule code capture exists").as_str();
-            let name_cell = captures.get(2).expect("rule name capture exists").as_str();
+            }
+            let cells: Vec<_> = line.trim_matches('|').split('|').map(str::trim).collect();
+            if cells.len() < 5 {
+                continue;
+            }
+            let code_cell = cells[0];
+            let name_cell = cells[1];
+            let mode = cells[cells.len() - 2];
+            let default = cells[cells.len() - 1];
 
             let (first_code, last_code) = if let Some((first, last)) = code_cell.split_once('–') {
                 (first, Some(last))
@@ -1305,6 +1349,8 @@ mod tests {
                             DocumentedRule {
                                 line_number: line_number + 1,
                                 name: name.clone(),
+                                mode: mode.to_owned(),
+                                default: default.to_owned(),
                             },
                         )
                         .is_none(),
@@ -1321,11 +1367,6 @@ mod tests {
     fn all_rules_count_matches_enum() {
         let iterated: Vec<_> = LintRule::iter().collect();
         assert_eq!(ALL_RULES, iterated);
-        assert_eq!(
-            ALL_RULES.len(),
-            301,
-            "every enum variant must be registered"
-        );
     }
 
     #[test]
@@ -1388,98 +1429,29 @@ mod tests {
             LintRule::from_code_or_name("cursor-description-missing"),
             None
         );
-        assert_eq!(
-            LintRule::from_code_or_name("channels-enabled-invalid"),
-            Some(LintRule::SettingsChannelsEnabledInvalid)
-        );
-        assert_eq!(
-            LintRule::from_code_or_name("style-field-unknown"),
-            Some(LintRule::OutputStyleFieldUnknown)
-        );
-        assert_eq!(
-            LintRule::from_code_or_name("O005"),
-            Some(LintRule::OutputStyleNameTooLong)
-        );
     }
 
     #[test]
-    fn soft_retired_rules_stay_config_only_identifiers() {
-        for identifier in SOFT_RETIRED_IDENTIFIERS {
-            let rule = LintRule::from_code_or_name(identifier)
-                .unwrap_or_else(|| panic!("{identifier} must keep resolving"));
-            assert!(
-                !ACTIVE_RULES.contains(&rule),
-                "{identifier} must stay inactive"
-            );
-            assert!(
-                !rule.is_autofixable(),
-                "{identifier} must not be autofixable"
-            );
-        }
-    }
-
-    #[test]
-    fn migrated_codex_agents_identifiers_resolve_to_shared_rules() {
-        for (identifier, expected) in [
-            ("CX037", LintRule::InstructionFileEmpty),
-            ("codex-agents-secret", LintRule::InstructionFileSecret),
-            ("CX041", LintRule::InstructionFilePathMissing),
-            (
-                "codex-agents-generic",
-                LintRule::InstructionFileGenericGuidance,
-            ),
-            ("CX043", LintRule::InstructionFileGenericGuidance),
-        ] {
-            assert_eq!(LintRule::from_code_or_name(identifier), Some(expected));
-        }
-        for retired in RETIRED_IDENTIFIERS {
+    fn retired_and_migrated_identifiers_do_not_resolve() {
+        for identifier in RETIRED_IDENTIFIERS {
             assert_eq!(
-                LintRule::from_code_or_name(retired),
+                LintRule::from_code_or_name(identifier),
                 None,
-                "{retired} must not resolve after retirement"
+                "{identifier}"
             );
         }
-    }
-
-    #[test]
-    fn project_document_rule_renames_preserve_only_the_requested_aliases() {
-        assert_eq!(
-            LintRule::from_code_or_name("codex-agents-limit"),
-            Some(LintRule::CodexProjectDocBudget)
-        );
-        assert_eq!(
-            LintRule::from_code_or_name("codex-agents-conflict"),
-            Some(LintRule::CodexProjectDocConflict)
-        );
-        for removed in [
-            "CX039",
-            "codex-agents-large",
-            "CX042",
-            "codex-agents-override",
-        ] {
-            assert_eq!(LintRule::from_code_or_name(removed), None, "{removed}");
-        }
-    }
-
-    #[test]
-    fn g005_pre_rename_name_resolves_as_legacy_alias() {
-        assert_eq!(
-            LintRule::from_code_or_name("security-md-missing"),
-            Some(LintRule::SecurityMdMissing)
-        );
-        assert_eq!(LintRule::SecurityMdMissing.code(), "G005");
-        assert_eq!(
-            LintRule::SecurityMdMissing.name(),
-            "security-policy-missing"
-        );
     }
 
     #[test]
     fn every_rule_round_trips() {
+        let mut canonical_identifiers = HashSet::new();
         for rule in ALL_RULES {
+            assert!(canonical_identifiers.insert(rule.code()));
+            assert!(canonical_identifiers.insert(rule.name()));
             assert_eq!(LintRule::from_code_or_name(rule.code()), Some(*rule));
             assert_eq!(LintRule::from_code_or_name(rule.name()), Some(*rule));
         }
+        assert_eq!(canonical_identifiers.len(), 2 * ALL_RULES.len());
     }
 
     #[test]
@@ -1488,11 +1460,11 @@ mod tests {
 
         assert_eq!(
             documented.len(),
-            ACTIVE_RULES.len(),
-            "docs/rules.md must document every active rule code"
+            ALL_RULES.len(),
+            "docs/rules.md must document every live rule code"
         );
 
-        for rule in &*ACTIVE_RULES {
+        for rule in ALL_RULES {
             let documented_rule = documented.get(rule.code()).unwrap_or_else(|| {
                 panic!(
                     "docs/rules.md is missing {} ({}) from the rule registry",
@@ -1508,6 +1480,25 @@ mod tests {
                     rule.code()
                 );
             }
+            assert_eq!(
+                documented_rule.mode,
+                rule.applicability().documentation_label(),
+                "docs/rules.md:{} gives {} the wrong mode/surface",
+                documented_rule.line_number,
+                rule.code()
+            );
+            let expected_default = match rule.default_severity() {
+                DefaultSeverity::Error => "error",
+                DefaultSeverity::Warning => "warn",
+                DefaultSeverity::Suppressed => "suppressed",
+            };
+            assert_eq!(
+                documented_rule.default,
+                expected_default,
+                "docs/rules.md:{} gives {} the wrong default severity",
+                documented_rule.line_number,
+                rule.code()
+            );
         }
 
         for (code, documented_rule) in documented {
@@ -1529,32 +1520,170 @@ mod tests {
         }
     }
 
+    fn validator_sources() -> Vec<std::path::PathBuf> {
+        fn visit(directory: &std::path::Path, sources: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(directory).expect("validator directory is readable") {
+                let entry = entry.expect("validator directory entry is readable");
+                let path = entry.path();
+                if path.is_dir() {
+                    visit(&path, sources);
+                } else if path.extension().is_some_and(|extension| extension == "rs")
+                    && path.file_name().is_none_or(|name| name != "tests.rs")
+                {
+                    sources.push(path);
+                }
+            }
+        }
+
+        let mut sources = Vec::new();
+        visit(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/validators"),
+            &mut sources,
+        );
+        sources.sort();
+        sources
+    }
+
+    fn production_source(source: &str) -> &str {
+        let test_module =
+            Regex::new(r"#\[cfg\(test\)\]\s*mod\s+").expect("test-module regex is valid");
+        test_module
+            .find(source)
+            .map_or(source, |matched| &source[..matched.start()])
+    }
+
     #[test]
-    fn default_suppressed_count() {
-        let suppressed: Vec<_> = ACTIVE_RULES
-            .iter()
-            .filter(|r| r.default_severity() == DefaultSeverity::Suppressed)
+    fn every_live_rule_has_a_production_validator_owner() {
+        let sources: Vec<_> = validator_sources()
+            .into_iter()
+            .map(|path| {
+                let source = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+                (path, source)
+            })
             .collect();
+
+        for rule in ALL_RULES {
+            let token = format!("LintRule::{rule:?}");
+            assert!(
+                sources
+                    .iter()
+                    .any(|(_, source)| production_source(source).contains(&token)),
+                "{} ({}) has no production validator owner",
+                rule.code(),
+                rule.name()
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_positive_contracts_cover_exactly_the_live_registry() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut covered = HashSet::new();
+        let manifests = root.join("tests/fixtures/conformance/manifests");
+        for entry in std::fs::read_dir(&manifests).expect("conformance manifests are readable") {
+            let path = entry.expect("manifest entry is readable").path();
+            if path.extension().is_none_or(|extension| extension != "json") {
+                continue;
+            }
+            let manifest: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(&path)
+                    .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display())),
+            )
+            .unwrap_or_else(|error| panic!("invalid manifest {}: {error}", path.display()));
+            for diagnostic in manifest["expected_diagnostics"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{} has no expected_diagnostics", path.display()))
+            {
+                let code = diagnostic["code"].as_str().unwrap_or_else(|| {
+                    panic!("{} has a diagnostic without a code", path.display())
+                });
+                let name = diagnostic["name"].as_str().unwrap_or_else(|| {
+                    panic!("{} has a diagnostic without a name", path.display())
+                });
+                let rule = LintRule::from_code_or_name(code)
+                    .unwrap_or_else(|| panic!("{} expects unknown rule {code}", path.display()));
+                assert_eq!(rule.name(), name, "{}: {code}", path.display());
+                covered.insert(rule);
+            }
+        }
+
+        let inventory_path = root.join("tests/fixtures/rule-positive-contracts.json");
+        let inventory: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&inventory_path).expect("positive contract inventory is readable"),
+        )
+        .expect("positive contract inventory is valid JSON");
+        for contract in inventory["contracts"]
+            .as_array()
+            .expect("positive contract inventory has contracts")
+        {
+            let code = contract["code"].as_str().expect("contract has a code");
+            let owner = contract["owner"].as_str().expect("contract has an owner");
+            let fixture = contract["fixture"]
+                .as_str()
+                .expect("contract has a fixture");
+            assert!(owner.starts_with("src/validators/"), "{code}: {owner}");
+            assert!(!owner.ends_with("tests.rs"), "{code}: {owner}");
+            let rule = LintRule::from_code_or_name(code)
+                .unwrap_or_else(|| panic!("contract inventory contains unknown rule {code}"));
+            assert!(
+                covered.insert(rule),
+                "duplicate positive contract for {code}"
+            );
+
+            let source = std::fs::read_to_string(root.join(owner))
+                .unwrap_or_else(|error| panic!("cannot read owner {owner}: {error}"));
+            let token = format!("LintRule::{rule:?}");
+            assert!(
+                production_source(&source).contains(&token),
+                "{code} contract owner {owner} does not contain a production {token} reference"
+            );
+
+            let (fixture_path, test_name) = fixture
+                .split_once('#')
+                .unwrap_or_else(|| panic!("{code} fixture must be path#test_name: {fixture}"));
+            assert!(
+                fixture_path.starts_with("src/validators/") || fixture_path == "tests/cli.rs",
+                "{code}: {fixture}"
+            );
+            assert_ne!(fixture_path, "src/diagnostic.rs", "{code}: {fixture}");
+            let fixture_source = std::fs::read_to_string(root.join(fixture_path))
+                .unwrap_or_else(|error| panic!("cannot read fixture {fixture_path}: {error}"));
+            let signature = format!("fn {test_name}(");
+            let test_position = fixture_source.find(&signature).unwrap_or_else(|| {
+                panic!("{code} fixture {fixture} does not name an existing test")
+            });
+            let annotation = fixture_source[..test_position]
+                .rfind("#[test]")
+                .unwrap_or_else(|| panic!("{code} fixture {fixture} is not a #[test] function"));
+            assert!(
+                !fixture_source[annotation..test_position].contains("fn "),
+                "{code} fixture {fixture} resolves to the wrong #[test] annotation"
+            );
+        }
+
+        let live: HashSet<_> = ALL_RULES.iter().copied().collect();
         assert_eq!(
-            suppressed.len(),
-            2,
-            "Expected 2 default-suppressed rules, got {}",
-            suppressed.len()
+            covered, live,
+            "positive contract inventory drifted from ALL_RULES"
         );
     }
 
     #[test]
-    fn default_warning_count() {
-        let warnings: Vec<_> = ACTIVE_RULES
+    fn severity_partition_covers_the_live_registry() {
+        let errors = ALL_RULES
             .iter()
-            .filter(|r| r.default_severity() == DefaultSeverity::Warning)
-            .collect();
-        assert_eq!(
-            warnings.len(),
-            121,
-            "Expected 121 active default-warning rules, got {}",
-            warnings.len()
-        );
+            .filter(|rule| rule.default_severity() == DefaultSeverity::Error)
+            .count();
+        let warnings = ALL_RULES
+            .iter()
+            .filter(|rule| rule.default_severity() == DefaultSeverity::Warning)
+            .count();
+        let suppressed = ALL_RULES
+            .iter()
+            .filter(|rule| rule.default_severity() == DefaultSeverity::Suppressed)
+            .count();
+        assert_eq!(errors + warnings + suppressed, ALL_RULES.len());
     }
 
     #[test]
@@ -1642,7 +1771,7 @@ mod tests {
 
     #[test]
     fn is_too_long_matches_exactly_four() {
-        let too_long: Vec<_> = ACTIVE_RULES.iter().filter(|r| r.is_too_long()).collect();
+        let too_long: Vec<_> = ALL_RULES.iter().filter(|r| r.is_too_long()).collect();
         assert_eq!(
             too_long.len(),
             4,
@@ -1666,7 +1795,7 @@ mod tests {
 
     #[test]
     fn autofixable_count() {
-        let fixable: Vec<_> = ACTIVE_RULES.iter().filter(|r| r.is_autofixable()).collect();
+        let fixable: Vec<_> = ALL_RULES.iter().filter(|r| r.is_autofixable()).collect();
         assert_eq!(
             fixable.len(),
             10,
@@ -1700,20 +1829,6 @@ mod tests {
         assert_eq!(
             LintRule::AgentDescRedundant.default_severity(),
             DefaultSeverity::Warning
-        );
-    }
-
-    #[test]
-    fn default_error_count() {
-        let errors: Vec<_> = ACTIVE_RULES
-            .iter()
-            .filter(|r| r.default_severity() == DefaultSeverity::Error)
-            .collect();
-        assert_eq!(
-            errors.len(),
-            174,
-            "Expected 174 default-error rules, got {}",
-            errors.len()
         );
     }
 

@@ -9,12 +9,10 @@ include!(concat!(
 ));
 
 #[test]
-fn retired_identifier_corpora_are_disjoint() {
+fn retired_identifier_corpus_is_unique() {
+    let mut identifiers = std::collections::HashSet::new();
     for identifier in RETIRED_IDENTIFIERS {
-        assert!(
-            !SOFT_RETIRED_IDENTIFIERS.contains(identifier),
-            "{identifier}"
-        );
+        assert!(identifiers.insert(identifier), "{identifier}");
     }
 }
 
@@ -534,7 +532,7 @@ fn s037_cli_accepts_repository_relative_json_reference() {
 }
 
 #[test]
-fn output_style_rules_preserve_runtime_coercion_metadata_and_o005_retirement() {
+fn output_style_rules_preserve_runtime_coercion_and_metadata() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
     let output_styles = tmp.path().join(".claude/output-styles/nested");
@@ -580,23 +578,6 @@ fn output_style_rules_preserve_runtime_coercion_metadata_and_o005_retirement() {
             .contains("sk_this-value-must-not-appear")
             && !diagnostic.to_string().contains("unknown-secret-shaped-key")
     }));
-
-    for arguments in [
-        vec!["--only", "O005", "."],
-        vec!["--pedantic", "--only", "style-name-long", "."],
-        vec!["--all", "--only", "O005", "."],
-    ] {
-        let output = run_in(tmp.path(), &arguments);
-        assert!(
-            output.status.success(),
-            "retired O005 must be inert for {arguments:?}: {}",
-            stderr(&output)
-        );
-        assert!(
-            stderr(&output).is_empty(),
-            "unexpected O005 output for {arguments:?}"
-        );
-    }
 }
 
 #[test]
@@ -3114,114 +3095,23 @@ fn json_reports_focused_rule_selection_and_only_emits_selected_rules() {
 }
 
 #[test]
-fn json_focused_retired_rules_are_reported_but_remain_inert() {
+fn retired_and_migrated_selectors_are_usage_errors() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
-    let skill = tmp.path().join(".claude/skills/tools/SKILL.md");
-    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    std::fs::write(
-        skill,
-        "---\nname: tools\ndescription: Use when exercising focused active and retired tool-rule selection\nallowed-tools: UnknownTool\n---\nBody\n",
-    )
-    .unwrap();
-    std::fs::create_dir_all(tmp.path().join(".claude/output-styles")).unwrap();
-    std::fs::write(
-        tmp.path().join(".claude/output-styles/long.md"),
-        format!(
-            "---\nname: {}\ndescription: Good\n---\nBody\n",
-            "long".repeat(17)
-        ),
-    )
-    .unwrap();
-
-    for (arguments, expected_code, expected_name) in [
-        (
-            vec!["--format", "json", "--only", "S045", "."],
-            "S045",
-            "tools-list-syntax",
-        ),
-        (
-            vec![
-                "--format",
-                "json",
-                "--pedantic",
-                "--only",
-                "tools-list-syntax",
-                ".",
-            ],
-            "S045",
-            "tools-list-syntax",
-        ),
-        (
-            vec!["--format", "json", "--all", "--only", "S045", "."],
-            "S045",
-            "tools-list-syntax",
-        ),
-        (
-            vec!["--format", "json", "--only", "O005", "."],
-            "O005",
-            "style-name-long",
-        ),
-        (
-            vec![
-                "--format",
-                "json",
-                "--pedantic",
-                "--only",
-                "style-name-long",
-                ".",
-            ],
-            "O005",
-            "style-name-long",
-        ),
-        (
-            vec!["--format", "json", "--all", "--only", "O005", "."],
-            "O005",
-            "style-name-long",
-        ),
-    ] {
-        let output = run_in(tmp.path(), &arguments);
-        assert!(
-            output.status.success(),
-            "arguments {arguments:?}: {}",
+    for identifier in RETIRED_IDENTIFIERS {
+        let output = run_in(tmp.path(), &["--only", identifier, "."]);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{identifier}: {}",
             stderr(&output)
         );
-        let report = json(&output);
-        assert_eq!(report["diagnostics"], serde_json::json!([]));
-        assert_eq!(report["counts"]["suppressed"], 0);
-        let selected = report["selected_rules"].as_array().unwrap();
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0]["code"], expected_code);
-        assert_eq!(selected[0]["name"], expected_name);
+        assert!(
+            stderr(&output).contains(identifier),
+            "{identifier}: {}",
+            stderr(&output)
+        );
     }
-
-    let arguments = [
-        "--format",
-        "json",
-        "--all",
-        "--only",
-        "S045,S040,tools-list-syntax,S045",
-        ".",
-    ];
-    let first = run_in(tmp.path(), &arguments);
-    let second = run_in(tmp.path(), &arguments);
-    assert_eq!(first.status.code(), Some(1), "stderr: {}", stderr(&first));
-    assert_eq!(first.stdout, second.stdout);
-    let report = json(&first);
-    assert_eq!(
-        report["selected_rules"],
-        serde_json::json!([
-            { "code": "S040", "name": "tools-unknown" },
-            { "code": "S045", "name": "tools-list-syntax" }
-        ])
-    );
-    assert!(
-        report["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|diagnostic| diagnostic["code"] == "S040")
-    );
 }
 
 #[test]
@@ -5042,83 +4932,6 @@ fn g005_per_file_override_suppresses_on_security_md_subject() {
 }
 
 #[test]
-fn g005_legacy_name_suppresses_and_selects_with_canonical_identity() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_git(tmp.path());
-    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
-    std::fs::write(
-        tmp.path().join("agent-lint.toml"),
-        "[lint]\nsuppress = [\"security-md-missing\"]\n",
-    )
-    .unwrap();
-
-    let suppressed = run_in(tmp.path(), &["--only", "G005", "."]);
-    let suppressed_stderr = stderr(&suppressed);
-    assert!(
-        suppressed.status.success(),
-        "legacy suppress name must load: {suppressed_stderr}"
-    );
-    assert!(
-        !suppressed_stderr.contains("security-policy-missing"),
-        "stderr: {suppressed_stderr}"
-    );
-    assert!(
-        suppressed_stderr.contains("(1 suppressed)"),
-        "stderr: {suppressed_stderr}"
-    );
-
-    let tmp_only = tempfile::tempdir().unwrap();
-    init_git(tmp_only.path());
-    std::fs::create_dir(tmp_only.path().join(".claude-plugin")).unwrap();
-
-    let text = run_in(tmp_only.path(), &["--only", "security-md-missing", "."]);
-    let text_stderr = stderr(&text);
-    assert!(text.status.success(), "stderr: {text_stderr}");
-    assert!(
-        text_stderr.contains("warning[G005/security-policy-missing]"),
-        "stderr: {text_stderr}"
-    );
-    assert!(
-        !text_stderr.contains("security-md-missing"),
-        "alias must not appear in output: {text_stderr}"
-    );
-
-    let json_out = run_in(
-        tmp_only.path(),
-        &["--format", "json", "--only", "security-md-missing", "."],
-    );
-    assert!(json_out.status.success(), "stderr: {}", stderr(&json_out));
-    let report = json(&json_out);
-    assert_eq!(
-        report["selected_rules"],
-        serde_json::json!([{ "code": "G005", "name": "security-policy-missing" }])
-    );
-    assert_eq!(report["diagnostics"][0]["code"], "G005");
-    assert_eq!(report["diagnostics"][0]["name"], "security-policy-missing");
-
-    let tmp_override = tempfile::tempdir().unwrap();
-    init_git(tmp_override.path());
-    std::fs::create_dir(tmp_override.path().join(".claude-plugin")).unwrap();
-    std::fs::write(
-        tmp_override.path().join("agent-lint.toml"),
-        "[lint]\n[[lint.overrides]]\nfiles = [\"SECURITY.md\"]\nsuppress = [\"security-md-missing\"]\n",
-    )
-    .unwrap();
-
-    let override_out = run_in(tmp_override.path(), &["--only", "G005", "."]);
-    let override_stderr = stderr(&override_out);
-    assert!(override_out.status.success(), "stderr: {override_stderr}");
-    assert!(
-        !override_stderr.contains("security-policy-missing"),
-        "legacy per-file alias must suppress G005: {override_stderr}"
-    );
-    assert!(
-        override_stderr.contains("(1 suppressed)"),
-        "stderr: {override_stderr}"
-    );
-}
-
-#[test]
 fn only_preserves_configured_severity() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
@@ -6121,7 +5934,7 @@ exclude = [".claude/settings.json", ".claude/settings.local.json"]
 suppress = ["T001"]
 [[lint.overrides]]
 files = [".claude/settings.local.json"]
-suppress = ["channels-enabled-invalid"]
+suppress = ["channels-enabled-unsupported"]
 reason = "managed policy is tracked elsewhere"
 "#,
     )
@@ -6824,7 +6637,7 @@ fn cx060_cli_covers_modes_platform_policy_locations_and_autofix() {
 }
 
 #[test]
-fn cx046_to_cx063_plugin_manifest_cli_covers_modes_policy_locations_and_autofix() {
+fn codex_plugin_manifest_cli_covers_modes_policy_locations_and_autofix() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
     let manifest_dir = tmp.path().join(".codex-plugin");
@@ -6854,7 +6667,7 @@ fn cx046_to_cx063_plugin_manifest_cli_covers_modes_policy_locations_and_autofix(
     std::fs::write(&manifest_path, &original).unwrap();
 
     let rule_filter =
-        "CX046,CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX058,CX059,CX063";
+        "CX047,CX048,CX049,CX050,CX051,CX052,CX053,CX054,CX055,CX056,CX057,CX059,CX063";
     let expected_codes = [
         "CX047", "CX049", "CX050", "CX051", "CX052", "CX053", "CX054", "CX055", "CX056", "CX057",
         "CX057", "CX059", "CX063",
@@ -6901,8 +6714,6 @@ fn cx046_to_cx063_plugin_manifest_cli_covers_modes_policy_locations_and_autofix(
             !serialized.contains(tmp.path().to_string_lossy().as_ref()),
             "absolute path leaked: {serialized}"
         );
-        assert!(!codes.contains(&"CX046"));
-        assert!(!codes.contains(&"CX058"));
     }
 
     let by_code = run_in(tmp.path(), &["--format", "json", "--only", "CX049", "."]);
@@ -6913,26 +6724,6 @@ fn cx046_to_cx063_plugin_manifest_cli_covers_modes_policy_locations_and_autofix(
     assert_eq!(by_code.stdout, by_name.stdout);
     assert_eq!(json(&by_code)["diagnostics"].as_array().unwrap().len(), 1);
     assert_eq!(json(&by_code)["diagnostics"][0]["code"], "CX049");
-
-    for (selector, code, name) in [
-        ("CX046", "CX046", "codex-plugin-path"),
-        ("CX058", "CX058", "codex-plugin-hooks"),
-        ("codex-plugin-path", "CX046", "codex-plugin-path"),
-        ("codex-plugin-hooks", "CX058", "codex-plugin-hooks"),
-    ] {
-        let output = run_in(tmp.path(), &["--format", "json", "--only", selector, "."]);
-        assert!(
-            output.status.success(),
-            "selector {selector}: {}",
-            stderr(&output)
-        );
-        let report = json(&output);
-        assert_eq!(report["diagnostics"], serde_json::json!([]));
-        assert_eq!(
-            report["selected_rules"],
-            serde_json::json!([{ "code": code, "name": name }])
-        );
-    }
 
     let first = run_in(
         tmp.path(),
@@ -7287,7 +7078,7 @@ fn mcp_cx_diagnostics_never_leak_token_shaped_server_names_through_cli() {
 }
 
 #[test]
-fn cx040_cx045_honor_visible_budget_policy_and_legacy_aliases() {
+fn cx040_cx045_honor_visible_budget_policy_and_canonical_selectors() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
     std::fs::create_dir(tmp.path().join(".codex")).unwrap();
@@ -7317,7 +7108,7 @@ fn cx040_cx045_honor_visible_budget_policy_and_legacy_aliases() {
         serde_json::json!(["AGENTS.md"])
     );
 
-    for selector in ["CX040", "codex-project-doc-budget", "codex-agents-limit"] {
+    for selector in ["CX040", "codex-project-doc-budget"] {
         let report = json(&run_in(
             tmp.path(),
             &["--format", "json", "--only", selector, "."],
@@ -7329,11 +7120,7 @@ fn cx040_cx045_honor_visible_budget_policy_and_legacy_aliases() {
         );
         assert_eq!(report["diagnostics"][0]["code"], "CX040");
     }
-    for selector in [
-        "CX045",
-        "codex-project-doc-conflict",
-        "codex-agents-conflict",
-    ] {
+    for selector in ["CX045", "codex-project-doc-conflict"] {
         let report = json(&run_in(
             tmp.path(),
             &["--format", "json", "--only", selector, "."],
@@ -8368,93 +8155,26 @@ fn unfinished_work_markers_report_structured_span_and_ignore_prose() {
     assert!(after.contains("Do not hack around the permission system."));
 }
 
-#[test]
-fn only_s042_is_accepted_and_clean_in_every_mode() {
-    // S042 is soft-retired: its code still parses for `--only`, but it never
-    // fires — even on a fixture (dmi:true + empty description) that formerly
-    // produced it. S005 owns the empty description and is filtered out here.
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
-    init_git(root);
-    let skill = root.join(".claude/skills/manual/SKILL.md");
-    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    std::fs::write(
-        &skill,
-        "---\nname: manual\ndescription:\ndisable-model-invocation: true\n---\nBody content for the manual skill.\n",
-    )
-    .unwrap();
-
-    for extra in [&[][..], &["--pedantic"][..], &["--all"][..]] {
-        let mut args = vec!["--format", "json", "--only", "S042"];
-        args.extend_from_slice(extra);
-        args.push(".");
-        let output = run_in(root, &args);
-        let value = json(&output);
-        assert_eq!(
-            output.status.code(),
-            Some(0),
-            "--only S042 {extra:?} must exit clean: {value}"
-        );
-        assert!(
-            value["diagnostics"].as_array().unwrap().is_empty(),
-            "--only S042 {extra:?} must produce no diagnostics: {value}"
-        );
-    }
-}
-
-/// The #342 Problem-1 evidence fixture: a valid, documented block-list
+/// A valid, documented block-list
 /// `allowed-tools` with a quoted scoped entry and a trailing comment.
-const S045_EVIDENCE_SKILL: &str = "---\nname: manual\ndescription: Use when exercising documented allowed-tools list forms\nallowed-tools:\n  - \"Bash(git add:*)\"\n  - Read # file reads\n  - Write\n---\nBody content for the manual skill.\n";
-
-#[test]
-fn only_s045_is_accepted_and_clean_in_every_mode() {
-    // S045 is soft-retired (#342): a YAML list is a documented accepted
-    // `allowed-tools` spelling. Its identifiers still parse for `--only`, but
-    // like the other retired rules (O005) it never fires — even on the
-    // block-list fixture that formerly produced it.
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
-    init_git(root);
-    let skill = root.join(".claude/skills/manual/SKILL.md");
-    std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    std::fs::write(&skill, S045_EVIDENCE_SKILL).unwrap();
-
-    for arguments in [
-        vec!["--only", "S045", "."],
-        vec!["--pedantic", "--only", "tools-list-syntax", "."],
-        vec!["--all", "--only", "S045", "."],
-    ] {
-        let output = run_in(root, &arguments);
-        assert!(
-            output.status.success(),
-            "retired S045 must be inert for {arguments:?}: {}",
-            stderr(&output)
-        );
-        assert!(
-            stderr(&output).is_empty(),
-            "unexpected S045 output for {arguments:?}"
-        );
-    }
-}
+const ALLOWED_TOOLS_LIST_SKILL: &str = "---\nname: manual\ndescription: Use when exercising documented allowed-tools list forms\nallowed-tools:\n  - \"Bash(git add:*)\"\n  - Read # file reads\n  - Write\n---\nBody content for the manual skill.\n";
 
 #[test]
 fn autofix_leaves_documented_allowed_tools_list_byte_identical() {
-    // #342: `--autofix` can no longer rewrite tool lists. The Problem-1
-    // fixture (whose S045 autofix used to produce invalid YAML with the
-    // comment swallowed into the value) must stay byte-identical and lint
+    // `--autofix` must leave an accepted tool list byte-identical and lint it
     // X001-clean afterwards.
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     init_git(root);
     let skill = root.join(".claude/skills/manual/SKILL.md");
     std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
-    std::fs::write(&skill, S045_EVIDENCE_SKILL).unwrap();
+    std::fs::write(&skill, ALLOWED_TOOLS_LIST_SKILL).unwrap();
 
     let fix = run_in(root, &["--autofix", "."]);
     assert_eq!(fix.status.code(), Some(0), "stderr: {}", stderr(&fix));
     assert_eq!(
         std::fs::read_to_string(&skill).unwrap(),
-        S045_EVIDENCE_SKILL,
+        ALLOWED_TOOLS_LIST_SKILL,
         "autofix must leave the documented list form byte-identical"
     );
 

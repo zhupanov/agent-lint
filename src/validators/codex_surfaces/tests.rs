@@ -64,7 +64,6 @@ fn alternate_and_nested_recognized_manifests_are_valid_roots() {
         "alternate and nested valid manifests must be clean: {:?}",
         diag.errors()
     );
-    assert!(!has_rule(&diag, LintRule::CodexPluginManifestPath));
 }
 
 #[test]
@@ -296,11 +295,11 @@ fn component_field_shapes_and_type_errors() {
     assert!(has_rule(&diag, LintRule::CodexPluginPathPrefix));
 }
 
-// ── CX058 soft-retire: hooks are supported ───────────────────────────────
+// ── hooks are supported ──────────────────────────────────────────────────
 
 #[test]
 #[serial_test::serial]
-fn hooks_are_supported_no_cx058() {
+fn hooks_are_supported() {
     let base = r#"{"name":"my-plugin","description":"x","hooks":HOOKS}"#;
     for hooks in [
         r#""./hooks/hooks.json""#,
@@ -309,7 +308,6 @@ fn hooks_are_supported_no_cx058() {
         r#"[{"event":"PreToolUse"}]"#,
     ] {
         let diag = run_manifest(&base.replace("HOOKS", hooks));
-        assert!(!has_rule(&diag, LintRule::CodexPluginHooksUnsupported));
         assert!(
             diag.diagnostics().is_empty(),
             "hooks={hooks} clean: {:?}",
@@ -330,7 +328,6 @@ fn hooks_are_supported_no_cx058() {
             "hooks={hooks} must emit {}",
             rule.code()
         );
-        assert!(!has_rule(&diag, LintRule::CodexPluginHooksUnsupported));
     }
 }
 

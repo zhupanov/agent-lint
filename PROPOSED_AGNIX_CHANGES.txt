@@ -1,4 +1,4 @@
-  Final Updated Proposal — 49 Rules, Zero Duplicates
+  Final Updated Proposal — 47 Rules, Zero Duplicates
 
   Context: agnix at /Users/zhupanov/agnix1 branch main@cb3acbe, 399 rules. agent-lint at /Users/zhupanov/agent-lint1, 104 rules. Two successive duplicate-audit
   passes (each with 3 research agents + 3 validation reviewers = 6 expert passes per audit) confirmed zero duplicates among the 49 proposed rules.
@@ -41,15 +41,13 @@
   path exists. Partial overlap with REF-002 when users write refs as markdown links; acceptable redundancy on that edge case.
 
   ---
-  Issue #4 — Complete userConfig validation in plugin.json (6 rules)
+  Issue #4 — Complete userConfig validation in plugin.json (5 rules)
 
   Why: agnix has only CC-PL-012 (key-name schema). No rule validates entry object shape. Verified at plugin.rs:318-343.
 
   What: Extend crates/agnix-core/src/rules/plugin.rs:
   - U001 → CC-PL-0XX userConfig must be an object — error.
   - U002 → CC-PL-0XX userConfig entry missing/invalid description field — error.
-  - U003 → CC-PL-0XX userConfig key has no corresponding $CLAUDE_PLUGIN_OPTION_<KEY> reference in scripts/**/*.sh — error. Cross-file grounding; follow
-  schemas::agents_md / schemas::cross_platform pattern.
   - U004 → CC-PL-0XX userConfig sensitive must be boolean — error.
   - U005 → CC-PL-0XX userConfig entry missing/invalid title — error.
   - U006 → CC-PL-0XX userConfig entry missing/invalid type — error.
@@ -131,14 +129,13 @@
   - S050 skill description content is vague/generic — warn. Distinct from AS-019 (vague NAMES).
   - S054 description keywords not reflected in body — warn.
 
-  Semantic naming (2 rules):
+  Semantic naming (1 rule):
   - S053 terminology inconsistency (3+ synonym variants) — warn.
-  - S049 skill name not in gerund form — default-suppressed (depends on Issue #8). Distinct from AS-019.
 
   ---
   Issue #8 — Add default-suppressed rule tier (feature, 0 new rules)
 
-  Why: S049 and S047 in Issue #7 are too opinionated to ship as default-warn. agent-lint has 3 default-severity tiers (error/warn/suppressed); agnix currently has 2.
+  Why: S047 in Issue #7 is too opinionated to ship as default-warn. agent-lint has 3 default-severity tiers (error/warn/suppressed); agnix currently has 2.
 
   What: Extend severity model in crates/agnix-core/src/config.rs:
   - Add Severity::Suppressed variant (rule defined but does not fire unless explicitly enabled in .agnix.toml).
@@ -148,12 +145,12 @@
 
   Risk: Touches config model; open as RFC-shaped issue first.
 
-  Dependency: S047 and S049 ship at default-warn until #8 lands; re-classify as suppressed after.
+  Dependency: S047 ships at default-warn until #8 lands; re-classify as suppressed after.
 
   ---
   Summary
 
-  8 issues spanning 49 confirmed-gap rules + 1 config-model feature + 1 doc drift fix.
+  8 issues spanning 47 confirmed-gap rules + 1 config-model feature + 1 doc drift fix.
 
   ┌─────┬────────────────────────────┬─────────────┬────────────┐
   │  #  │           Title            │    Rules    │ Difficulty │
@@ -164,13 +161,13 @@
   ├─────┼────────────────────────────┼─────────────┼────────────┤
   │ 3   │ CLAUDE.md canonical refs   │ 1           │ S          │
   ├─────┼────────────────────────────┼─────────────┼────────────┤
-  │ 4   │ userConfig depth           │ 6           │ M          │
+  │ 4   │ userConfig depth           │ 5           │ M          │
   ├─────┼────────────────────────────┼─────────────┼────────────┤
   │ 5   │ marketplace.json validator │ 7           │ M          │
   ├─────┼────────────────────────────┼─────────────┼────────────┤
   │ 6   │ Plugin hygiene bundle      │ 10          │ M          │
   ├─────┼────────────────────────────┼─────────────┼────────────┤
-  │ 7   │ Skill content heuristics   │ 22          │ L          │
+  │ 7   │ Skill content heuristics   │ 21          │ L          │
   ├─────┼────────────────────────────┼─────────────┼────────────┤
   │ 8   │ Default-suppressed tier    │ 0 (feature) │ L          │
   └─────┴────────────────────────────┴─────────────┴────────────┘

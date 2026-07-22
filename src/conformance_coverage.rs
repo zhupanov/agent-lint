@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::rules::ACTIVE_RULES;
+    use crate::rules::ALL_RULES;
     use std::collections::BTreeSet;
     use std::path::Path;
 
@@ -50,7 +50,6 @@ mod tests {
         ("X003", "pre-floor gap, tracked by this issue's baseline"),
         ("X004", "pre-floor gap, tracked by this issue's baseline"),
         ("X005", "pre-floor gap, tracked by this issue's baseline"),
-        ("S001", "pre-floor gap, tracked by this issue's baseline"),
         ("S002", "pre-floor gap, tracked by this issue's baseline"),
         ("S003", "pre-floor gap, tracked by this issue's baseline"),
         ("S004", "pre-floor gap, tracked by this issue's baseline"),
@@ -106,8 +105,6 @@ mod tests {
         ("O002", "pre-floor gap, tracked by this issue's baseline"),
         ("O004", "pre-floor gap, tracked by this issue's baseline"),
         ("CX045", "pre-floor gap, tracked by this issue's baseline"),
-        ("CX046", "pre-floor gap, tracked by this issue's baseline"),
-        ("CX058", "pre-floor gap, tracked by this issue's baseline"),
         (
             "CR-SK-001",
             "pre-floor gap, tracked by this issue's baseline",
@@ -162,7 +159,7 @@ mod tests {
             .collect();
         let mut missing = Vec::new();
         let mut stale_baseline = Vec::new();
-        for rule in &*ACTIVE_RULES {
+        for rule in ALL_RULES {
             let code = rule.code();
             if code == "X999" {
                 continue; // Documented internal sentinel.

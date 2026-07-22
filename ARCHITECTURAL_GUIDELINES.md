@@ -43,7 +43,9 @@ validation path again.
 - Why: examples in prose do not protect rule behavior, severity resolution,
   mode dispatch, or autofix convergence.
 - Guidance: reproduce the old failure in a unit or integration test, then
-  verify the corrected diagnostic code, severity, message, or file content.
+  verify the canonical diagnostic identity and, where relevant, severity,
+  subject, message, or file content. Message text or counts alone do not prove
+  that the intended rule emitted.
   Prefer a small temporary repository over mocks of filesystem behavior.
 - Deviate when: the change is documentation-only or the behavior depends on an
   external service that cannot be represented locally; describe the manual
@@ -93,7 +95,7 @@ validation path again.
 - Guidance: validators should not parse CLI arguments, select lint modes,
   decide exit codes, print diagnostics directly, or apply fixes. Share lexical
   and traversal behavior through focused helpers such as `frontmatter.rs`,
-  `fence.rs`, `validators/common.rs`, and `validators/walk.rs`.
+  `fence.rs`, `validators/common.rs`, and `traversal.rs`.
 - Deviate when: a validator needs a small domain-specific parser that has no
   second consumer; keep it private to that validator.
 
@@ -119,25 +121,28 @@ validation path again.
 
 ## Rule evolution
 
-### G-Rule-1: Treat a rule addition as a registry-wide change
+### G-Rule-1: Treat the full rule lifecycle as a registry-wide change
 
 - Why: a `LintRule` participates in lookup, configuration, default severity,
-  strictness modes, documentation, and possibly autofix.
-- Guidance: update the enum, code and name mappings, compiled default,
-  `ALL_RULES`, validator dispatch, tests, and `docs/rules.md` together. Add an
-  autofix mapping only when the transformation is deterministic and safe.
-- Deviate when: no new rule is being added, such as broadening the inputs of an
-  existing rule without changing its contract.
+  strictness modes, validator ownership, positive and negative contracts,
+  documentation, and possibly autofix.
+- Guidance: add, change, or remove the enum variant, canonical code/name,
+  compiled default, `ALL_RULES`, reachable validator, explicit positive
+  identity test, negative boundary test, documentation, and autofix decision
+  together. An autofix mapping exists only when the transformation is
+  deterministic and safe.
+- Deviate when: an implementation refactor leaves the observable rule contract
+  unchanged; preserve the existing lifecycle evidence.
 
-### G-Compat-1: Evolve public rule and CLI contracts additively
+### G-Compat-1: Retire rule identities completely and never reuse them
 
-- Why: users persist rule codes and names in `agent-lint.toml` and branch on
-  process exit status in CI.
-- Guidance: do not reuse a code or name for new semantics. Prefer a new rule
-  over silently redefining an old one. Preserve exit-code meanings and stable
-  diagnostic prefixes unless a migration is deliberate and documented.
-- Deviate when: correcting a contract that is unsafe or unusable; include a
-  migration note and update every first-party consumer in the same change.
+- Why: compatibility-only identities create registry entries with no reachable
+  validator and make public accounting untrustworthy.
+- Guidance: removed and renamed rules retain no runtime lookup aliases. Never
+  reuse a retired code or name for new semantics; keep migration history in the
+  changelog and update every first-party selector in the same change. Preserve
+  exit-code meanings and stable diagnostic prefixes for current rules.
+- Deviate when: none for runtime rule aliases or code reuse.
 
 ### G-Diag-1: Report actionable facts with stable identity
 
@@ -281,9 +286,12 @@ validation path again.
 
 - Why: rule totals, source line numbers, and duplicated defaults become stale
   without a compiler error.
-- Guidance: refer to code by symbol or module, derive counts from `ALL_RULES`,
-  and keep exact defaults in one code owner. Sweep README and `docs/` when
-  renaming a rule, flag, config key, module, or script.
+- Guidance: refer to code by symbol or module, derive exact counts from the
+  sole live `ALL_RULES` registry, and keep exact defaults in one code owner.
+  Reserve approximate wording such as `~300` for marketing prose; generate or
+  mechanically check exact totals, prefix tables, rule rows, and autofix
+  denominators. Sweep README and `docs/` when renaming a rule, flag, config key,
+  module, or script.
 - Deviate when: a literal is itself part of the public contract and tests pin
   the documentation to the implementation.
 
