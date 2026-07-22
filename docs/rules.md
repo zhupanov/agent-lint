@@ -601,15 +601,17 @@ skipped best-effort because no scoped I/O rule owns them.
 R001 validates Claude's effective `paths` contract, not Rust `globset` syntax.
 A `paths` value may be a string or recursively nested arrays of strings. Agent
 Lint applies Claude's normalization order: recursive flatten; split top-level
-commas outside braces; recursive `{a,b}` expansion; trim/drop empty entries;
-strip one terminal `/**`; then accept each effective entry under node-ignore
-gitignore semantics (`**` remains the explicit universal form). A present
-`paths` value with any non-string leaf, a non-string/non-array top-level value,
-or zero effective non-empty entries emits one field-level R001 (fail closed:
-authors wanting an unconditional rule must omit `paths` or use `**`). Valid
-string entries in a mixed array are still normalized so a bad shape cannot hide
-a second invalid pattern. Identical effective-pattern failures within one file
-are deduplicated in first-source order.
+commas outside braces; recursive balanced `{a,b}` expansion (each `{` pairs with
+its matching `}`, and alternatives split only at commas at the current group
+depth; unmatched or empty `{}` groups stay literal); strip one terminal `/**`;
+drop entries that are empty after stripping; then accept each effective entry
+under node-ignore gitignore semantics (`**` remains the explicit universal
+form). A present `paths` value with any non-string leaf, a non-string/non-array
+top-level value, or zero effective non-empty entries emits one field-level R001
+(fail closed: authors wanting an unconditional rule must omit `paths` or use
+`**`). Valid string entries in a mixed array are still normalized so a bad shape
+cannot hide a second invalid pattern. Identical effective-pattern failures
+within one file are deduplicated in first-source order.
 
 Missing frontmatter is a valid unconditional rule. Attempted frontmatter that
 has no matching closer, invalid YAML, or a non-mapping non-null document emits
