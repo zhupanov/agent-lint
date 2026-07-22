@@ -414,6 +414,11 @@ fn collect_paths_source_strings(value: &YamlValue) -> Vec<&str> {
 }
 
 /// Claude's `Z2r`/`UHc` normalization plus terminal `/**` stripping.
+///
+/// Order: split top-level commas outside braces; recursively expand each
+/// balanced `{…}` group (pair each `{` with its matching `}`, split alternatives
+/// only at commas at the current group depth); strip one terminal `/**` from
+/// each entry; drop entries that are empty after stripping.
 fn normalize_claude_paths_string(input: &str) -> Vec<String> {
     split_top_level_commas(input)
         .into_iter()
@@ -465,16 +470,34 @@ fn expand_braces(input: &str) -> Vec<String> {
         return vec![input.to_string()];
     };
     let mut expanded = Vec::new();
-    for alternative in body.split(',') {
+    for alternative in split_brace_alternatives(body) {
         let candidate = format!("{prefix}{}{suffix}", alternative.trim());
         expanded.extend(expand_braces(&candidate));
     }
     expanded
 }
 
+/// Locate the first balanced `{…}` group. Unmatched braces and empty `{}`
+/// groups are non-expandable and are left as literal text for the node-ignore
+/// probe (which accepts every UTF-8 string pattern).
 fn split_first_brace_group(input: &str) -> Option<(&str, &str, &str)> {
     let start = input.find('{')?;
-    let end = input[start + 1..].find('}')? + start + 1;
+    let mut depth = 0isize;
+    let mut end = None;
+    for (offset, ch) in input[start..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(start + offset);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
     let prefix = &input[..start];
     let body = &input[start + 1..end];
     if body.is_empty() {
@@ -482,6 +505,26 @@ fn split_first_brace_group(input: &str) -> Option<(&str, &str, &str)> {
     }
     let suffix = &input[end + 1..];
     Some((prefix, body, suffix))
+}
+
+/// Split a brace-group body on commas that sit at depth 0 within that body.
+fn split_brace_alternatives(body: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut depth = 0isize;
+    for (offset, ch) in body.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&body[start..offset]);
+                start = offset + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&body[start..]);
+    parts
 }
 
 /// Claude's node-ignore compile probe never rejects a UTF-8 string pattern.
@@ -1082,12 +1125,124 @@ mod tests {
 
     #[test]
     fn claude_paths_normalization_matches_runtime_order() {
-        assert_eq!(
-            normalize_claude_paths_string("src/{a,b}/**, lib/**/*.rs"),
-            vec!["src/a", "src/b", "lib/**/*.rs"]
-        );
-        assert_eq!(normalize_claude_paths_string("**"), vec!["**"]);
-        assert_eq!(normalize_claude_paths_string("src/**"), vec!["src"]);
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "src/{a,b}/**, lib/**/*.rs",
+                &["src/a", "src/b", "lib/**/*.rs"],
+            ),
+            ("**", &["**"]),
+            ("src/**", &["src"]),
+            // Nested groups expand in deterministic source order; terminal
+            // `/**` is stripped after every expansion leaf.
+            ("src/{a,{b,c}}/**", &["src/a", "src/b", "src/c"]),
+            // Multiple sequential groups.
+            (
+                "src/{a,b}/{c,d}",
+                &["src/a/c", "src/a/d", "src/b/c", "src/b/d"],
+            ),
+            // Nested empty alternatives normalize to zero effective patterns.
+            ("{,{,}}", &[]),
+            ("{,}", &[]),
+            ("/**", &[]),
+            // Commas at each nesting depth.
+            ("{a,{b,c},d}", &["a", "b", "c", "d"]),
+            ("x{a,{b,c}}y", &["xay", "xby", "xcy"]),
+            // Top-level commas split before expansion (brace groups stay intact).
+            ("{a,b}, {c,{d,e}}", &["a", "b", "c", "d", "e"]),
+            // Unmatched / non-expandable braces remain literal.
+            ("{a", &["{a"]),
+            ("a}", &["a}"]),
+            ("{a,{b}", &["{a,{b}"]),
+            ("{}", &["{}"]),
+            // Non-empty nested expansion stays usable.
+            ("src/{foo,{bar,baz}}/**", &["src/foo", "src/bar", "src/baz"]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                normalize_claude_paths_string(input),
+                expected
+                    .iter()
+                    .map(|entry| (*entry).to_string())
+                    .collect::<Vec<_>>(),
+                "normalize_claude_paths_string({input:?})"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rules_nested_empty_brace_expansion_reports_field_level_r001() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/rules").unwrap();
+            fs::write(
+                ".claude/rules/nested-empty.md",
+                "---\npaths: \"{,{,}}\"\n---\nRule body\n",
+            )
+            .unwrap();
+            let diag = validate();
+            let findings: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|d| d.rule == LintRule::RulesGlobInvalid)
+                .collect();
+            assert_eq!(findings.len(), 1, "expected exactly one field-level R001");
+            let finding = findings[0];
+            assert_eq!(finding.suggestion.as_deref(), Some(R001_SUGGESTION));
+            assert_eq!(finding.evidence.as_deref(), Some("paths: empty"));
+            assert!(finding.location.is_some());
+            assert!(
+                !finding.message.contains("{,{,}}"),
+                "message must not disclose the raw pattern"
+            );
+            assert!(
+                finding
+                    .evidence
+                    .as_deref()
+                    .is_none_or(|evidence| !evidence.contains("{,{,}}")),
+                "evidence must not disclose the raw pattern"
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rules_non_empty_nested_brace_expansion_is_clean() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/rules").unwrap();
+            fs::write(
+                ".claude/rules/nested-ok.md",
+                "---\npaths: \"src/{a,{b,c}}/**\"\n---\nRule body\n",
+            )
+            .unwrap();
+            let diag = validate();
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::RulesGlobInvalid)
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rules_wrong_shape_still_reports_single_field_level_r001() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/rules").unwrap();
+            fs::write(
+                ".claude/rules/shape.md",
+                "---\npaths: {not: a string}\n---\nRule body\n",
+            )
+            .unwrap();
+            let diag = validate();
+            let findings: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|d| d.rule == LintRule::RulesGlobInvalid)
+                .collect();
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].evidence.as_deref(), Some("paths: wrong type"));
+        });
     }
 
     #[test]
