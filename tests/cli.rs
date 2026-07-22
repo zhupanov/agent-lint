@@ -3273,6 +3273,83 @@ fn g005_per_file_override_suppresses_on_security_md_subject() {
 }
 
 #[test]
+fn g005_legacy_name_suppresses_and_selects_with_canonical_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nsuppress = [\"security-md-missing\"]\n",
+    )
+    .unwrap();
+
+    let suppressed = run_in(tmp.path(), &["--only", "G005", "."]);
+    let suppressed_stderr = stderr(&suppressed);
+    assert!(
+        suppressed.status.success(),
+        "legacy suppress name must load: {suppressed_stderr}"
+    );
+    assert!(
+        !suppressed_stderr.contains("security-policy-missing"),
+        "stderr: {suppressed_stderr}"
+    );
+    assert!(
+        suppressed_stderr.contains("(1 suppressed)"),
+        "stderr: {suppressed_stderr}"
+    );
+
+    let tmp_only = tempfile::tempdir().unwrap();
+    init_git(tmp_only.path());
+    std::fs::create_dir(tmp_only.path().join(".claude-plugin")).unwrap();
+
+    let text = run_in(tmp_only.path(), &["--only", "security-md-missing", "."]);
+    let text_stderr = stderr(&text);
+    assert!(text.status.success(), "stderr: {text_stderr}");
+    assert!(
+        text_stderr.contains("warning[G005/security-policy-missing]"),
+        "stderr: {text_stderr}"
+    );
+    assert!(
+        !text_stderr.contains("security-md-missing"),
+        "alias must not appear in output: {text_stderr}"
+    );
+
+    let json_out = run_in(
+        tmp_only.path(),
+        &["--format", "json", "--only", "security-md-missing", "."],
+    );
+    assert!(json_out.status.success(), "stderr: {}", stderr(&json_out));
+    let report = json(&json_out);
+    assert_eq!(
+        report["selected_rules"],
+        serde_json::json!([{ "code": "G005", "name": "security-policy-missing" }])
+    );
+    assert_eq!(report["diagnostics"][0]["code"], "G005");
+    assert_eq!(report["diagnostics"][0]["name"], "security-policy-missing");
+
+    let tmp_override = tempfile::tempdir().unwrap();
+    init_git(tmp_override.path());
+    std::fs::create_dir(tmp_override.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp_override.path().join("agent-lint.toml"),
+        "[lint]\n[[lint.overrides]]\nfiles = [\"SECURITY.md\"]\nsuppress = [\"security-md-missing\"]\n",
+    )
+    .unwrap();
+
+    let override_out = run_in(tmp_override.path(), &["--only", "G005", "."]);
+    let override_stderr = stderr(&override_out);
+    assert!(override_out.status.success(), "stderr: {override_stderr}");
+    assert!(
+        !override_stderr.contains("security-policy-missing"),
+        "legacy per-file alias must suppress G005: {override_stderr}"
+    );
+    assert!(
+        override_stderr.contains("(1 suppressed)"),
+        "stderr: {override_stderr}"
+    );
+}
+
+#[test]
 fn only_preserves_configured_severity() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir(tmp.path().join(".claude-plugin")).unwrap();

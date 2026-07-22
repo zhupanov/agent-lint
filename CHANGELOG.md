@@ -194,13 +194,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Stopped flagging broad subject nouns (`data`, `files`, `documents`) and
   compounds that contain otherwise generic tokens under S033
 - **BREAKING**: Renamed rule G005 from `security-md-missing` to
-  `security-policy-missing`. The stable code `G005` is unchanged, but
-  `agent-lint.toml` references and `--only` selections using the old *name*
-  now fail as invalid rule identifiers; update them to
-  `security-policy-missing` or use the code `G005`. G005 now recognizes a
-  repository-local `SECURITY.md` in the repository root, `.github/`, or
-  `docs/` (previously repo root only), matching GitHub's supported
-  community-health file locations
+  `security-policy-missing`. The stable code `G005` is unchanged; the
+  pre-rename name `security-md-missing` remains accepted as a silent legacy
+  selector alias (canonical identity in diagnostics and JSON stays
+  `G005`/`security-policy-missing`). G005 now recognizes a repository-local
+  `SECURITY.md` in the repository root, `.github/`, or `docs/` (previously
+  repo root only), matching GitHub's supported community-health file locations
 - Skill frontmatter field-type rules S023-S027, S035, S039, S043, S063, S064,
   S066, S070, and S071, plus the cross-field rules S028/S069, now read
   frontmatter through canonical YAML instead of the legacy line-oriented

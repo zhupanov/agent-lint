@@ -1016,6 +1016,7 @@ impl LintRule {
             "CX043" | "codex-agents-generic" => Some(Self::InstructionFileGenericGuidance),
             "codex-agents-limit" => Some(Self::CodexProjectDocBudget),
             "codex-agents-conflict" => Some(Self::CodexProjectDocConflict),
+            "security-md-missing" => Some(Self::SecurityMdMissing),
             _ => None,
         };
         if migrated.is_some() {
@@ -1430,6 +1431,19 @@ mod tests {
         ] {
             assert_eq!(LintRule::from_code_or_name(removed), None, "{removed}");
         }
+    }
+
+    #[test]
+    fn g005_pre_rename_name_resolves_as_legacy_alias() {
+        assert_eq!(
+            LintRule::from_code_or_name("security-md-missing"),
+            Some(LintRule::SecurityMdMissing)
+        );
+        assert_eq!(LintRule::SecurityMdMissing.code(), "G005");
+        assert_eq!(
+            LintRule::SecurityMdMissing.name(),
+            "security-policy-missing"
+        );
     }
 
     #[test]
