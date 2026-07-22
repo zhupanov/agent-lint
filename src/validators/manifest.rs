@@ -1174,15 +1174,18 @@ pub fn validate_plugin_fields(ctx: &LintContext, diag: &mut DiagnosticCollector)
     if let ManifestState::Parsed(value) = &ctx.plugin_json
         && value.is_object()
     {
+        let field_ctx = PluginFieldContext {
+            lint: ctx,
+            mcp_base: Some(&ctx.base_path),
+        };
         diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
             validate_plugin_fields_surface(
-                ctx,
+                &field_ctx,
                 value,
                 value.source(),
                 ".claude-plugin/plugin.json",
                 "",
                 &[],
-                Some(&ctx.base_path),
                 diag,
             );
         });
@@ -1196,14 +1199,17 @@ pub fn validate_plugin_fields(ctx: &LintContext, diag: &mut DiagnosticCollector)
                 if entry.is_object() {
                     let prefix = format!("plugins[{index}]");
                     let mcp_base = effective_marketplace_plugin_root(ctx, marketplace, entry);
+                    let field_ctx = PluginFieldContext {
+                        lint: ctx,
+                        mcp_base: mcp_base.as_deref(),
+                    };
                     validate_plugin_fields_surface(
-                        ctx,
+                        &field_ctx,
                         entry,
                         marketplace.source(),
                         ".claude-plugin/marketplace.json",
                         &prefix,
                         &[Seg::Key("plugins"), Seg::Index(index)],
-                        mcp_base.as_deref(),
                         diag,
                     );
                 }
@@ -1221,16 +1227,11 @@ pub fn validate_plugin_metadata(ctx: &LintContext, diag: &mut DiagnosticCollecto
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_plugin_fields_surface(
-        ctx,
-        val,
-        val.source(),
-        f,
-        "",
-        &[],
-        Some(&ctx.base_path),
-        diag,
-    );
+    let field_ctx = PluginFieldContext {
+        lint: ctx,
+        mcp_base: Some(&ctx.base_path),
+    };
+    validate_plugin_fields_surface(&field_ctx, val, val.source(), f, "", &[], diag);
 }
 
 /// V31: Validate plugin.json lspServers entries (M016).
@@ -1242,16 +1243,11 @@ pub fn validate_lsp_servers(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_plugin_fields_surface(
-        ctx,
-        val,
-        val.source(),
-        f,
-        "",
-        &[],
-        Some(&ctx.base_path),
-        diag,
-    );
+    let field_ctx = PluginFieldContext {
+        lint: ctx,
+        mcp_base: Some(&ctx.base_path),
+    };
+    validate_plugin_fields_surface(&field_ctx, val, val.source(), f, "", &[], diag);
 }
 
 /// V32: Validate plugin.json channels entries (M017).
@@ -1264,39 +1260,37 @@ pub fn validate_channels(ctx: &LintContext, diag: &mut DiagnosticCollector) {
         _ => return, // Missing/invalid already reported by V1
     };
 
-    validate_plugin_fields_surface(
-        ctx,
-        val,
-        val.source(),
-        f,
-        "",
-        &[],
-        Some(&ctx.base_path),
-        diag,
-    );
+    let field_ctx = PluginFieldContext {
+        lint: ctx,
+        mcp_base: Some(&ctx.base_path),
+    };
+    validate_plugin_fields_surface(&field_ctx, val, val.source(), f, "", &[], diag);
+}
+
+struct PluginFieldContext<'a> {
+    lint: &'a LintContext,
+    mcp_base: Option<&'a Path>,
 }
 
 fn validate_plugin_fields_surface(
-    ctx: &LintContext,
+    field_ctx: &PluginFieldContext<'_>,
     value: &Value,
     source: Option<&str>,
     document: &str,
     prefix: &str,
     path_prefix: &[Seg<'_>],
-    mcp_base: Option<&Path>,
     diag: &mut DiagnosticCollector,
 ) {
     validate_author(value, source, document, prefix, path_prefix, diag);
     validate_homepage(value, source, document, prefix, path_prefix, diag);
     validate_lsp_servers_value(value, source, document, prefix, path_prefix, diag);
     validate_channels_value(
-        ctx,
+        field_ctx,
         value,
         source,
         document,
         prefix,
         path_prefix,
-        mcp_base,
         diag,
     );
 }
@@ -1635,13 +1629,12 @@ fn mcp_names_from_path(ctx: &LintContext, mcp_base: &Path, path: &str) -> Option
 }
 
 fn validate_channels_value(
-    ctx: &LintContext,
+    field_ctx: &PluginFieldContext<'_>,
     value: &Value,
     source: Option<&str>,
     document: &str,
     prefix: &str,
     path_prefix: &[Seg<'_>],
-    mcp_base: Option<&Path>,
     diag: &mut DiagnosticCollector,
 ) {
     let Some(channels) = value.get("channels") else {
@@ -1660,7 +1653,7 @@ fn validate_channels_value(
         );
         return;
     };
-    let known_servers = known_mcp_servers(ctx, value, mcp_base);
+    let known_servers = known_mcp_servers(field_ctx.lint, value, field_ctx.mcp_base);
     for (index, entry) in entries.iter().enumerate() {
         let path = extend_path(&root_path, &[Seg::Index(index)]);
         let label = format!("{root_label}[{index}]");
