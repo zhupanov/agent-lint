@@ -344,7 +344,6 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
 > (Basic mode). They catch typos and invalid enum values (e.g. `model: sonet`,
 > `permissionMode: yolo`, `tools: [Bsh]`, dangling `skills:` references) with
-<<<<<<< HEAD
 > near-zero false-positive risk. **Larch template convention (A005-A007).**
 > These are self-activating, Plugin-only rules for public top-level
 > `agents/*.md`; they are not a Claude Code requirement and do not apply to
