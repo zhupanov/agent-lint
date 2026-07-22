@@ -874,6 +874,16 @@ They run in both Basic and Plugin modes.
 | CU020 | `cursor-rule-extension` | A `.md` file below a repository-wide `.cursor/rules/` directory is not a live Cursor rule; rename it to the same basename with `.mdc` | Always | warn |
 | CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses a frontmatter key other than `name`, `description`, `paths`, `disable-model-invocation`, or `metadata`; it checks the active recursive Cursor runtime inventory, including shared `.agents/skills` locations | Always | warn |
 
+Cursor contracts are documented in the following primary sources, retrieved
+2026-07-21: [Cursor Rules](https://cursor.com/docs/context/rules) (CU001–CU009),
+[Cursor Hooks](https://cursor.com/docs/hooks.md) (CU010–CU013 and CU017–CU019),
+[Cursor Subagents](https://cursor.com/docs/subagents.md) (CU014–CU015),
+[Cloud Agent setup](https://cursor.com/docs/cloud-agent/setup.md) and the
+[environment schema](https://www.cursor.com/schemas/environment.schema.json)
+(CU016), and [Cursor Skills](https://cursor.com/docs/skills.md) (CR-SK-001).
+These Cursor contracts must be reverified against these pages by 2026-10-21,
+or after the next major Cursor release if earlier.
+
 ### Cursor MDC activation states (CU002-CU008)
 
 Cursor derives one rule type from the **effective values** of `alwaysApply`,
