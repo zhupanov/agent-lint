@@ -278,9 +278,9 @@ pub(crate) fn is_unsafe_inline_code_path_probe(path: &Path) -> bool {
         || path.is_symlink()
 }
 
-/// Model aliases accepted by Claude Code `/model` plus skill-only `inherit`.
+/// Model aliases accepted by Claude Code `/model` plus skill/agent `inherit`.
 /// Full Anthropic model IDs (`claude-…`) are also accepted.
-/// Shared by skill frontmatter (S063) and future agent frontmatter validation.
+/// Shared by skill frontmatter (S063) and agent frontmatter (A014).
 const MODEL_ALIASES: &[&str] = &[
     "inherit",
     "default",
@@ -297,6 +297,7 @@ const MODEL_ALIASES: &[&str] = &[
 ];
 
 /// Return true if `value` is a recognized Claude Code model alias or ID.
+/// Canonical vocabulary for S063 (skills) and A014 (agents).
 pub(crate) fn is_valid_model_value(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() {
@@ -317,6 +318,7 @@ pub(crate) fn is_valid_model_value(value: &str) -> bool {
 pub(crate) const KNOWN_TOOLS: &[&str] = &[
     "AskUserQuestion",
     "Bash",
+    "EndConversation",
     "Read",
     "Edit",
     "Write",
@@ -329,6 +331,7 @@ pub(crate) const KNOWN_TOOLS: &[&str] = &[
     "Skill",
     "NotebookEdit",
     "LSP",
+    "PowerShell",
     "TaskCreate",
     "TaskUpdate",
     "TaskList",
@@ -414,6 +417,28 @@ mod model_tests {
         assert!(!is_valid_model_value(""));
         assert!(!is_valid_model_value("gpt-4"));
     }
+
+    /// Shared S063/A014 vocabulary table: both rules call this one function.
+    #[test]
+    fn s063_a014_shared_vocabulary_table() {
+        let cases: &[(&str, bool)] = &[
+            ("fable", true),
+            ("opusplan", true),
+            ("best", true),
+            ("claude-fable-5", true),
+            ("haiku[1m]", false),
+            ("inherit[1m]", false),
+            ("sonet", false),
+            ("", false),
+        ];
+        for &(value, expected) in cases {
+            assert_eq!(
+                is_valid_model_value(value),
+                expected,
+                "shared model vocabulary mismatch for {value:?}"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -425,6 +450,8 @@ mod tool_tests {
         assert!(is_known_tool_name("Bash"));
         assert!(is_known_tool_name("Read"));
         assert!(is_known_tool_name("Agent"));
+        assert!(is_known_tool_name("EndConversation"));
+        assert!(is_known_tool_name("PowerShell"));
     }
 
     #[test]
@@ -449,6 +476,7 @@ mod tool_tests {
     #[test]
     fn rejects_unknown_tools() {
         assert!(!is_known_tool_name("UnknownTool"));
+        assert!(!is_known_tool_name("ExitPlanMode"));
         assert!(!is_known_tool_name(""));
     }
 }

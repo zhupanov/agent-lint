@@ -285,7 +285,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | A011 | `agent-desc-redundant` | Agent description too similar to agent name | Always | error |
 | A012 | `agent-read-mismatch` | Explicit agent tools omit `Read` while live prose explicitly requires the `Read` tool | Always | error |
 | A013 | `agent-output-unsafe` | Machine-only evidence output lacks both an unreadable-evidence outcome and never-invent language | Always | error |
-| A014 | `agent-model-invalid` | Agent `model` is not a recognized Claude Code model | Always | error |
+| A014 | `agent-model-invalid` | Agent `model` must be a recognized alias (`sonnet`/`opus`/`haiku`/`fable`/`inherit`/…) or `claude-…` ID (same vocabulary as S063) | Always | error |
 | A015 | `agent-permission-invalid` | Agent `permissionMode` is not one of the allowed enum values | Always | error |
 | A016 | `agent-skill-missing` | Agent `skills` entry has no matching `SKILL.md` on disk | Always | error |
 | A017 | `agent-tools-overlap` | A tool appears in both `tools` and `disallowedTools` | Always | error |
@@ -344,6 +344,7 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
 > (Basic mode). They catch typos and invalid enum values (e.g. `model: sonet`,
 > `permissionMode: yolo`, `tools: [Bsh]`, dangling `skills:` references) with
+<<<<<<< HEAD
 > near-zero false-positive risk. **Larch template convention (A005-A007).**
 > These are self-activating, Plugin-only rules for public top-level
 > `agents/*.md`; they are not a Claude Code requirement and do not apply to
@@ -364,7 +365,8 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > included agents but suppresses A007 because the participant set is incomplete.
 > All three default to warnings (and follow normal pedantic/all/config policy),
 > have no autofix, and A007 identifies participating agents as related subjects.
-> The known-tool list is shared with S040
+> Model aliases/`claude-…` IDs share one vocabulary with S063 (`skill model`);
+> the known-tool list is shared with S040
 > (`skill allowed-tools`); `mcp__<server>__<tool>` names are accepted.
 > **Stop controls (A029).** A029 applies only to valid Claude/plugin agent
 > frontmatter that explicitly declares an execution-capable tool: `Agent`,

@@ -2568,6 +2568,77 @@ Body ## Reviewer
         });
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH14PH_fable_and_claude_fable_clean() {
+        for model in ["fable", "claude-fable-5"] {
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nmodel: {model}\n---\nBody\n"
+            );
+            run_agent(&content, |diag| {
+                assert!(
+                    !diag.errors().iter().any(|e| e.contains("model")),
+                    "A014 must accept {model}"
+                );
+            });
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH14PH_inherit_1m_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\nmodel: inherit[1m]\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("not a recognized Claude Code model")),
+                "A014 must reject inherit[1m]"
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s063_a014_model_verdicts_agree() {
+        // Cross-rule consistency: skill S063 and agent A014 share is_valid_model_value.
+        let cases: &[(&str, bool)] = &[
+            ("fable", true),
+            ("opusplan", true),
+            ("best", true),
+            ("claude-fable-5", true),
+            ("haiku[1m]", false),
+            ("inherit[1m]", false),
+            ("sonet", false),
+            ("", false),
+        ];
+        for &(model, expect_valid) in cases {
+            assert_eq!(
+                is_valid_model_value(model),
+                expect_valid,
+                "shared helper mismatch for model={model:?}"
+            );
+            if model.is_empty() {
+                continue; // empty is FieldState::Empty on skills; helper covers both
+            }
+            let content = format!(
+                "---\nname: general\ndescription: {GOOD_DESC}\nmodel: {model}\n---\nBody\n"
+            );
+            run_agent(&content, |diag| {
+                let fires = diag
+                    .diagnostics()
+                    .iter()
+                    .any(|d| d.rule == LintRule::AgentModelInvalid);
+                assert_eq!(
+                    !fires, expect_valid,
+                    "A014 verdict mismatch for model={model:?}"
+                );
+            });
+        }
+    }
+
     // ── A015: agent-permission-invalid ───────────────────────────────
 
     #[test]
@@ -2753,6 +2824,39 @@ Body ## Reviewer
                     .errors()
                     .iter()
                     .any(|e| e.contains("unrecognized tool"))
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_powershell_clean() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: PowerShell\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag
+                    .errors()
+                    .iter()
+                    .any(|e| e.contains("unrecognized tool")),
+                "A019 must accept PowerShell"
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_absent_candidate_still_fires() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: ExitPlanMode\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("tools lists unrecognized tool 'ExitPlanMode'")),
+                "A019 must still reject ExitPlanMode (not authorized in this vocabulary fix)"
             );
         });
     }
