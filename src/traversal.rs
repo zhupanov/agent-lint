@@ -381,7 +381,9 @@ mod tests {
 
     #[test]
     fn cache_artifact_detection_covers_dirs_and_extensions() {
-        assert!(is_cache_artifact(Path::new("skills/x/scripts/__pycache__/mod.pyc")));
+        assert!(is_cache_artifact(Path::new(
+            "skills/x/scripts/__pycache__/mod.pyc"
+        )));
         assert!(is_cache_artifact(Path::new("skills/x/scripts/helper.PYC")));
         assert!(!is_cache_artifact(Path::new("skills/x/scripts/helper.py")));
         assert!(!is_cache_artifact(Path::new("skills/x/scripts/run.sh")));
@@ -398,13 +400,25 @@ mod tests {
         fs::write(".gitignore", "*.tmp\n").unwrap();
 
         let non_git = SkillScriptNoiseFilter::discover();
-        assert!(non_git.is_noise(Path::new("skills/x/scripts/cache.pyc"), "skills/x/scripts/cache.pyc"));
-        assert!(!non_git.is_noise(Path::new("skills/x/scripts/noise.tmp"), "skills/x/scripts/noise.tmp"));
+        assert!(non_git.is_noise(
+            Path::new("skills/x/scripts/cache.pyc"),
+            "skills/x/scripts/cache.pyc"
+        ));
+        assert!(!non_git.is_noise(
+            Path::new("skills/x/scripts/noise.tmp"),
+            "skills/x/scripts/noise.tmp"
+        ));
 
         fs::create_dir_all(".git/info").unwrap();
         let git = SkillScriptNoiseFilter::discover();
-        assert!(git.is_noise(Path::new("skills/x/scripts/cache.pyc"), "skills/x/scripts/cache.pyc"));
-        assert!(git.is_noise(Path::new("skills/x/scripts/noise.tmp"), "skills/x/scripts/noise.tmp"));
+        assert!(git.is_noise(
+            Path::new("skills/x/scripts/cache.pyc"),
+            "skills/x/scripts/cache.pyc"
+        ));
+        assert!(git.is_noise(
+            Path::new("skills/x/scripts/noise.tmp"),
+            "skills/x/scripts/noise.tmp"
+        ));
     }
 
     #[test]

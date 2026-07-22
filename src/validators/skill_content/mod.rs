@@ -2448,7 +2448,11 @@ suppress = ["S014"]
             "from pathlib import Path\ndata = Path('./fixtures/case.json').read_text()\n",
         )
         .unwrap();
-        std::fs::write("skills/my-skill/scripts/fixtures/case.json", "{\"ok\":true}\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/fixtures/case.json",
+            "{\"ok\":true}\n",
+        )
+        .unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when testing harness fixture reachability\n---\nRun `run_tests.py`.\n",
@@ -2537,8 +2541,16 @@ suppress = ["S014"]
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
-        std::fs::write("skills/my-skill/scripts/a.sh", "#!/bin/bash\n# calls b.sh\n").unwrap();
-        std::fs::write("skills/my-skill/scripts/b.sh", "#!/bin/bash\n# calls a.sh\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/a.sh",
+            "#!/bin/bash\n# calls b.sh\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/scripts/b.sh",
+            "#!/bin/bash\n# calls a.sh\n",
+        )
+        .unwrap();
         std::fs::write(
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: Use when testing mutual orphan harnesses\n---\nNo script refs.\n",

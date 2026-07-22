@@ -138,10 +138,12 @@ pub(super) fn validate_orphaned_skill_files(
         })
         .collect();
 
-        let basename_counts = candidates.iter().fold(HashMap::new(), |mut counts, script| {
-            *counts.entry(script.basename.clone()).or_insert(0usize) += 1;
-            counts
-        });
+        let basename_counts = candidates
+            .iter()
+            .fold(HashMap::new(), |mut counts, script| {
+                *counts.entry(script.basename.clone()).or_insert(0usize) += 1;
+                counts
+            });
 
         let live = reachable_script_assets(&candidates, &basename_counts, &docs);
 
@@ -180,9 +182,10 @@ fn reachable_script_assets(
 
     for (index, script) in candidates.iter().enumerate() {
         let unique_basename = basename_counts.get(&script.basename) == Some(&1);
-        if docs.iter().any(|doc| {
-            script_referenced(doc, &script.relative, &script.basename, unique_basename)
-        }) {
+        if docs
+            .iter()
+            .any(|doc| script_referenced(doc, &script.relative, &script.basename, unique_basename))
+        {
             live.insert(index);
             queue.push_back(index);
         }
