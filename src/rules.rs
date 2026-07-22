@@ -494,7 +494,7 @@ pub enum LintRule {
     /// A023: agent `effort` is not `low`/`medium`/`high`/`xhigh`/`max`
     #[strum(props(code = "A023", name = "agent-effort-invalid"))]
     AgentEffortInvalid,
-    /// A024: agent `isolation` is not `worktree` or `remote`
+    /// A024: agent `isolation` is not `worktree`
     #[strum(props(code = "A024", name = "agent-isolation-invalid"))]
     AgentIsolationInvalid,
     /// A025: agent `background` is not a boolean
