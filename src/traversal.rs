@@ -390,6 +390,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn skill_script_noise_filter_is_deterministic_for_git_and_non_git() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
