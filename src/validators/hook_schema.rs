@@ -24,7 +24,7 @@
 
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
 use crate::rules::LintRule;
-use crate::validators::common::VALID_SHELLS;
+use crate::validators::common::{VALID_SHELLS, executable_basename};
 use regex::Regex;
 use serde_json::{Map, Value};
 use std::sync::LazyLock;
@@ -161,7 +161,11 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
             if ch == active_quote {
                 quote = None;
             } else if ch == '\\' && active_quote == '"' {
-                current.push(chars.next()?);
+                if is_windows_path_token(&current) {
+                    current.push(ch);
+                } else {
+                    current.push(chars.next()?);
+                }
             } else {
                 current.push(ch);
             }
@@ -169,6 +173,7 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
         }
         match ch {
             '\'' | '"' => quote = Some(ch),
+            '\\' if is_windows_path_token(&current) => current.push(ch),
             '\\' => current.push(chars.next()?),
             ch if ch.is_whitespace() => push_shell_word(&mut words, &mut current),
             '|' | '&' | ';' => {
@@ -192,6 +197,13 @@ fn shell_words(command: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
+fn is_windows_path_token(token: &str) -> bool {
+    token.contains('\\')
+        || (token.len() == 2
+            && token.as_bytes()[0].is_ascii_alphabetic()
+            && token.as_bytes()[1] == b':')
+}
+
 fn push_shell_word(words: &mut Vec<String>, current: &mut String) {
     if !current.is_empty() {
         words.push(std::mem::take(current));
@@ -204,10 +216,6 @@ fn is_control_operator(token: &str) -> bool {
 
 fn command_segments(tokens: &[String]) -> impl Iterator<Item = &[String]> {
     tokens.split(|token| is_control_operator(token))
-}
-
-fn executable_basename(token: &str) -> &str {
-    token.rsplit('/').next().unwrap_or(token)
 }
 
 fn detect_recursive_force_rm(tokens: &[String]) -> bool {
@@ -287,14 +295,14 @@ fn detect_download_piped_to_shell(tokens: &[String]) -> bool {
             .rsplit(|token| is_control_operator(token))
             .next()
             .expect("split always yields one segment");
-        if !effective_command(left)
-            .is_some_and(|command| matches!(executable_basename(&command[0]), "curl" | "wget"))
-        {
+        if !effective_command(left).is_some_and(|command| {
+            matches!(executable_basename(&command[0]).as_str(), "curl" | "wget")
+        }) {
             return false;
         }
         next_effective_executable(&tokens[pipe + 1..]).is_some_and(|executable| {
             matches!(
-                executable_basename(executable),
+                executable_basename(executable).as_str(),
                 "sh" | "bash" | "dash" | "zsh" | "ksh"
             )
         })
@@ -318,7 +326,7 @@ fn effective_command(tokens: &[String]) -> Option<&[String]> {
             index += 1;
             continue;
         }
-        match executable_basename(token) {
+        match executable_basename(token).as_str() {
             "env" => {
                 index += 1;
                 while let Some(token) = tokens.get(index) {
@@ -1300,6 +1308,11 @@ mod tests {
                 DangerousCommandCategory::RecursiveForceRm,
             ),
             (
+                r"C:\tools\rm.exe -rf build",
+                DangerousCommandCategory::RecursiveForceRm,
+            ),
+            ("RM.EXE -rf /", DangerousCommandCategory::RecursiveForceRm),
+            (
                 "git reset --hard HEAD~1",
                 DangerousCommandCategory::GitResetHard,
             ),
@@ -1395,6 +1408,7 @@ mod tests {
             "rm -r /tmp/x",
             "rm -f /tmp/x",
             "rm --force x",
+            r"C:\tools\rm.exe README.md",
             "format --recursive --force x",
             "echo dash | grep sh",
             "curl https://example.test/data | /usr/bin/jq",
@@ -1402,6 +1416,7 @@ mod tests {
             "echo curl https://example.test/install | sh",
             "echo git reset --hard HEAD",
             "echo rm -r -f /tmp/x",
+            "echo rm.exe -rf /",
             "git reset -- --hard",
             "git clean -- --force",
             "rm -- -r -f /tmp/x",

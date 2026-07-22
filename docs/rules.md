@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 299 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -228,7 +228,7 @@ exports for S003 but are otherwise command-style files; they do not receive the
 SKILL.md content-rule suite. Private `.claude/skills/shared/SKILL.md` is an
 ordinary private skill.
 
-### Name Validation (S009--S011, S033, S049)
+### Name Validation (S009--S011, S033)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
@@ -236,7 +236,6 @@ ordinary private skill.
 | S010 | `name-invalid-chars` | Skill name contains characters outside `[a-z0-9-]` | All skill surfaces | error |
 | S011 | `name-bad-hyphens` | Skill name starts/ends with hyphen or has consecutive hyphens | All skill surfaces | error |
 | S033 | `name-vague` | Exact published skill name is a domainless implementation label (`helper`, `helpers`, `util`, `utilities`, `utility`, `utils`, `tool`, `tools`); add a domain or task. Broad subject nouns such as `data`/`files`/`documents` and compounds are allowed | Plugin | warn |
-| S049 | `name-not-gerund` | Skill name not in gerund (verb+ing) form (deprecated — no longer fires; config alias retained) | Plugin | suppressed |
 
 ### Description Validation (S014--S018, S034, S050, S074)
 
@@ -314,14 +313,13 @@ values — every frontmatter field except the free-prose `description`,
 | S072 | `skill-dir-oversized` | Skill directory exceeds 8MB platform upload limit (counts build/dependency trees; skips `.git`; does not follow directory symlinks) | Always | warn |
 | S073 | `skill-ref-nested` | Skill-relative `.md` link nested deeper than one directory level (`..` counts; URI schemes and non-`.md` targets are skipped) | Always | error |
 
-### Extended Frontmatter (S035, S039--S040, S042--S044, S067)
+### Extended Frontmatter (S035, S039--S040, S043--S044, S067)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S035 | `compat-too-long` | `compatibility` field exceeds 500 characters | Always | warn |
 | S039 | `metadata-not-string` | Metadata map values must be strings | Always | error |
 | S040 | `tools-unknown` | `allowed-tools` or `disallowed-tools` lists an unrecognized tool name | Always | warn |
-| S042 | `dmi-empty-desc` | Deprecated — no longer fires (a strict subset of S005; the code/name remain accepted in config) | Always | error |
 | S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Always | error |
 | S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Always | warn |
 | S067 | `bash-unscoped` | `allowed-tools` lists unscoped `Bash` (prefer scoping such as `Bash(git *)`) | Always | warn |
@@ -1375,7 +1373,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (10 of 299):**
+**Auto-fixable rules (10 of 297):**
 
 | Rule | Code | Fix |
 |------|------|-----|

@@ -8,7 +8,7 @@ use crate::sensitive::{
     SENSITIVE_HTTP_HEADERS, contains_codex_mcp_token_signature, is_sensitive_key,
 };
 use crate::traversal;
-use crate::validators::common::is_nonlocal_url_with_scheme;
+use crate::validators::common::{executable_basename, is_nonlocal_url_with_scheme};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -1458,20 +1458,6 @@ fn payload_has_destructive_rm(payload: &str) -> bool {
 fn payload_has_destructive_rd(payload: &str) -> bool {
     payload_command_segments(payload)
         .any(|tokens| is_destructive_rd_args(&executable_basename(tokens[0]), &tokens[1..]))
-}
-
-fn executable_basename(command: &str) -> String {
-    let name = command
-        .rsplit(['/', '\\'])
-        .find(|component| !component.is_empty())
-        .unwrap_or_default();
-    let lower = name.to_ascii_lowercase();
-    for ext in [".exe", ".cmd", ".bat"] {
-        if let Some(stripped) = lower.strip_suffix(ext) {
-            return stripped.to_string();
-        }
-    }
-    lower
 }
 
 enum InterpreterPayload {

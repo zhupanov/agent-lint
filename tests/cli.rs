@@ -2,6 +2,21 @@ use std::process::{Command, Output};
 
 use serde_json::Value;
 
+include!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src/retired_identifiers.rs"
+));
+
+#[test]
+fn retired_identifier_corpora_are_disjoint() {
+    for identifier in RETIRED_IDENTIFIERS {
+        assert!(
+            !SOFT_RETIRED_IDENTIFIERS.contains(identifier),
+            "{identifier}"
+        );
+    }
+}
+
 fn run(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_agent-lint"))
         .args(args)
@@ -1607,6 +1622,28 @@ fn h023_cli_ignores_arguments_and_operands_after_option_terminators() {
     let output = run_in(tmp.path(), &["--format", "json", "--only", "H023", "."]);
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     assert!(json(&output)["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn h023_cli_flags_windows_form_rm_executable() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let settings = tmp.path().join(".claude/settings.json");
+    std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    std::fs::write(
+        settings,
+        r#"{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"C:\\tools\\rm.exe -rf build"}]}]}}"#,
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "H023", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{report:#}");
+    assert_eq!(diagnostics[0]["code"], "H023");
+    assert_eq!(diagnostics[0]["severity"], "warning");
+    assert_eq!(diagnostics[0]["evidence"], "recursive-force-rm");
 }
 
 #[test]
@@ -3832,23 +3869,10 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
     let tmp = tempfile::tempdir().unwrap();
     let target = tmp.path().to_string_lossy().into_owned();
 
-    for only in [
-        "NOT_A_RULE",
-        "S012",
-        "S013",
-        "name-reserved-word",
-        "name-has-xml",
-        "K001",
-        "slack-fallback-mismatch",
-        "U003",
-        "userconfig-env-missing",
-        "I005",
-        "instruction-file-structure",
-        "CX044",
-        "codex-agents-structure",
-        "Q006,",
-        ",Q006",
-    ] {
+    for only in std::iter::once("NOT_A_RULE")
+        .chain(RETIRED_IDENTIFIERS.iter().copied())
+        .chain(["Q006,", ",Q006"])
+    {
         let output = run(&["--format", "json", "--only", only, &target]);
         assert_eq!(output.status.code(), Some(2), "--only {only}");
         let report = json(&output);
@@ -3870,21 +3894,7 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
         ("all", vec!["--all"]),
         ("autofix", vec!["--autofix"]),
     ] {
-        for only in [
-            "NOT_A_RULE",
-            "S012",
-            "S013",
-            "name-reserved-word",
-            "name-has-xml",
-            "K001",
-            "slack-fallback-mismatch",
-            "U003",
-            "userconfig-env-missing",
-            "I005",
-            "instruction-file-structure",
-            "CX044",
-            "codex-agents-structure",
-        ] {
+        for only in std::iter::once("NOT_A_RULE").chain(RETIRED_IDENTIFIERS.iter().copied()) {
             let mut args = mode_args.clone();
             args.extend(["--only", only, &target]);
             let text = run(&args);

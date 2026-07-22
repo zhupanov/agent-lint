@@ -5630,8 +5630,8 @@ suppress = ["S033"]
         let mut all_config = crate::config::LintConfig::default();
         all_config.apply_cli_mode(crate::config::CliMode::All);
         assert!(
-            all_config.error.contains(&LintRule::NameNotGerund),
-            "retired S049 remains selectable under --all for config compatibility"
+            !all_config.error.contains(&LintRule::NameNotGerund),
+            "retired S049 must remain outside active all-mode selection"
         );
         let mut diag = DiagnosticCollector::with_config(all_config);
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
