@@ -17,10 +17,28 @@ const BODY_NO_REFS_THRESHOLD: usize = 300;
 const BODY_NO_WORKFLOW_THRESHOLD: usize = 300;
 const BODY_NO_EXAMPLES_THRESHOLD: usize = 200;
 
-// S037: Body-no-refs
-static RE_BODY_FILE_REF: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\$\{CLAUDE_PLUGIN_ROOT\}|\.sh\b|\.md\b|\.py\b|\.js\b|\.ts\b|scripts/|shared/")
-        .unwrap()
+// S037: Explicit repository-relative path tokens with a filename extension.
+// The leading boundary prevents a URL tail such as `example.test/config.json`
+// from being treated as a repository path.
+static RE_BODY_FILE_PATH: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?:^|[^A-Za-z0-9_./:-])(?:\$\{CLAUDE_PLUGIN_ROOT\}/|\./)?(?:[A-Za-z0-9][A-Za-z0-9._-]*/)+[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z0-9]{1,16}(?:$|[^A-Za-z0-9_-])"#,
+    )
+    .unwrap()
+});
+
+// S037: Reference directories may contain extensionless supporting files.
+static RE_BODY_REFERENCE_DIRECTORY: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?:^|[^A-Za-z0-9_./:-])(?:\$\{CLAUDE_PLUGIN_ROOT\}/)?(?:scripts|shared|references|assets|examples|templates)/[^\s/]+"#,
+    )
+    .unwrap()
+});
+
+// S037: Bare Markdown filenames remain useful references to the canonical
+// split target. Other bare extensions are intentionally not accepted.
+static RE_BARE_MARKDOWN_FILE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?:^|[^A-Za-z0-9_./:-])[A-Za-z0-9][A-Za-z0-9._-]*\.md\b"#).unwrap()
 });
 
 // S038: Time-sensitive
@@ -173,7 +191,9 @@ pub(super) fn check_body_content(
     }
 
     // S037: body-no-refs (plugin-only) -- body > 300 lines with no file references
-    if plugin_mode && line_count > BODY_NO_REFS_THRESHOLD && !RE_BODY_FILE_REF.is_match(&info.body)
+    if plugin_mode
+        && line_count > BODY_NO_REFS_THRESHOLD
+        && !body_has_file_reference(&info.body, info.document.links())
     {
         diag.report(
             LintRule::BodyNoRefs,
@@ -321,6 +341,43 @@ pub(super) fn check_body_content(
     if plugin_mode {
         check_magic_numbers(info, diag);
     }
+}
+
+/// Whether a skill body explicitly directs readers to a supporting file.
+///
+/// This deliberately recognizes only repository-relative Markdown links and
+/// path-shaped prose. The rule measures authored references, so fenced content
+/// is included just as it was before S037 used this predicate.
+fn body_has_file_reference(body: &str, links: &[crate::markdown::MarkdownLink]) -> bool {
+    links
+        .iter()
+        .any(|link| link_destination_is_repository_relative(&link.destination))
+        || RE_BODY_FILE_PATH.is_match(body)
+        || RE_BODY_REFERENCE_DIRECTORY.is_match(body)
+        || RE_BARE_MARKDOWN_FILE.is_match(body)
+}
+
+fn link_destination_is_repository_relative(destination: &str) -> bool {
+    let destination = strip_link_query_or_fragment(destination);
+    !destination.is_empty() && !destination.starts_with('/') && !has_uri_scheme(destination)
+}
+
+fn strip_link_query_or_fragment(destination: &str) -> &str {
+    match destination.find(['?', '#']) {
+        Some(index) => &destination[..index],
+        None => destination,
+    }
+}
+
+fn has_uri_scheme(value: &str) -> bool {
+    let Some((scheme, _)) = value.split_once(':') else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    matches!(chars.next(), Some(character) if character.is_ascii_alphabetic())
+        && chars.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        })
 }
 
 /// A skill is "script-backed" if it has a non-empty `scripts/` subdirectory
@@ -546,6 +603,48 @@ fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
 
                 prev_is_comment = false;
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::markdown::MarkdownDocument;
+
+    fn has_reference(body: &str) -> bool {
+        let document = MarkdownDocument::parse_body(body);
+        body_has_file_reference(body, document.links())
+    }
+
+    #[test]
+    fn s037_reference_predicate_accepts_explicit_paths_and_relative_links() {
+        for body in [
+            "Read references/config.json before continuing.",
+            "Validate schemas/input.yaml before use.",
+            "Copy assets/template.txt into the output.",
+            "Apply references/policy.",
+            "Open [the schema](references/config.toml?raw=1#contents).",
+            "See guide.md for the full procedure.",
+            "See *guide.md* for the full procedure.",
+            "Run ${CLAUDE_PLUGIN_ROOT}/tools/check.rb.",
+            "Inspect templates/default before writing output.",
+        ] {
+            assert!(has_reference(body), "expected reference in: {body}");
+        }
+    }
+
+    #[test]
+    fn s037_reference_predicate_rejects_urls_fragments_and_extension_prose() {
+        for body in [
+            "No supporting files are needed.",
+            "Open [the remote schema](https://example.test/config.json).",
+            "Open [this section](#configuration).",
+            "This skill supports JSON input and version .json terminology.",
+            "```text\nword-ending-in-.json\n```",
+            "See https://example.test/config.md for remote documentation.",
+        ] {
+            assert!(!has_reference(body), "unexpected reference in: {body}");
         }
     }
 }
