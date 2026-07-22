@@ -106,6 +106,32 @@ same `ManifestState`; an invalid existing file is never silently converted to
 
 Mechanical backing: `ManifestState`, `LintContext::new`, and their unit tests.
 
+### I-Syntax-1: Parser adapters preserve semantic token roles
+
+An adapter from a shared parser to a validator preserves every semantic role
+and source identity that the validator uses. Executables remain distinct from
+arguments and post-terminator operands; code remains distinct from prose;
+mapping keys remain distinct from values; authored paths remain distinct from
+decoded paths; and source spans remain attached to the token they locate. A
+consumer may discard a field only when its contract cannot depend on that
+field.
+
+Mechanical backing: typed outputs from `MarkdownDocument`,
+`markdown_commands`, `script_paths`, and the structured data parsers, plus
+table-driven adapter tests for each consuming rule family.
+
+### I-Validate-1: Invalid subtrees isolate dependent checks only
+
+When a configuration subtree fails structural validation, validators skip
+only semantic checks that require that subtree to be usable. They do not emit
+advisory child findings for an unusable node, and they continue validating
+independent sibling fields, entries, and surfaces. One malformed branch never
+causes a whole-file early return when other branches remain interpretable.
+
+Mechanical backing: mixed-validity fixtures for manifest, hook, MCP, Cursor,
+Codex, and user-configuration validators assert both non-cascade behavior and
+continued sibling diagnostics.
+
 ### I-Exclude-1: Strictness never changes file selection
 
 Normal, pedantic, and all mode may change whether a registered rule is

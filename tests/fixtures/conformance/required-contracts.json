@@ -1,0 +1,99 @@
+{
+  "requirements": [
+    {
+      "rule": "H026",
+      "surface": "hook-schema",
+      "classes": ["clean", "broken", "hard-negative"],
+      "axes": ["json-output", "focused-selection", "normal-policy", "claude-active", "no-autofix"]
+    },
+    {
+      "rule": "H026",
+      "surface": "hook-schema",
+      "classes": ["broken"],
+      "axes": ["basic-mode", "diagnostic", "subject", "location", "suggestion"]
+    },
+    {
+      "rule": "H026",
+      "surface": "hook-schema",
+      "classes": ["clean"],
+      "axes": ["plugin-mode"]
+    },
+    {
+      "rule": "H026",
+      "surface": "hook-schema",
+      "classes": ["hard-negative"],
+      "axes": ["basic-mode", "plugin-mode", "global-suppression", "per-file-suppression"]
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "classes": ["clean", "broken", "hard-negative"],
+      "axes": ["json-output", "focused-selection"]
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "classes": ["broken"],
+      "axes": ["diagnostic", "subject"]
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "classes": ["clean", "broken", "hard-negative"],
+      "axes": ["json-output", "focused-selection", "normal-policy", "codex-active", "no-autofix"]
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "classes": ["broken"],
+      "axes": ["basic-mode", "plugin-mode", "diagnostic", "subject", "location", "suggestion"]
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "classes": ["hard-negative"],
+      "axes": ["global-suppression", "per-file-suppression", "exclusion"]
+    },
+    {
+      "rule": "S014",
+      "surface": "shared-skill-discovery",
+      "classes": ["clean", "broken", "hard-negative"],
+      "axes": ["json-output", "focused-selection"]
+    },
+    {
+      "rule": "S014",
+      "surface": "shared-skill-discovery",
+      "classes": ["broken"],
+      "axes": ["basic-mode", "normal-policy", "claude-active", "diagnostic", "subject", "no-autofix"]
+    },
+    {
+      "rule": "S014",
+      "surface": "shared-skill-discovery",
+      "classes": ["hard-negative"],
+      "axes": ["platform-disabled", "exclusion"]
+    }
+  ],
+  "baseline": [
+    {"rule":"H026","surface":"hook-schema","class":"broken","axis":"location","reason":"Hook-schema conformance diagnostics do not yet pin source locations."},
+    {"rule":"H026","surface":"hook-schema","class":"broken","axis":"suggestion","reason":"Malformed hook-schema findings do not currently expose repair suggestions."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"clean","axis":"json-output","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"clean","axis":"focused-selection","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"json-output","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"focused-selection","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"diagnostic","reason":"Cursor skill diagnostics are not represented by a checked-in conformance case."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"subject","reason":"Cursor skill diagnostic subjects are not represented by a checked-in conformance case."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"hard-negative","axis":"json-output","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
+    {"rule":"CR-SK-001","surface":"cursor-skill","class":"hard-negative","axis":"focused-selection","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
+    {"rule":"CX059","surface":"codex-plugin","class":"broken","axis":"location","reason":"Codex plugin conformance diagnostics do not yet pin source locations."},
+    {"rule":"CX059","surface":"codex-plugin","class":"broken","axis":"suggestion","reason":"The missing-description diagnostic does not currently expose a repair suggestion."},
+    {"rule":"CX059","surface":"codex-plugin","class":"hard-negative","axis":"global-suppression","reason":"Codex plugin fixtures do not yet include global suppression for CX059."},
+    {"rule":"CX059","surface":"codex-plugin","class":"hard-negative","axis":"per-file-suppression","reason":"Codex plugin fixtures do not yet include per-file suppression for CX059."},
+    {"rule":"CX059","surface":"codex-plugin","class":"hard-negative","axis":"exclusion","reason":"Codex plugin fixtures do not yet pin fixed-path exclusion behavior for CX059."},
+    {"rule":"S014","surface":"shared-skill-discovery","class":"clean","axis":"json-output","reason":"Shared skill discovery has a broken case but no clean conformance case."},
+    {"rule":"S014","surface":"shared-skill-discovery","class":"clean","axis":"focused-selection","reason":"Shared skill discovery has a broken case but no clean conformance case."},
+    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"json-output","reason":"Shared skill discovery has a broken case but no hard-negative conformance case."},
+    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"focused-selection","reason":"Shared skill discovery has a broken case but no hard-negative conformance case."},
+    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"platform-disabled","reason":"Shared skill discovery does not yet have a platform-disabled conformance case."},
+    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"exclusion","reason":"Shared skill discovery does not yet have an exclusion conformance case."}
+  ]
+}
