@@ -2063,6 +2063,24 @@ suppress = ["S014"]
 
     #[test]
     #[serial_test::serial]
+    fn test_s030_orphaned_script_without_readable_markdown_still_reports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write("skills/my-skill/scripts/orphan.sh", "#!/bin/bash\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(diag.diagnostics().iter().any(|finding| {
+            finding.rule == LintRule::OrphanedSkillFiles
+                && finding.subject_path.as_deref()
+                    == Some(std::path::Path::new("skills/my-skill/scripts/orphan.sh"))
+        }));
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s030_referenced_script_ok() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -2156,6 +2174,181 @@ suppress = ["S014"]
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(!diag.errors().iter().any(|e| e.contains("not referenced")));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_nested_scripts_require_exact_path_or_unique_basename() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/lib").unwrap();
+        std::fs::write("skills/my-skill/scripts/lib/orphan.sh", "#!/bin/bash\n").unwrap();
+
+        for lookalike in [
+            "orphan.sh.bak",
+            "orphan.sh2",
+            "dry-orphan.sh",
+            "scripts/lib/orphan.sh/child",
+        ] {
+            std::fs::write(
+                "skills/my-skill/SKILL.md",
+                format!(
+                    "---\nname: my-skill\ndescription: Use when testing exact script references\n---\nRun `{lookalike}`.\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            assert!(
+                diag.diagnostics().iter().any(|finding| {
+                    finding.rule == LintRule::OrphanedSkillFiles
+                        && finding.subject_path.as_deref()
+                            == Some(std::path::Path::new(
+                                "skills/my-skill/scripts/lib/orphan.sh",
+                            ))
+                }),
+                "{lookalike} must not reference the nested script"
+            );
+        }
+
+        for reference in [
+            "scripts/lib/orphan.sh",
+            "orphan.sh",
+            "./scripts/lib/orphan.sh",
+        ] {
+            std::fs::write(
+                "skills/my-skill/SKILL.md",
+                format!(
+                    "---\nname: my-skill\ndescription: Use when testing exact script references\n---\nRun `{reference}`.\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|finding| finding.rule == LintRule::OrphanedSkillFiles),
+                "{reference} must reference the nested script"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_duplicate_basenames_require_relative_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/a").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/b").unwrap();
+        std::fs::write("skills/my-skill/scripts/a/run.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write("skills/my-skill/scripts/b/run.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing duplicate script basenames\n---\nRun `run.sh`.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::OrphanedSkillFiles)
+            .filter_map(|finding| finding.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            subjects,
+            [
+                "skills/my-skill/scripts/a/run.sh",
+                "skills/my-skill/scripts/b/run.sh"
+            ]
+        );
+
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing duplicate script basenames\n---\nRun `scripts/a/run.sh` and `scripts/b/run.sh`.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|finding| finding.rule == LintRule::OrphanedSkillFiles)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_scans_packaged_nested_files_and_honors_exclusion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/dist").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/lib").unwrap();
+        std::fs::write("skills/my-skill/scripts/dist/packaged.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write("skills/my-skill/scripts/lib/excluded.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing nested script traversal\n---\nNo script references.\n",
+        )
+        .unwrap();
+
+        let exclude =
+            crate::config::ExcludeSet::new(
+                &["skills/my-skill/scripts/lib/excluded.sh".to_string()],
+            )
+            .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &exclude);
+        assert!(diag.diagnostics().iter().any(|finding| {
+            finding.rule == LintRule::OrphanedSkillFiles
+                && finding.subject_path.as_deref()
+                    == Some(std::path::Path::new(
+                        "skills/my-skill/scripts/dist/packaged.sh",
+                    ))
+        }));
+        assert!(!diag.diagnostics().iter().any(|finding| {
+            finding.subject_path.as_deref()
+                == Some(std::path::Path::new(
+                    "skills/my-skill/scripts/lib/excluded.sh",
+                ))
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn test_s030_does_not_follow_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::create_dir_all("outside").unwrap();
+        std::fs::write("outside/orphan.sh", "#!/bin/bash\n").unwrap();
+        symlink(tmp.path().join("outside"), "skills/my-skill/scripts/linked").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing script symlink traversal\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.diagnostics().iter().any(|finding| {
+            finding.subject_path.as_deref()
+                == Some(std::path::Path::new(
+                    "skills/my-skill/scripts/linked/orphan.sh",
+                ))
+        }));
     }
 
     // ── S032: hardcoded-secret ──────────────────────────────────────
@@ -5219,6 +5412,48 @@ suppress = ["S033"]
                 .errors()
                 .iter()
                 .any(|e| e.contains("scripts/doc1.md") && e.contains("non-descriptive"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s048_recurses_outside_scripts_and_honors_exclusion() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/references").unwrap();
+        std::fs::create_dir_all("skills/my-skill/notes/deeper").unwrap();
+        std::fs::create_dir_all("skills/my-skill/examples").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing recursive reference names\n---\nBody.\n",
+        )
+        .unwrap();
+        std::fs::write("skills/my-skill/references/doc.md", "reference").unwrap();
+        std::fs::write("skills/my-skill/notes/deeper/a.md", "excluded reference").unwrap();
+        std::fs::write("skills/my-skill/examples/TEST.MD", "example").unwrap();
+        std::fs::write("skills/my-skill/scripts/doc.md", "script asset").unwrap();
+        std::fs::write("skills/my-skill/references/api-contract.md", "descriptive").unwrap();
+
+        let exclude =
+            crate::config::ExcludeSet::new(&["skills/my-skill/notes/deeper/a.md".to_string()])
+                .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &exclude);
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::RefNameGeneric)
+            .filter_map(|finding| finding.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            subjects,
+            [
+                "skills/my-skill/examples/TEST.MD",
+                "skills/my-skill/references/doc.md"
+            ]
         );
     }
 

@@ -61,7 +61,23 @@ pub fn entries(
     kind: EntryKind,
     exclude: Option<&ExcludeSet>,
 ) -> WalkReport {
-    if !base.is_dir() {
+    entries_with_pruning(base, root, depth, kind, exclude, should_descend)
+}
+
+/// Walk `base` with a caller-provided directory-pruning policy.
+///
+/// This is for narrow domain contracts that intentionally differ from the
+/// repository-wide recursive policy. The caller remains responsible for
+/// pruning `.git` and any domain-specific directory trees.
+pub fn entries_with_pruning(
+    base: &Path,
+    root: &Path,
+    depth: WalkDepth,
+    kind: EntryKind,
+    exclude: Option<&ExcludeSet>,
+    should_descend: fn(&DirEntry) -> bool,
+) -> WalkReport {
+    if !std::fs::symlink_metadata(base).is_ok_and(|metadata| metadata.file_type().is_dir()) {
         return WalkReport::default();
     }
 
@@ -116,6 +132,25 @@ pub fn recursive_files(base: &Path, root: &Path, exclude: Option<&ExcludeSet>) -
     entries(base, root, WalkDepth::Recursive, EntryKind::Files, exclude)
 }
 
+/// Recursively enumerate regular files while pruning only directories selected
+/// by `should_descend`. This is for validators whose public contract must
+/// include packaged or generated-looking files.
+pub fn recursive_files_with_pruning(
+    base: &Path,
+    root: &Path,
+    exclude: Option<&ExcludeSet>,
+    should_descend: fn(&DirEntry) -> bool,
+) -> WalkReport {
+    entries_with_pruning(
+        base,
+        root,
+        WalkDepth::Recursive,
+        EntryKind::Files,
+        exclude,
+        should_descend,
+    )
+}
+
 /// Sum byte sizes of regular files under `dir` for upload-limit accounting.
 ///
 /// Unlike [`recursive_files`], this descends into conventional build and
@@ -158,6 +193,12 @@ fn includes(entry: &DirEntry, kind: EntryKind) -> bool {
 /// Skip repository metadata, dependency trees, and conventional build output.
 pub fn should_descend(entry: &DirEntry) -> bool {
     !IGNORED_DIRECTORY_NAMES.contains(&entry.file_name().to_string_lossy().as_ref())
+}
+
+/// Skip only Git metadata. Specialized recursive validators use this when
+/// files in packaged directories are part of their ownership contract.
+pub fn should_descend_except_git(entry: &DirEntry) -> bool {
+    entry.file_name() != ".git"
 }
 
 pub fn display_path(root: &Path, path: &Path) -> String {
@@ -231,6 +272,21 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["real/AGENTS.md"]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recursive_walk_does_not_follow_a_symlinked_root() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir(tmp.path().join("real")).unwrap();
+        fs::write(tmp.path().join("real/AGENTS.md"), "").unwrap();
+        symlink(tmp.path().join("real"), tmp.path().join("linked")).unwrap();
+
+        let report = recursive_files(&tmp.path().join("linked"), tmp.path(), None);
+        assert!(report.entries.is_empty());
+        assert!(report.errors.is_empty());
     }
 
     #[test]

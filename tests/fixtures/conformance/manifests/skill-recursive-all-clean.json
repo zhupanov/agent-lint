@@ -1,10 +1,10 @@
 {
   "class": "clean",
-  "repository": "skill-structural-clean",
-  "covers": ["plugin-mode", "normal", "json", "skill-structural"],
+  "repository": "skill-recursive-all-clean",
+  "covers": ["plugin-mode", "all", "json", "skill-recursive"],
   "invocation": {
     "mode": "plugin",
-    "arguments": ["--format", "json", "--only", "S030,S036,S048,S072,S073", "."]
+    "arguments": ["--format", "json", "--all", "--only", "S030,S048", "."]
   },
   "expected_exit_code": 0,
   "expected_status": "clean",

@@ -1,3 +1,3 @@
 # Usage
 
-Run `rollup.sh` after packaging.
+Run `scripts/lib/rollup.sh` after packaging.
