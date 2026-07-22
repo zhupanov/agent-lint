@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 296 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -518,12 +518,18 @@ not exist.
 |------|------|-------------|------|---------|
 | R001 | `rules-glob-invalid` | A `.claude/rules/` frontmatter `paths` glob is invalid | Always | error |
 | R002 | `rules-field-unknown` | `.claude/rules/` frontmatter contains an unknown field | Always | warn |
-| O001 | `style-description-missing` | Output-style `description` is missing or whitespace-only | Always | warn |
-| O002 | `style-instructions-invalid` | Output-style `keep-coding-instructions` is not a YAML boolean | Always | error |
-| O003 | `style-field-unknown` | Output-style frontmatter contains an unknown field | Always | warn |
-| O004 | `style-body-empty` | Output style has no non-whitespace body after frontmatter | Always | warn |
-| O005 | `style-name-long` | Output-style `name` exceeds 64 characters | Always | warn |
-| O006 | `style-frontmatter-invalid` | Output-style frontmatter is missing or invalid YAML | Always | error |
+| O001 | `style-description-missing` | Output-style `description` is missing, non-string, or blank | Always | warn |
+| O002 | `style-instructions-invalid` | Output-style `keep-coding-instructions` is not `true`, `false`, `"true"`, or `"false"` | Always | error |
+| O003 | `style-field-unsupported` | Output-style frontmatter contains an unsupported field or private-only placement | Always | warn |
+| O004 | `style-body-empty` | Output style has no non-whitespace effective body | Always | warn |
+| O006 | `style-frontmatter-invalid` | Output-style attempted frontmatter is malformed, invalid YAML, or not a mapping | Always | error |
+
+Output styles are discovered recursively below `.claude/output-styles/` using
+the shared exclusion, pruned-directory, and no-symlink traversal policy. A
+body-only file is valid: its whole content is the effective body. O005
+(`style-name-long`) is retired but remains an inert compatibility selector;
+Claude Code has no output-style name-length limit, so it has no active rule
+row or finding.
 | T001 | `pr-template-invalid` | `prUrlTemplate` must be a trimmed non-empty string, use a documented placeholder only, and render to an absolute HTTP(S) URL with a host | Always | warn |
 | T002 | `channels-enabled-unsupported` | Repository `channelsEnabled` is ignored; configure this managed-policy-only field through organization policy instead | Always | warn |
 

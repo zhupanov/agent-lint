@@ -1,4 +1,4 @@
-use crate::rules::ALL_RULES;
+use crate::rules::ACTIVE_RULES;
 use regex::Regex;
 use std::collections::BTreeMap;
 
@@ -57,7 +57,7 @@ fn matching_manifest_version(cargo: &str, package: &str) -> Result<String, Strin
 
 fn registry_prefix_counts() -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
-    for rule in ALL_RULES {
+    for rule in &*ACTIVE_RULES {
         let prefix = rule
             .code()
             .trim_end_matches(|character: char| character.is_ascii_digit())
@@ -132,10 +132,10 @@ fn validate_rule_summaries(readme: &str, rules_documentation: &str) -> Result<()
         ("docs/rules.md", rules_documentation),
     ] {
         let (total, categories) = documented_rule_summary(document, path)?;
-        if total != ALL_RULES.len() || categories != registry.len() {
+        if total != ACTIVE_RULES.len() || categories != registry.len() {
             return Err(format!(
                 "{path} documents {total} rules in {categories} categories; registry has {} rules in {} categories",
-                ALL_RULES.len(),
+                ACTIVE_RULES.len(),
                 registry.len()
             ));
         }

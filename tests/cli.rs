@@ -126,6 +126,72 @@ fn s037_cli_accepts_repository_relative_json_reference() {
 }
 
 #[test]
+fn output_style_rules_preserve_runtime_coercion_metadata_and_o005_retirement() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let output_styles = tmp.path().join(".claude/output-styles/nested");
+    std::fs::create_dir_all(&output_styles).unwrap();
+    std::fs::write(
+        output_styles.join("style.md"),
+        "---\ndescription: 7\nkeep-coding-instructions: 'TRUE'\nforce-for-plugin: false\nunknown-secret-shaped-key: sk_this-value-must-not-appear\n---\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".claude/output-styles/long.md"),
+        format!(
+            "---\nname: {}\ndescription: Good\n---\nBody\n",
+            "名".repeat(65)
+        ),
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert!(diagnostics.iter().all(|diagnostic| {
+        diagnostic["subject_path"] == ".claude/output-styles/nested/style.md"
+            && diagnostic["location"].is_object()
+            && diagnostic["evidence"].is_string()
+            && diagnostic["suggestion"].is_string()
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "O001"
+            && diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("must be a string"))
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "O003"
+            && diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("plugin-bundled"))
+    }));
+    assert!(diagnostics.iter().all(|diagnostic| {
+        !diagnostic
+            .to_string()
+            .contains("sk_this-value-must-not-appear")
+            && !diagnostic.to_string().contains("unknown-secret-shaped-key")
+    }));
+
+    for arguments in [
+        vec!["--only", "O005", "."],
+        vec!["--pedantic", "--only", "style-name-long", "."],
+        vec!["--all", "--only", "O005", "."],
+    ] {
+        let output = run_in(tmp.path(), &arguments);
+        assert!(
+            output.status.success(),
+            "retired O005 must be inert for {arguments:?}: {}",
+            stderr(&output)
+        );
+        assert!(
+            stderr(&output).is_empty(),
+            "unexpected O005 output for {arguments:?}"
+        );
+    }
+}
+
+#[test]
 fn s022_autofix_converts_complete_runs_preserves_escapes_and_is_idempotent() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
