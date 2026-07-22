@@ -988,10 +988,17 @@ value.
 
 P019 preserves command/argv boundaries. Shell and Windows-interpreter payloads
 are inspected only when the selected executable is a known shell/`cmd`/
-PowerShell/`pwsh` and a `-c` / `/c`/`/k` / `-Command` (or documented abbreviation)
-payload is present. Direct `rm`/`sudo rm` recursive+force against `/`, and
-Windows `rd`/`rmdir /s /q` against a drive root, are detected from argv.
-Inert argument text (for example `echo` receiving `curl ... | sh`) does not warn.
+PowerShell/`pwsh` and a `-c` / `/c`/`/k` / `-Command` (or documented abbreviation
+or unambiguous parameter prefix such as `-enc`) payload is present. For `cmd`
+`/c`/`/k` and PowerShell plain command flags, all remaining arguments are joined
+with single spaces before inspection; PowerShell encoded-command flags still use
+the single next argument (the base64 blob). Unix `sh -c` (and siblings) keep
+single-argument payload semantics. Direct `rm`/`sudo rm` recursive+force against
+`/` or `/*`, and Windows `rd`/`rmdir /s /q` against a drive root (including
+`C:\*` / `C:/*` forms), are detected from argv. On Claude MCP surfaces, a
+non-blank `headersHelper` string is also scanned as a shell-parsed payload
+(Cursor has no such field). Inert argument text (for example `echo` receiving
+`curl ... | sh`) does not warn.
 
 P026 reserved names follow Claude Code's documented built-in server list
 ([MCP docs](https://code.claude.com/docs/en/mcp), retrieved 2026-07-21): `workspace`,
