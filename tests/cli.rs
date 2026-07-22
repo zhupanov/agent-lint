@@ -2606,6 +2606,12 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
         "name-has-xml",
         "K001",
         "slack-fallback-mismatch",
+        "U003",
+        "userconfig-env-missing",
+        "I005",
+        "instruction-file-structure",
+        "CX044",
+        "codex-agents-structure",
         "Q006,",
         ",Q006",
     ] {
@@ -2638,6 +2644,12 @@ fn json_invalid_only_is_schema_valid_and_preserves_prior_notices() {
             "name-has-xml",
             "K001",
             "slack-fallback-mismatch",
+            "U003",
+            "userconfig-env-missing",
+            "I005",
+            "instruction-file-structure",
+            "CX044",
+            "codex-agents-structure",
         ] {
             let mut args = mode_args.clone();
             args.extend(["--only", only, &target]);
