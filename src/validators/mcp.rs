@@ -1,6 +1,7 @@
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, ManifestState};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
+use crate::json_locate::{JsonScanner, Seg};
 use crate::platforms::ValidationTargets;
 use crate::rules::LintRule;
 use crate::sensitive::{
@@ -417,7 +418,14 @@ pub fn validate_mcp_configs(
     if let ManifestState::Parsed(value) = &ctx.plugin_json {
         let display = ".claude-plugin/plugin.json";
         if !exclude.is_excluded(display) {
-            validate_inline_plugin_mcp(display, value, &ctx.base_path, diag, exclude);
+            validate_inline_plugin_mcp(
+                display,
+                value,
+                value.source(),
+                &ctx.base_path,
+                diag,
+                exclude,
+            );
         }
     }
 }
@@ -474,7 +482,11 @@ fn validate_json_document(
             &display,
             &value,
             adapter,
-            Some((&content, &raw_keys, &raw_tokens)),
+            Some(RawDocument {
+                source: &content,
+                keys: Some(&raw_keys),
+                tokens: &raw_tokens,
+            }),
             diag,
         );
     });
@@ -501,9 +513,13 @@ fn display_path(base: &Path, path: &Path) -> String {
 /// Inline plugin `mcpServers` accepts object maps, string config paths, and
 /// arrays of those (plus inline server-map objects). Path existence/escape is
 /// M-owned; present readable files receive plugin-reference P-rule coverage.
+/// The already-valid manifest `source` is read solely to recover token spans
+/// (M002 remains the parse owner); when it is unavailable the diagnostics keep
+/// their evidence and suggestions without locations.
 fn validate_inline_plugin_mcp(
     display: &str,
     value: &Value,
+    source: Option<&str>,
     base_path: &Path,
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
@@ -512,8 +528,16 @@ fn validate_inline_plugin_mcp(
     match value.get("mcpServers") {
         None => {}
         Some(Value::Object(_)) => {
+            let tokens = source.map(RawMcpTokens::parse);
+            let raw = source
+                .zip(tokens.as_ref())
+                .map(|(source, tokens)| RawDocument {
+                    source,
+                    keys: None,
+                    tokens,
+                });
             diag.with_subject_path(display, |diag| {
-                validate_document(display, value, McpAdapter::ClaudeInlinePlugin, None, diag);
+                validate_document(display, value, McpAdapter::ClaudeInlinePlugin, raw, diag);
             });
         }
         Some(Value::String(path)) => {
@@ -521,6 +545,7 @@ fn validate_inline_plugin_mcp(
         }
         Some(Value::Array(items)) => {
             for (index, item) in items.iter().enumerate() {
+                let item_path = [Seg::Key("mcpServers"), Seg::Index(index)];
                 match item {
                     Value::String(path) => {
                         validate_referenced_claude_mcp(
@@ -533,25 +558,40 @@ fn validate_inline_plugin_mcp(
                     }
                     Value::Object(map) => {
                         let label_prefix = format!("{display}: mcpServers[{index}]");
+                        let tokens = source.and_then(|source| {
+                            JsonScanner::locate(source, &item_path)
+                                .map(|range| RawMcpTokens::parse_server_map_at(source, range.start))
+                        });
+                        let raw = source
+                            .zip(tokens.as_ref())
+                            .map(|(source, tokens)| RawDocument {
+                                source,
+                                keys: None,
+                                tokens,
+                            });
                         diag.with_subject_path(display, |diag| {
                             validate_server_map(
                                 &label_prefix,
                                 map,
                                 McpAdapter::ClaudeInlinePlugin,
-                                None,
+                                raw,
                                 diag,
                             );
                         });
                     }
                     _ => {
+                        let location = source.and_then(|source| {
+                            JsonScanner::locate(source, &item_path).map(|range| (source, range))
+                        });
                         diag.with_subject_path(display, |diag| {
                             report_structure(
                                 diag,
                                 &format!(
                                     "{display}: mcpServers[{index}] must be a string path or inline server-map object"
                                 ),
-                                None,
-                                None,
+                                location,
+                                Some(&format!("mcpServers[{index}]")),
+                                Some("use a ./-relative path string or inline server-map object"),
                             );
                         });
                     }
@@ -559,12 +599,16 @@ fn validate_inline_plugin_mcp(
             }
         }
         Some(_) => {
+            let location = source.and_then(|source| {
+                JsonScanner::locate(source, &[Seg::Key("mcpServers")]).map(|range| (source, range))
+            });
             diag.with_subject_path(display, |diag| {
                 report_structure(
                     diag,
                     &format!("{display}: mcpServers must be an object, string path, or array"),
-                    None,
-                    None,
+                    location,
+                    Some("mcpServers"),
+                    Some("use a JSON object, ./-relative path string, or array for mcpServers"),
                 );
             });
         }
@@ -630,30 +674,54 @@ fn normalize_under_base(base: &Path, relative: &str) -> std::path::PathBuf {
     out
 }
 
+/// Raw source context for span recovery. `keys` carries the raw top-level
+/// `mcpServers` occurrence scan that drives the duplicate/shape pass for
+/// standalone map documents; token-recovery-only surfaces (the inline plugin
+/// manifest, whose parse M002 owns) supply `tokens` without `keys`. Both raw
+/// duplicate passes — the P027 occurrence checks and the P023 duplicate
+/// server names — are gated on `keys` so token recovery alone never adds
+/// parse-derived diagnostics to a surface another rule owns.
+#[derive(Clone, Copy)]
+struct RawDocument<'a> {
+    source: &'a str,
+    keys: Option<&'a RawMcpKeys>,
+    tokens: &'a RawMcpTokens,
+}
+
 fn validate_document(
     display: &str,
     value: &Value,
     adapter: McpAdapter,
-    raw_document: Option<(&str, &RawMcpKeys, &RawMcpTokens)>,
+    raw_document: Option<RawDocument<'_>>,
     diag: &mut DiagnosticCollector,
 ) {
-    if let Some((source, raw_keys, raw_tokens)) = raw_document {
+    if let Some(raw) = raw_document
+        && let Some(raw_keys) = raw.keys
+    {
+        let source = raw.source;
+        // All duplicate-key diagnostics come first in source order, then one
+        // invalid-map-value diagnostic for every non-object occurrence in
+        // source order, so the emitted set never depends on key order.
         for duplicate in raw_keys.server_maps.iter().skip(1) {
             report_structure(
                 diag,
                 &format!("{display}: duplicate top-level mcpServers key"),
                 Some((source, duplicate.key_range.clone())),
-                None,
+                Some("duplicate mcpServers"),
+                Some("remove the duplicate top-level mcpServers key"),
             );
         }
-        if let Some(first) = raw_keys.server_maps.first()
-            && !first.value_is_object
+        for map in raw_keys
+            .server_maps
+            .iter()
+            .filter(|map| !map.value_is_object)
         {
             report_structure(
                 diag,
                 &format!("{display}: mcpServers must be an object"),
-                Some((source, first.value_range.clone())),
-                None,
+                Some((source, map.value_range.clone())),
+                Some("mcpServers"),
+                Some("use a JSON object for mcpServers"),
             );
         }
         for map in &raw_keys.server_maps {
@@ -663,12 +731,13 @@ fn validate_document(
                         diag,
                         &format!("{display}: mcpServers.{} must be an object", entry.name),
                         Some((source, entry.value_range.clone())),
-                        None,
+                        Some(&format!("server entry: {}", entry.name)),
+                        Some("use a JSON object for this server configuration"),
                     );
                 }
             }
         }
-        for duplicate in &raw_tokens.duplicates {
+        for duplicate in &raw.tokens.duplicates {
             let (line, column) = position_at_offset(source, duplicate.first_key.start);
             diag.report_with(
                 LintRule::McpDuplicateServer,
@@ -691,25 +760,19 @@ fn validate_document(
         return;
     }
     let Some(servers) = servers.and_then(Value::as_object) else {
-        let has_duplicate_map =
-            raw_document.is_some_and(|(_, raw_keys, _)| raw_keys.server_maps.len() > 1);
-        let first_invalid_map = raw_document.is_some_and(|(_, raw_keys, _)| {
-            raw_keys
-                .server_maps
-                .first()
-                .is_some_and(|map| !map.value_is_object)
+        // When the raw pass scanned occurrences, it already reported every
+        // non-object occurrence; only the documented missing-map file-level
+        // exception (no occurrence at all) falls through to this report.
+        let raw_pass_reported = raw_document.is_some_and(|raw| {
+            raw.keys
+                .is_some_and(|raw_keys| !raw_keys.server_maps.is_empty())
         });
-        if !has_duplicate_map && !first_invalid_map {
-            let location = raw_document.and_then(|(source, raw_keys, _)| {
-                raw_keys
-                    .server_maps
-                    .last()
-                    .map(|map| (source, map.value_range.clone()))
-            });
+        if !raw_pass_reported {
             report_structure(
                 diag,
                 &format!("{display}: mcpServers must be an object"),
-                location,
+                None,
+                None,
                 servers
                     .is_none()
                     .then_some("add a top-level mcpServers object"),
@@ -731,13 +794,13 @@ fn validate_server_map(
     label_prefix: &str,
     servers: &serde_json::Map<String, Value>,
     adapter: McpAdapter,
-    raw_document: Option<(&str, &RawMcpKeys, &RawMcpTokens)>,
+    raw_document: Option<RawDocument<'_>>,
     diag: &mut DiagnosticCollector,
 ) {
     for (name, config) in servers {
         let label = format!("{label_prefix}.{name}");
-        let token = raw_document.and_then(|(_, _, tokens)| tokens.servers.get(name));
-        let source = raw_document.map(|(source, _, _)| source);
+        let token = raw_document.and_then(|raw| raw.tokens.servers.get(name));
+        let source = raw_document.map(|raw| raw.source);
         let server_key = token.map(|token| &token.key);
         if adapter.allows_claude_only_rules() && RESERVED_SERVER_NAMES.contains(&name.as_str()) {
             report(
@@ -751,10 +814,18 @@ fn validate_server_map(
             );
         }
         let Some(config) = config.as_object() else {
-            if raw_document.is_none() {
-                diag.report(
+            // With raw keys scanned, the raw pass already reported every raw
+            // occurrence of this entry; other surfaces report it here with
+            // whatever token span is recoverable.
+            if raw_document.is_none_or(|raw| raw.keys.is_none()) {
+                report(
+                    diag,
                     LintRule::McpStructureInvalid,
                     &format!("{label} must be an object"),
+                    source,
+                    server_key,
+                    &format!("server entry: {name}"),
+                    "use a JSON object for this server configuration",
                 );
             }
             continue;
@@ -854,6 +925,7 @@ fn report_structure(
     diag: &mut DiagnosticCollector,
     message: &str,
     location: Option<(&str, std::ops::Range<usize>)>,
+    evidence: Option<&str>,
     suggestion: Option<&str>,
 ) {
     let mut metadata = DiagnosticMetadata::default();
@@ -861,6 +933,9 @@ fn report_structure(
         if let Some(span) = SourceSpan::from_byte_range(source, range) {
             metadata = metadata.with_location(span);
         }
+    }
+    if let Some(evidence) = evidence {
+        metadata = metadata.with_evidence(evidence);
     }
     if let Some(suggestion) = suggestion {
         metadata = metadata.with_suggestion(suggestion);
@@ -886,7 +961,7 @@ fn validate_claude_transport(
             &format!("{label} has a \"url\" but no \"type\""),
             source,
             field_value(token, "url").or(server_key),
-            "url",
+            "url without type",
             "add \"type\": \"http\" (or \"sse\" / \"ws\") to this entry",
         );
         return;
@@ -963,9 +1038,14 @@ fn validate_cursor_selector(
     diag: &mut DiagnosticCollector,
 ) {
     match (config.contains_key("command"), config.contains_key("url")) {
-        (false, false) | (true, true) => diag.report(
+        (false, false) | (true, true) => report(
+            diag,
             LintRule::McpStructureInvalid,
             &format!("{label} must define exactly one of command or url"),
+            source,
+            server_key,
+            "command/url selector",
+            "define exactly one non-empty command or url selector",
         ),
         (false, true) => {
             if let Some(url) = config
@@ -988,7 +1068,7 @@ fn validate_cursor_selector(
                     source,
                     field_value(token, "url").or(server_key),
                     "url",
-                    "set url to a non-empty string",
+                    "use a non-empty string for url",
                 );
             }
         }
@@ -1001,7 +1081,7 @@ fn validate_cursor_selector(
                     source,
                     field_value(token, "command").or(server_key),
                     "command",
-                    "set command to a non-empty string",
+                    "use a non-empty string for command",
                 );
             }
         }
@@ -1960,6 +2040,19 @@ impl RawMcpTokens {
         scanner.scan_root();
         scanner.tokens
     }
+
+    /// Scan one server-map object that starts at `offset` (an inline plugin
+    /// `mcpServers[i]` array item). Recorded ranges stay absolute within
+    /// `content`.
+    fn parse_server_map_at(content: &str, offset: usize) -> Self {
+        let mut scanner = TokenScanner::new(content.as_bytes());
+        scanner.pos = offset;
+        scanner.skip_ws();
+        if scanner.input.get(scanner.pos) == Some(&b'{') {
+            scanner.scan_servers_object();
+        }
+        scanner.tokens
+    }
 }
 
 struct TokenScanner<'a> {
@@ -2228,7 +2321,7 @@ struct RawServerEntry {
 }
 
 fn scan_mcp_keys(content: &str) -> RawMcpKeys {
-    let mut scanner = JsonScanner::new(content.as_bytes());
+    let mut scanner = OccurrenceScanner::new(content.as_bytes());
     scanner.scan_value(ScanObject::TopLevel);
     RawMcpKeys {
         server_maps: scanner.server_maps,
@@ -2243,14 +2336,14 @@ enum ScanObject {
     ServerMap,
 }
 
-struct JsonScanner<'a> {
+struct OccurrenceScanner<'a> {
     input: &'a [u8],
     pos: usize,
     server_maps: Vec<RawServerMap>,
     server_entries: Vec<RawServerEntry>,
 }
 
-impl<'a> JsonScanner<'a> {
+impl<'a> OccurrenceScanner<'a> {
     fn new(input: &'a [u8]) -> Self {
         Self {
             input,
@@ -2837,6 +2930,96 @@ mod tests {
             ),
             vec![LintRule::McpStructureInvalid, LintRule::McpDuplicateServer]
         );
+    }
+
+    #[test]
+    fn duplicate_map_orders_emit_identical_p027_sequences() {
+        // Every raw occurrence is validated, so the emitted sequence never
+        // depends on which occurrence holds the invalid value.
+        for content in [
+            r#"{"mcpServers":null,"mcpServers":{"ok":{"command":"ok"}}}"#,
+            r#"{"mcpServers":{"ok":{"command":"ok"}},"mcpServers":null}"#,
+        ] {
+            let found = findings(content);
+            assert_eq!(found.len(), 2, "{content}: {found:#?}");
+            assert_eq!(found[0].rule, LintRule::McpStructureInvalid);
+            assert_eq!(
+                found[0].message,
+                ".mcp.json: duplicate top-level mcpServers key"
+            );
+            assert_eq!(found[0].evidence.as_deref(), Some("duplicate mcpServers"));
+            assert_eq!(
+                found[0].suggestion.as_deref(),
+                Some("remove the duplicate top-level mcpServers key")
+            );
+            assert!(found[0].location.is_some(), "{content}");
+            assert_eq!(found[1].rule, LintRule::McpStructureInvalid);
+            assert_eq!(found[1].message, ".mcp.json: mcpServers must be an object");
+            assert_eq!(found[1].evidence.as_deref(), Some("mcpServers"));
+            assert_eq!(
+                found[1].suggestion.as_deref(),
+                Some("use a JSON object for mcpServers")
+            );
+            assert!(found[1].location.is_some(), "{content}");
+        }
+
+        // Three occurrences: both duplicate keys first, then both invalid
+        // values, all in source order.
+        let three =
+            findings(r#"{"mcpServers":null,"mcpServers":{"ok":{"command":"ok"}},"mcpServers":[]}"#);
+        assert_eq!(
+            three
+                .iter()
+                .map(|finding| finding.message.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                ".mcp.json: duplicate top-level mcpServers key",
+                ".mcp.json: duplicate top-level mcpServers key",
+                ".mcp.json: mcpServers must be an object",
+                ".mcp.json: mcpServers must be an object",
+            ]
+        );
+        assert_eq!(three[2].location, Some(SourceSpan::range(1, 15, 1, 19)));
+        assert_eq!(three[3].location, Some(SourceSpan::range(1, 70, 1, 72)));
+
+        // Escaped spellings follow the same decoded-key contract.
+        let escaped =
+            findings("{\"mcp\\u0053ervers\":null,\"mcpServers\":{\"ok\":{\"command\":\"ok\"}}}");
+        assert_eq!(
+            escaped
+                .iter()
+                .map(|finding| finding.message.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                ".mcp.json: duplicate top-level mcpServers key",
+                ".mcp.json: mcpServers must be an object",
+            ]
+        );
+
+        // Object/object duplicates report only the duplicate key.
+        let object_duplicate =
+            findings(r#"{"mcpServers":{"a":{"command":"x"}},"mcpServers":{"b":{"command":"y"}}}"#);
+        assert_eq!(object_duplicate.len(), 1, "{object_duplicate:#?}");
+        assert_eq!(
+            object_duplicate[0].message,
+            ".mcp.json: duplicate top-level mcpServers key"
+        );
+    }
+
+    #[test]
+    fn server_entry_p027_metadata_matches_bound_matrix() {
+        let found = findings(r#"{"mcpServers":{"bad":5,"ok":{"command":"ok"}}}"#);
+        let entry = found
+            .iter()
+            .find(|finding| finding.rule == LintRule::McpStructureInvalid)
+            .unwrap();
+        assert_eq!(entry.message, ".mcp.json: mcpServers.bad must be an object");
+        assert_eq!(entry.evidence.as_deref(), Some("server entry: bad"));
+        assert_eq!(
+            entry.suggestion.as_deref(),
+            Some("use a JSON object for this server configuration")
+        );
+        assert_eq!(entry.location, Some(SourceSpan::range(1, 22, 1, 23)));
     }
 
     #[test]
@@ -4089,6 +4272,71 @@ mod tests {
                 .filter(|item| item.message.contains(".url must be a non-empty string"))
                 .count(),
             2
+        );
+        assert!(
+            structures
+                .iter()
+                .all(|item| item.location.is_some() && item.suggestion.is_some())
+        );
+        assert_eq!(
+            structures
+                .iter()
+                .filter(|item| item.evidence.as_deref() == Some("url")
+                    && item.suggestion.as_deref() == Some("use a non-empty string for url"))
+                .count(),
+            2
+        );
+        assert_eq!(
+            structures
+                .iter()
+                .filter(|item| item.evidence.as_deref() == Some("command")
+                    && item.suggestion.as_deref() == Some("use a non-empty string for command"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn cursor_selector_contradictions_carry_structured_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join(".cursor/mcp.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"mcpServers":{"both":{"command":"server","url":"https://example.com"}}}"#,
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_mcp_configs(
+            &context(temp.path()),
+            &mut diag,
+            &ExcludeSet::default(),
+            ValidationTargets {
+                cursor: true,
+                ..ValidationTargets::default()
+            },
+        );
+        let contradiction = diag
+            .diagnostics()
+            .iter()
+            .find(|item| item.rule == LintRule::McpStructureInvalid)
+            .unwrap();
+        assert_eq!(
+            contradiction.message,
+            ".cursor/mcp.json: mcpServers.both must define exactly one of command or url"
+        );
+        assert_eq!(
+            contradiction.evidence.as_deref(),
+            Some("command/url selector")
+        );
+        assert_eq!(
+            contradiction.suggestion.as_deref(),
+            Some("define exactly one non-empty command or url selector")
+        );
+        // The server key token anchors the contradiction.
+        assert_eq!(
+            contradiction.location,
+            Some(SourceSpan::range(1, 16, 1, 22))
         );
     }
 

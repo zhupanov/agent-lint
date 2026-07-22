@@ -836,27 +836,6 @@ fn is_valid_publish_url_unit() {
     assert!(!is_valid_publish_url("not a url"));
 }
 
-#[test]
-fn json_scanner_locates_nested_paths() {
-    let source = r#"{"name":"x","interface":{"defaultPrompt":["a","bb"]}}"#;
-    // Locations point at the offending value, not the key/member.
-    let name = JsonScanner::locate(source, &[Seg::Key("name")]).unwrap();
-    assert_eq!(&source[name], "\"x\"");
-
-    let prompt = JsonScanner::locate(
-        source,
-        &[
-            Seg::Key("interface"),
-            Seg::Key("defaultPrompt"),
-            Seg::Index(1),
-        ],
-    )
-    .unwrap();
-    assert_eq!(&source[prompt], "\"bb\"");
-
-    assert!(JsonScanner::locate(source, &[Seg::Key("missing")]).is_none());
-}
-
 // ── CX060: skill frontmatter ─────────────────────────────────────────────
 
 fn cx060_hits(diag: &DiagnosticCollector) -> Vec<&crate::diagnostic::Diagnostic> {

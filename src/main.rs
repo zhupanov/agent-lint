@@ -7,6 +7,7 @@ mod documentation_consistency;
 mod fence;
 mod frontmatter;
 mod hook_commands;
+mod json_locate;
 mod json_output;
 mod live_instructions;
 mod markdown;

@@ -1,0 +1,31 @@
+{
+  "class": "broken",
+  "repository": "mcp-structure-duplicate-broken",
+  "covers": ["mcp", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "P027", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "P027",
+      "name": "mcp-structure-invalid",
+      "severity": "error",
+      "subject_path": ".mcp.json",
+      "location": { "line": 5, "column": 3 },
+      "evidence": "duplicate mcpServers",
+      "suggestion": "remove the duplicate top-level mcpServers key"
+    },
+    {
+      "code": "P027",
+      "name": "mcp-structure-invalid",
+      "severity": "error",
+      "subject_path": ".mcp.json",
+      "location": { "line": 5, "column": 17 },
+      "evidence": "mcpServers",
+      "suggestion": "use a JSON object for mcpServers"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

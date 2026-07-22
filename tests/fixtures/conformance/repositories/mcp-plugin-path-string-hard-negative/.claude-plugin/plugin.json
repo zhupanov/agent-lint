@@ -1,0 +1,4 @@
+{
+  "name": "path-string-plugin",
+  "mcpServers": "./config/servers.json"
+}

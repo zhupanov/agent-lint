@@ -1,24 +1,150 @@
 {
   "class": "broken",
   "repository": "cursor-hooks-basic-broken",
-  "covers": ["cursor-hooks-basic", "normal", "json"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CU010,CU011,CU012,CU013,CU017,CU018,CU019", "."] },
+  "covers": [
+    "cursor-hooks-basic",
+    "normal",
+    "json"
+  ],
+  "invocation": {
+    "mode": "basic",
+    "arguments": [
+      "--format",
+      "json",
+      "--only",
+      "CU010,CU011,CU012,CU013,CU017,CU018,CU019",
+      "."
+    ]
+  },
   "expected_exit_code": 1,
   "expected_status": "errors",
-  "expected_active_platforms": ["claude", "cursor"],
+  "expected_active_platforms": [
+    "claude",
+    "cursor"
+  ],
   "expected_suppressed": 0,
   "expected_diagnostics": [
-    { "code": "CU010", "name": "cursor-hooks-invalid", "severity": "error", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU011", "name": "cursor-event-unknown", "severity": "warning", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU012", "name": "cursor-command-missing", "severity": "error", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU012", "name": "cursor-command-missing", "severity": "error", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU013", "name": "cursor-type-invalid", "severity": "error", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU017", "name": "cursor-hook-invalid", "severity": "warning", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU018", "name": "cursor-prompt-missing", "severity": "error", "subject_path": ".cursor/hooks.json" },
-    { "code": "CU019", "name": "cursor-model-invalid", "severity": "error", "subject_path": ".cursor/hooks.json" }
+    {
+      "code": "CU010",
+      "name": "cursor-hooks-invalid",
+      "severity": "error",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 2,
+        "column": 14
+      },
+      "evidence": "version"
+    },
+    {
+      "code": "CU011",
+      "name": "cursor-event-unknown",
+      "severity": "warning",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 11,
+        "column": 5
+      },
+      "evidence": "hooks.unknown"
+    },
+    {
+      "code": "CU012",
+      "name": "cursor-command-missing",
+      "severity": "error",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 7,
+        "column": 39
+      },
+      "evidence": "hooks.beforeShellExecution[3].command"
+    },
+    {
+      "code": "CU012",
+      "name": "cursor-command-missing",
+      "severity": "error",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 9,
+        "column": 7
+      },
+      "evidence": "hooks.beforeShellExecution[5].command"
+    },
+    {
+      "code": "CU013",
+      "name": "cursor-type-invalid",
+      "severity": "error",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 8,
+        "column": 17
+      },
+      "evidence": "hooks.beforeShellExecution[4].type"
+    },
+    {
+      "code": "CU017",
+      "name": "cursor-hook-invalid",
+      "severity": "warning",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 9,
+        "column": 20
+      },
+      "evidence": "hooks.beforeShellExecution[5].timeout"
+    },
+    {
+      "code": "CU017",
+      "name": "cursor-hook-invalid",
+      "severity": "warning",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 9,
+        "column": 42
+      },
+      "evidence": "hooks.beforeShellExecution[5].loop_limit"
+    },
+    {
+      "code": "CU017",
+      "name": "cursor-hook-invalid",
+      "severity": "warning",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 9,
+        "column": 63
+      },
+      "evidence": "hooks.beforeShellExecution[5].failClosed"
+    },
+    {
+      "code": "CU017",
+      "name": "cursor-hook-invalid",
+      "severity": "warning",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 9,
+        "column": 81
+      },
+      "evidence": "hooks.beforeShellExecution[5].matcher"
+    },
+    {
+      "code": "CU018",
+      "name": "cursor-prompt-missing",
+      "severity": "error",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 5,
+        "column": 37
+      },
+      "evidence": "hooks.beforeShellExecution[1].prompt"
+    },
+    {
+      "code": "CU019",
+      "name": "cursor-model-invalid",
+      "severity": "error",
+      "subject_path": ".cursor/hooks.json",
+      "location": {
+        "line": 6,
+        "column": 59
+      },
+      "evidence": "hooks.beforeShellExecution[2].model"
+    }
   ],
   "allowed_additional_diagnostics": []
 }

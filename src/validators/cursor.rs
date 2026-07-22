@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::config::ExcludeSet;
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::frontmatter;
+use crate::json_locate::{JsonScanner, Seg};
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
 use crate::platforms;
@@ -653,6 +654,44 @@ fn analyze_globs(
     }
 }
 
+/// Parser point for invalid JSON: serde's line/column, line-only when the
+/// error carries no column.
+fn json_parse_error_location(error: &serde_json::Error) -> SourceSpan {
+    if error.column() > 0 {
+        SourceSpan::point(error.line().max(1), error.column())
+    } else {
+        SourceSpan::line(error.line().max(1))
+    }
+}
+
+/// Structured metadata for a hooks.json finding: bounded structural-path
+/// evidence plus the source span of the named token. `key_token` anchors at
+/// the key spelling (unknown event names); otherwise the value at `path` is
+/// located, falling back through `fallback` (for example the owning entry when
+/// a required field is absent). Instance values never enter the evidence.
+fn hooks_metadata(
+    content: &str,
+    evidence: &str,
+    key_token: bool,
+    path: &[Seg<'_>],
+    fallback: &[Seg<'_>],
+) -> DiagnosticMetadata {
+    let range = if key_token {
+        JsonScanner::locate_key(content, path)
+    } else {
+        JsonScanner::locate(content, path).or_else(|| {
+            (!fallback.is_empty())
+                .then(|| JsonScanner::locate(content, fallback))
+                .flatten()
+        })
+    };
+    let mut metadata = DiagnosticMetadata::default().with_evidence(evidence);
+    if let Some(span) = range.and_then(|range| SourceSpan::from_byte_range(content, range)) {
+        metadata = metadata.with_location(span);
+    }
+    metadata
+}
+
 fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     const PATH: &str = ".cursor/hooks.json";
     if exclude.is_excluded(PATH) {
@@ -664,21 +703,25 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let value = match serde_json::from_str::<JsonValue>(&content) {
         Ok(value) => value,
         Err(error) => {
-            report(
+            report_meta(
                 diag,
                 LintRule::CursorHooksSchemaInvalid,
                 PATH,
                 &format!("invalid JSON: {error}"),
+                DiagnosticMetadata::default()
+                    .with_location(json_parse_error_location(&error))
+                    .with_evidence("JSON syntax"),
             );
             return;
         }
     };
     let Some(root) = value.as_object() else {
-        report(
+        report_meta(
             diag,
             LintRule::CursorHooksSchemaInvalid,
             PATH,
             "top level must be an object",
+            hooks_metadata(&content, "top level", false, &[], &[]),
         );
         return;
     };
@@ -686,48 +729,63 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
         .get("version")
         .is_some_and(|version| version.is_number() && version.as_f64() == Some(1.0))
     {
-        report(
+        report_meta(
             diag,
             LintRule::CursorHooksSchemaInvalid,
             PATH,
             "'version' must be numeric schema version 1",
+            hooks_metadata(&content, "version", false, &[Seg::Key("version")], &[]),
         );
     }
     let Some(hooks) = root.get("hooks").and_then(JsonValue::as_object) else {
-        report(
+        report_meta(
             diag,
             LintRule::CursorHooksSchemaInvalid,
             PATH,
             "'hooks' must be an object",
+            hooks_metadata(&content, "hooks", false, &[Seg::Key("hooks")], &[]),
         );
         return;
     };
     for (event, entries) in hooks {
+        let event_path = [Seg::Key("hooks"), Seg::Key(event)];
         if !HOOK_EVENTS.contains(&event.as_str()) {
-            report(
+            report_meta(
                 diag,
                 LintRule::CursorHookEventUnknown,
                 PATH,
                 &format!("unknown hook event '{event}'"),
+                hooks_metadata(&content, &format!("hooks.{event}"), true, &event_path, &[]),
             );
         }
         let Some(entries) = entries.as_array() else {
-            report(
+            report_meta(
                 diag,
                 LintRule::CursorHooksSchemaInvalid,
                 PATH,
                 &format!("hooks.{event} must be an array"),
+                hooks_metadata(&content, &format!("hooks.{event}"), false, &event_path, &[]),
             );
             continue;
         };
         for (index, entry) in entries.iter().enumerate() {
             let label = format!("hooks.{event}[{}]", index + 1);
+            let entry_path = [Seg::Key("hooks"), Seg::Key(event), Seg::Index(index)];
+            let field_path = |field: &'static str| {
+                [
+                    Seg::Key("hooks"),
+                    Seg::Key(event),
+                    Seg::Index(index),
+                    Seg::Key(field),
+                ]
+            };
             let Some(entry) = entry.as_object() else {
-                report(
+                report_meta(
                     diag,
                     LintRule::CursorHooksSchemaInvalid,
                     PATH,
                     &format!("{label} must be an object"),
+                    hooks_metadata(&content, &label, false, &entry_path, &[]),
                 );
                 continue;
             };
@@ -739,21 +797,35 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                     .and_then(JsonValue::as_str)
                     .is_none_or(|value| value.trim().is_empty())
             {
-                report(
+                report_meta(
                     diag,
                     LintRule::CursorHookCommandMissing,
                     PATH,
                     &format!("{label} is missing a non-empty 'command'"),
+                    hooks_metadata(
+                        &content,
+                        &format!("{label}.command"),
+                        false,
+                        &field_path("command"),
+                        &entry_path,
+                    ),
                 );
             }
             if let Some(kind) = entry.get("type")
                 && !matches!(kind.as_str(), Some("command" | "prompt"))
             {
-                report(
+                report_meta(
                     diag,
                     LintRule::CursorHookTypeInvalid,
                     PATH,
                     &format!("{label}.type must be 'command' or 'prompt'"),
+                    hooks_metadata(
+                        &content,
+                        &format!("{label}.type"),
+                        false,
+                        &field_path("type"),
+                        &entry_path,
+                    ),
                 );
             }
             for (field, valid) in [
@@ -777,11 +849,18 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                 ),
             ] {
                 if !valid {
-                    report(
+                    report_meta(
                         diag,
                         LintRule::CursorHookFieldTypeInvalid,
                         PATH,
                         &format!("{label}.{field} has an invalid type"),
+                        hooks_metadata(
+                            &content,
+                            &format!("{label}.{field}"),
+                            false,
+                            &field_path(field),
+                            &entry_path,
+                        ),
                     );
                 }
             }
@@ -791,22 +870,36 @@ fn validate_hooks(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
                     .and_then(JsonValue::as_str)
                     .is_none_or(|value| value.trim().is_empty())
                 {
-                    report(
+                    report_meta(
                         diag,
                         LintRule::CursorPromptHookPromptMissing,
                         PATH,
                         &format!("{label} is missing a non-empty 'prompt'"),
+                        hooks_metadata(
+                            &content,
+                            &format!("{label}.prompt"),
+                            false,
+                            &field_path("prompt"),
+                            &entry_path,
+                        ),
                     );
                 }
                 if entry
                     .get("model")
                     .is_some_and(|value| value.as_str().is_none_or(|model| model.trim().is_empty()))
                 {
-                    report(
+                    report_meta(
                         diag,
                         LintRule::CursorPromptHookModelInvalid,
                         PATH,
                         &format!("{label}.model must be a non-empty string"),
+                        hooks_metadata(
+                            &content,
+                            &format!("{label}.model"),
+                            false,
+                            &field_path("model"),
+                            &entry_path,
+                        ),
                     );
                 }
             }
@@ -910,53 +1003,221 @@ fn validate_environment(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let value = match serde_json::from_str::<JsonValue>(&content) {
         Ok(value) => value,
         Err(error) => {
-            report(
+            report_meta(
                 diag,
                 LintRule::CursorEnvironmentInvalid,
                 PATH,
                 &format!("invalid JSON: {error}"),
+                DiagnosticMetadata::default()
+                    .with_location(json_parse_error_location(&error))
+                    .with_evidence("JSON syntax"),
             );
             return;
         }
     };
+    let mut findings = Vec::new();
     for error in CURSOR_ENVIRONMENT_VALIDATOR.iter_errors(&value) {
-        let property_path = cursor_environment_property_path(&error);
-        report(
+        resolve_environment_error(&error, &mut findings);
+    }
+    for finding in suppress_unevaluated_cascades(findings) {
+        let property_path = environment_property_path(&finding.segments);
+        report_meta(
             diag,
             LintRule::CursorEnvironmentInvalid,
             PATH,
             // The configuration may contain commands or credentials. Retain
             // the actionable path and constraint while masking its value.
-            &format!("{property_path}: {}", error.masked()),
+            &format!("{property_path}: {}", finding.message),
+            finding.metadata(&content, &property_path),
         );
     }
 }
 
-/// Convert JSON Pointer locations into the property paths shown in agent-lint
-/// diagnostics. Array indices are one-based, matching the validator's prior
-/// Cursor environment output.
-fn cursor_environment_property_path(error: &jsonschema::ValidationError<'_>) -> String {
-    let mut pointer = error.instance_path().as_str().to_string();
-    if let ValidationErrorKind::Required { property } = error.kind()
-        && let Some(property) = property.as_str()
-    {
-        pointer.push('/');
-        pointer.push_str(&property.replace('~', "~0").replace('/', "~1"));
+/// One instance-path segment of an environment schema finding.
+#[derive(Clone, PartialEq, Eq)]
+enum EnvSeg {
+    Key(String),
+    Index(usize),
+}
+
+/// A schema violation resolved to its narrowest actionable property path.
+struct EnvironmentFinding {
+    /// Full instance path, including a `Required` error's missing property.
+    segments: Vec<EnvSeg>,
+    /// The final segment names a missing required property, so the source
+    /// location anchors at the owning object rather than an absent token.
+    missing_property: bool,
+    /// `unevaluatedProperties` payload used to drop union-parent cascades.
+    unevaluated: Option<Vec<String>>,
+    /// Masked constraint text; instance values never appear.
+    message: String,
+}
+
+impl EnvironmentFinding {
+    fn from_error(error: &jsonschema::ValidationError<'_>) -> Self {
+        let mut segments = pointer_segments(error.instance_path().as_str());
+        let mut missing_property = false;
+        let mut unevaluated = None;
+        match error.kind() {
+            ValidationErrorKind::Required { property } => {
+                if let Some(property) = property.as_str() {
+                    segments.push(EnvSeg::Key(property.to_string()));
+                    missing_property = true;
+                }
+            }
+            ValidationErrorKind::UnevaluatedProperties { unexpected } => {
+                unevaluated = Some(unexpected.clone());
+            }
+            _ => {}
+        }
+        Self {
+            segments,
+            missing_property,
+            unevaluated,
+            message: error.masked().to_string(),
+        }
     }
 
-    let mut path = String::new();
-    for segment in pointer.trim_start_matches('/').split('/') {
-        if segment.is_empty() {
-            continue;
-        }
-        let segment = segment.replace("~1", "/").replace("~0", "~");
-        if let Ok(index) = segment.parse::<usize>() {
-            path.push_str(&format!("[{}]", index + 1));
-        } else if path.is_empty() {
-            path.push_str(&segment);
+    /// Bounded structural metadata: the property path as evidence plus the
+    /// narrowest recoverable source span (the value, the owning object for a
+    /// missing property, or the first unexpected key token).
+    fn metadata(&self, content: &str, property_path: &str) -> DiagnosticMetadata {
+        let mut metadata = DiagnosticMetadata::default().with_evidence(property_path);
+        let locator_path: Vec<Seg<'_>> = self
+            .segments
+            .iter()
+            .map(|segment| match segment {
+                EnvSeg::Key(key) => Seg::Key(key),
+                EnvSeg::Index(index) => Seg::Index(*index),
+            })
+            .collect();
+        let range = if self.missing_property {
+            let parent = &locator_path[..locator_path.len() - 1];
+            JsonScanner::locate(content, parent)
+        } else if let Some(unexpected) = self
+            .unevaluated
+            .as_ref()
+            .and_then(|unexpected| unexpected.first())
+        {
+            let mut key_path = locator_path.clone();
+            key_path.push(Seg::Key(unexpected));
+            JsonScanner::locate_key(content, &key_path)
         } else {
-            path.push('.');
-            path.push_str(&segment);
+            JsonScanner::locate(content, &locator_path)
+        };
+        if let Some(span) = range.and_then(|range| SourceSpan::from_byte_range(content, range)) {
+            metadata = metadata.with_location(span);
+        }
+        metadata
+    }
+}
+
+/// Surface the narrowest actionable leaf errors for a failed `oneOf` union.
+///
+/// The crate reports a union failure at the union parent with every branch's
+/// child errors attached. When exactly one branch failed for reasons other
+/// than a fundamental type mismatch, that branch is the one the author meant,
+/// so its leaf errors replace the generic parent finding; otherwise the parent
+/// finding is kept unchanged.
+fn resolve_environment_error(
+    error: &jsonschema::ValidationError<'_>,
+    findings: &mut Vec<EnvironmentFinding>,
+) {
+    if let ValidationErrorKind::OneOfNotValid { context } = error.kind() {
+        let parent_pointer = error.instance_path().as_str().to_string();
+        let mut pertinent = context.iter().filter(|branch| {
+            !branch.is_empty() && !branch_is_type_mismatch(branch, &parent_pointer)
+        });
+        if let (Some(branch), None) = (pertinent.next(), pertinent.next()) {
+            for child in branch {
+                resolve_environment_error(child, findings);
+            }
+            return;
+        }
+    }
+    findings.push(EnvironmentFinding::from_error(error));
+}
+
+/// A branch that failed only because the instance has the wrong fundamental
+/// JSON type carries exactly one `type` error at the union parent itself.
+fn branch_is_type_mismatch(
+    branch: &[jsonschema::ValidationError<'_>],
+    parent_pointer: &str,
+) -> bool {
+    matches!(branch, [only]
+        if matches!(only.kind(), ValidationErrorKind::Type { .. })
+            && only.instance_path().as_str() == parent_pointer)
+}
+
+/// Drop an `unevaluatedProperties` finding when every property it names is
+/// already owned by a more specific finding underneath it. Failing subschemas
+/// discard their annotations, so a defective known property re-surfaces as
+/// "unevaluated" at its parent; the deeper finding is the actionable one.
+/// Findings naming any genuinely unknown property are kept, reordered so the
+/// first named property (the location anchor) is a genuinely unknown one.
+fn suppress_unevaluated_cascades(findings: Vec<EnvironmentFinding>) -> Vec<EnvironmentFinding> {
+    // Any finding can own a flagged property, including a deeper unevaluated
+    // finding (an unknown key inside `build` also cascades to the root). An
+    // owning prefix is strictly longer than the flagging finding's own path,
+    // so no finding suppresses itself, and two unevaluated findings cannot
+    // suppress each other cyclically.
+    let all_paths: Vec<Vec<EnvSeg>> = findings
+        .iter()
+        .map(|finding| finding.segments.clone())
+        .collect();
+    findings
+        .into_iter()
+        .filter_map(|mut finding| {
+            let Some(unexpected) = &finding.unevaluated else {
+                return Some(finding);
+            };
+            let (genuine, cascaded): (Vec<String>, Vec<String>) =
+                unexpected.iter().cloned().partition(|property| {
+                    let mut prefix = finding.segments.clone();
+                    prefix.push(EnvSeg::Key(property.clone()));
+                    !all_paths.iter().any(|segments| {
+                        segments.len() >= prefix.len() && segments[..prefix.len()] == prefix
+                    })
+                });
+            if genuine.is_empty() {
+                return None;
+            }
+            let mut anchored = genuine;
+            anchored.extend(cascaded);
+            finding.unevaluated = Some(anchored);
+            Some(finding)
+        })
+        .collect()
+}
+
+fn pointer_segments(pointer: &str) -> Vec<EnvSeg> {
+    pointer
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let segment = segment.replace("~1", "/").replace("~0", "~");
+            match segment.parse::<usize>() {
+                Ok(index) => EnvSeg::Index(index),
+                Err(_) => EnvSeg::Key(segment),
+            }
+        })
+        .collect()
+}
+
+/// Render the property paths shown in agent-lint diagnostics. Array indices
+/// are one-based, matching the validator's prior Cursor environment output.
+fn environment_property_path(segments: &[EnvSeg]) -> String {
+    let mut path = String::new();
+    for segment in segments {
+        match segment {
+            EnvSeg::Index(index) => path.push_str(&format!("[{}]", index + 1)),
+            EnvSeg::Key(key) => {
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(key);
+            }
         }
     }
     if path.is_empty() {
@@ -2219,35 +2480,37 @@ mod tests {
                 "ports[1].port:",
             ),
             ("terminal type", r#"{"terminals":false}"#, "terminals:"),
+            // Union failures surface the narrowest leaf property, not the
+            // oneOf parent.
             (
                 "terminal command required",
                 r#"{"terminals":[{}]}"#,
-                "terminals[1]:",
+                "terminals[1].command:",
             ),
             (
                 "terminal command type",
                 r#"{"terminals":[{"command":false}]}"#,
-                "terminals[1]:",
+                "terminals[1].command:",
             ),
             (
                 "terminal name type",
                 r#"{"terminals":[{"command":"run","name":false}]}"#,
-                "terminals[1]:",
+                "terminals[1].name:",
             ),
             (
                 "terminal description type",
                 r#"{"terminals":[{"command":"run","description":false}]}"#,
-                "terminals[1]:",
+                "terminals[1].description:",
             ),
             (
                 "nested terminal command required",
                 r#"{"terminals":[[{}]]}"#,
-                "terminals[1]:",
+                "terminals[1][1].command:",
             ),
             (
                 "nested terminal field type",
                 r#"{"terminals":[[{"command":"run","name":false,"description":false}]]}"#,
-                "terminals[1]:",
+                "terminals[1][1].name:",
             ),
             ("build type", r#"{"build":false}"#, "build:"),
             (
@@ -2292,6 +2555,20 @@ mod tests {
                 "{name} has an unstable subject: {messages:?}"
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_environment_unknown_nested_key_reports_once_without_cascade() {
+        // The unknown key inside `build` is owned by the build-level finding;
+        // the root-level unevaluated cascade naming `build` is dropped even
+        // though the owning finding is itself an unevaluated finding.
+        let messages = environment_messages_for(r#"{"build":{"dockerfile":"D","extra":1}}"#);
+        assert_eq!(messages.len(), 1, "{messages:?}");
+        assert!(
+            messages[0].starts_with(".cursor/environment.json: build: "),
+            "{messages:?}"
+        );
     }
 
     #[test]
