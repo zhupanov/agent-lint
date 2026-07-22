@@ -1,0 +1,15 @@
+{
+  "class": "broken",
+  "repository": "hook-command-invocations-plugin-broken",
+  "covers": ["hook-command-paths", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "H004,H005", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "H004", "name": "hook-command-missing", "severity": "error", "subject_path": "scripts/missing.sh" },
+    { "code": "H004", "name": "hook-command-missing", "severity": "error", "subject_path": "hooks/hooks.json", "suggestion": "use an in-repository normalized path such as ${CLAUDE_PLUGIN_ROOT}/scripts/your-hook" }
+  ],
+  "allowed_additional_diagnostics": []
+}

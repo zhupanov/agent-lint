@@ -82,6 +82,24 @@ impl ScriptReference {
 /// caller decides which repository surfaces are command-like; this function
 /// never scans arbitrary prose on its own.
 pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<ScriptReference> {
+    extract_references(command, line, false)
+}
+
+/// Extract root-qualified script paths from instruction and workflow command
+/// surfaces. These also support the explicit prose `Run`/`Execute` and YAML
+/// `run:` command markers that are not valid shell command words.
+pub(crate) fn extract_instruction_command_references(
+    command: &str,
+    line: usize,
+) -> Vec<ScriptReference> {
+    extract_references(command, line, true)
+}
+
+fn extract_references(
+    command: &str,
+    line: usize,
+    supports_instruction_markers: bool,
+) -> Vec<ScriptReference> {
     let mut references = Vec::new();
     let mut offset = 0;
     while let Some((reference, path, start, end)) = next_reference(command, offset) {
@@ -93,7 +111,7 @@ pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<Scri
                 reference,
                 path: PathBuf::new(),
                 base: ScriptReferenceBase::RepositoryRoot,
-                invocation: invocation_for(command, start),
+                invocation: invocation_for(command, start, supports_instruction_markers),
                 line,
             });
             continue;
@@ -102,7 +120,7 @@ pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<Scri
             reference,
             path,
             base: ScriptReferenceBase::RepositoryRoot,
-            invocation: invocation_for(command, start),
+            invocation: invocation_for(command, start, supports_instruction_markers),
             line,
         });
     }
@@ -131,7 +149,7 @@ pub(crate) fn extract_bare_script_references(command: &str, line: usize) -> Vec<
                 reference: reference.to_string(),
                 path,
                 base: ScriptReferenceBase::Relative,
-                invocation: invocation_for(command, start),
+                invocation: invocation_for(command, start, false),
                 line,
             });
         }
@@ -249,45 +267,115 @@ fn is_shell_path_delimiter(character: char) -> bool {
         )
 }
 
-fn invocation_for(command: &str, reference_start: usize) -> Invocation {
-    let raw_preceding = &command[..reference_start];
-    let preceding = raw_preceding.trim_end();
-    let separated_from_previous_word = raw_preceding.len() != preceding.len();
-    let mut words = preceding
-        .trim_matches('"')
-        .split_whitespace()
-        .collect::<Vec<_>>();
-    if words
-        .last()
-        .is_some_and(|word| ASSIGNMENT_WORD.is_match(word))
-        && !separated_from_previous_word
+fn invocation_for(
+    command: &str,
+    reference_start: usize,
+    supports_instruction_markers: bool,
+) -> Invocation {
+    let segment_start = command[..reference_start]
+        .rfind([';', '|', '&', '\n'])
+        .map_or(0, |index| index + 1);
+    let segment = &command[segment_start..reference_start];
+    let word_start = segment
+        .rfind(|character: char| character.is_whitespace())
+        .map_or(0, |index| index + 1);
+    let word_prefix = &segment[word_start..];
+
+    // A root placeholder embedded in an assignment, argument, comparison, or
+    // other token cannot be proven to be an invoked script.
+    if !word_prefix
+        .trim_matches(|character| matches!(character, '\'' | '"'))
+        .is_empty()
     {
         return Invocation::Mention;
     }
+
+    let mut words = segment[..word_start]
+        .split_whitespace()
+        .map(|word| word.trim_matches(|character| matches!(character, '\'' | '"')))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
     while words
         .first()
         .is_some_and(|word| ASSIGNMENT_WORD.is_match(word))
     {
         words.remove(0);
     }
-    let context = words
-        .iter()
-        .rev()
-        .copied()
-        .find(|word| !ASSIGNMENT_WORD.is_match(word))
-        .unwrap_or("");
-    if matches!(context, "source" | ".") {
-        Invocation::Sourced
-    } else if matches!(
-        context,
+    // Markdown command instructions and GitHub Actions `run:` values are
+    // command surfaces for G002/G003. Their lexical marker is not a shell
+    // executable, so discard it before classifying the actual command word.
+    if supports_instruction_markers
+        && (matches!(words.first(), Some(&"Run" | &"Execute" | &"run:"))
+            || matches!(words.as_slice(), ["-", "run:", ..]))
+    {
+        words.remove(0);
+        if words.first() == Some(&"run:") {
+            words.remove(0);
+        }
+        while words
+            .first()
+            .is_some_and(|word| ASSIGNMENT_WORD.is_match(word))
+        {
+            words.remove(0);
+        }
+    }
+    let Some(command_word) = words.first().copied() else {
+        return Invocation::Direct;
+    };
+
+    if command_word == "env" {
+        words.remove(0);
+        while let Some(word) = words.first().copied() {
+            if matches!(word, "-u" | "--unset") {
+                words.remove(0);
+                if words.is_empty() {
+                    return Invocation::Mention;
+                }
+                words.remove(0);
+            } else if ASSIGNMENT_WORD.is_match(word) || word.starts_with('-') {
+                words.remove(0);
+            } else {
+                break;
+            }
+        }
+        return if words.is_empty() {
+            Invocation::Direct
+        } else {
+            Invocation::Mention
+        };
+    }
+
+    if matches!(command_word, "source" | ".") {
+        return if words[1..].iter().all(|word| word.starts_with('-')) {
+            Invocation::Sourced
+        } else {
+            Invocation::Mention
+        };
+    }
+
+    if matches!(
+        command_word,
         "bash" | "sh" | "zsh" | "fish" | "python" | "python3" | "node" | "ruby" | "perl"
     ) {
-        Invocation::Interpreter
-    } else if context.starts_with('-') || matches!(context, "[[" | "[" | "test" | "if" | "while") {
-        Invocation::Mention
-    } else {
-        Invocation::Direct
+        // These interpreter options consume their following token as source
+        // text or a module name, never as a script filename. Treat a
+        // root-qualified value there as data rather than guessing.
+        if words[1..].last().is_some_and(|word| {
+            matches!(
+                *word,
+                "-c" | "--command" | "-e" | "--eval" | "-m" | "--module" | "-r"
+            )
+        }) {
+            return Invocation::Mention;
+        }
+        return if words[1..].iter().all(|word| word.starts_with('-')) {
+            Invocation::Interpreter
+        } else {
+            Invocation::Mention
+        };
     }
+
+    Invocation::Mention
 }
 
 #[cfg(test)]
@@ -336,6 +424,97 @@ mod tests {
         assert_eq!(
             extract_command_references("if FOO=1 ${CLAUDE_PLUGIN_ROOT}/scripts/a", 1)[0].invocation,
             Invocation::Mention
+        );
+    }
+
+    #[test]
+    fn classifies_simple_command_segments_conservatively() {
+        let cases = [
+            ("${CLAUDE_PLUGIN_ROOT}/scripts/direct", Invocation::Direct),
+            (
+                "FOO=bar ${CLAUDE_PLUGIN_ROOT}/scripts/direct",
+                Invocation::Direct,
+            ),
+            (
+                "env FOO=bar ${CLAUDE_PLUGIN_ROOT}/scripts/direct",
+                Invocation::Direct,
+            ),
+            (
+                "env -u FOO ${CLAUDE_PLUGIN_ROOT}/scripts/direct",
+                Invocation::Direct,
+            ),
+            (
+                "python3 -u ${CLAUDE_PLUGIN_ROOT}/scripts/interpreted.py",
+                Invocation::Interpreter,
+            ),
+            (
+                "python3 -c ${CLAUDE_PLUGIN_ROOT}/generated/code.py",
+                Invocation::Mention,
+            ),
+            (
+                "source ${CLAUDE_PLUGIN_ROOT}/scripts/library.sh",
+                Invocation::Sourced,
+            ),
+            (
+                "echo ${CLAUDE_PLUGIN_ROOT}/generated/output.json",
+                Invocation::Mention,
+            ),
+            (
+                "tool ${CLAUDE_PLUGIN_ROOT}/generated/output.json",
+                Invocation::Mention,
+            ),
+            (
+                "INPUT=${CLAUDE_PLUGIN_ROOT}/generated/output.json echo ok",
+                Invocation::Mention,
+            ),
+            (
+                "test -f ${CLAUDE_PLUGIN_ROOT}/generated/output.json",
+                Invocation::Mention,
+            ),
+            (
+                "echo ok; ${CLAUDE_PLUGIN_ROOT}/scripts/semicolon",
+                Invocation::Direct,
+            ),
+            (
+                "echo ok && ${CLAUDE_PLUGIN_ROOT}/scripts/and",
+                Invocation::Direct,
+            ),
+            (
+                "echo ok || ${CLAUDE_PLUGIN_ROOT}/scripts/or",
+                Invocation::Direct,
+            ),
+            (
+                "echo ok | ${CLAUDE_PLUGIN_ROOT}/scripts/pipe",
+                Invocation::Direct,
+            ),
+            (
+                "echo ok\n${CLAUDE_PLUGIN_ROOT}/scripts/newline",
+                Invocation::Direct,
+            ),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(
+                extract_command_references(command, 1)[0].invocation,
+                expected,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn instruction_markers_are_not_hook_command_words() {
+        assert_eq!(
+            extract_command_references("run: ${CLAUDE_PLUGIN_ROOT}/scripts/workflow", 1)[0]
+                .invocation,
+            Invocation::Mention
+        );
+        assert_eq!(
+            extract_instruction_command_references(
+                "Run ${CLAUDE_PLUGIN_ROOT}/scripts/documented",
+                1
+            )[0]
+            .invocation,
+            Invocation::Direct
         );
     }
 

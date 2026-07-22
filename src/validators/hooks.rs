@@ -5,13 +5,14 @@ use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::hook_commands::extract_hook_command_paths;
 use crate::plugin_paths::{has_normalized_path_segment, is_absolute_path, path_segments};
 use crate::rules::LintRule;
+use crate::script_paths::Invocation;
 use crate::validators::{common::manifest_error_metadata, hook_schema};
 use serde_json::Value;
 use std::path::Path;
 
 /// Validate hook command paths in a parsed JSON value.
-/// Extracts repository-resolvable paths only from hook command fields, then
-/// verifies each resolved path exists and is executable.
+/// Verifies invoked hook script paths. Data references are deliberately
+/// ignored; an interpreter or sourced script must exist but is not direct.
 fn validate_hook_command_paths(
     val: &Value,
     label: &str,
@@ -20,9 +21,13 @@ fn validate_hook_command_paths(
     diag: &mut DiagnosticCollector,
 ) {
     for reference in extract_hook_command_paths(val) {
+        if reference.invocation == Invocation::Mention {
+            continue;
+        }
         check_hook_path(
             &reference.path,
             &reference.reference,
+            reference.invocation,
             label,
             missing_rule,
             not_exec_rule,
@@ -34,11 +39,22 @@ fn validate_hook_command_paths(
 fn check_hook_path(
     path: &Path,
     reference: &str,
+    invocation: Invocation,
     label: &str,
     missing_rule: LintRule,
     not_exec_rule: LintRule,
     diag: &mut DiagnosticCollector,
 ) {
+    if path.as_os_str().is_empty() {
+        diag.report_with(
+            missing_rule,
+            &format!("{label}: hook command escapes the repository: {reference}"),
+            DiagnosticMetadata::default()
+                .with_evidence(reference)
+                .with_suggestion("use an in-repository normalized path such as ${CLAUDE_PLUGIN_ROOT}/scripts/your-hook"),
+        );
+        return;
+    }
     if !path.is_file() {
         diag.report_at_with(
             missing_rule,
@@ -52,15 +68,18 @@ fn check_hook_path(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = path.metadata() {
-            if meta.permissions().mode() & 0o111 == 0 {
-                diag.report_at_with(
-                    not_exec_rule,
-                    path,
-                    &format!("{label}: hook command not executable: {reference}"),
-                    DiagnosticMetadata::default().with_evidence(reference),
-                );
-            }
+        if invocation == Invocation::Direct
+            && let Ok(meta) = path.metadata()
+            && meta.permissions().mode() & 0o111 == 0
+        {
+            diag.report_at_with(
+                not_exec_rule,
+                path,
+                &format!("{label}: hook command not executable: {reference}"),
+                DiagnosticMetadata::default()
+                    .with_evidence(reference)
+                    .with_suggestion("run chmod +x on this file"),
+            );
         }
     }
 }
@@ -613,6 +632,87 @@ mod tests {
         );
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("not executable"));
+        assert_eq!(
+            diag.diagnostics()[0].suggestion.as_deref(),
+            Some("run chmod +x on this file")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn hook_command_paths_only_check_invoked_scripts_and_direct_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        for path in [
+            "scripts/direct.sh",
+            "scripts/interpreted.py",
+            "scripts/sourced.sh",
+        ] {
+            std::fs::write(path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        let val = json!({"hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/direct.sh; python3 -u ${CLAUDE_PLUGIN_ROOT}/scripts/interpreted.py; source ${CLAUDE_PLUGIN_ROOT}/scripts/sourced.sh; echo ${CLAUDE_PLUGIN_ROOT}/generated/output.json; INPUT=${CLAUDE_PLUGIN_ROOT}/generated/runtime.json echo ok"}]});
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_hook_command_paths(
+            &val,
+            "test",
+            LintRule::HookCommandMissing,
+            LintRule::HookNotExecutable,
+            &mut diag,
+        );
+
+        assert_eq!(diag.error_count(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::HookNotExecutable);
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(Path::new("scripts/direct.sh"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn missing_invoked_paths_include_interpreters_sources_and_unsafe_direct_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let val = json!({"hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/direct.sh; python3 ${CLAUDE_PLUGIN_ROOT}/scripts/interpreted.py; . ${CLAUDE_PLUGIN_ROOT}/scripts/sourced.sh; ${CLAUDE_PLUGIN_ROOT}/../outside"}]});
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        diag.with_subject_path("hooks/hooks.json", |diag| {
+            validate_hook_command_paths(
+                &val,
+                "hooks/hooks.json",
+                LintRule::HookCommandMissing,
+                LintRule::HookNotExecutable,
+                diag,
+            );
+        });
+
+        assert_eq!(diag.error_count(), 4);
+        assert_eq!(
+            diag.diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.subject_path.as_deref())
+                .collect::<Vec<_>>(),
+            vec![
+                Some(Path::new("scripts/direct.sh")),
+                Some(Path::new("scripts/interpreted.py")),
+                Some(Path::new("scripts/sourced.sh")),
+                Some(Path::new("hooks/hooks.json")),
+            ]
+        );
+        assert_eq!(
+            diag.diagnostics()[3].suggestion.as_deref(),
+            Some(
+                "use an in-repository normalized path such as ${CLAUDE_PLUGIN_ROOT}/scripts/your-hook"
+            )
+        );
     }
 
     #[test]

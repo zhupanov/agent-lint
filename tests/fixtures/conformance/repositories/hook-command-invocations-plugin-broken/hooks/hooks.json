@@ -1,0 +1,7 @@
+{
+  "hooks": [
+    {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/missing.sh; ${CLAUDE_PLUGIN_ROOT}/../outside; echo ${CLAUDE_PLUGIN_ROOT}/generated/runtime.json"
+    }
+  ]
+}

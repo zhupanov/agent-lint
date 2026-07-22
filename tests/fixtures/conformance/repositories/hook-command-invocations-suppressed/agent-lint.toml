@@ -1,0 +1,3 @@
+[[lint.overrides]]
+files = [".claude/hooks/noexec.sh"]
+suppress = ["H005"]

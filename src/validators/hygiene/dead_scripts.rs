@@ -40,6 +40,10 @@ pub fn validate_dead_scripts(
             references.extend(
                 extract_hook_command_paths(value)
                     .into_iter()
+                    .filter(|reference| {
+                        reference.invocation != Invocation::Mention
+                            && !reference.path.as_os_str().is_empty()
+                    })
                     .map(|reference| reference.path),
             );
         }

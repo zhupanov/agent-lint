@@ -6,12 +6,13 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
-use crate::script_paths::extract_command_references;
+use crate::script_paths::{Invocation, extract_command_references};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HookCommandPath {
     pub(crate) reference: String,
     pub(crate) path: PathBuf,
+    pub(crate) invocation: Invocation,
 }
 
 /// Extract repository-relative script paths from command positions in the
@@ -82,12 +83,11 @@ fn collect_command_value_paths(command: &Value, paths: &mut Vec<HookCommandPath>
 
 fn extract_paths_from_command(command: &str, paths: &mut Vec<HookCommandPath>) {
     for candidate in extract_command_references(command, 0) {
-        if !candidate.path.as_os_str().is_empty() {
-            paths.push(HookCommandPath {
-                reference: candidate.reference,
-                path: candidate.path,
-            });
-        }
+        paths.push(HookCommandPath {
+            reference: candidate.reference,
+            path: candidate.path,
+            invocation: candidate.invocation,
+        });
     }
 }
 
@@ -134,10 +134,30 @@ mod tests {
     }
 
     #[test]
-    fn ignores_runtime_roots_and_unsafe_paths() {
+    fn preserves_unsafe_paths_and_invocation_classification() {
         let value = json!({"hooks": [{"command": "${CLAUDE_PLUGIN_DATA}/state ${CLAUDE_PLUGIN_ROOT}/../outside $PWD/ok"}]});
         let paths = extract_hook_command_paths(&value);
-        assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0].path, PathBuf::from("ok"));
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].path.as_os_str().is_empty());
+        assert_eq!(paths[0].invocation, Invocation::Mention);
+        assert_eq!(paths[1].path, PathBuf::from("ok"));
+        assert_eq!(paths[1].invocation, Invocation::Mention);
+    }
+
+    #[test]
+    fn retains_invocation_state_for_hook_consumers() {
+        let value = json!({"hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/direct; python3 ${CLAUDE_PLUGIN_ROOT}/scripts/interpreted.py; source ${CLAUDE_PLUGIN_ROOT}/scripts/library.sh; echo ${CLAUDE_PLUGIN_ROOT}/output.json"}]});
+        assert_eq!(
+            extract_hook_command_paths(&value)
+                .into_iter()
+                .map(|path| path.invocation)
+                .collect::<Vec<_>>(),
+            vec![
+                Invocation::Direct,
+                Invocation::Interpreter,
+                Invocation::Sourced,
+                Invocation::Mention,
+            ]
+        );
     }
 }

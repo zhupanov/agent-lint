@@ -94,8 +94,8 @@ keyword text), and a concrete suggestion. Neither rule has an autofix.
 | H001 | `hooks-json-missing` | A hook-config file declared by `plugin.json` cannot be found. Hook configuration is optional upstream; the conventional `hooks/hooks.json` is validated only when present. | Plugin | error |
 | H002 | `hooks-json-invalid` | A discovered plugin hook-config file is not valid JSON | Plugin | error |
 | H003 | `hooks-key-missing` | A file-backed hook config has no top-level `hooks` key | Plugin | error |
-| H004 | `hook-command-missing` | Hook command script missing on disk | Always | error |
-| H005 | `hook-not-executable` | Hook command script not executable (Unix only) | Always | error |
+| H004 | `hook-command-missing` | Direct, interpreter-launched, or sourced hook script missing on disk; data arguments are ignored | Always | error |
+| H005 | `hook-not-executable` | Directly invoked hook script not executable (Unix only); interpreter-launched and sourced scripts are ignored | Always | error |
 | H006 | `settings-json-invalid` | `.claude/settings.json` is not valid JSON | Always | error |
 | H007 | `hooks-array-empty` | A syntactically valid plugin hook config has no handler entries | Plugin | error |
 | H008 | `hook-event-invalid` | Hook event name is not a recognized Claude Code event | Always | error |
@@ -1263,7 +1263,7 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 
 | Rule | Code | Fix |
 |------|------|-----|
-| hook-not-executable | H005 | `chmod +x` on script |
+| hook-not-executable | H005 | `chmod +x` on a directly invoked script |
 | script-not-executable | G003 | `chmod +x` on script |
 | frontmatter-name-mismatch | S006 | Set a single-line canonical `name:` scalar to match the directory, only on surfaces selected for the run |
 | frontmatter-field-empty | S007 | Remove a bare empty optional field only when it has no YAML continuation or child lines |
@@ -1274,6 +1274,7 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 | frontmatter-backslash | S043 | Replace `\` with `/` in frontmatter |
 | pwd-in-skill | G001 | Existing bundled asset `$PWD/` or `${PWD}/` → `${CLAUDE_PLUGIN_ROOT}/` |
 
-Each fix is logged to stderr. H005 enforcement and its `chmod +x` autofix are
-Unix-only because executable-bit permissions are not available on every
-platform.
+Each fix is logged to stderr. H005 checks and its `chmod +x` autofix apply
+only to directly invoked hook scripts: interpreter operands, sourced files,
+and data arguments do not require an executable bit. H005 is Unix-only because
+executable-bit permissions are not available on every platform.

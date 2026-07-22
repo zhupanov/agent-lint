@@ -7,6 +7,7 @@ use crate::hook_commands::extract_hook_command_paths;
 use crate::platforms::ValidationTargets;
 use crate::pwd_hygiene::replace_bundled_asset_prefixes;
 use crate::rules::LintRule;
+use crate::script_paths::Invocation;
 use crate::traversal;
 use crate::validators::skill_content::security::flagged_http_offsets;
 use crate::validators::skill_content::{
@@ -102,6 +103,9 @@ fn fix_executability_hooks(mode: LintMode, config: &LintConfig) -> bool {
 fn fix_hook_config_executability(value: &serde_json::Value, config: &LintConfig) -> bool {
     let mut fixed = false;
     for reference in extract_hook_command_paths(value) {
+        if reference.invocation != Invocation::Direct || reference.path.as_os_str().is_empty() {
+            continue;
+        }
         if is_suppressed(config, LintRule::HookNotExecutable, &reference.path) {
             continue;
         }
