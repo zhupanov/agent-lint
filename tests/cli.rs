@@ -123,6 +123,93 @@ fn s022_autofix_converts_complete_runs_preserves_escapes_and_is_idempotent() {
 }
 
 #[test]
+fn s021_autofix_follows_shared_policy_across_skill_and_reference_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let root = tmp.path();
+    let write = |relative: &str, content: &str| {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+        path
+    };
+
+    // `sh` pair: never S021-diagnosable, must stay byte-for-byte.
+    let shpair = write(
+        ".claude/skills/aaa-shpair/SKILL.md",
+        "---\nname: aaa-shpair\ndescription: Use when demonstrating sh fences that S021 never diagnoses here\n---\nRun it:\n```sh\necho one\n```\n\n```sh\necho two\n```\n",
+    );
+    // Reason-bearing waiver in the first fence: deliberate boundary, untouched.
+    let waived = write(
+        ".claude/skills/bbb-waived/SKILL.md",
+        "---\nname: bbb-waived\ndescription: Use when a reason-bearing waiver marks a deliberate tool boundary here\n---\nFirst:\n```bash\n# lint-consecutive-bash: ok separate tool boundary needed\necho one\n```\n```bash\necho two\n```\n",
+    );
+    // Genuine unwaived blank-gap bash pair: merged.
+    let genuine = write(
+        ".claude/skills/zzz-genuine/SKILL.md",
+        "---\nname: zzz-genuine\ndescription: Use when two adjacent bash blocks should be merged by the autofix here\n---\nSteps:\n```bash\necho one\n```\n\n```bash\necho two\n```\n",
+    );
+    // Reference-file blank-gap bash pair: merged (the new autofix surface).
+    let reference = write(
+        ".claude/skills/zzz-genuine/references/guide.md",
+        "# Guide\n\n```bash\necho ref-one\n```\n\n```bash\necho ref-two\n```\n",
+    );
+    // Flagged breadcrumb-gap pair: non-blank gap, left for a human.
+    let breadcrumb = write(
+        ".claude/skills/crumb/SKILL.md",
+        "---\nname: crumb\ndescription: Use when a short breadcrumb separates two bash tool call fences here\n---\nStart:\n```bash\necho one\n```\nThen continue:\n```bash\necho two\n```\n",
+    );
+
+    let shpair_before = std::fs::read_to_string(&shpair).unwrap();
+    let waived_before = std::fs::read_to_string(&waived).unwrap();
+    let breadcrumb_before = std::fs::read_to_string(&breadcrumb).unwrap();
+
+    let first = run_in(root, &["--autofix", "--only", "S021", "."]);
+    assert!(first.status.success(), "stderr: {}", stderr(&first));
+
+    // Pairs the shared policy never flags are byte-for-byte unchanged, and the
+    // flagged breadcrumb pair keeps its prose gap intact.
+    assert_eq!(std::fs::read_to_string(&shpair).unwrap(), shpair_before);
+    assert_eq!(std::fs::read_to_string(&waived).unwrap(), waived_before);
+    assert_eq!(
+        std::fs::read_to_string(&breadcrumb).unwrap(),
+        breadcrumb_before
+    );
+    // Genuine SKILL.md body and reference file are merged; trailing newline kept.
+    assert_eq!(
+        std::fs::read_to_string(&genuine).unwrap(),
+        "---\nname: zzz-genuine\ndescription: Use when two adjacent bash blocks should be merged by the autofix here\n---\nSteps:\n```bash\necho one\necho two\n```\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&reference).unwrap(),
+        "# Guide\n\n```bash\necho ref-one\necho ref-two\n```\n"
+    );
+
+    // After autofix the only surviving S021 diagnostic is the breadcrumb pair,
+    // proving the loop terminated on an unmergeable-but-flagged pair.
+    let after = run_in(root, &["--format", "json", "--all", "--only", "S021", "."]);
+    let diagnostics = json(&after)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "S021");
+    assert_eq!(
+        diagnostics[0]["subject_path"],
+        ".claude/skills/crumb/SKILL.md"
+    );
+
+    // Idempotent: a second autofix rewrites nothing and reports no fixes.
+    let genuine_fixed = std::fs::read_to_string(&genuine).unwrap();
+    let reference_fixed = std::fs::read_to_string(&reference).unwrap();
+    let second = run_in(root, &["--autofix", "--only", "S021", "."]);
+    assert!(second.status.success(), "stderr: {}", stderr(&second));
+    assert_eq!(std::fs::read_to_string(&genuine).unwrap(), genuine_fixed);
+    assert_eq!(
+        std::fs::read_to_string(&reference).unwrap(),
+        reference_fixed
+    );
+    assert!(!stderr(&second).contains("fixed[S021"));
+}
+
+#[test]
 fn path_hygiene_preserves_rule_severity_location_and_focused_autofix_contract() {
     let tmp = tempfile::tempdir().unwrap();
     let skill = write_public_path_hygiene_fixture(tmp.path());

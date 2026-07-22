@@ -4,7 +4,7 @@ mod codex_config;
 mod codex_constants;
 mod codex_surfaces;
 mod common;
-mod contracts;
+pub(crate) mod contracts;
 mod cursor;
 mod desc_overlap;
 mod docs;
