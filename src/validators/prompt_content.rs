@@ -12,7 +12,8 @@ use crate::markdown::{MarkdownDocument, MarkdownHeading};
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::validators::common::{
-    NEVER_INVENT_PROHIBITION, has_bound_or_fallback, normalize_emphasis_for_gates, sentence_ranges,
+    NEVER_INVENT_PROHIBITION, bound_or_fallback_ranges, has_bound_or_fallback,
+    normalize_emphasis_for_gates, sentence_ranges,
 };
 use regex::Regex;
 use std::collections::{BTreeMap, HashSet};
@@ -78,6 +79,29 @@ static UNBOUNDED_RETRY_PROHIBITION: LazyLock<Regex> = LazyLock::new(|| {
 
 static EMPHASIS_LABEL_PREFIX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(?:important|note|warning)\s*:\s*").expect("Q005 emphasis-label regex is valid")
+});
+
+/// An adjacent Q005 control cannot govern a retry when its recognized phrase
+/// is explicitly qualified as controlling another clause or artifact. These
+/// are deliberately lexical gates from the Q005 contract, not grammatical
+/// inference.
+static ADJACENT_CONTROL_OTHER_OPERATION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:while|when|during|before)\b")
+        .expect("Q005 adjacent-control clause gate regex is valid")
+});
+
+static ADJACENT_CONTROL_ARTIFACT_ADJUNCT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"\bfor\s+(?:the\s+)?(?:report|summary|output|artifact|files?|dependenc(?:y|ies)|scan|inspection|indexing)\b",
+    )
+    .expect("Q005 adjacent-control artifact gate regex is valid")
+});
+
+/// A bound followed by its concrete failure report remains one standalone
+/// retry control; it is not an unrelated `before` clause.
+static ADJACENT_CONTROL_FAILURE_REPORT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*before\s+reporting\s+(?:the\s+)?failure\b")
+        .expect("Q005 adjacent-control failure-report regex is valid")
 });
 
 static PRECISE_SAFETY_PROHIBITIONS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
@@ -391,11 +415,8 @@ fn check_unbounded_retry(
     let example_scopes = document.example_scopes();
     for scope in instruction_scopes(document, &example_scopes) {
         let joined_scope = JoinedProseScope::new(&scope);
-        if has_bound_or_fallback(&normalize_emphasis_for_gates(&joined_scope.text)) {
-            continue;
-        }
-
-        for sentence_range in sentence_ranges(&joined_scope.text) {
+        let sentence_ranges = sentence_ranges(&joined_scope.text);
+        for (sentence_index, sentence_range) in sentence_ranges.iter().enumerate() {
             let sentence = &joined_scope.text[sentence_range.clone()];
             let normalized_sentence = sentence.to_ascii_lowercase();
             let gate_view = normalize_emphasis_for_gates(&normalized_sentence);
@@ -410,6 +431,14 @@ fn check_unbounded_retry(
             else {
                 continue;
             };
+
+            if retry_sentence_has_applicable_control(
+                &sentence_ranges,
+                sentence_index,
+                &joined_scope.text,
+            ) {
+                continue;
+            }
 
             let matched_range =
                 sentence_range.start + matched.start()..sentence_range.start + matched.end();
@@ -434,6 +463,57 @@ fn check_unbounded_retry(
             );
         }
     }
+}
+
+/// Whether the retry sentence at `retry_index` has a bound or fallback that
+/// applies to it. Direct controls always apply. Adjacent controls are limited
+/// to the same contiguous paragraph/list-item and must pass the explicit
+/// lexical standalone gates above.
+fn retry_sentence_has_applicable_control(
+    sentence_ranges: &[std::ops::Range<usize>],
+    retry_index: usize,
+    scope: &str,
+) -> bool {
+    let retry_sentence = &scope[sentence_ranges[retry_index].clone()];
+    if has_bound_or_fallback(&normalize_emphasis_for_gates(retry_sentence)) {
+        return true;
+    }
+
+    [
+        retry_index.checked_sub(1),
+        (retry_index + 1 < sentence_ranges.len()).then_some(retry_index + 1),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|adjacent_index| {
+        let adjacent_sentence = &scope[sentence_ranges[adjacent_index].clone()];
+        adjacent_control_is_standalone(&normalize_emphasis_for_gates(adjacent_sentence))
+    })
+}
+
+/// An adjacent control is applicable when at least one recognized shared
+/// bound/fallback phrase is not explicitly tied to another operation.
+fn adjacent_control_is_standalone(sentence: &str) -> bool {
+    let normalized_sentence = sentence.to_ascii_lowercase();
+    let gate_view = normalize_emphasis_for_gates(&normalized_sentence);
+    // A bound in a retry sentence belongs to that retry. It must not become a
+    // paragraph-wide control for a neighbouring retry sentence.
+    if is_operative_retry_instruction(&gate_view)
+        && UNBOUNDED_RETRY_REGEXES
+            .iter()
+            .any(|pattern| pattern.is_match(&normalized_sentence))
+    {
+        return false;
+    }
+
+    bound_or_fallback_ranges(sentence)
+        .into_iter()
+        .any(|control| {
+            let text_after_control = &sentence[control.end..];
+            (!ADJACENT_CONTROL_OTHER_OPERATION.is_match(text_after_control)
+                || ADJACENT_CONTROL_FAILURE_REPORT.is_match(text_after_control))
+                && !ADJACENT_CONTROL_ARTIFACT_ADJUNCT.is_match(text_after_control)
+        })
 }
 
 /// Prose lines joined exactly as the sentence parser sees them, retaining the
@@ -2326,6 +2406,80 @@ mod tests {
         assert_eq!(
             q005_diagnostics("Retry until success.\n- Use a limit in the report.").len(),
             1
+        );
+    }
+
+    #[test]
+    fn unbounded_retry_associates_controls_with_each_sentence() {
+        for (applicable, attached_elsewhere) in [
+            (
+                "Stop after 3 attempts. Retry until success.",
+                "Stop after 3 attempts while inspecting dependencies. Retry until success.",
+            ),
+            (
+                "Stop after 3\nattempts. Retry until\nsuccess.",
+                "Stop after 3\nattempts while inspecting\ndependencies. Retry until\nsuccess.",
+            ),
+            (
+                "Retry until success. A timeout of 15 minutes for the investigation.",
+                "Retry until success. A timeout of 15 minutes for the report.",
+            ),
+            (
+                "- Stop after 3 attempts. Retry until success.",
+                "- Stop after 3 attempts when scanning files. Retry until success.",
+            ),
+        ] {
+            assert!(q005_diagnostics(applicable).is_empty(), "{applicable}");
+            assert_eq!(
+                q005_diagnostics(attached_elsewhere).len(),
+                1,
+                "{attached_elsewhere}"
+            );
+        }
+
+        for suffix in [
+            "while inspecting dependencies",
+            "when scanning files",
+            "during indexing",
+            "before inspecting dependencies",
+            "for the report",
+            "for summary",
+            "for the output",
+            "for artifact",
+            "for files",
+            "for dependency",
+            "for dependencies",
+            "for scan",
+            "for inspection",
+            "for indexing",
+        ] {
+            let body = format!("Stop after 3 attempts {suffix}. Retry until success.");
+            assert_eq!(q005_diagnostics(&body).len(), 1, "{body}");
+        }
+
+        assert!(q005_diagnostics(
+            "Stop after 3 attempts while scanning files, then stop after 5 attempts. Retry until success.",
+        )
+        .is_empty());
+
+        let one_bounded_one_unbounded = q005_diagnostics(
+            "Retry until success, but stop after 3 attempts. Retry until success.",
+        );
+        assert_eq!(one_bounded_one_unbounded.len(), 1);
+        assert_eq!(
+            one_bounded_one_unbounded[0].evidence.as_deref(),
+            Some("Retry until success.")
+        );
+
+        let two_unbounded = q005_diagnostics("Retry until success. Loop forever.");
+        assert_eq!(two_unbounded.len(), 2);
+        assert_eq!(
+            two_unbounded[0].location.unwrap().start().column_number(),
+            Some(1)
+        );
+        assert_eq!(
+            two_unbounded[1].location.unwrap().start().column_number(),
+            Some(22)
         );
     }
 

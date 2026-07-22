@@ -2983,6 +2983,54 @@ fn q005_and_a029_share_bound_recognition_through_the_real_binary() {
 }
 
 #[test]
+fn q005_associates_adjacent_controls_per_retry_through_the_real_binary() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".agents/skills/reviewer")).unwrap();
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "Use at most 3 tool calls while inspecting dependencies. Retry until success.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".agents/skills/reviewer/SKILL.md"),
+        "---\nname: reviewer\ndescription: Reviews changes with concrete test evidence\n---\nRetry until success, but stop after 3 attempts. Retry until success.\n",
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "Q005", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 2);
+    let basic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["subject_path"] == "CLAUDE.md")
+        .unwrap();
+    assert_eq!(basic["location"]["start"]["line"], 1);
+    assert_eq!(basic["location"]["start"]["column"], 57);
+    let plugin = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["subject_path"] == ".agents/skills/reviewer/SKILL.md")
+        .unwrap();
+    assert_eq!(plugin["location"]["start"]["line"], 5);
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nexclude = [\"CLAUDE.md\"]\n[[lint.overrides]]\nfiles = [\".agents/skills/reviewer/SKILL.md\"]\nsuppress = [\"Q005\"]\nreason = \"legacy plugin instruction\"\n",
+    )
+    .unwrap();
+    let excluded_and_suppressed = run_in(tmp.path(), &["--format", "json", "--only", "Q005", "."]);
+    assert!(
+        excluded_and_suppressed.status.success(),
+        "stderr: {}",
+        stderr(&excluded_and_suppressed)
+    );
+    let report = json(&excluded_and_suppressed);
+    assert_eq!(report["diagnostics"], serde_json::json!([]));
+    assert_eq!(report["counts"]["suppressed"], 1);
+}
+
+#[test]
 fn emphasized_a029_control_and_q005_label_work_through_the_real_binary() {
     let clean = tempfile::tempdir().unwrap();
     init_git(clean.path());

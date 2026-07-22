@@ -482,7 +482,14 @@ step, timeout, token/cost budget, deadline, concrete failure outcome, or a
 validated agent `maxTurns` bound. Its diagnostic reports bounded matched
 evidence and asks for a bound or failure outcome; it has no autofix. Its bound
 and fallback vocabulary is shared with A029, and ordinary hard-wrapped prose is
-evaluated as joined sentences while retaining source locations.
+evaluated as joined sentences while retaining source locations. A control is
+associated with each retry independently: it applies in the same sentence or
+in an immediately adjacent sentence of the same paragraph or list item. An
+adjacent control does not apply when text after its recognized phrase contains
+`while`, `when`, `during`, or `before`, or a `for (the) <noun>` adjunct for a
+report, summary, output, artifact, file, dependency, scan, inspection, or
+indexing. The existing concrete fallback form `before reporting the failure`
+remains part of the same control.
 
 Q006 models each operative output directive as a typed constraint (an exclusive
 format requirement, or a size/shape bound) and reports only the pairs that
