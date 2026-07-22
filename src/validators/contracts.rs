@@ -1208,8 +1208,96 @@ fn looks_like_package_scope(line: &str, at: usize, raw: &str) -> bool {
     }
     let prefix: String = line.chars().take(at).collect();
     let prior = prefix.to_ascii_lowercase();
-    prior.ends_with("install ") || prior.ends_with("package ") || prior.ends_with("dependency ")
+    legacy_package_scope_context(&prior) || package_manager_command_context(&prior)
 }
+
+/// Legacy hard negatives: prose that names install/package/dependency immediately
+/// before a scoped token (including quoted/list punctuation variants).
+fn legacy_package_scope_context(prior: &str) -> bool {
+    let trimmed = trim_package_command_prefix(prior);
+    trimmed.ends_with("install") || trimmed.ends_with("package") || trimmed.ends_with("dependency")
+}
+
+/// Unambiguous package-manager invocations: npm/pnpm/yarn/bun plus
+/// add/install/remove/update/uninstall, including later list members.
+fn package_manager_command_context(prior: &str) -> bool {
+    static PACKAGE_MANAGER_COMMAND: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?:^|[\s;|&])(?:npm|pnpm|yarn|bun)(?:\s+global)?\s+(?:add|install|remove|update|uninstall)\b",
+        )
+        .unwrap()
+    });
+    let Some(matched) = PACKAGE_MANAGER_COMMAND.find_iter(prior).last() else {
+        return false;
+    };
+    package_list_prefix(&prior[matched.end()..])
+}
+
+fn trim_package_command_prefix(prior: &str) -> &str {
+    prior.trim_end_matches(|c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '`' | '(' | '[' | '{' | '<' | ',' | ';' | ':'
+            )
+    })
+}
+
+/// Tokens between a package-manager verb and the current `@` must look like a
+/// package list (flags and package names), not a new prose clause.
+fn package_list_prefix(after: &str) -> bool {
+    if after.contains(';') || after.contains('|') || after.contains("&&") {
+        return false;
+    }
+    for token in after.split_whitespace() {
+        let token = token.trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\'' | '`' | ',' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>'
+            )
+        });
+        if token.is_empty() {
+            continue;
+        }
+        if token.starts_with('-') {
+            continue;
+        }
+        if !looks_like_package_token(token) {
+            return false;
+        }
+    }
+    true
+}
+
+fn looks_like_package_token(token: &str) -> bool {
+    // Strip a trailing @version / @tag so bare names can be checked.
+    let bare = if let Some(rest) = token.strip_prefix('@') {
+        // @scope/name or @scope/name@version
+        match rest.split_once('@') {
+            Some((name, _)) => name,
+            None => rest,
+        }
+    } else {
+        match token.split_once('@') {
+            Some((name, _)) => name,
+            None => token,
+        }
+    };
+    if bare.is_empty() || PACKAGE_LIST_PROSE_WORDS.contains(&bare) {
+        return false;
+    }
+    bare.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.' | '+' | '~' | '^' | '*')
+    })
+}
+
+/// Common prose words that can appear after a package-manager command on the
+/// same line. Ambiguous cases stay imports (conservative policy).
+const PACKAGE_LIST_PROSE_WORDS: &[&str] = &[
+    "then", "see", "the", "a", "an", "to", "for", "with", "from", "and", "or", "but", "use", "run",
+    "read", "load", "open", "please", "this", "that", "into", "onto", "your", "our", "of", "in",
+    "on", "at", "by", "as", "is", "are", "be", "do",
+];
 
 fn import_metadata(
     directive: &ImportDirective,
@@ -4270,6 +4358,98 @@ notice="# lint-bash32: ok this is not a real waiver"; declare -A m
         );
         assert_eq!(l001[0].evidence.as_deref(), Some("docs/missing.md"));
         assert!(l001[0].suggestion.is_some());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn package_manager_scopes_are_not_instruction_imports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs").unwrap();
+        fs::write("docs/guide.md", "guide\n").unwrap();
+        fs::write(
+            "CLAUDE.md",
+            "\
+pnpm add @scope/package
+npm install @scope/package@1.2.3
+yarn add -D '@scope/package'
+bun remove @scope/package
+pnpm add @foo/bar @baz/qux
+install @legacy/package
+See @docs/guide.md for details.
+",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        let graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_import_graph(&graph, &mut diag);
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::ImportPathMissing),
+            "package scopes must not emit L001: {:?}",
+            diag.diagnostics()
+        );
+        assert!(graph.nodes.contains_key(Path::new("docs/guide.md")));
+        assert!(!graph.nodes.contains_key(Path::new("scope/package")));
+        assert!(!graph.nodes.contains_key(Path::new("foo/bar")));
+    }
+
+    #[test]
+    fn looks_like_package_scope_recognizes_package_manager_forms() {
+        assert!(looks_like_package_scope(
+            "pnpm add @scope/package",
+            9,
+            "scope/package"
+        ));
+        assert!(looks_like_package_scope(
+            "npm install \"@scope/package\"",
+            13,
+            "scope/package"
+        ));
+        assert!(looks_like_package_scope(
+            "yarn add -D @scope/package",
+            12,
+            "scope/package"
+        ));
+        assert!(looks_like_package_scope(
+            "bun update @scope/package",
+            11,
+            "scope/package"
+        ));
+        assert!(looks_like_package_scope(
+            "pnpm add @foo/bar @baz/qux",
+            18,
+            "baz/qux"
+        ));
+        assert!(looks_like_package_scope(
+            "install @legacy/package",
+            8,
+            "legacy/package"
+        ));
+        assert!(!looks_like_package_scope(
+            "See @docs/guide",
+            4,
+            "docs/guide"
+        ));
+        assert!(!looks_like_package_scope(
+            "pnpm add lodash; then see @docs/guide",
+            26,
+            "docs/guide"
+        ));
+        assert!(!looks_like_package_scope(
+            "pnpm add lodash then see @docs/guide",
+            25,
+            "docs/guide"
+        ));
+        assert!(looks_like_package_scope(
+            "pnpm add lodash @scope/package",
+            16,
+            "scope/package"
+        ));
     }
 
     // ── L002: circular-import ───────────────────────────────────────
