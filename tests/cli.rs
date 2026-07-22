@@ -2682,6 +2682,54 @@ fn json_xml_structure_diagnostics_preserve_structured_locations() {
 }
 
 #[test]
+fn cli_commonmark_structure_boundaries_preserve_real_xml_diagnostics() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "```lang`invalid\n<after-invalid-info>\n`` `<inline-literal>` ``\n\\<escaped-literal>\n<example\n  kind=\">\">\n</example>\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "X002,X003,X004,X005", "."],
+    );
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "X003");
+    assert_eq!(diagnostics[0]["location"]["start"]["line"], 3);
+}
+
+#[test]
+fn cli_l005_resolves_commonmark_escaped_destinations_with_authored_evidence() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join("docs")).unwrap();
+    let target = tmp.path().join("docs/a(b).md");
+    std::fs::write(&target, "present\n").unwrap();
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "See [the nested guide](docs/a\\(b\\).md).\n",
+    )
+    .unwrap();
+
+    let clean = run_in(tmp.path(), &["--format", "json", "--only", "L005", "."]);
+    assert!(clean.status.success(), "stderr: {}", stderr(&clean));
+    assert!(json(&clean)["diagnostics"].as_array().unwrap().is_empty());
+
+    std::fs::remove_file(target).unwrap();
+    let missing = run_in(tmp.path(), &["--format", "json", "--only", "L005", "."]);
+    assert!(missing.status.success(), "stderr: {}", stderr(&missing));
+    let diagnostics = json(&missing)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], "L005");
+    assert_eq!(diagnostics[0]["evidence"], "docs/a\\(b\\).md");
+    assert_eq!(diagnostics[0]["location"]["start"]["line"], 1);
+}
+
+#[test]
 fn s059_json_reports_the_fence_line_and_actionable_suggestion() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

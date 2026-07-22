@@ -1570,7 +1570,7 @@ fn validate_markdown_links(diag: &mut DiagnosticCollector, exclude: &ExcludeSet)
                 continue;
             }
             let raw = &reference.raw;
-            let decoded = percent_decode_once(raw);
+            let decoded = percent_decode_once(&reference.decoded);
             if is_external_link(&decoded) {
                 continue;
             }
@@ -4512,5 +4512,33 @@ notice="# lint-bash32: ok this is not a real waiver"; declare -A m
             broken[0].suggestion.as_deref(),
             Some(SUGGEST_CREATE_OR_CORRECT)
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn l005_uses_decoded_destinations_but_reports_authored_evidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs").unwrap();
+        fs::write("docs/a(b).md", "present\n").unwrap();
+        fs::write(
+            "CLAUDE.md",
+            "[present](<docs/a\\(b\\).md> \"title\")\n[missing](docs/missing\\(b\\).md)\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_markdown_links(&mut diag, &ExcludeSet::default());
+        let broken: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::BrokenMarkdownLink)
+            .collect();
+        assert_eq!(broken.len(), 1);
+        assert_eq!(
+            broken[0].evidence.as_deref(),
+            Some("docs/missing\\(b\\).md")
+        );
+        assert!(broken[0].location.is_some());
     }
 }
