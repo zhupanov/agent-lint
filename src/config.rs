@@ -1,4 +1,4 @@
-use crate::rules::{ACTIVE_RULES, LintRule};
+use crate::rules::{ACTIVE_RULES, ALL_RULES, LintRule};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -20,21 +20,26 @@ pub enum CliMode {
 
 /// Invocation-scoped rule policy resolved from CLI strictness and `--only`.
 ///
-/// A focused selection is stored in canonical registry order so duplicate and
-/// reordered CLI identifiers cannot affect validation or autofix ordering.
+/// A focused selection preserves canonical requested identities separately
+/// from the active identities that may execute. This lets compatibility-only
+/// retired rules remain visible in public output without making them active.
+/// Both views use registry order, so duplicate and reordered CLI identifiers
+/// cannot affect output, validation, or autofix ordering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunPolicy {
     mode: CliMode,
-    selected_rules: Option<Vec<LintRule>>,
-    selected_set: Option<HashSet<LintRule>>,
+    requested_rules: Option<Vec<LintRule>>,
+    effective_rules: Option<Vec<LintRule>>,
+    effective_set: Option<HashSet<LintRule>>,
 }
 
 impl Default for RunPolicy {
     fn default() -> Self {
         Self {
             mode: CliMode::Normal,
-            selected_rules: None,
-            selected_set: None,
+            requested_rules: None,
+            effective_rules: None,
+            effective_set: None,
         }
     }
 }
@@ -50,7 +55,7 @@ impl RunPolicy {
             });
         }
 
-        let mut selected_set = HashSet::new();
+        let mut requested_set = HashSet::new();
         for value in only_values {
             for raw_identifier in value.split(',') {
                 let identifier = raw_identifier.trim();
@@ -64,38 +69,51 @@ impl RunPolicy {
                         "invalid rule identifier '{identifier}' for --only; use a canonical code or name"
                     )
                 })?;
-                selected_set.insert(rule);
+                requested_set.insert(rule);
             }
         }
 
-        let selected_rules = ACTIVE_RULES
+        let requested_rules = ALL_RULES
             .iter()
             .copied()
-            .filter(|rule| selected_set.contains(rule))
+            .filter(|rule| requested_set.contains(rule))
+            .collect();
+        let effective_rules: Vec<_> = ACTIVE_RULES
+            .iter()
+            .copied()
+            .filter(|rule| requested_set.contains(rule))
             .collect();
         Ok(Self {
             mode,
-            selected_rules: Some(selected_rules),
-            selected_set: Some(selected_set),
+            requested_rules: Some(requested_rules),
+            effective_set: Some(effective_rules.iter().copied().collect()),
+            effective_rules: Some(effective_rules),
         })
     }
 
     pub fn selects(&self, rule: LintRule) -> bool {
-        self.selected_set
+        self.effective_set
             .as_ref()
             .is_none_or(|selected| selected.contains(&rule))
     }
 
     pub fn effective_rules(&self) -> &[LintRule] {
-        self.selected_rules.as_deref().unwrap_or(&ACTIVE_RULES)
+        self.effective_rules.as_deref().unwrap_or(&ACTIVE_RULES)
+    }
+
+    /// Canonical identities explicitly requested by `--only`, including
+    /// accepted retired identities. This view is for user-facing reporting;
+    /// dispatch, severity, accounting, and autofix use `effective_rules`.
+    pub fn requested_rules(&self) -> Option<&[LintRule]> {
+        self.requested_rules.as_deref()
     }
 
     pub fn is_focused(&self) -> bool {
-        self.selected_rules.is_some()
+        self.requested_rules.is_some()
     }
 
     pub fn registry_rank(&self, rule: LintRule) -> Option<usize> {
-        self.selected_rules
+        self.effective_rules
             .as_ref()?
             .iter()
             .position(|selected| *selected == rule)
@@ -1018,8 +1036,36 @@ mod tests {
             policy.effective_rules(),
             &[LintRule::AgentMaxturnsInvalid, LintRule::PromptNegativeOnly]
         );
+        assert_eq!(
+            policy.requested_rules(),
+            Some(&[LintRule::AgentMaxturnsInvalid, LintRule::PromptNegativeOnly,][..])
+        );
         assert!(policy.selects(LintRule::PromptNegativeOnly));
         assert!(!policy.selects(LintRule::PluginJsonMissing));
+    }
+
+    #[test]
+    fn focused_policy_preserves_retired_requests_but_keeps_them_inert() {
+        let policy = RunPolicy::resolve(
+            CliMode::All,
+            &["S045,S040,O005,S045,style-name-long".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            policy.requested_rules(),
+            Some(
+                &[
+                    LintRule::ToolsUnknown,
+                    LintRule::ToolsListSyntax,
+                    LintRule::OutputStyleNameTooLong,
+                ][..]
+            )
+        );
+        assert_eq!(policy.effective_rules(), &[LintRule::ToolsUnknown]);
+        assert!(policy.selects(LintRule::ToolsUnknown));
+        assert!(!policy.selects(LintRule::ToolsListSyntax));
+        assert!(!policy.selects(LintRule::OutputStyleNameTooLong));
     }
 
     #[test]
