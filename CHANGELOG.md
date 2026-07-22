@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   heuristic on any option, on top-level and channel surfaces. It is an agent-lint
   security convention stricter than the manifest schema, is non-autofixable, and
   never echoes the default value in the message, evidence, or suggestion
+
 - Added full T001 (`pr-template-invalid`) URL-template validation and T002
   (`channels-enabled-unsupported`) repository-scope validation. T002 retains
   `channels-enabled-invalid` as a compatibility selector alias; both rules
@@ -35,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   left-boundary matching, shared repository-safe path probing, and file-level
   advisory size metadata so Basic CLAUDE.md-only repos and fenced/parent-path
   examples no longer false-positive or stay silent
+- Retired O005 (`style-name-long`): Claude Code has no output-style name-length
+  cap, so O005 is now inert in normal, pedantic, all, and focused runs. Existing
+  O005 / `style-name-long` selectors remain accepted for compatibility but emit
+  no findings; output-style names remain optional and unconstrained.
 - Agent discovery is now recursive across `.claude/agents/`, the plugin
   `agents/` default, and manifest-declared `plugin.json` `agents` roots, matching
   Claude Code: agents nested in subdirectories are seen by every agent rule

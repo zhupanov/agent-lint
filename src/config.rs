@@ -1,4 +1,4 @@
-use crate::rules::{ALL_RULES, LintRule};
+use crate::rules::{ACTIVE_RULES, LintRule};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
@@ -68,7 +68,7 @@ impl RunPolicy {
             }
         }
 
-        let selected_rules = ALL_RULES
+        let selected_rules = ACTIVE_RULES
             .iter()
             .copied()
             .filter(|rule| selected_set.contains(rule))
@@ -87,7 +87,7 @@ impl RunPolicy {
     }
 
     pub fn effective_rules(&self) -> &[LintRule] {
-        self.selected_rules.as_deref().unwrap_or(ALL_RULES)
+        self.selected_rules.as_deref().unwrap_or(&ACTIVE_RULES)
     }
 
     pub fn is_focused(&self) -> bool {
@@ -2188,7 +2188,7 @@ root-max-lines = 10
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 297);
+        assert_eq!(config.error.len(), 296);
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }

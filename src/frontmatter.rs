@@ -1,3 +1,72 @@
+use std::ops::Range;
+
+/// A complete leading YAML frontmatter block, retaining byte ranges in its
+/// owning source so validators can attach file-relative structured metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeadingFrontmatter<'a> {
+    pub yaml: &'a str,
+    pub yaml_range: Range<usize>,
+    pub delimiter_range: Range<usize>,
+    pub body: &'a str,
+}
+
+/// Leading-frontmatter discovery result.
+///
+/// A file with no logical opener is body-only. An opener is `---` followed
+/// only by horizontal whitespace and a LF/CRLF line ending. A closing marker
+/// has the same delimiter grammar and may end at EOF.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeadingFrontmatterState<'a> {
+    Absent { body: &'a str },
+    Complete(LeadingFrontmatter<'a>),
+    Unterminated { delimiter_range: Range<usize> },
+}
+
+/// Split a document at a logical leading YAML frontmatter block.
+///
+/// This deliberately owns only delimiter/body recognition; callers retain
+/// their own YAML schema policy. It is shared infrastructure for Claude
+/// configuration surfaces that accept body-only Markdown files.
+pub fn leading_frontmatter(content: &str) -> LeadingFrontmatterState<'_> {
+    let Some(open_end) = logical_delimiter_end(content, 0, true) else {
+        return LeadingFrontmatterState::Absent { body: content };
+    };
+    let opening_range = 0..open_end;
+    let yaml_start = open_end;
+    let mut line_start = open_end;
+    while line_start < content.len() {
+        if let Some(close_end) = logical_delimiter_end(content, line_start, false) {
+            return LeadingFrontmatterState::Complete(LeadingFrontmatter {
+                yaml: &content[yaml_start..line_start],
+                yaml_range: yaml_start..line_start,
+                delimiter_range: opening_range,
+                body: &content[close_end..],
+            });
+        }
+        let Some(newline) = content[line_start..].find('\n') else {
+            break;
+        };
+        line_start += newline + 1;
+    }
+    LeadingFrontmatterState::Unterminated {
+        delimiter_range: opening_range,
+    }
+}
+
+fn logical_delimiter_end(content: &str, start: usize, require_newline: bool) -> Option<usize> {
+    let newline = content[start..].find('\n').map(|offset| start + offset);
+    let (line_end, end) = match newline {
+        Some(newline) => (newline, newline + 1),
+        None if !require_newline => (content.len(), content.len()),
+        None => return None,
+    };
+    let line = content[start..line_end]
+        .strip_suffix('\r')
+        .unwrap_or(&content[start..line_end]);
+    (line.starts_with("---") && line[3..].bytes().all(|byte| matches!(byte, b' ' | b'\t')))
+        .then_some(end)
+}
+
 /// Extract YAML frontmatter lines from a file's content.
 /// The file must start with `---` on line 1 and have a closing `---`.
 /// Returns None if the file is malformed.
@@ -283,6 +352,35 @@ pub fn yaml_to_json(value: &crate::yaml::Value) -> Option<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn leading_frontmatter_handles_logical_delimiters_and_body_only_files() {
+        let body_only = "Instructions without metadata\n";
+        assert_eq!(
+            leading_frontmatter(body_only),
+            LeadingFrontmatterState::Absent { body: body_only }
+        );
+
+        let source = "--- \t\r\nname: concise\r\n---  \r\nBody\r\n";
+        let LeadingFrontmatterState::Complete(block) = leading_frontmatter(source) else {
+            panic!("logical CRLF delimiters must form frontmatter");
+        };
+        assert_eq!(block.yaml, "name: concise\r\n");
+        assert_eq!(block.body, "Body\r\n");
+    }
+
+    #[test]
+    fn leading_frontmatter_distinguishes_unterminated_attempts() {
+        let source = "---\nname: concise\n";
+        assert!(matches!(
+            leading_frontmatter(source),
+            LeadingFrontmatterState::Unterminated { .. }
+        ));
+        assert!(matches!(
+            leading_frontmatter("----\nnot frontmatter\n"),
+            LeadingFrontmatterState::Absent { .. }
+        ));
+    }
 
     #[test]
     fn test_valid_frontmatter() {

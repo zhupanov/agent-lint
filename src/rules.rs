@@ -3,6 +3,8 @@
 //! Every lint diagnostic has a unique code (e.g., "M001") and human-readable
 //! name (e.g., "plugin-json-missing"). Rules are grouped by category prefix.
 
+use std::sync::LazyLock;
+
 use strum::{EnumProperty as StrumEnumProperty, VariantArray as StrumVariantArray};
 use strum_macros::{EnumIter, EnumProperty, VariantArray};
 
@@ -532,8 +534,8 @@ pub enum LintRule {
     /// O002: output style keep-coding-instructions is not a boolean
     #[strum(props(code = "O002", name = "style-instructions-invalid"))]
     OutputStyleKeepCodingInstructionsInvalid,
-    /// O003: output style frontmatter contains an unrecognized field
-    #[strum(props(code = "O003", name = "style-field-unknown"))]
+    /// O003: output style frontmatter contains an unsupported field
+    #[strum(props(code = "O003", name = "style-field-unsupported"))]
     OutputStyleFieldUnknown,
     /// O004: output style has no body after frontmatter
     #[strum(props(code = "O004", name = "style-body-empty"))]
@@ -992,6 +994,8 @@ impl LintRule {
     pub fn from_code_or_name(s: &str) -> Option<Self> {
         let migrated = match s {
             "channels-enabled-invalid" => Some(Self::SettingsChannelsEnabledInvalid),
+            "style-field-unknown" => Some(Self::OutputStyleFieldUnknown),
+            "O005" | "style-name-long" => Some(Self::OutputStyleNameTooLong),
             "CX037" | "codex-agents-empty" => Some(Self::InstructionFileEmpty),
             "CX038" | "codex-agents-secret" => Some(Self::InstructionFileSecret),
             "CX041" | "codex-agents-path" => Some(Self::InstructionFilePathMissing),
@@ -1148,8 +1152,19 @@ impl LintRule {
     }
 }
 
-/// Every variant of [`LintRule`], derived from the enum declaration.
+/// Every lint-rule identity, including compatibility-only retired rules.
 pub const ALL_RULES: &[LintRule] = LintRule::VARIANTS;
+
+/// Rules that participate in invocation selection, strictness, and public
+/// rule documentation. Retired identities remain in [`ALL_RULES`] so every
+/// `LintRule` retains its canonical registry entry.
+pub static ACTIVE_RULES: LazyLock<Vec<LintRule>> = LazyLock::new(|| {
+    LintRule::VARIANTS
+        .iter()
+        .copied()
+        .filter(|rule| *rule != LintRule::OutputStyleNameTooLong)
+        .collect()
+});
 
 #[cfg(test)]
 mod tests {
@@ -1337,6 +1352,14 @@ mod tests {
             LintRule::from_code_or_name("channels-enabled-invalid"),
             Some(LintRule::SettingsChannelsEnabledInvalid)
         );
+        assert_eq!(
+            LintRule::from_code_or_name("style-field-unknown"),
+            Some(LintRule::OutputStyleFieldUnknown)
+        );
+        assert_eq!(
+            LintRule::from_code_or_name("O005"),
+            Some(LintRule::OutputStyleNameTooLong)
+        );
     }
 
     #[test]
@@ -1401,11 +1424,11 @@ mod tests {
 
         assert_eq!(
             documented.len(),
-            ALL_RULES.len(),
-            "docs/rules.md must document every registered rule code"
+            ACTIVE_RULES.len(),
+            "docs/rules.md must document every active rule code"
         );
 
-        for rule in ALL_RULES {
+        for rule in &*ACTIVE_RULES {
             let documented_rule = documented.get(rule.code()).unwrap_or_else(|| {
                 panic!(
                     "docs/rules.md is missing {} ({}) from the rule registry",
@@ -1444,7 +1467,7 @@ mod tests {
 
     #[test]
     fn default_suppressed_count() {
-        let suppressed: Vec<_> = ALL_RULES
+        let suppressed: Vec<_> = ACTIVE_RULES
             .iter()
             .filter(|r| r.default_severity() == DefaultSeverity::Suppressed)
             .collect();
@@ -1458,14 +1481,14 @@ mod tests {
 
     #[test]
     fn default_warning_count() {
-        let warnings: Vec<_> = ALL_RULES
+        let warnings: Vec<_> = ACTIVE_RULES
             .iter()
             .filter(|r| r.default_severity() == DefaultSeverity::Warning)
             .collect();
         assert_eq!(
             warnings.len(),
-            121,
-            "Expected 121 default-warning rules, got {}",
+            120,
+            "Expected 120 active default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1541,7 +1564,7 @@ mod tests {
 
     #[test]
     fn is_too_long_matches_exactly_four() {
-        let too_long: Vec<_> = ALL_RULES.iter().filter(|r| r.is_too_long()).collect();
+        let too_long: Vec<_> = ACTIVE_RULES.iter().filter(|r| r.is_too_long()).collect();
         assert_eq!(
             too_long.len(),
             4,
@@ -1565,7 +1588,7 @@ mod tests {
 
     #[test]
     fn autofixable_count() {
-        let fixable: Vec<_> = ALL_RULES.iter().filter(|r| r.is_autofixable()).collect();
+        let fixable: Vec<_> = ACTIVE_RULES.iter().filter(|r| r.is_autofixable()).collect();
         assert_eq!(
             fixable.len(),
             11,
@@ -1592,7 +1615,7 @@ mod tests {
 
     #[test]
     fn default_error_count() {
-        let errors: Vec<_> = ALL_RULES
+        let errors: Vec<_> = ACTIVE_RULES
             .iter()
             .filter(|r| r.default_severity() == DefaultSeverity::Error)
             .collect();

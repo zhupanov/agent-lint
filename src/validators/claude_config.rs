@@ -6,7 +6,7 @@
 use crate::config::ExcludeSet;
 use crate::context::{LintContext, ManifestState, ParsedManifest};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
-use crate::frontmatter;
+use crate::frontmatter::{self, LeadingFrontmatterState};
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::yaml::{Mapping, Value as YamlValue};
@@ -19,6 +19,16 @@ use std::sync::LazyLock;
 
 const RULES_FIELDS: &[&str] = &["paths"];
 const OUTPUT_STYLE_FIELDS: &[&str] = &["name", "description", "keep-coding-instructions"];
+const OUTPUT_STYLE_FORCE_FOR_PLUGIN: &str = "force-for-plugin";
+const OUTPUT_STYLE_DESCRIPTION_SUGGESTION: &str =
+    "add a non-empty string description frontmatter field";
+const OUTPUT_STYLE_INSTRUCTIONS_SUGGESTION: &str =
+    "set keep-coding-instructions to true, false, \"true\", or \"false\"";
+const OUTPUT_STYLE_FIELD_SUGGESTION: &str =
+    "remove the unsupported field or relocate it to a plugin-bundled output style";
+const OUTPUT_STYLE_BODY_SUGGESTION: &str = "add output-style instructions to the body";
+const OUTPUT_STYLE_FRONTMATTER_SUGGESTION: &str =
+    "repair the attempted frontmatter or remove it to use a body-only style";
 const PR_URL_TEMPLATE_PLACEHOLDERS: &[&str] = &["{host}", "{owner}", "{repo}", "{number}", "{url}"];
 const CHANNELS_ENABLED_SUGGESTION: &str =
     "remove channelsEnabled here and configure it through managed organization policy";
@@ -60,30 +70,73 @@ fn validate_output_styles(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) 
         diag,
         exclude,
         |path, content, diag| {
-            let Some(frontmatter) = parse_frontmatter(content) else {
-                diag.report(
-                    LintRule::OutputStyleFrontmatterInvalid,
-                    &format!("{path}: frontmatter must be valid YAML between '---' delimiters"),
-                );
-                return;
-            };
-
-            report_unknown_fields(
-                diag,
-                path,
-                &frontmatter,
-                OUTPUT_STYLE_FIELDS,
-                LintRule::OutputStyleFieldUnknown,
-            );
-            validate_output_style_fields(diag, path, &frontmatter);
-            if frontmatter::extract_body(content).trim().is_empty() {
-                diag.report(
-                    LintRule::OutputStyleBodyEmpty,
-                    &format!("{path}: body is empty after frontmatter"),
-                );
-            }
+            validate_output_style(diag, path, content);
         },
     );
+}
+
+fn validate_output_style(diag: &mut DiagnosticCollector, path: &str, content: &str) {
+    let (frontmatter, body, yaml_range) = match frontmatter::leading_frontmatter(content) {
+        LeadingFrontmatterState::Absent { body } => (Mapping::new(), body, None),
+        LeadingFrontmatterState::Unterminated { delimiter_range } => {
+            report_output_style_frontmatter_invalid(
+                diag,
+                path,
+                content,
+                delimiter_range,
+                "frontmatter opening delimiter has no matching closer",
+            );
+            return;
+        }
+        LeadingFrontmatterState::Complete(block) => {
+            let yaml = match crate::yaml::parse(block.yaml) {
+                Ok(yaml) if yaml.is_null() => Mapping::new(),
+                Ok(yaml) => match yaml.as_mapping() {
+                    Some(mapping) => mapping.clone(),
+                    None => {
+                        report_output_style_frontmatter_invalid(
+                            diag,
+                            path,
+                            content,
+                            block.yaml_range,
+                            "frontmatter must be a YAML mapping",
+                        );
+                        return;
+                    }
+                },
+                Err(error) => {
+                    let range = crate::yaml::error_line(&error)
+                        .and_then(|line| yaml_line_range(content, block.yaml_range.clone(), line))
+                        .unwrap_or(block.yaml_range);
+                    report_output_style_frontmatter_invalid(
+                        diag,
+                        path,
+                        content,
+                        range,
+                        "frontmatter is not valid YAML",
+                    );
+                    return;
+                }
+            };
+            (yaml, block.body, Some(block.yaml_range))
+        }
+    };
+
+    report_output_style_unknown_fields(diag, path, content, yaml_range.clone(), &frontmatter);
+    validate_output_style_fields(diag, path, content, yaml_range, &frontmatter);
+    if body.trim().is_empty() {
+        let body_range = body_range(content, body).unwrap_or(0..content.len());
+        diag.report_with(
+            LintRule::OutputStyleBodyEmpty,
+            &format!("{path}: output-style body is empty or whitespace-only"),
+            metadata_for_range(
+                content,
+                body_range,
+                "body: whitespace-only",
+                OUTPUT_STYLE_BODY_SUGGESTION,
+            ),
+        );
+    }
 }
 
 fn validate_markdown_directory<F>(
@@ -99,7 +152,7 @@ fn validate_markdown_directory<F>(
         return;
     }
 
-    for entry in traversal::shallow_files(dir, Path::new("."), Some(exclude)).entries {
+    for entry in traversal::recursive_files(dir, Path::new("."), Some(exclude)).entries {
         let path = entry.path;
         if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
             continue;
@@ -118,6 +171,61 @@ fn parse_frontmatter(content: &str) -> Option<Mapping> {
     let lines = frontmatter::extract_frontmatter(content)?;
     let yaml = crate::yaml::parse(&lines.join("\n")).ok()?;
     Some(yaml.as_mapping().cloned().unwrap_or_default())
+}
+
+fn report_output_style_frontmatter_invalid(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    range: Range<usize>,
+    message: &str,
+) {
+    diag.report_with(
+        LintRule::OutputStyleFrontmatterInvalid,
+        &format!("{path}: {message}"),
+        metadata_for_range(
+            content,
+            range,
+            "frontmatter: invalid",
+            OUTPUT_STYLE_FRONTMATTER_SUGGESTION,
+        ),
+    );
+}
+
+fn report_output_style_unknown_fields(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    yaml_range: Option<Range<usize>>,
+    frontmatter: &Mapping,
+) {
+    for key in frontmatter.keys() {
+        if OUTPUT_STYLE_FIELDS.contains(&key.as_str()) {
+            continue;
+        }
+        let (message, evidence) = if key == OUTPUT_STYLE_FORCE_FOR_PLUGIN {
+            (
+                "force-for-plugin is honored only for plugin-bundled output styles and is ignored under .claude/output-styles",
+                "force-for-plugin: private-style placement",
+            )
+        } else {
+            (
+                "output-style frontmatter contains an unsupported field",
+                "frontmatter: unsupported field",
+            )
+        };
+        diag.report_with(
+            LintRule::OutputStyleFieldUnknown,
+            &format!("{path}: {message}"),
+            metadata_for_field(
+                content,
+                yaml_range.clone(),
+                key,
+                evidence,
+                OUTPUT_STYLE_FIELD_SUGGESTION,
+            ),
+        );
+    }
 }
 
 fn report_unknown_fields(
@@ -153,35 +261,130 @@ fn validate_rule_paths(diag: &mut DiagnosticCollector, path: &str, frontmatter: 
     }
 }
 
-fn validate_output_style_fields(diag: &mut DiagnosticCollector, path: &str, frontmatter: &Mapping) {
-    let description = frontmatter.get("description").and_then(YamlValue::as_str);
-    if description.is_none_or(|value| value.trim().is_empty()) {
-        diag.report(
+fn validate_output_style_fields(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    yaml_range: Option<Range<usize>>,
+    frontmatter: &Mapping,
+) {
+    let description_issue = match frontmatter.get("description") {
+        None => Some(("missing", "description: missing")),
+        Some(YamlValue::String(value)) if value.trim().is_empty() => {
+            Some(("blank", "description: blank"))
+        }
+        Some(YamlValue::String(_)) => None,
+        Some(_) => Some(("must be a string", "description: non-string")),
+    };
+    if let Some((category, evidence)) = description_issue {
+        diag.report_with(
             LintRule::OutputStyleDescriptionMissing,
-            &format!("{path}: missing or blank 'description' frontmatter field"),
+            &format!("{path}: 'description' {category}"),
+            metadata_for_field(
+                content,
+                yaml_range.clone(),
+                "description",
+                evidence,
+                OUTPUT_STYLE_DESCRIPTION_SUGGESTION,
+            ),
         );
     }
 
     if let Some(value) = frontmatter.get("keep-coding-instructions")
-        && !value.is_bool()
+        && !output_style_instructions_value_is_valid(value)
     {
-        diag.report(
+        diag.report_with(
             LintRule::OutputStyleKeepCodingInstructionsInvalid,
-            &format!("{path}: 'keep-coding-instructions' must be a YAML boolean"),
-        );
-    }
-
-    if let Some(name) = frontmatter.get("name").and_then(YamlValue::as_str)
-        && name.chars().count() > 64
-    {
-        diag.report(
-            LintRule::OutputStyleNameTooLong,
             &format!(
-                "{path}: 'name' exceeds 64 characters ({})",
-                name.chars().count()
+                "{path}: 'keep-coding-instructions' must be true, false, \"true\", or \"false\""
+            ),
+            metadata_for_field(
+                content,
+                yaml_range,
+                "keep-coding-instructions",
+                "keep-coding-instructions: unsupported value",
+                OUTPUT_STYLE_INSTRUCTIONS_SUGGESTION,
             ),
         );
     }
+}
+
+fn output_style_instructions_value_is_valid(value: &YamlValue) -> bool {
+    value.is_bool() || matches!(value.as_str(), Some("true" | "false"))
+}
+
+fn metadata_for_field(
+    content: &str,
+    yaml_range: Option<Range<usize>>,
+    key: &str,
+    evidence: &str,
+    suggestion: &str,
+) -> DiagnosticMetadata {
+    let range = yaml_range
+        .and_then(|range| yaml_field_range(content, range, key))
+        .unwrap_or(0..0);
+    metadata_for_range(content, range, evidence, suggestion)
+}
+
+fn metadata_for_range(
+    content: &str,
+    range: Range<usize>,
+    evidence: &str,
+    suggestion: &str,
+) -> DiagnosticMetadata {
+    let mut metadata = DiagnosticMetadata::default()
+        .with_evidence(evidence)
+        .with_suggestion(suggestion);
+    if let Some(span) = SourceSpan::from_byte_range(content, range) {
+        metadata = metadata.with_location(span);
+    }
+    metadata
+}
+
+fn yaml_line_range(content: &str, yaml_range: Range<usize>, line: usize) -> Option<Range<usize>> {
+    let yaml = &content[yaml_range.clone()];
+    let start = yaml
+        .split_inclusive('\n')
+        .take(line.saturating_sub(1))
+        .map(str::len)
+        .sum::<usize>();
+    let end = yaml[start..]
+        .find('\n')
+        .map_or(yaml.len(), |offset| start + offset);
+    (start <= end).then_some((yaml_range.start + start)..(yaml_range.start + end))
+}
+
+fn yaml_field_range(content: &str, yaml_range: Range<usize>, key: &str) -> Option<Range<usize>> {
+    let yaml = &content[yaml_range.clone()];
+    let mut offset = 0;
+    for line in yaml.split_inclusive('\n') {
+        let text = line.trim_end_matches(['\r', '\n']);
+        if yaml_top_level_key_matches(text, key) {
+            return Some(yaml_range.start + offset..yaml_range.start + offset + text.len());
+        }
+        offset += line.len();
+    }
+    None
+}
+
+fn yaml_top_level_key_matches(line: &str, key: &str) -> bool {
+    if line.starts_with([' ', '\t']) {
+        return false;
+    }
+    let Some(after_key) = line.strip_prefix(key) else {
+        return [format!("\"{key}\""), format!("'{key}'")]
+            .into_iter()
+            .any(|quoted| {
+                line.strip_prefix(&quoted)
+                    .is_some_and(|rest| rest.starts_with(':'))
+            });
+    };
+    after_key.starts_with(':')
+}
+
+fn body_range(content: &str, body: &str) -> Option<Range<usize>> {
+    let start = body.as_ptr() as usize - content.as_ptr() as usize;
+    (start <= content.len()).then_some(start..content.len())
 }
 
 fn validate_typed_settings(ctx: &LintContext, diag: &mut DiagnosticCollector) {
@@ -564,7 +767,7 @@ mod tests {
             fs::create_dir_all(".claude/output-styles").unwrap();
             fs::write(
                 ".claude/output-styles/style.md",
-                "---\ndescription: Good\nkeep-coding-instructions: 'true'\n---\nBody\n",
+                "---\ndescription: Good\nkeep-coding-instructions: 'TRUE'\n---\nBody\n",
             )
             .unwrap();
             let diag = validate();
@@ -616,7 +819,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn output_style_long_name_reports_o005() {
+    fn output_style_long_name_is_clean_and_o005_is_inert() {
         with_temp_dir(|| {
             fs::create_dir_all(".claude/output-styles").unwrap();
             fs::write(
@@ -629,10 +832,104 @@ mod tests {
             .unwrap();
             let diag = validate();
             assert!(
-                diag.diagnostics()
+                !diag
+                    .diagnostics()
                     .iter()
                     .any(|d| d.rule == LintRule::OutputStyleNameTooLong)
             );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn output_styles_accept_body_only_and_quoted_lowercase_instruction_booleans() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/output-styles/nested").unwrap();
+            fs::write(
+                ".claude/output-styles/nested/style.md",
+                "Use terse, actionable answers.\n",
+            )
+            .unwrap();
+            fs::write(
+                ".claude/output-styles/quoted.md",
+                "--- \t\r\ndescription: Good\r\nkeep-coding-instructions: \"true\"\r\n---  \r\nBody\r\n",
+            )
+            .unwrap();
+            let diag = validate();
+            assert!(diag.diagnostics().iter().all(|diagnostic| {
+                diagnostic.rule != LintRule::OutputStyleFrontmatterInvalid
+                    && diagnostic.rule != LintRule::OutputStyleKeepCodingInstructionsInvalid
+            }));
+            assert!(diag.diagnostics().iter().any(|diagnostic| {
+                diagnostic.rule == LintRule::OutputStyleDescriptionMissing
+                    && diagnostic.subject_path.as_deref()
+                        == Some(std::path::Path::new(
+                            ".claude/output-styles/nested/style.md",
+                        ))
+            }));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn output_style_o006_suppresses_field_cascades_and_has_safe_metadata() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/output-styles").unwrap();
+            fs::write(
+                ".claude/output-styles/style.md",
+                "---\ndescription: [\nkeep-coding-instructions: nope\nunknown-secret-key: sk_this-must-not-leak\n---\n",
+            )
+            .unwrap();
+            let diag = validate();
+            assert_eq!(diag.diagnostics().len(), 1);
+            let diagnostic = &diag.diagnostics()[0];
+            assert_eq!(diagnostic.rule, LintRule::OutputStyleFrontmatterInvalid);
+            assert!(diagnostic.location.is_some());
+            assert_eq!(diagnostic.evidence.as_deref(), Some("frontmatter: invalid"));
+            assert_eq!(
+                diagnostic.suggestion.as_deref(),
+                Some(OUTPUT_STYLE_FRONTMATTER_SUGGESTION)
+            );
+            assert!(!diagnostic.message.contains("sk_this-must-not-leak"));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn output_style_reports_category_specific_description_and_private_field_metadata() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/output-styles").unwrap();
+            fs::write(
+                ".claude/output-styles/style.md",
+                "---\ndescription: 7\nforce-for-plugin: false\nvery-long-unknown-key-that-must-not-appear-in-output: secret\n---\nBody\n",
+            )
+            .unwrap();
+            let diag = validate();
+            let description = diag
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| diagnostic.rule == LintRule::OutputStyleDescriptionMissing)
+                .unwrap();
+            assert!(description.message.contains("must be a string"));
+            assert_eq!(
+                description.evidence.as_deref(),
+                Some("description: non-string")
+            );
+            assert!(description.location.is_some());
+            let force = diag
+                .diagnostics()
+                .iter()
+                .find(|diagnostic| diagnostic.message.contains("plugin-bundled"))
+                .unwrap();
+            assert_eq!(
+                force.evidence.as_deref(),
+                Some("force-for-plugin: private-style placement")
+            );
+            assert!(diag.diagnostics().iter().all(|diagnostic| {
+                !diagnostic
+                    .message
+                    .contains("very-long-unknown-key-that-must-not-appear-in-output")
+            }));
         });
     }
 
