@@ -234,7 +234,7 @@ pub(super) fn check_body_content(
     // S041: fork-no-task -- context: fork set but no task instructions in body.
     // The fork gate reads the canonical mapping (like S024/S064) so comments
     // and quoting cannot mask `fork`; invalid/non-mapping frontmatter skips
-    // (X001/S004 own those states).
+    // (X001/S004/S005 own those states).
     let context_is_fork = info
         .frontmatter_mapping()
         .and_then(|map| map.get("context"))

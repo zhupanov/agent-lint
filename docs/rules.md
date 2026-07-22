@@ -270,11 +270,12 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 
 ### Frontmatter Field Types (S023--S027, S063--S066, S070--S071)
 
-These field-type rules (together with S028, S035, S039, and S043 below) read
-frontmatter through canonical YAML: trailing comments, YAML 1.2 boolean
-spellings, quoting, and multiline scalars are interpreted as a real parser
-would, and each rule skips a file whose frontmatter is invalid YAML or not a
-mapping (X001/S004/S005 own those states). S043 scans only path-configuration
+These field-type rules (together with S028, S035, S039, and S043 below, and
+the S041 `context: fork` gate above) read frontmatter through canonical YAML:
+trailing comments, YAML 1.2 boolean spellings, quoting, and multiline scalars
+are interpreted as a real parser would, and each rule skips a file whose
+frontmatter is invalid YAML or not a mapping (X001/S004/S005 own those
+states). S043 scans only path-configuration
 values — every frontmatter field except the free-prose `description`,
 `compatibility`, and `when_to_use` fields and `metadata` values.
 

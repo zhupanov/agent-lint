@@ -264,7 +264,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   spaced (`name :`) spellings are no longer reported as unknown fields; and S043
   scans only path-configuration values, exempting the `description`,
   `compatibility`, `when_to_use`, and `metadata` fields, with a single-line-safe
-  autofix
+  autofix. S041's `context: fork` gate reads the same canonical value, so a
+  trailing comment or quoting no longer masks the fork gate (and invalid
+  frontmatter no longer fires S041 from the raw line)
 - `frontmatter::parse_yaml_strict` restores the trailing newline dropped by line
   extraction, so a frontmatter block whose final line is a bare `key:` (a valid
   null value) no longer reports X001 (`frontmatter-yaml-invalid`)

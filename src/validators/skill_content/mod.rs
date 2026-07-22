@@ -8318,8 +8318,9 @@ suppress = ["S055"]
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
         // Invalid YAML that still contains a raw `context: fork` line: X001
-        // (reported from skills.rs collection) owns the parse failure; the
-        // retired line-oriented reader used to fire S041 from the raw line.
+        // (reported from the skills.rs validation pass) owns the parse
+        // failure; the retired line-oriented reader used to fire S041 from
+        // the raw line anyway.
         let fm_lines = [
             "name: subject",
             "description: A valid skill description here",
