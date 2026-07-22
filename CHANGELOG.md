@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Added U009 (`userconfig-default-secret`, default warning) for `userConfig`
+  option `default` values that commit a secret in the world-readable
+  `.claude-plugin/plugin.json`: a `default` declared on a `sensitive: true`
+  option, or a string/string-array literal matching the shared possible-secret
+  heuristic on any option, on top-level and channel surfaces. It is an agent-lint
+  security convention stricter than the manifest schema, is non-autofixable, and
+  never echoes the default value in the message, evidence, or suggestion
 - Added full T001 (`pr-template-invalid`) URL-template validation and T002
   (`channels-enabled-unsupported`) repository-scope validation. T002 retains
   `channels-enabled-invalid` as a compatibility selector alias; both rules
