@@ -1697,6 +1697,9 @@ fn validate_script_contracts(
             continue;
         };
         let kind = script_kind(&path).unwrap_or(ScriptKind::Other);
+        if kind == ScriptKind::Shell && g008_shell_script(&path) {
+            validate_gh_inline(&path, &content, diag);
+        }
         let mut heredoc: Option<HeredocState> = None;
         let mut continuation = String::new();
         let mut awk_single_body = false;
@@ -1751,9 +1754,6 @@ fn validate_script_contracts(
                 continue;
             }
 
-            if kind != ScriptKind::Awk {
-                validate_gh_inline(&path, line_number, &line, diag);
-            }
             if scope.portability {
                 match kind {
                     ScriptKind::Shell => {
@@ -1821,28 +1821,461 @@ fn validate_bash_replacement(
     }
 }
 
-fn validate_gh_inline(path: &Path, line_number: usize, line: &str, diag: &mut DiagnosticCollector) {
-    if has_reasoned_marker(line, "lint-gh-body-inline: ok")
-        || !(line.contains("gh ") || line.contains("/gh "))
-    {
-        return;
-    }
-    for (option, replacement) in [("--body", "--body-file"), ("--notes", "--notes-file")] {
-        if line
-            .split_whitespace()
-            .any(|word| word == option || word.starts_with(&format!("{option}=")))
-            && !line.contains(replacement)
-        {
-            diag.report_at(
-                LintRule::GhInlineBody,
-                path,
-                &format!(
-                    "{}:{line_number}: inline gh {option} payload; use {replacement}",
-                    path.display()
-                ),
-            );
+/// The GitHub CLI body options this rule knows how to replace safely.
+///
+/// Reviewed against https://cli.github.com/manual/gh_help_reference on
+/// 2026-07-21. Update this table (and its table-driven test) when that
+/// reference changes; only entries with a documented file/stdin equivalent
+/// belong here.
+#[derive(Clone, Copy)]
+struct GhBodyOption {
+    command: &'static [&'static str],
+    inline_long: &'static str,
+    inline_short: &'static str,
+    file_long: &'static str,
+    file_short: &'static str,
+}
+
+const GH_BODY_OPTIONS: &[GhBodyOption] = &[
+    GhBodyOption {
+        command: &["issue", "create"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["issue", "edit"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["issue", "comment"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["pr", "create"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["pr", "edit"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["pr", "comment"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["pr", "review"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["discussion", "create"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["discussion", "edit"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["discussion", "comment"],
+        inline_long: "--body",
+        inline_short: "-b",
+        file_long: "--body-file",
+        file_short: "-F",
+    },
+    GhBodyOption {
+        command: &["release", "create"],
+        inline_long: "--notes",
+        inline_short: "-n",
+        file_long: "--notes-file",
+        file_short: "-F",
+    },
+];
+
+#[derive(Debug, Clone)]
+struct ShellWord {
+    value: String,
+    range: std::ops::Range<usize>,
+    dynamic: bool,
+    multiline: bool,
+}
+
+/// Parse enough shell grammar to identify command words and option arguments
+/// without treating comments or quoted data as executable commands. This is a
+/// deliberately small lexer, not a shell evaluator: aliases and variable
+/// command names remain outside G008's contract.
+fn shell_commands(source: &str, offset: usize, commands: &mut Vec<Vec<ShellWord>>) {
+    let mut command = Vec::new();
+    let mut index = 0;
+    while index < source.len() {
+        let ch = source[index..].chars().next().unwrap();
+        if ch.is_whitespace() {
+            if ch == '\n' && !command.is_empty() {
+                commands.push(std::mem::take(&mut command));
+            }
+            index += ch.len_utf8();
+            continue;
+        }
+        if matches!(ch, ';' | '|' | '&' | '(' | ')') {
+            if !command.is_empty() {
+                commands.push(std::mem::take(&mut command));
+            }
+            index += ch.len_utf8();
+            continue;
+        }
+        if ch == '#' {
+            while index < source.len() {
+                let comment_ch = source[index..].chars().next().unwrap();
+                index += comment_ch.len_utf8();
+                if comment_ch == '\n' {
+                    break;
+                }
+            }
+            if !command.is_empty() {
+                commands.push(std::mem::take(&mut command));
+            }
+            continue;
+        }
+        if ch == '\\' && source[index + 1..].starts_with('\n') {
+            index += 2;
+            continue;
+        }
+
+        let start = index;
+        let mut value = String::new();
+        let mut dynamic = false;
+        let mut multiline = false;
+        while index < source.len() {
+            let word_ch = source[index..].chars().next().unwrap();
+            if word_ch.is_whitespace() || matches!(word_ch, ';' | '|' | '&' | '(' | ')') {
+                break;
+            }
+            if word_ch == '\\' {
+                index += 1;
+                if index < source.len() {
+                    let escaped = source[index..].chars().next().unwrap();
+                    index += escaped.len_utf8();
+                    if escaped == '\n' {
+                        value.push(' ');
+                    } else {
+                        value.push(escaped);
+                    }
+                }
+                continue;
+            }
+            if word_ch == '\'' || word_ch == '"' {
+                let quote = word_ch;
+                let ansi_c_quote = quote == '\'' && value.ends_with('$');
+                index += 1;
+                while index < source.len() {
+                    let quoted = source[index..].chars().next().unwrap();
+                    index += quoted.len_utf8();
+                    if quoted == quote {
+                        break;
+                    }
+                    if quoted == '\n' {
+                        multiline = true;
+                    }
+                    if ansi_c_quote && quoted == '\\' && source[index..].starts_with('n') {
+                        multiline = true;
+                    }
+                    if quote == '"' && matches!(quoted, '$' | '`') {
+                        dynamic = true;
+                    }
+                    if quote == '"' && quoted == '$' && source[index..].starts_with('(') {
+                        let inner_start = index + 1;
+                        if let Some(close) = matching_command_substitution(source, inner_start) {
+                            shell_commands(
+                                &source[inner_start..close],
+                                offset + inner_start,
+                                commands,
+                            );
+                            value.push_str("$(…)");
+                            index = close + 1;
+                            continue;
+                        }
+                    }
+                    if quote == '"' && quoted == '\\' && index < source.len() {
+                        let escaped = source[index..].chars().next().unwrap();
+                        index += escaped.len_utf8();
+                        if escaped == '\n' {
+                            value.push(' ');
+                        } else {
+                            value.push(escaped);
+                        }
+                    } else {
+                        value.push(quoted);
+                    }
+                }
+                continue;
+            }
+            if word_ch == '$' || word_ch == '`' {
+                if word_ch == '$' && source[index + 1..].starts_with('\'') {
+                    value.push('$');
+                    index += 1;
+                    continue;
+                }
+                dynamic = true;
+                if word_ch == '$' && source[index + 1..].starts_with('(') {
+                    let inner_start = index + 2;
+                    if let Some(close) = matching_command_substitution(source, inner_start) {
+                        shell_commands(&source[inner_start..close], offset + inner_start, commands);
+                        value.push_str("$(…)");
+                        index = close + 1;
+                        continue;
+                    }
+                }
+            }
+            if word_ch == '\n' {
+                multiline = true;
+            }
+            value.push(word_ch);
+            index += word_ch.len_utf8();
+        }
+        if start != index {
+            command.push(ShellWord {
+                value,
+                range: offset + start..offset + index,
+                dynamic,
+                multiline,
+            });
+        } else {
+            index += source[index..].chars().next().unwrap().len_utf8();
         }
     }
+    if !command.is_empty() {
+        commands.push(command);
+    }
+}
+
+fn matching_command_substitution(source: &str, mut index: usize) -> Option<usize> {
+    let mut depth = 1;
+    while index < source.len() {
+        let ch = source[index..].chars().next()?;
+        if ch == '\\' {
+            index += 1;
+            if index < source.len() {
+                index += source[index..].chars().next()?.len_utf8();
+            }
+            continue;
+        }
+        if ch == '\'' || ch == '"' {
+            let quote = ch;
+            index += 1;
+            while index < source.len() {
+                let quoted = source[index..].chars().next()?;
+                index += quoted.len_utf8();
+                if quoted == quote {
+                    break;
+                }
+            }
+            continue;
+        }
+        if ch == '(' {
+            depth += 1;
+        } else if ch == ')' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+        index += ch.len_utf8();
+    }
+    None
+}
+
+fn is_assignment(word: &str) -> bool {
+    word.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && name
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+    })
+}
+
+fn gh_command_start(words: &[ShellWord]) -> Option<usize> {
+    let mut index = 0;
+    while words
+        .get(index)
+        .is_some_and(|word| is_assignment(&word.value))
+    {
+        index += 1;
+    }
+    while words.get(index).is_some_and(|word| {
+        matches!(
+            word.value.as_str(),
+            "if" | "then" | "do" | "while" | "until" | "!"
+        )
+    }) {
+        index += 1;
+    }
+    if words.get(index).is_some_and(|word| word.value == "command") {
+        index += 1;
+    } else if words.get(index).is_some_and(|word| word.value == "env") {
+        index += 1;
+        while words
+            .get(index)
+            .is_some_and(|word| word.value.starts_with('-') || is_assignment(&word.value))
+        {
+            index += 1;
+        }
+    }
+    let executable = &words.get(index)?.value;
+    (executable == "gh"
+        || (executable.starts_with('/') && executable.rsplit('/').next() == Some("gh")))
+    .then_some(index + 1)
+}
+
+fn option_value<'a>(words: &'a [ShellWord], index: usize, option: &str) -> Option<&'a ShellWord> {
+    let word = words.get(index)?;
+    if word.value == option {
+        return words.get(index + 1);
+    }
+    word.value
+        .strip_prefix(option)
+        .and_then(|value| value.strip_prefix('='))
+        .map(|_| word)
+}
+
+fn command_has_option(words: &[ShellWord], option: &str) -> bool {
+    words
+        .iter()
+        .any(|word| word.value == option || word.value.starts_with(&format!("{option}=")))
+}
+
+fn validate_gh_inline(path: &Path, content: &str, diag: &mut DiagnosticCollector) {
+    let source = strip_heredoc_bodies(content);
+    let mut commands = Vec::new();
+    shell_commands(&source, 0, &mut commands);
+    for words in commands {
+        let Some(start) = gh_command_start(&words) else {
+            continue;
+        };
+        for specification in GH_BODY_OPTIONS {
+            if words[start..]
+                .iter()
+                .take(specification.command.len())
+                .map(|word| word.value.as_str())
+                .eq(specification.command.iter().copied())
+                && !command_has_option(&words, specification.file_long)
+                && !command_has_option(&words, specification.file_short)
+            {
+                for (index, word) in words
+                    .iter()
+                    .enumerate()
+                    .skip(start + specification.command.len())
+                {
+                    let option = if word.value == specification.inline_long
+                        || word
+                            .value
+                            .starts_with(&format!("{}=", specification.inline_long))
+                    {
+                        specification.inline_long
+                    } else if word.value == specification.inline_short
+                        || word
+                            .value
+                            .starts_with(&format!("{}=", specification.inline_short))
+                    {
+                        specification.inline_short
+                    } else {
+                        continue;
+                    };
+                    let Some(payload) = option_value(&words, index, option) else {
+                        continue;
+                    };
+                    if !(payload.dynamic || payload.multiline) {
+                        continue;
+                    }
+                    if gh_inline_waived(content, word.range.start) {
+                        continue;
+                    }
+                    let location = SourceSpan::from_byte_range(content, word.range.clone())
+                        .unwrap_or_else(|| SourceSpan::line(1));
+                    let line = location.start().line_number();
+                    diag.report_at_with(
+                        LintRule::GhInlineBody,
+                        path,
+                        &format!(
+                            "{}:{line}: inline gh {option} payload; use {}",
+                            path.display(),
+                            specification.file_long
+                        ),
+                        DiagnosticMetadata::default()
+                            .with_location(location)
+                            .with_redacted_evidence()
+                            .with_suggestion(format!(
+                                "use {} with a file path or '-' for stdin",
+                                specification.file_long
+                            )),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn g008_shell_script(path: &Path) -> bool {
+    let path = path.to_string_lossy();
+    path.ends_with(".sh") || path.ends_with(".inc.bash")
+}
+
+fn strip_heredoc_bodies(source: &str) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut heredoc: Option<String> = None;
+    for line in source.split_inclusive('\n') {
+        if let Some(delimiter) = &heredoc {
+            if line.trim() == delimiter {
+                heredoc = None;
+                result.push_str(line);
+            } else {
+                for ch in line.chars() {
+                    if ch == '\n' {
+                        result.push('\n');
+                    } else {
+                        result.extend((0..ch.len_utf8()).map(|_| ' '));
+                    }
+                }
+            }
+            continue;
+        }
+        result.push_str(line);
+        heredoc = (!line.trim_start().starts_with('#'))
+            .then(|| heredoc_state(line, false).map(|state| state.delimiter))
+            .flatten();
+    }
+    result
+}
+
+fn gh_inline_waived(source: &str, offset: usize) -> bool {
+    let line_start = source[..offset].rfind('\n').map_or(0, |index| index + 1);
+    let line_end = source[offset..]
+        .find('\n')
+        .map_or(source.len(), |index| offset + index);
+    has_reasoned_marker(&source[line_start..line_end], "lint-gh-body-inline: ok")
 }
 
 fn validate_bash32(path: &Path, line_number: usize, line: &str, diag: &mut DiagnosticCollector) {
@@ -2581,7 +3014,7 @@ mod tests {
         fs::create_dir_all("scripts").unwrap();
         fs::write(
             "scripts/bad.sh",
-            "gh pr create --body payload\ndeclare -A values\nempty=()\nprintf '%s' \"${empty[@]}\"\nout=${text//x/$replacement}\ncat <<EOF\ncopy=${text//x/$replacement}\nEOF\ncat <<'SAFE'\nliteral=${text//x/$replacement}\nSAFE\nawk -v re='—' '$0 ~ re'\n",
+            "gh pr create --body \"$payload\"\ndeclare -A values\nempty=()\nprintf '%s' \"${empty[@]}\"\nout=${text//x/$replacement}\ncat <<EOF\ncopy=${text//x/$replacement}\nEOF\ncat <<'SAFE'\nliteral=${text//x/$replacement}\nSAFE\nawk -v re='—' '$0 ~ re'\n",
         )
         .unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
@@ -2604,6 +3037,143 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn gh_inline_body_matches_the_documented_command_matrix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("scripts").unwrap();
+        let content = GH_BODY_OPTIONS
+            .iter()
+            .flat_map(|specification| {
+                [
+                    format!(
+                        "gh {} {} \"$PAYLOAD\"",
+                        specification.command.join(" "),
+                        specification.inline_short
+                    ),
+                    format!(
+                        "gh {} {} \"$PAYLOAD\"",
+                        specification.command.join(" "),
+                        specification.inline_long
+                    ),
+                    format!(
+                        "gh {} {}=\"$PAYLOAD\"",
+                        specification.command.join(" "),
+                        specification.inline_long
+                    ),
+                    format!(
+                        "gh {} {}=\"$PAYLOAD\"",
+                        specification.command.join(" "),
+                        specification.inline_short
+                    ),
+                ]
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write("scripts/matrix.sh", content).unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_script_contracts(&mut diag, &ExcludeSet::default(), true);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::GhInlineBody)
+            .collect();
+        assert_eq!(findings.len(), GH_BODY_OPTIONS.len() * 4);
+        assert_eq!(
+            findings[0].location,
+            Some(SourceSpan::range(1, 17, 1, 19)),
+            "the first -b option has an exact structured source span"
+        );
+        for (findings, specification) in findings.chunks(4).zip(GH_BODY_OPTIONS) {
+            for finding in findings {
+                assert!(finding.message.contains(specification.file_long));
+                assert_eq!(
+                    finding.subject_path.as_deref(),
+                    Some(Path::new("scripts/matrix.sh"))
+                );
+                assert!(finding.location.is_some());
+                assert!(finding.evidence.is_some());
+                let expected_suggestion = format!(
+                    "use {} with a file path or '-' for stdin",
+                    specification.file_long
+                );
+                assert_eq!(
+                    finding.suggestion.as_deref(),
+                    Some(expected_suggestion.as_str())
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn gh_inline_body_uses_shell_lexing_and_excludes_non_prose_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("scripts").unwrap();
+        fs::write(
+            "scripts/cases.sh",
+            r#"# gh pr create --body "$BODY"
+printf '%s\n' 'gh pr create --body "$BODY"'
+weigh --body 5
+sleigh --notes x
+gh secret set TOKEN --body "$TOKEN"
+gh variable set NAME --body "$VALUE"
+gh project item-create 1 --body "$BODY"
+gh pr create --body 'static body'
+gh pr create --body $'static body'
+gh release create v1 --notes="static notes"
+gh pr create --body "$BODY" --body-file body.md
+gh release create v1 -n "$NOTES" -F notes.md
+gh pr create --body "$BODY" # lint-gh-body-inline: ok reviewed constant boundary
+gh pr create \
+  -b "$BODY"; gh issue comment -b "$BODY"
+command gh pr create -b "$BODY"
+env -i gh issue create --body="$BODY"
+/usr/local/bin/gh release create v1 --notes "$NOTES"
+echo "$(gh discussion comment 1 -b "$BODY")"
+gh issue create --body "first
+second"
+cat <<'EOF'
+gh pr create --body "$BODY"
+EOF
+"#,
+        )
+        .unwrap();
+        fs::write(
+            "scripts/example.py",
+            "value = 'gh pr create --body \"$BODY\"'\n",
+        )
+        .unwrap();
+        fs::write("scripts/example.bash", "gh pr create --body \"$BODY\"\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_script_contracts(&mut diag, &ExcludeSet::default(), true);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::GhInlineBody)
+            .collect();
+        assert_eq!(findings.len(), 7);
+        assert!(
+            findings
+                .iter()
+                .all(|item| item.subject_path.as_deref() == Some(Path::new("scripts/cases.sh")))
+        );
+        for line in [15, 16, 17, 18, 19, 20] {
+            assert!(
+                findings
+                    .iter()
+                    .any(|item| item.message.contains(&format!(":{line}:"))),
+                "missing diagnostic at line {line}"
+            );
+        }
     }
 
     #[test]

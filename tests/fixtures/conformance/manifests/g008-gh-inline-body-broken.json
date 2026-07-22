@@ -1,0 +1,17 @@
+{
+  "class": "broken",
+  "repository": "g008-gh-inline-body-broken",
+  "covers": ["plugin-mode", "normal", "json", "g008-gh-inline-body"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "G008", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/publish.sh", "suggestion": "use --body-file with a file path or '-' for stdin" },
+    { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/publish.sh", "suggestion": "use --body-file with a file path or '-' for stdin" },
+    { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/publish.sh", "suggestion": "use --body-file with a file path or '-' for stdin" },
+    { "code": "G008", "name": "gh-inline-body", "severity": "warning", "subject_path": "scripts/release.sh", "suggestion": "use --notes-file with a file path or '-' for stdin" }
+  ],
+  "allowed_additional_diagnostics": []
+}
