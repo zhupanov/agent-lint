@@ -42,6 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- S032 (`hardcoded-secret`) no longer treats ordinary prose mentions of
+  `token` (for example `First token = alias name`) or shell identifiers such as
+  `TOKEN_SPEND=$(...)` as hardcoded secrets: assignment findings now require
+  credential-bearing value evidence, and skill surfaces join `\` line
+  continuations before classifying command substitutions. True literal
+  assignments and signature matches still report with key/category-only
+  evidence.
 - S030 (`orphaned-skill-files`) no longer treats repository-ignored files or
   conventional cache artifacts (`__pycache__`, `*.pyc`, …) as orphan
   candidates, and treats fixture/data files as owned when a Markdown-live

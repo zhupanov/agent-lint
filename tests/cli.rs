@@ -5699,6 +5699,69 @@ fn s032_rejects_partial_command_substitutions_on_claude_and_cursor_skills() {
 }
 
 #[test]
+fn s032_ignores_token_prose_and_multiline_shell_assignments_on_public_and_private_skills() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"s032-token-fix","version":"0.0.1"}"#,
+    )
+    .unwrap();
+
+    let prose = "---\nname: alias-token\ndescription: Use when testing ordinary token prose is not a secret\n---\n- First token = **alias name**\n- Second token = **target skill name** (without `/` prefix)\n";
+    let multiline_shell = "---\nname: research-token\ndescription: Use when testing TOKEN_SPEND command substitution continuations\n---\n```bash\nTOKEN_SPEND=$(python3 \"${CLAUDE_PLUGIN_ROOT}/python/cli.py\" token lane-report \\\n  --dir \"$RESEARCH_TMPDIR\" 2>/dev/null || echo \"_(token telemetry unavailable)_\")\nTOKEN=\nTOKEN=$OTHER\n```\n";
+    let true_literal = "---\nname: leaky-token\ndescription: Use when testing nearby true hardcoded token literals still report\n---\nFirst token = alias name\nTOKEN_SPEND=$(gh auth token)\ndeployment_token: committed-super-secret-value\n";
+    let secret_canary = "committed-super-secret-value";
+
+    for (relative, body) in [
+        ("skills/alias-token/SKILL.md", prose),
+        ("skills/research-token/SKILL.md", multiline_shell),
+        (".claude/skills/alias-token/SKILL.md", prose),
+        (".claude/skills/research-token/SKILL.md", multiline_shell),
+        (".cursor/skills/alias-token/SKILL.md", prose),
+        (".cursor/skills/research-token/SKILL.md", multiline_shell),
+        (".claude/skills/leaky-token/SKILL.md", true_literal),
+        ("skills/leaky-token/SKILL.md", true_literal),
+    ] {
+        let path = tmp.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "S032", "."]);
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(!rendered.contains(secret_canary));
+    assert!(!stderr(&output).contains(secret_canary));
+    let report = json(&output);
+    let diagnostics = report["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+    let mut subjects: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            assert_eq!(diagnostic["code"], "S032");
+            assert_eq!(diagnostic["evidence"], "deployment_token");
+            assert!(
+                !diagnostic["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(secret_canary)
+            );
+            diagnostic["subject_path"].as_str().unwrap()
+        })
+        .collect();
+    subjects.sort_unstable();
+    assert_eq!(
+        subjects,
+        [
+            ".claude/skills/leaky-token/SKILL.md",
+            "skills/leaky-token/SKILL.md",
+        ]
+    );
+}
+
+#[test]
 fn m013_component_prefix_is_structured_and_never_autofixes() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
