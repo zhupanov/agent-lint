@@ -276,9 +276,9 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 | A002 | `agent-frontmatter-malformed` | Agent `.md` has malformed frontmatter | Always | error |
 | A003 | `agent-field-missing` | Agent `.md` missing required field (`name` or `description`) | Always | error |
 | A004 | `no-agent-files` | `agents/` has no `.md` files | Plugin | error |
-| A005 | `template-file-missing` | `skills/shared/reviewer-templates.md` is missing | Plugin | warn |
-| A006 | `template-marker-missing` | Agent `.md` missing "Derived from" marker | Plugin | warn |
-| A007 | `template-count-mismatch` | Agent-template count mismatch | Plugin | warn |
+| A005 | `template-file-missing` | An opted-in larch agent derives from a missing or unreadable `skills/shared/reviewer-templates.md` | Plugin | warn |
+| A006 | `template-marker-missing` | An opted-in top-level agent lacks the larch derivation marker | Plugin | warn |
+| A007 | `template-count-mismatch` | Opted-in larch agent count differs from semantic reviewer-section count | Plugin | warn |
 | A008 | `agent-desc-long` | Agent description exceeds 1024 characters | Always | error |
 | A009 | `agent-desc-short` | Agent description under 20 characters | Always | error |
 | A010 | `agent-name-invalid` | Agent name contains characters outside `[a-z0-9-]` | Always | error |
@@ -344,8 +344,27 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > agent frontmatter in both `agents/` (Plugin mode) and `.claude/agents/`
 > (Basic mode). They catch typos and invalid enum values (e.g. `model: sonet`,
 > `permissionMode: yolo`, `tools: [Bsh]`, dangling `skills:` references) with
-> near-zero false-positive risk. The larch-specific template rules A005-A007
-> remain Plugin-only. The known-tool list is shared with S040
+> near-zero false-positive risk. **Larch template convention (A005-A007).**
+> These are self-activating, Plugin-only rules for public top-level
+> `agents/*.md`; they are not a Claude Code requirement and do not apply to
+> nested, private, custom, or manifest-declared agent roots. They activate only
+> when `skills/shared/reviewer-templates.md` exists or an included agent has a
+> live derivation marker. A marker is a complete non-quoted, non-fenced,
+> non-inline-code prose line (optionally prefixed by a Markdown list marker)
+> that begins case-insensitively with `Derived from` and contains the exact
+> `skills/shared/reviewer-templates.md` token; the same normalized marker is
+> accepted in one complete standalone HTML comment, including a multiline
+> comment. Frontmatter, block quotes, examples, filename substrings, and
+> `${CLAUDE_PLUGIN_ROOT}` variants do not activate it. With a readable template,
+> A006 reports each included agent without that marker. A007 counts only live
+> level-2 ATX or setext headings whose canonical text is `Reviewer` or begins
+> `Reviewer` followed by whitespace, `:`, or `-`; quoted, fenced, commented,
+> other-level, and `Reviewership` headings do not count. Excluding the template
+> disables all three rules; excluding any top-level agent still allows A006 for
+> included agents but suppresses A007 because the participant set is incomplete.
+> All three default to warnings (and follow normal pedantic/all/config policy),
+> have no autofix, and A007 identifies participating agents as related subjects.
+> The known-tool list is shared with S040
 > (`skill allowed-tools`); `mcp__<server>__<tool>` names are accepted.
 > **Stop controls (A029).** A029 applies only to valid Claude/plugin agent
 > frontmatter that explicitly declares an execution-capable tool: `Agent`,

@@ -87,6 +87,8 @@ struct DiagnosticIdentity {
     subject_path: Option<String>,
     #[serde(default)]
     related_subjects: Vec<String>,
+    #[serde(default)]
+    suggestion: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,6 +128,7 @@ struct OutputDiagnostic {
     subject_path: Option<String>,
     #[serde(default)]
     related_subjects: Vec<String>,
+    suggestion: Option<String>,
 }
 
 impl From<&OutputDiagnostic> for DiagnosticIdentity {
@@ -136,6 +139,7 @@ impl From<&OutputDiagnostic> for DiagnosticIdentity {
             severity: diagnostic.severity.clone(),
             subject_path: diagnostic.subject_path.clone(),
             related_subjects: diagnostic.related_subjects.clone(),
+            suggestion: diagnostic.suggestion.clone(),
         }
     }
 }
@@ -490,15 +494,31 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
         case.name
     );
 
+    assert_expected_suggestions(case, report);
+
     let diagnostics: Vec<_> = report
         .diagnostics
         .iter()
         .map(DiagnosticIdentity::from)
+        .map(|mut diagnostic| {
+            diagnostic.suggestion = None;
+            diagnostic
+        })
+        .collect();
+    let expected_diagnostics: Vec<_> = case
+        .manifest
+        .expected_diagnostics
+        .iter()
+        .cloned()
+        .map(|mut diagnostic| {
+            diagnostic.suggestion = None;
+            diagnostic
+        })
         .collect();
 
     if case.manifest.allowed_additional_diagnostics.is_empty() {
         assert_eq!(
-            diagnostics, case.manifest.expected_diagnostics,
+            diagnostics, expected_diagnostics,
             "{}: diagnostic identities, severities, paths, or public order changed",
             case.name
         );
@@ -507,11 +527,11 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
 
     let expected_in_output_order: Vec<_> = diagnostics
         .iter()
-        .filter(|diagnostic| case.manifest.expected_diagnostics.contains(diagnostic))
+        .filter(|diagnostic| expected_diagnostics.contains(diagnostic))
         .cloned()
         .collect();
     assert_eq!(
-        expected_in_output_order, case.manifest.expected_diagnostics,
+        expected_in_output_order, expected_diagnostics,
         "{}: expected diagnostics changed or were duplicated",
         case.name
     );
@@ -523,13 +543,44 @@ fn assert_report(case: &LoadedCase, report: &OutputReport) {
         .collect();
     for diagnostic in diagnostics
         .iter()
-        .filter(|diagnostic| !case.manifest.expected_diagnostics.contains(diagnostic))
+        .filter(|diagnostic| !expected_diagnostics.contains(diagnostic))
     {
         let position = remaining_allowances
             .iter()
             .position(|allowed| **allowed == *diagnostic)
             .unwrap_or_else(|| panic!("{}: unexpected diagnostic {diagnostic:?}", case.name));
         remaining_allowances.remove(position);
+    }
+}
+
+fn assert_expected_suggestions(case: &LoadedCase, report: &OutputReport) {
+    for expected in case
+        .manifest
+        .expected_diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.suggestion.is_some())
+    {
+        let actual = report
+            .diagnostics
+            .iter()
+            .find(|actual| {
+                actual.code == expected.code
+                    && actual.name == expected.name
+                    && actual.severity == expected.severity
+                    && actual.subject_path == expected.subject_path
+                    && actual.related_subjects == expected.related_subjects
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: cannot find diagnostic for expected suggestion {:?}",
+                    case.name, expected
+                )
+            });
+        assert_eq!(
+            actual.suggestion, expected.suggestion,
+            "{}: diagnostic suggestion changed",
+            case.name
+        );
     }
 }
 
