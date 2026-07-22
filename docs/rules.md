@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 298 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -546,15 +546,46 @@ intentionally out of scope for the first version.
 
 ## Claude Configuration Rules (R/O/T)
 
-These optional rules scan `.claude/rules/`, `.claude/output-styles/`, and
-`.claude/settings.json` / `.claude/settings.local.json` in both Basic and
+These optional rules scan `.claude/rules/` (recursively), `.claude/output-styles/`,
+and `.claude/settings.json` / `.claude/settings.local.json` in both Basic and
 Plugin modes. They are silent when the corresponding directories or files do
 not exist.
 
+`.claude/rules/**/*.md` files are discovered with the shared recursive walk
+(deterministic repository-relative order, `[lint].exclude`, pruned directories,
+and the repository-wide no-symlink policy). Non-UTF-8 or unreadable entries are
+skipped best-effort because no scoped I/O rule owns them.
+
+R001 validates Claude's effective `paths` contract, not Rust `globset` syntax.
+A `paths` value may be a string or recursively nested arrays of strings. Agent
+Lint applies Claude's normalization order: recursive flatten; split top-level
+commas outside braces; recursive `{a,b}` expansion; trim/drop empty entries;
+strip one terminal `/**`; then accept each effective entry under node-ignore
+gitignore semantics (`**` remains the explicit universal form). A present
+`paths` value with any non-string leaf, a non-string/non-array top-level value,
+or zero effective non-empty entries emits one field-level R001 (fail closed:
+authors wanting an unconditional rule must omit `paths` or use `**`). Valid
+string entries in a mixed array are still normalized so a bad shape cannot hide
+a second invalid pattern. Identical effective-pattern failures within one file
+are deduplicated in first-source order.
+
+Missing frontmatter is a valid unconditional rule. Attempted frontmatter that
+has no matching closer, invalid YAML, or a non-mapping non-null document emits
+exactly one R003. Empty or null frontmatter is an empty mapping and is clean.
+R002 warns once per unknown top-level key (`paths` is the only known key),
+ordered by source position.
+
+Every R001/R002/R003 finding carries `subject_path`, an exact structured span,
+bounded evidence (field/key category or a redaction-guarded short pattern
+fragment), and a fixed suggestion. Messages never embed the full pattern,
+secret-like values, absolute paths, or compiler internals. None of these rules
+is autofixable.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| R001 | `rules-glob-invalid` | A `.claude/rules/` frontmatter `paths` glob is invalid | Always | error |
+| R001 | `rules-glob-invalid` | A `.claude/rules/` frontmatter `paths` value is not a usable Claude paths value | Always | error |
 | R002 | `rules-field-unknown` | `.claude/rules/` frontmatter contains an unknown field | Always | warn |
+| R003 | `rules-frontmatter-invalid` | `.claude/rules/` frontmatter is missing a closer, invalid YAML, or not a mapping | Always | error |
 | O001 | `style-description-missing` | Output-style `description` is missing, non-string, or blank | Always | warn |
 | O002 | `style-instructions-invalid` | Output-style `keep-coding-instructions` is not `true`, `false`, `"true"`, or `"false"` | Always | error |
 | O003 | `style-field-unsupported` | Output-style frontmatter contains an unsupported field or private-only placement | Always | warn |
@@ -567,6 +598,7 @@ body-only file is valid: its whole content is the effective body. O005
 (`style-name-long`) is retired but remains an inert compatibility selector;
 Claude Code has no output-style name-length limit, so it has no active rule
 row or finding.
+
 | T001 | `pr-template-invalid` | `prUrlTemplate` must be a trimmed non-empty string, use a documented placeholder only, and render to an absolute HTTP(S) URL with a host | Always | warn |
 | T002 | `channels-enabled-unsupported` | Repository `channelsEnabled` is ignored; configure this managed-policy-only field through organization policy instead | Always | warn |
 
@@ -1157,7 +1189,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 298):**
+**Auto-fixable rules (11 of 299):**
 
 | Rule | Code | Fix |
 |------|------|-----|

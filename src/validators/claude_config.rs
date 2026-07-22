@@ -10,14 +10,17 @@ use crate::frontmatter::{self, LeadingFrontmatterState};
 use crate::rules::LintRule;
 use crate::traversal;
 use crate::yaml::{Mapping, Value as YamlValue};
-use globset::Glob;
 use serde_json::Value as JsonValue;
+use std::collections::HashSet;
 use std::fs;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::LazyLock;
 
 const RULES_FIELDS: &[&str] = &["paths"];
+const R001_SUGGESTION: &str = "use a valid Claude gitignore-style paths pattern";
+const R002_SUGGESTION: &str = "remove the unsupported key";
+const R003_SUGGESTION: &str = "repair or remove the attempted frontmatter";
 const OUTPUT_STYLE_FIELDS: &[&str] = &["name", "description", "keep-coding-instructions"];
 const OUTPUT_STYLE_FORCE_FOR_PLUGIN: &str = "force-for-plugin";
 const OUTPUT_STYLE_DESCRIPTION_SUGGESTION: &str =
@@ -50,18 +53,59 @@ pub fn validate_private_config(
 
 fn validate_rules(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     validate_markdown_directory(".claude/rules", diag, exclude, |path, content, diag| {
-        let Some(frontmatter) = parse_frontmatter(content) else {
-            return;
-        };
-        report_unknown_fields(
-            diag,
-            path,
-            &frontmatter,
-            RULES_FIELDS,
-            LintRule::RulesFieldUnknown,
-        );
-        validate_rule_paths(diag, path, &frontmatter);
+        validate_rule_file(diag, path, content);
     });
+}
+
+fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str) {
+    let (frontmatter, yaml_range) = match frontmatter::leading_frontmatter(content) {
+        LeadingFrontmatterState::Absent { .. } => return,
+        LeadingFrontmatterState::Unterminated { delimiter_range } => {
+            report_rules_frontmatter_invalid(
+                diag,
+                path,
+                content,
+                delimiter_range,
+                "frontmatter: missing closer",
+            );
+            return;
+        }
+        LeadingFrontmatterState::Complete(block) => {
+            let yaml = match crate::yaml::parse(block.yaml) {
+                Ok(yaml) if yaml.is_null() => Mapping::new(),
+                Ok(yaml) => match yaml.as_mapping() {
+                    Some(mapping) => mapping.clone(),
+                    None => {
+                        report_rules_frontmatter_invalid(
+                            diag,
+                            path,
+                            content,
+                            block.yaml_range,
+                            "frontmatter: non-mapping",
+                        );
+                        return;
+                    }
+                },
+                Err(error) => {
+                    let range = crate::yaml::error_line(&error)
+                        .and_then(|line| yaml_line_range(content, block.yaml_range.clone(), line))
+                        .unwrap_or(block.yaml_range);
+                    report_rules_frontmatter_invalid(
+                        diag,
+                        path,
+                        content,
+                        range,
+                        "frontmatter: invalid yaml",
+                    );
+                    return;
+                }
+            };
+            (yaml, Some(block.yaml_range))
+        }
+    };
+
+    report_rules_unknown_fields(diag, path, content, yaml_range.clone(), &frontmatter);
+    validate_rule_paths(diag, path, content, yaml_range, &frontmatter);
 }
 
 fn validate_output_styles(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
@@ -167,10 +211,251 @@ fn validate_markdown_directory<F>(
     }
 }
 
-fn parse_frontmatter(content: &str) -> Option<Mapping> {
-    let lines = frontmatter::extract_frontmatter(content)?;
-    let yaml = crate::yaml::parse(&lines.join("\n")).ok()?;
-    Some(yaml.as_mapping().cloned().unwrap_or_default())
+fn report_rules_frontmatter_invalid(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    range: Range<usize>,
+    evidence: &str,
+) {
+    diag.report_at_with(
+        LintRule::RulesFrontmatterInvalid,
+        path,
+        &format!("{path}: rule frontmatter is missing or invalid"),
+        metadata_for_range(content, range, evidence, R003_SUGGESTION),
+    );
+}
+
+fn report_rules_unknown_fields(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    yaml_range: Option<Range<usize>>,
+    frontmatter: &Mapping,
+) {
+    for key in frontmatter.keys() {
+        if RULES_FIELDS.contains(&key.as_str()) {
+            continue;
+        }
+        diag.report_at_with(
+            LintRule::RulesFieldUnknown,
+            path,
+            &format!("{path}: unknown frontmatter field"),
+            metadata_for_field(
+                content,
+                yaml_range.clone(),
+                key,
+                &format!("unknown field: {key}"),
+                R002_SUGGESTION,
+            ),
+        );
+    }
+}
+
+fn validate_rule_paths(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    yaml_range: Option<Range<usize>>,
+    frontmatter: &Mapping,
+) {
+    let Some(value) = frontmatter.get("paths") else {
+        return;
+    };
+
+    let field_metadata = metadata_for_field(
+        content,
+        yaml_range.clone(),
+        "paths",
+        "paths: empty",
+        R001_SUGGESTION,
+    );
+
+    let top_level_ok = matches!(value, YamlValue::String(_) | YamlValue::Sequence(_));
+    let has_non_string_leaf = paths_has_non_string_leaf(value);
+    let source_strings = collect_paths_source_strings(value);
+    let mut effective_by_source: Vec<(&str, Vec<String>)> = Vec::new();
+    let mut all_effective = Vec::new();
+    for source in &source_strings {
+        let expanded = normalize_claude_paths_string(source);
+        all_effective.extend(expanded.iter().cloned());
+        effective_by_source.push((source, expanded));
+    }
+
+    let empty_effective = all_effective.is_empty();
+    if !top_level_ok || has_non_string_leaf || empty_effective {
+        let evidence = if !top_level_ok {
+            "paths: wrong type"
+        } else if has_non_string_leaf {
+            "paths: non-string leaf"
+        } else {
+            "paths: empty"
+        };
+        let metadata = metadata_for_field(
+            content,
+            yaml_range.clone(),
+            "paths",
+            evidence,
+            R001_SUGGESTION,
+        );
+        diag.report_at_with(
+            LintRule::RulesGlobInvalid,
+            path,
+            &format!("{path}: paths metadata is not a usable Claude paths value"),
+            metadata,
+        );
+    }
+
+    let mut seen_invalid = HashSet::new();
+    for (source, patterns) in effective_by_source {
+        for pattern in patterns {
+            if node_ignore_pattern_is_valid(&pattern) || !seen_invalid.insert(pattern.clone()) {
+                continue;
+            }
+            let metadata = locate_paths_scalar_metadata(content, yaml_range.clone(), source)
+                .unwrap_or_else(|| field_metadata.clone());
+            let metadata = metadata
+                .with_evidence(pattern_evidence_fragment(&pattern))
+                .with_suggestion(R001_SUGGESTION);
+            diag.report_at_with(
+                LintRule::RulesGlobInvalid,
+                path,
+                &format!("{path}: paths entry is not a valid Claude gitignore-style paths pattern"),
+                metadata,
+            );
+        }
+    }
+}
+
+fn paths_has_non_string_leaf(value: &YamlValue) -> bool {
+    match value {
+        YamlValue::String(_) => false,
+        YamlValue::Sequence(items) => items.iter().any(paths_has_non_string_leaf),
+        _ => true,
+    }
+}
+
+fn collect_paths_source_strings(value: &YamlValue) -> Vec<&str> {
+    match value {
+        YamlValue::String(text) => vec![text.as_str()],
+        YamlValue::Sequence(items) => items
+            .iter()
+            .flat_map(collect_paths_source_strings)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Claude's `Z2r`/`UHc` normalization plus terminal `/**` stripping.
+fn normalize_claude_paths_string(input: &str) -> Vec<String> {
+    split_top_level_commas(input)
+        .into_iter()
+        .flat_map(|part| expand_braces(&part))
+        .map(|entry| {
+            if let Some(stripped) = entry.trim().strip_suffix("/**") {
+                stripped.to_string()
+            } else {
+                entry.trim().to_string()
+            }
+        })
+        .filter(|entry| !entry.is_empty())
+        .collect()
+}
+
+fn split_top_level_commas(input: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0isize;
+    for ch in input.chars() {
+        match ch {
+            '{' => {
+                depth += 1;
+                current.push(ch);
+            }
+            '}' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                let trimmed = current.trim();
+                if !trimmed.is_empty() {
+                    parts.push(trimmed.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        parts.push(trimmed.to_string());
+    }
+    parts
+}
+
+fn expand_braces(input: &str) -> Vec<String> {
+    let Some((prefix, body, suffix)) = split_first_brace_group(input) else {
+        return vec![input.to_string()];
+    };
+    let mut expanded = Vec::new();
+    for alternative in body.split(',') {
+        let candidate = format!("{prefix}{}{suffix}", alternative.trim());
+        expanded.extend(expand_braces(&candidate));
+    }
+    expanded
+}
+
+fn split_first_brace_group(input: &str) -> Option<(&str, &str, &str)> {
+    let start = input.find('{')?;
+    let end = input[start + 1..].find('}')? + start + 1;
+    let prefix = &input[..start];
+    let body = &input[start + 1..end];
+    if body.is_empty() {
+        return None;
+    }
+    let suffix = &input[end + 1..];
+    Some((prefix, body, suffix))
+}
+
+/// Claude's node-ignore compile probe never rejects a UTF-8 string pattern.
+fn node_ignore_pattern_is_valid(_pattern: &str) -> bool {
+    true
+}
+
+fn pattern_evidence_fragment(pattern: &str) -> String {
+    const MAX_CHARS: usize = 32;
+    let mut fragment: String = pattern.chars().take(MAX_CHARS).collect();
+    if pattern.chars().count() > MAX_CHARS {
+        fragment.push('…');
+    }
+    format!("paths pattern: {fragment}")
+}
+
+fn locate_paths_scalar_metadata(
+    content: &str,
+    yaml_range: Option<Range<usize>>,
+    value: &str,
+) -> Option<DiagnosticMetadata> {
+    let yaml_range = yaml_range?;
+    let yaml = &content[yaml_range.clone()];
+    let candidates = [
+        format!("'{value}'"),
+        format!("\"{value}\""),
+        value.to_string(),
+    ];
+    for candidate in candidates {
+        if let Some(local) = yaml.find(&candidate) {
+            let start = yaml_range.start + local;
+            let end = start + candidate.len();
+            return Some(metadata_for_range(
+                content,
+                start..end,
+                "paths pattern: invalid",
+                R001_SUGGESTION,
+            ));
+        }
+    }
+    None
 }
 
 fn report_output_style_frontmatter_invalid(
@@ -225,39 +510,6 @@ fn report_output_style_unknown_fields(
                 OUTPUT_STYLE_FIELD_SUGGESTION,
             ),
         );
-    }
-}
-
-fn report_unknown_fields(
-    diag: &mut DiagnosticCollector,
-    path: &str,
-    frontmatter: &Mapping,
-    known_fields: &[&str],
-    rule: LintRule,
-) {
-    for key in frontmatter.keys() {
-        if !known_fields.contains(&key.as_str()) {
-            diag.report(rule, &format!("{path}: unknown frontmatter field '{key}'"));
-        }
-    }
-}
-
-fn validate_rule_paths(diag: &mut DiagnosticCollector, path: &str, frontmatter: &Mapping) {
-    let Some(value) = frontmatter.get("paths") else {
-        return;
-    };
-    let values: Vec<&str> = match value {
-        YamlValue::String(value) => vec![value],
-        YamlValue::Sequence(values) => values.iter().filter_map(YamlValue::as_str).collect(),
-        _ => Vec::new(),
-    };
-    for value in values {
-        if let Err(error) = Glob::new(value) {
-            diag.report(
-                LintRule::RulesGlobInvalid,
-                &format!("{path}: invalid paths glob '{value}': {error}"),
-            );
-        }
     }
 }
 
@@ -690,17 +942,76 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn rules_invalid_glob_reports_r001() {
+    fn rules_empty_paths_reports_r001() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/rules").unwrap();
+            fs::write(".claude/rules/rule.md", "---\npaths: []\n---\nRule body\n").unwrap();
+            let diag = validate();
+            let finding = diag
+                .diagnostics()
+                .iter()
+                .find(|d| d.rule == LintRule::RulesGlobInvalid)
+                .expect("R001");
+            assert_eq!(finding.suggestion.as_deref(), Some(R001_SUGGESTION));
+            assert_eq!(finding.evidence.as_deref(), Some("paths: empty"));
+            assert!(finding.location.is_some());
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rules_accept_node_ignore_patterns_rejected_by_globset() {
         with_temp_dir(|| {
             fs::create_dir_all(".claude/rules").unwrap();
             fs::write(".claude/rules/rule.md", "---\npaths: '['\n---\nRule body\n").unwrap();
             let diag = validate();
             assert!(
-                diag.diagnostics()
+                !diag
+                    .diagnostics()
                     .iter()
                     .any(|d| d.rule == LintRule::RulesGlobInvalid)
             );
         });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rules_missing_closer_reports_r003() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/rules").unwrap();
+            fs::write(
+                ".claude/rules/rule.md",
+                "---\npaths: ['src/**']\nRule body\n",
+            )
+            .unwrap();
+            let diag = validate();
+            assert!(diag.diagnostics().iter().any(|d| {
+                d.rule == LintRule::RulesFrontmatterInvalid
+                    && d.evidence.as_deref() == Some("frontmatter: missing closer")
+            }));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rules_no_frontmatter_is_clean() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude/rules").unwrap();
+            fs::write(".claude/rules/rule.md", "Unconditional rule body\n").unwrap();
+            let diag = validate();
+            assert_eq!(diag.error_count(), 0);
+            assert_eq!(diag.warning_count(), 0);
+        });
+    }
+
+    #[test]
+    fn claude_paths_normalization_matches_runtime_order() {
+        assert_eq!(
+            normalize_claude_paths_string("src/{a,b}/**, lib/**/*.rs"),
+            vec!["src/a", "src/b", "lib/**/*.rs"]
+        );
+        assert_eq!(normalize_claude_paths_string("**"), vec!["**"]);
+        assert_eq!(normalize_claude_paths_string("src/**"), vec!["src"]);
     }
 
     #[test]
@@ -1164,7 +1475,7 @@ mod tests {
     fn rules_are_dispatched_in_basic_and_plugin_modes() {
         with_temp_dir(|| {
             fs::create_dir_all(".claude/rules").unwrap();
-            fs::write(".claude/rules/rule.md", "---\npaths: '['\n---\nRule body\n").unwrap();
+            fs::write(".claude/rules/rule.md", "---\npaths: []\n---\nRule body\n").unwrap();
 
             for mode in [
                 crate::context::LintMode::Basic,
