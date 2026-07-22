@@ -150,16 +150,14 @@ fn run_plugin(
     hygiene::validate_security_md(diag);
     // V15: shared markdown reference integrity
     skills::validate_shared_md_references(diag, exclude);
-    // V16: agent-template alignment
-    agents::validate_agent_template_alignment(diag, exclude);
+    // V16/V21: opt-in larch reviewer-template convention
+    agents::validate_agent_template_convention(diag, exclude);
     // V17: email format
     email::validate_email_format(ctx, diag);
     // V18/V23–V25/V33/U008: userConfig schema (top-level and channels)
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
         user_config::validate_user_config(ctx, diag);
     });
-    // V21: agent-template count
-    agents::validate_agent_template_count(diag, exclude);
     // V22: docs file references
     docs::validate_docs_references(diag, exclude);
     // V29: component path safety and layout

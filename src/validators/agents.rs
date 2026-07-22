@@ -6,7 +6,7 @@ use crate::markdown::MarkdownDocument;
 use crate::rules::LintRule;
 use crate::traversal;
 use regex::Regex;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::num::NonZeroU64;
 use std::path::Path;
@@ -21,6 +21,8 @@ use super::common::{
 const JACCARD_THRESHOLD: f64 = 0.8;
 /// Descriptions with fewer than this many words are eligible for Jaccard flagging.
 const MIN_DESC_WORDS: usize = 6;
+const REVIEWER_TEMPLATE_PATH: &str = "skills/shared/reviewer-templates.md";
+const TEMPLATE_MARKER: &str = "Derived from skills/shared/reviewer-templates.md";
 
 const STOPWORDS: &[&str] = &[
     "a", "an", "the", "is", "for", "and", "of", "to", "that", "which",
@@ -1106,104 +1108,295 @@ fn check_agent_field_values(
     }
 }
 
-/// V16: Agent-template alignment — every agents/*.md must contain
-/// "Derived from" marker referencing reviewer-templates.md.
-/// (Larch-specific convention check.)
-pub fn validate_agent_template_alignment(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+/// V16/V21: Validate the opt-in larch reviewer-template convention.
+///
+/// This convention intentionally applies only to public top-level plugin agents.
+/// It is inactive until the shared template exists or an included agent makes a
+/// live provenance claim. Keeping all three rules in one pass makes that
+/// activation and the count's participant set deterministic.
+pub fn validate_agent_template_convention(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     let agents_dir = Path::new("agents");
-    let templates = Path::new("skills/shared/reviewer-templates.md");
-
-    if !agents_dir.is_dir() {
-        return;
-    }
-    if !templates.is_file() {
-        diag.report_at(
-            LintRule::TemplateFileMissing,
-            templates,
-            &format!("reviewer-templates.md missing: {}", templates.display()),
-        );
+    let template_path = Path::new(REVIEWER_TEMPLATE_PATH);
+    if !agents_dir.is_dir() || exclude.is_excluded(REVIEWER_TEMPLATE_PATH) {
         return;
     }
 
+    let mut agents = Vec::new();
+    let mut has_excluded_agent = false;
     for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
         let path = entry.path;
-        let name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) if n.ends_with(".md") => n.to_string(),
-            _ => continue,
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
         };
-
-        let agent_path = format!("agents/{name}");
-        if exclude.is_excluded(&agent_path) {
+        if !name.ends_with(".md") {
             continue;
         }
 
-        let content = match fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        let has_marker = content.lines().any(|line| {
-            let lower = line.to_lowercase();
-            lower.contains("derived from") && lower.contains("reviewer-templates.md")
+        let subject_path = format!("agents/{name}");
+        if exclude.is_excluded(&subject_path) {
+            has_excluded_agent = true;
+            continue;
+        }
+        let content = fs::read_to_string(&path).ok();
+        let has_marker = content.as_deref().is_some_and(has_reviewer_template_marker);
+        agents.push(TemplateAgent {
+            subject_path,
+            has_marker,
         });
+    }
 
-        if !has_marker {
-            diag.report_at(
-                LintRule::TemplateMarkerMissing,
-                &agent_path,
+    let marker_activates = agents.iter().any(|agent| agent.has_marker);
+    let template_activates = template_path.is_file();
+    if !marker_activates && !template_activates {
+        return;
+    }
+
+    let template_content = match fs::read_to_string(template_path) {
+        Ok(content) => content,
+        Err(_) if marker_activates => {
+            diag.report_at_with(
+                LintRule::TemplateFileMissing,
+                template_path,
                 &format!(
-                    "agents/{name} missing 'Derived from skills/shared/reviewer-templates.md' marker"
+                    "an agent declares derivation from missing or unreadable template: {REVIEWER_TEMPLATE_PATH}"
                 ),
+                DiagnosticMetadata::default().with_suggestion(
+                    "restore skills/shared/reviewer-templates.md or remove the stale derivation claim",
+                ),
+            );
+            return;
+        }
+        Err(_) => return,
+    };
+
+    for agent in &agents {
+        if !agent.has_marker {
+            diag.report_at_with(
+                LintRule::TemplateMarkerMissing,
+                &agent.subject_path,
+                &format!("{} missing '{TEMPLATE_MARKER}' marker", agent.subject_path),
+                DiagnosticMetadata::default().with_suggestion(TEMPLATE_MARKER),
             );
         }
     }
-}
 
-/// V21: Agent-template count — number of ## Reviewer sections in
-/// skills/shared/reviewer-templates.md must equal number of agents/*.md files.
-/// (Larch-specific convention check.)
-pub fn validate_agent_template_count(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    let agents_dir = Path::new("agents");
-    let templates = Path::new("skills/shared/reviewer-templates.md");
-
-    if !agents_dir.is_dir() || !templates.is_file() {
-        return; // V16 catches missing template
+    // A007 is a whole-convention fact. Once a participant is excluded, the
+    // complete set cannot be observed without violating exclusion invisibility.
+    if has_excluded_agent {
+        return;
     }
 
-    // Count ## Reviewer sections
-    let template_content = match fs::read_to_string(templates) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    let template_count = template_content
-        .lines()
-        .filter(|line| line.starts_with("## Reviewer"))
-        .count();
-
-    // Count agents/*.md files
-    let mut agent_count = 0;
-    for entry in traversal::shallow_files(agents_dir, Path::new("."), None).entries {
-        let path = entry.path;
-        if let Some(name) = path.file_name().and_then(|n| n.to_str())
-            && name.ends_with(".md")
-        {
-            let agent_path = format!("agents/{name}");
-            if !exclude.is_excluded(&agent_path) {
-                agent_count += 1;
-            }
-        }
-    }
-
+    let template_count = reviewer_heading_count(&template_content);
+    let agent_count = agents.len();
     if template_count != agent_count {
-        diag.report_at(
+        let related_subjects: Vec<_> = agents
+            .iter()
+            .map(|agent| agent.subject_path.as_str())
+            .collect();
+        diag.report_at_with(
             LintRule::TemplateCountMismatch,
-            templates,
+            template_path,
             &format!(
-                "agent-template count mismatch: {agent_count} agent file(s) but {template_count} '## Reviewer' section(s) in {}",
-                templates.display()
+                "agent-template count mismatch: {agent_count} agent file(s) but {template_count} reviewer section(s) in {REVIEWER_TEMPLATE_PATH}"
             ),
+            DiagnosticMetadata::default()
+                .with_related_subjects(related_subjects)
+                .with_suggestion(
+                    "add or remove a reviewer section, or reconcile the participating agent set",
+                ),
         );
     }
+}
+
+struct TemplateAgent {
+    subject_path: String,
+    has_marker: bool,
+}
+
+fn has_reviewer_template_marker(content: &str) -> bool {
+    let document = MarkdownDocument::parse(content);
+    document.body_prose().iter().any(|line| {
+        line.masked_inline_code_columns.is_empty() && is_reviewer_template_marker_line(&line.text)
+    }) || has_reviewer_template_marker_comment(&document)
+}
+
+fn is_reviewer_template_marker_line(line: &str) -> bool {
+    if line.contains('`') {
+        return false;
+    }
+    let normalized = line.trim();
+    let normalized = strip_markdown_list_marker(normalized).trim_start();
+    let Some(after_prefix) = strip_ascii_case_prefix(normalized, "derived from") else {
+        return false;
+    };
+    if !after_prefix.chars().next().is_some_and(char::is_whitespace) {
+        return false;
+    }
+    let normalized = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    contains_exact_template_path(&normalized) && !contains_marker_negation(&normalized)
+}
+
+fn strip_markdown_list_marker(line: &str) -> &str {
+    if let Some(rest) = line.strip_prefix(['-', '*', '+'])
+        && rest.chars().next().is_some_and(char::is_whitespace)
+    {
+        return rest;
+    }
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0
+        && matches!(line[digits..].chars().next(), Some('.' | ')'))
+        && line[digits + 1..]
+            .chars()
+            .next()
+            .is_some_and(char::is_whitespace)
+    {
+        return &line[digits + 1..];
+    }
+    line
+}
+
+fn strip_ascii_case_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.get(..prefix.len())
+        .filter(|candidate| candidate.eq_ignore_ascii_case(prefix))
+        .and_then(|_| text.get(prefix.len()..))
+}
+
+fn contains_exact_template_path(text: &str) -> bool {
+    let path = REVIEWER_TEMPLATE_PATH;
+    let mut start = 0;
+    while let Some(index) = text[start..].find(path) {
+        let index = start + index;
+        let before = text[..index].chars().next_back();
+        let after = text[index + path.len()..].chars().next();
+        if before.is_none_or(is_template_path_boundary)
+            && after.is_none_or(is_template_path_boundary)
+        {
+            return true;
+        }
+        start = index + path.len();
+    }
+    false
+}
+
+fn is_template_path_boundary(character: char) -> bool {
+    !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-' | '.' | '/')
+}
+
+fn contains_marker_negation(text: &str) -> bool {
+    text.split(|character: char| !character.is_ascii_alphabetic())
+        .any(|word| {
+            matches!(
+                word.to_ascii_lowercase().as_str(),
+                "not" | "never" | "without" | "stale" | "independent" | "example"
+            )
+        })
+}
+
+/// HTML comments are intentionally absent from `body_prose`, so this small
+/// recognizer reuses its source eligibility and inline-code masks to accept a
+/// complete standalone provenance comment without reimplementing fence parsing.
+fn has_reviewer_template_marker_comment(document: &MarkdownDocument) -> bool {
+    let prose_by_line: HashMap<_, _> = document
+        .body_prose()
+        .iter()
+        .map(|line| (line.line, line))
+        .collect();
+    let lines: Vec<_> = document.content().lines().collect();
+    let mut comment = None::<(String, bool)>;
+
+    for line_number in document.body_start_line()..=lines.len() {
+        let raw = lines[line_number - 1];
+        let Some(prose) = prose_by_line.get(&line_number) else {
+            comment = None;
+            continue;
+        };
+
+        if let Some((contents, contains_inline_code)) = comment.as_mut() {
+            *contains_inline_code |= !prose.masked_inline_code_columns.is_empty();
+            let Some(end) = visible_comment_delimiter(raw, prose, "-->", 0) else {
+                contents.push('\n');
+                contents.push_str(raw);
+                continue;
+            };
+            if !raw[end + 3..].trim().is_empty() {
+                comment = None;
+                continue;
+            }
+            contents.push('\n');
+            contents.push_str(&raw[..end]);
+            if !*contains_inline_code && is_reviewer_template_marker_line(contents) {
+                return true;
+            }
+            comment = None;
+            continue;
+        }
+
+        let Some(start) = visible_comment_delimiter(raw, prose, "<!--", 0) else {
+            continue;
+        };
+        if !raw[..start].trim().is_empty() {
+            continue;
+        }
+        let after_start = start + 4;
+        if let Some(end) = visible_comment_delimiter(raw, prose, "-->", after_start) {
+            if raw[end + 3..].trim().is_empty()
+                && prose.masked_inline_code_columns.is_empty()
+                && is_reviewer_template_marker_line(&raw[after_start..end])
+            {
+                return true;
+            }
+        } else {
+            comment = Some((
+                raw[after_start..].to_string(),
+                !prose.masked_inline_code_columns.is_empty(),
+            ));
+        }
+    }
+    false
+}
+
+fn visible_comment_delimiter(
+    raw: &str,
+    prose: &crate::markdown::MarkdownProseLine,
+    delimiter: &str,
+    from: usize,
+) -> Option<usize> {
+    raw[from..]
+        .match_indices(delimiter)
+        .find_map(|(offset, _)| {
+            let index = from + offset;
+            let start_column = raw[..index].chars().count() + 1;
+            let end_column = start_column + delimiter.chars().count() - 1;
+            (!prose
+                .masked_inline_code_columns
+                .iter()
+                .any(|range| range.contains(&start_column) || range.contains(&end_column)))
+            .then_some(index)
+        })
+}
+
+fn reviewer_heading_count(content: &str) -> usize {
+    let document = MarkdownDocument::parse_body(content);
+    let prose_lines: HashSet<_> = document.body_prose().iter().map(|line| line.line).collect();
+    document
+        .headings()
+        .iter()
+        .filter(|heading| {
+            heading.level == 2
+                && prose_lines.contains(&heading.line)
+                && is_reviewer_heading(&heading.text)
+        })
+        .count()
+}
+
+fn is_reviewer_heading(text: &str) -> bool {
+    let text = text.trim();
+    text == "Reviewer"
+        || text.strip_prefix("Reviewer").is_some_and(|suffix| {
+            suffix.chars().next().is_some_and(|character| {
+                character.is_whitespace() || matches!(character, ':' | '-')
+            })
+        })
 }
 
 #[cfg(test)]
@@ -1290,7 +1483,7 @@ mod tests {
 
         std::fs::create_dir_all("agents").unwrap();
         std::fs::create_dir_all("skills/shared").unwrap();
-        std::fs::write("skills/shared/reviewer-templates.md", "# Templates\n").unwrap();
+        std::fs::write("skills/shared/reviewer-templates.md", "## Reviewer\n").unwrap();
         std::fs::write(
             "agents/general.md",
             "---\nname: general\ndescription: desc\n---\nDerived from skills/shared/reviewer-templates.md\n",
@@ -1298,7 +1491,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_template_alignment(&mut diag, &crate::config::ExcludeSet::default());
+        validate_agent_template_convention(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
 
@@ -1319,9 +1512,18 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_template_alignment(&mut diag, &crate::config::ExcludeSet::default());
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("missing"));
+        validate_agent_template_convention(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 2);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::TemplateMarkerMissing)
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::TemplateCountMismatch)
+        );
     }
 
     // V21: validate_agent_template_count
@@ -1339,11 +1541,19 @@ mod tests {
             "## Reviewer 1\nContent\n## Reviewer 2\nContent\n",
         )
         .unwrap();
-        std::fs::write("agents/one.md", "---\nname: one\n---\n").unwrap();
-        std::fs::write("agents/two.md", "---\nname: two\n---\n").unwrap();
+        std::fs::write(
+            "agents/one.md",
+            "---\nname: one\n---\nDerived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "agents/two.md",
+            "---\nname: two\n---\nDerived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
 
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_template_count(&mut diag, &crate::config::ExcludeSet::default());
+        validate_agent_template_convention(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 0);
     }
 
@@ -1361,13 +1571,151 @@ mod tests {
             "## Reviewer 1\nContent\n## Reviewer 2\nContent\n",
         )
         .unwrap();
-        std::fs::write("agents/one.md", "---\nname: one\n---\n").unwrap();
+        std::fs::write(
+            "agents/one.md",
+            "---\nname: one\n---\nDerived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
         // Only 1 agent but 2 templates
 
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_agent_template_count(&mut diag, &crate::config::ExcludeSet::default());
+        validate_agent_template_convention(&mut diag, &crate::config::ExcludeSet::default());
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("mismatch"));
+    }
+
+    #[test]
+    fn reviewer_template_marker_accepts_only_live_provenance() {
+        for content in [
+            "Derived from skills/shared/reviewer-templates.md\n",
+            "- derived from skills/shared/reviewer-templates.md\n",
+            "<!-- Derived from skills/shared/reviewer-templates.md -->\n",
+            "<!--\nDERIVED FROM skills/shared/reviewer-templates.md\n-->\n",
+        ] {
+            assert!(has_reviewer_template_marker(content), "{content:?}");
+        }
+
+        for content in [
+            "```text\nDerived from skills/shared/reviewer-templates.md\n```\n",
+            "`Derived from skills/shared/reviewer-templates.md`\n",
+            "Derived from skills/shared/reviewer-templates.md `example`\n",
+            "<!-- Derived from `skills/shared/reviewer-templates.md` -->\n",
+            "> Derived from skills/shared/reviewer-templates.md\n",
+            "---\nDerived from skills/shared/reviewer-templates.md\n---\n",
+            "Derived from skills/shared/reviewer-templates.md, but not for this agent.\n",
+            "This example says Derived from skills/shared/reviewer-templates.md\n",
+            "Derived from skills/shared/reviewer-templates.md.bak\n",
+            "Derived from ${CLAUDE_PLUGIN_ROOT}/skills/shared/reviewer-templates.md\n",
+        ] {
+            assert!(!has_reviewer_template_marker(content), "{content:?}");
+        }
+    }
+
+    #[test]
+    fn reviewer_heading_count_uses_live_level_two_markdown_headings() {
+        let content = "\
+## Reviewer
+## Reviewer: Security
+Reviewer - Reliability
+----------------------
+```markdown
+## Reviewer fake
+```
+> ## Reviewer quoted
+<!-- ## Reviewer commented -->
+# Reviewer
+### Reviewer
+## Reviewership
+Body ## Reviewer
+";
+        assert_eq!(reviewer_heading_count(content), 3);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn template_convention_is_opt_in_and_respects_exclusions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::write("agents/independent.md", "Independent agent\n").unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_template_convention(&mut diag, &ExcludeSet::default());
+        assert!(diag.diagnostics().is_empty());
+
+        std::fs::write(
+            "agents/declared.md",
+            "Derived from skills/shared/reviewer-templates.md\n",
+        )
+        .unwrap();
+        validate_agent_template_convention(&mut diag, &ExcludeSet::default());
+        assert_eq!(diag.diagnostics().len(), 1);
+        assert_eq!(diag.diagnostics()[0].rule, LintRule::TemplateFileMissing);
+        assert_eq!(
+            diag.diagnostics()[0].suggestion.as_deref(),
+            Some(
+                "restore skills/shared/reviewer-templates.md or remove the stale derivation claim"
+            )
+        );
+
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write("skills/shared/reviewer-templates.md", "## Reviewer\n").unwrap();
+        let excluded = ExcludeSet::new(&["agents/declared.md".to_string()]).unwrap();
+        let mut excluded_diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_template_convention(&mut excluded_diag, &excluded);
+        assert!(
+            excluded_diag
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.rule != LintRule::TemplateCountMismatch)
+        );
+        assert!(excluded_diag.diagnostics().iter().any(|diagnostic| {
+            diagnostic.rule == LintRule::TemplateMarkerMissing
+                && diagnostic.subject_path.as_deref() == Some(Path::new("agents/independent.md"))
+        }));
+
+        let template_excluded = ExcludeSet::new(&[REVIEWER_TEMPLATE_PATH.to_string()]).unwrap();
+        let mut template_diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_template_convention(&mut template_diag, &template_excluded);
+        assert!(template_diag.diagnostics().is_empty());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn template_count_metadata_is_sorted_and_actionable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("agents").unwrap();
+        std::fs::create_dir_all("skills/shared").unwrap();
+        std::fs::write("skills/shared/reviewer-templates.md", "## Reviewer\n").unwrap();
+        for name in ["zeta", "alpha"] {
+            std::fs::write(
+                format!("agents/{name}.md"),
+                "Derived from skills/shared/reviewer-templates.md\n",
+            )
+            .unwrap();
+        }
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_agent_template_convention(&mut diag, &ExcludeSet::default());
+        let mismatch = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::TemplateCountMismatch)
+            .unwrap();
+        assert_eq!(
+            mismatch.related_subjects,
+            vec![
+                std::path::PathBuf::from("agents/alpha.md"),
+                std::path::PathBuf::from("agents/zeta.md"),
+            ]
+        );
+        assert_eq!(
+            mismatch.suggestion.as_deref(),
+            Some("add or remove a reviewer section, or reconcile the participating agent set")
+        );
     }
 
     // A008: agent-desc-long
