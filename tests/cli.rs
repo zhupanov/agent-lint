@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::process::{Command, Output};
 
 use serde_json::Value;
@@ -78,6 +79,190 @@ fn init_git(path: &std::path::Path) {
         "git init failed: {}",
         stderr(&output)
     );
+}
+
+const DIAGNOSTIC_SECRET_CANARY: &str = "AGENT_LINT_SECRET_CANARY_7f3e9d2a";
+const OUTSIDE_PATH_CANARY: &str = "AGENT_LINT_OUTSIDE_CANARY_91c42b";
+
+struct SafetyCase {
+    name: &'static str,
+    files: Vec<(&'static str, String)>,
+    arguments: &'static [&'static str],
+    expected_rule: &'static str,
+    secret_canary: &'static str,
+}
+
+fn assert_canaries_absent_from_checked_in_fixtures(canaries: &[&str]) {
+    fn visit(path: &Path, canaries: &[&str]) {
+        for entry in std::fs::read_dir(path).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, canaries);
+            } else if path.is_file() {
+                let bytes = std::fs::read(&path).unwrap();
+                for canary in canaries {
+                    assert!(
+                        !bytes
+                            .windows(canary.len())
+                            .any(|window| window == canary.as_bytes()),
+                        "checked-in fixture {} contains a safety canary",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for canary in canaries {
+        assert!(
+            !repository.to_string_lossy().contains(canary),
+            "repository path contains a safety canary"
+        );
+    }
+    visit(&repository.join("tests/fixtures"), canaries);
+    let ordinary = run(&["--version"]);
+    for canary in canaries {
+        assert!(
+            !ordinary
+                .stdout
+                .windows(canary.len())
+                .any(|window| window == canary.as_bytes())
+                && !ordinary
+                    .stderr
+                    .windows(canary.len())
+                    .any(|window| window == canary.as_bytes()),
+            "ordinary harness output contains a safety canary"
+        );
+    }
+}
+
+fn assert_secret_absent_in_streams(
+    stdout: &[u8],
+    stderr: &[u8],
+    report: &Value,
+    canaries: &[&str],
+) {
+    fn visit(value: &Value, pointer: &str, canaries: &[&str]) {
+        match value {
+            Value::String(text) => {
+                for canary in canaries {
+                    let prefix = &canary[..12];
+                    assert!(
+                        !text.contains(canary) && !text.contains(prefix),
+                        "JSON string at {pointer} exposes a secret canary"
+                    );
+                }
+            }
+            Value::Array(values) => {
+                for (index, value) in values.iter().enumerate() {
+                    visit(value, &format!("{pointer}/{index}"), canaries);
+                }
+            }
+            Value::Object(values) => {
+                for (key, value) in values {
+                    let escaped = key.replace('~', "~0").replace('/', "~1");
+                    visit(value, &format!("{pointer}/{escaped}"), canaries);
+                }
+            }
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        }
+    }
+
+    for (name, stream) in [("stdout", stdout), ("stderr", stderr)] {
+        for canary in canaries {
+            let prefix = &canary[..12];
+            assert!(
+                !stream
+                    .windows(canary.len())
+                    .any(|window| window == canary.as_bytes()),
+                "{name} exposes a full secret canary"
+            );
+            assert!(
+                !stream
+                    .windows(prefix.len())
+                    .any(|window| window == prefix.as_bytes()),
+                "{name} exposes a secret-canary prefix"
+            );
+        }
+    }
+    visit(report, "", canaries);
+}
+
+fn assert_secret_absent_everywhere(output: &Output, report: &Value, canaries: &[&str]) {
+    assert_secret_absent_in_streams(&output.stdout, &output.stderr, report, canaries);
+}
+
+fn assert_expected_rule_once(report: &Value, expected_rule: &str) {
+    let matches = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == expected_rule)
+        .count();
+    assert_eq!(
+        matches, 1,
+        "expected exactly one {expected_rule} diagnostic"
+    );
+}
+
+fn assert_text_diagnostic_is_terminal_safe(output: &Output, expected_rule: &str) {
+    assert!(output.stdout.is_empty(), "text output must use stderr");
+    assert!(
+        !text_has_literal_terminal_control(&output.stderr),
+        "text stream contains a literal terminal control"
+    );
+    let text = stderr(output);
+    let lines: Vec<_> = text.lines().collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "text output has an injected diagnostic line: {text}"
+    );
+    let diagnostic = lines[0];
+    assert!(
+        diagnostic.starts_with("error[") || diagnostic.starts_with("warning["),
+        "text diagnostic must start with stable severity grammar: {diagnostic}"
+    );
+    assert!(
+        diagnostic.contains(&format!("[{expected_rule}/")),
+        "text diagnostic has the expected rule: {diagnostic}"
+    );
+    assert!(
+        lines[1].starts_with("Lint: "),
+        "text summary must remain a separate stable record: {}",
+        lines[1]
+    );
+}
+
+fn text_has_literal_terminal_control(bytes: &[u8]) -> bool {
+    bytes
+        .iter()
+        .any(|byte| byte.is_ascii_control() && *byte != b'\n')
+}
+
+fn json_has_literal_control_in_string(bytes: &[u8]) -> bool {
+    let mut in_string = false;
+    let mut escaped = false;
+    for byte in bytes {
+        if !in_string {
+            if *byte == b'"' {
+                in_string = true;
+            }
+            continue;
+        }
+        if escaped {
+            escaped = false;
+        } else if *byte == b'\\' {
+            escaped = true;
+        } else if *byte == b'"' {
+            in_string = false;
+        } else if *byte < 0x20 {
+            return true;
+        }
+    }
+    false
 }
 
 #[test]
@@ -9066,4 +9251,260 @@ fn h026_hook_declaration_span_follows_owning_field() {
     // The empty string at version (line 3) must not capture the span.
     assert_eq!(diagnostics[0]["location"]["start"]["line"], 4);
     assert_eq!(diagnostics[0]["location"]["start"]["column"], 12);
+}
+
+#[test]
+fn diagnostics_do_not_expose_secrets_across_supported_surfaces() {
+    assert_canaries_absent_from_checked_in_fixtures(&[DIAGNOSTIC_SECRET_CANARY]);
+    let cases = [
+        SafetyCase {
+            name: "Codex MCP environment credential",
+            files: vec![(
+                ".codex/config.toml",
+                format!(
+                    "[mcp_servers.local]\ncommand = 'server'\nenv = {{ TOKEN = '{DIAGNOSTIC_SECRET_CANARY}' }}\n"
+                ),
+            )],
+            arguments: &["--all"],
+            expected_rule: "CX013",
+            secret_canary: DIAGNOSTIC_SECRET_CANARY,
+        },
+        SafetyCase {
+            name: "Claude MCP environment credential",
+            files: vec![(
+                ".mcp.json",
+                format!(
+                    r#"{{"mcpServers":{{"local":{{"command":"server","env":{{"TOKEN":"{DIAGNOSTIC_SECRET_CANARY}"}}}}}}}}"#
+                ),
+            )],
+            arguments: &["--all"],
+            expected_rule: "P018",
+            secret_canary: DIAGNOSTIC_SECRET_CANARY,
+        },
+        SafetyCase {
+            name: "hook header interpolation",
+            files: vec![(
+                ".claude/settings.json",
+                format!(
+                    r#"{{"hooks":{{"PreToolUse":[{{"type":"http","url":"https://example.com","headers":{{"Authorization":"Bearer ${DIAGNOSTIC_SECRET_CANARY}"}}}}]}}}}"#
+                ),
+            )],
+            arguments: &["--all"],
+            expected_rule: "H024",
+            secret_canary: DIAGNOSTIC_SECRET_CANARY,
+        },
+        SafetyCase {
+            name: "skill hardcoded secret",
+            files: vec![(
+                ".claude/skills/leaky/SKILL.md",
+                format!(
+                    "---\nname: leaky\ndescription: Use when validating diagnostic secrecy across skill content\n---\nTOKEN={DIAGNOSTIC_SECRET_CANARY}\n"
+                ),
+            )],
+            arguments: &["--all"],
+            expected_rule: "S032",
+            secret_canary: DIAGNOSTIC_SECRET_CANARY,
+        },
+    ];
+
+    for case in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git(tmp.path());
+        for (relative, content) in &case.files {
+            let path = tmp.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+
+        let mut text_args = case.arguments.to_vec();
+        text_args.extend(["--only", case.expected_rule, "."]);
+        let text = run_in(tmp.path(), &text_args);
+        assert_text_diagnostic_is_terminal_safe(&text, case.expected_rule);
+        assert_secret_absent_in_streams(
+            &text.stdout,
+            &text.stderr,
+            &serde_json::json!({}),
+            &[case.secret_canary],
+        );
+
+        let mut json_args = case.arguments.to_vec();
+        json_args.extend(["--format", "json", "--only", case.expected_rule, "."]);
+        let machine = run_in(tmp.path(), &json_args);
+        assert_eq!(
+            machine.status.code(),
+            text.status.code(),
+            "{} must have matching text and JSON exit codes",
+            case.name
+        );
+        assert!(
+            machine.stderr.is_empty(),
+            "{}: {}",
+            case.name,
+            stderr(&machine)
+        );
+        let report = json_document(&machine);
+        assert_expected_rule_once(&report, case.expected_rule);
+        assert_secret_absent_everywhere(&machine, &report, &[case.secret_canary]);
+    }
+}
+
+#[test]
+fn diagnostic_transports_escape_authored_control_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest = tmp.path().join(".claude-plugin/plugin.json");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(
+        manifest,
+        r#"{"name":"control","skills":"skills\u001b[31mRED\u001b[0m\n\r\t"}"#,
+    )
+    .unwrap();
+
+    let text = run_in(tmp.path(), &["--only", "M013", "."]);
+    assert_text_diagnostic_is_terminal_safe(&text, "M013");
+    let rendered = stderr(&text);
+    for escape in [r"\u{1b}", r"\u{a}", r"\u{d}", r"\u{9}"] {
+        assert!(
+            rendered.contains(escape),
+            "missing visible {escape}: {rendered}"
+        );
+    }
+
+    let machine = run_in(tmp.path(), &["--format", "json", "--only", "M013", "."]);
+    assert_eq!(machine.status.code(), text.status.code());
+    assert!(machine.stderr.is_empty(), "{}", stderr(&machine));
+    assert!(
+        !json_has_literal_control_in_string(&machine.stdout),
+        "JSON string contains an illegal literal control byte"
+    );
+    let report = json_document(&machine);
+    assert_expected_rule_once(&report, "M013");
+    assert!(
+        report["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains('\u{1b}'),
+        "JSON preserves the intentionally structured control-bearing value"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn rejected_paths_do_not_disclose_outside_canonical_identity() {
+    use std::os::unix::fs::symlink;
+
+    assert_canaries_absent_from_checked_in_fixtures(&[OUTSIDE_PATH_CANARY]);
+    let repository = tempfile::tempdir().unwrap();
+    let outside_parent = tempfile::tempdir().unwrap();
+    let outside = outside_parent.path().join(OUTSIDE_PATH_CANARY);
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(outside.join("agent.md"), "outside\n").unwrap();
+    init_git(repository.path());
+    std::fs::create_dir_all(repository.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        repository.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"symlink-check","agents":"./linked-agents"}"#,
+    )
+    .unwrap();
+    symlink(&outside, repository.path().join("linked-agents")).unwrap();
+    let canonical_outside = outside.canonicalize().unwrap();
+    let canonical_target = outside.join("agent.md").canonicalize().unwrap();
+
+    for format in [false, true] {
+        let args = if format {
+            vec!["--format", "json", "--only", "M013", "."]
+        } else {
+            vec!["--only", "M013", "."]
+        };
+        let output = run_in(repository.path(), &args);
+        let report = if format {
+            assert!(output.stderr.is_empty(), "{}", stderr(&output));
+            json_document(&output)
+        } else {
+            assert_text_diagnostic_is_terminal_safe(&output, "M013");
+            serde_json::json!({})
+        };
+        if format {
+            assert_expected_rule_once(&report, "M013");
+            assert_eq!(
+                report["diagnostics"][0]["subject_path"],
+                ".claude-plugin/plugin.json"
+            );
+        }
+        assert_secret_absent_in_streams(
+            &output.stdout,
+            &output.stderr,
+            &report,
+            &[OUTSIDE_PATH_CANARY],
+        );
+        for forbidden in [
+            canonical_outside.to_string_lossy(),
+            canonical_target.to_string_lossy(),
+        ] {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !stdout.contains(forbidden.as_ref()) && !stderr.contains(forbidden.as_ref()),
+                "outside canonical path leaked"
+            );
+        }
+    }
+}
+
+#[test]
+fn diagnostic_safety_assertions_reject_injected_leaks() {
+    let canary = DIAGNOSTIC_SECRET_CANARY;
+    for report in [
+        serde_json::json!({"message": canary}),
+        serde_json::json!({"evidence": canary}),
+        serde_json::json!({"suggestion": canary}),
+        serde_json::json!({"subject_path": canary, "related_subjects": [canary]}),
+        serde_json::json!({"notices": [canary]}),
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_secret_absent_in_streams(b"", b"", &report, &[canary])
+            })
+            .is_err(),
+            "recursive JSON checker accepted an injected leak"
+        );
+    }
+    for (stdout, stderr) in [(canary.as_bytes(), b"" as &[u8]), (b"", canary.as_bytes())] {
+        assert!(
+            std::panic::catch_unwind(|| {
+                assert_secret_absent_in_streams(stdout, stderr, &serde_json::json!({}), &[canary])
+            })
+            .is_err(),
+            "raw-stream checker accepted an injected leak"
+        );
+    }
+    assert!(
+        std::panic::catch_unwind(|| {
+            assert_secret_absent_in_streams(
+                &canary.as_bytes()[..12],
+                b"",
+                &serde_json::json!({}),
+                &[canary],
+            )
+        })
+        .is_err(),
+        "prefix checker accepted an injected leak"
+    );
+    assert!(
+        !json_has_literal_control_in_string(br#"{"message":"\u001b"}"#),
+        "escaped JSON control is transport-safe"
+    );
+    assert!(json_has_literal_control_in_string(b"{\"message\":\"\"}"));
+    assert!(
+        text_has_literal_terminal_control(b"error[M001/plugin-json-missing]: \x1b[31mred\n"),
+        "literal ESC in text must be detected"
+    );
+    assert!(
+        std::panic::catch_unwind(|| assert_expected_rule_once(
+            &serde_json::json!({"diagnostics": []}),
+            "S032"
+        ))
+        .is_err(),
+        "missing expected diagnostic must fail before secrecy assertions"
+    );
 }

@@ -812,12 +812,14 @@ fn check_http_headers(hook: &Map<String, Value>, ctx: &str, diag: &mut Diagnosti
     }
 
     for (name, value) in headers {
-        if let Some(found) = value.as_str().and_then(|v| RE_ENV_INTERP.find(v)) {
+        if value
+            .as_str()
+            .is_some_and(|value| RE_ENV_INTERP.is_match(value))
+        {
             diag.report(
                 LintRule::HookHeadersInterpolated,
                 &format!(
-                    "{ctx} header '{name}' interpolates '{}' but 'allowedEnvVars' is not declared",
-                    found.as_str()
+                    "{ctx} header '{name}' interpolates an environment variable but 'allowedEnvVars' is not declared"
                 ),
             );
         }

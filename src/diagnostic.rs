@@ -1007,25 +1007,78 @@ suppress = ["M001", "H001"]
     }
 
     #[test]
-    fn evidence_is_bounded_and_possible_secrets_are_redacted() {
+    fn diagnostic_evidence_is_bounded_redacted_and_utf8_safe() {
+        let ordinary = DiagnosticMetadata::default().with_evidence("safe evidence");
+        assert_eq!(ordinary.evidence.as_deref(), Some("safe evidence"));
+
+        for length in [511, 512, 513] {
+            let input = "x".repeat(length);
+            let evidence = DiagnosticMetadata::default()
+                .with_evidence(&input)
+                .evidence
+                .unwrap();
+            assert!(evidence.len() <= MAX_EVIDENCE_BYTES, "length {length}");
+            assert!(evidence.is_char_boundary(evidence.len()), "length {length}");
+            if length <= MAX_EVIDENCE_BYTES {
+                assert_eq!(evidence, input, "length {length}");
+            } else {
+                assert!(evidence.ends_with('…'), "length {length}: {evidence}");
+            }
+        }
+
+        for scalar in ['a', 'é', '€', '𐍈'] {
+            let input = scalar.to_string().repeat(600);
+            let first = DiagnosticMetadata::default()
+                .with_evidence(&input)
+                .evidence
+                .unwrap();
+            let second = DiagnosticMetadata::default()
+                .with_evidence(&input)
+                .evidence
+                .unwrap();
+            assert!(first.len() <= MAX_EVIDENCE_BYTES, "{scalar}");
+            assert!(first.is_char_boundary(first.len()), "{scalar}");
+            assert!(first.ends_with('…'), "{scalar}: {first}");
+            assert_eq!(first, second, "{scalar}");
+        }
+
         let secret = "token = 'this-is-a-sensitive-value'";
         let metadata = DiagnosticMetadata::default().with_evidence(secret);
         assert_eq!(metadata.evidence.as_deref(), Some(REDACTED_EVIDENCE));
         assert!(!metadata.evidence.as_deref().unwrap().contains(secret));
+        let long_secret = format!("{} {secret}", "x".repeat(MAX_EVIDENCE_BYTES * 2));
+        assert_eq!(
+            DiagnosticMetadata::default()
+                .with_evidence(long_secret)
+                .evidence
+                .as_deref(),
+            Some(REDACTED_EVIDENCE),
+            "redaction must happen before truncation"
+        );
+        assert_eq!(
+            DiagnosticMetadata::default()
+                .with_redacted_evidence()
+                .evidence
+                .as_deref(),
+            Some(REDACTED_EVIDENCE)
+        );
 
+        let control_evidence = "shown\\u{1b}[31mtext";
+        let metadata = DiagnosticMetadata::default()
+            .with_evidence(control_evidence)
+            .with_suggestion("safe suggestion")
+            .with_related_subjects(["other.md"]);
+        assert_eq!(metadata.evidence.as_deref(), Some(control_evidence));
         let mut diag = DiagnosticCollector::new();
         diag.report_with(LintRule::PluginJsonMissing, "safe message", metadata);
+        let diagnostic = &diag.diagnostics()[0];
+        assert_eq!(diagnostic.evidence.as_deref(), Some(control_evidence));
+        assert_eq!(diagnostic.suggestion.as_deref(), Some("safe suggestion"));
+        assert_eq!(diagnostic.related_subjects, vec![PathBuf::from("other.md")]);
+
         let mut rendered = Vec::new();
         diag.render_text(&mut rendered);
         assert!(!String::from_utf8(rendered).unwrap().contains(secret));
-
-        let short_secret = DiagnosticMetadata::default().with_evidence("API_KEY=short-value");
-        assert_eq!(short_secret.evidence.as_deref(), Some(REDACTED_EVIDENCE));
-
-        let metadata = DiagnosticMetadata::default().with_evidence("é".repeat(400));
-        let evidence = metadata.evidence.unwrap();
-        assert!(evidence.len() <= MAX_EVIDENCE_BYTES);
-        assert!(evidence.ends_with('…'));
     }
 
     #[test]
