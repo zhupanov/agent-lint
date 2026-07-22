@@ -2188,7 +2188,7 @@ root-max-lines = 10
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 299);
+        assert_eq!(config.error.len(), 297);
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }

@@ -718,34 +718,7 @@ fn json_scanner_locates_nested_paths() {
     assert!(JsonScanner::locate(source, &[Seg::Key("missing")]).is_none());
 }
 
-// ── preserved surfaces: CX042 override tracking, CX060 skill frontmatter ──
-
-#[test]
-#[serial_test::serial]
-fn validates_tracked_agents_override() {
-    let tmp = tempfile::tempdir().unwrap();
-    let _guard = CwdGuard::new();
-    std::env::set_current_dir(tmp.path()).unwrap();
-    std::fs::write("AGENTS.override.md", "personal settings\n").unwrap();
-    assert!(
-        std::process::Command::new("git")
-            .args(["init", "-q"])
-            .status()
-            .unwrap()
-            .success()
-    );
-    assert!(
-        std::process::Command::new("git")
-            .args(["add", "AGENTS.override.md"])
-            .status()
-            .unwrap()
-            .success()
-    );
-
-    let mut diag = DiagnosticCollector::new_all_enabled();
-    validate(&mut diag, &ExcludeSet::default());
-    assert!(has_rule(&diag, LintRule::CodexAgentsOverrideTracked));
-}
+// ── CX060: skill frontmatter ─────────────────────────────────────────────
 
 fn cx060_hits(diag: &DiagnosticCollector) -> Vec<&crate::diagnostic::Diagnostic> {
     diag.diagnostics()

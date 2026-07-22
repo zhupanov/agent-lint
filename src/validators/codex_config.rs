@@ -12,6 +12,67 @@ use toml::value::Table;
 use toml_edit::{ImDocument, Item, TableLike};
 
 const CONFIG_PATH: &str = ".codex/config.toml";
+pub(crate) const CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES: usize = 32_768;
+
+/// Repository-local inputs that control Codex project-document selection.
+/// `None` from [`project_document_settings`] means an existing config could
+/// not supply valid inputs, so dependent document rules must not cascade.
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectDocumentSettings {
+    pub max_bytes: usize,
+    pub fallback_filenames: Vec<String>,
+    pub config: Option<Value>,
+}
+
+pub(crate) fn project_document_settings(exclude: &ExcludeSet) -> Option<ProjectDocumentSettings> {
+    if exclude.is_excluded(CONFIG_PATH) {
+        return Some(ProjectDocumentSettings {
+            max_bytes: CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES,
+            fallback_filenames: Vec::new(),
+            config: None,
+        });
+    }
+    let bytes = match std::fs::read(CONFIG_PATH) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Some(ProjectDocumentSettings {
+                max_bytes: CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES,
+                fallback_filenames: Vec::new(),
+                config: None,
+            });
+        }
+        Err(_) => return None,
+    };
+    let content = String::from_utf8(bytes).ok()?;
+    let value: Value = content.parse().ok()?;
+    let Some(root) = value.as_table() else {
+        return Some(ProjectDocumentSettings {
+            max_bytes: CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES,
+            fallback_filenames: Vec::new(),
+            config: Some(value),
+        });
+    };
+    let max_bytes = match root.get("project_doc_max_bytes") {
+        None => CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES,
+        Some(value) => value
+            .as_integer()
+            .filter(|value| *value >= 0)
+            .and_then(|value| usize::try_from(value).ok())?,
+    };
+    let fallback_filenames = match root.get("project_doc_fallback_filenames") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()?
+            .iter()
+            .map(|value| value.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()?,
+    };
+    Some(ProjectDocumentSettings {
+        max_bytes,
+        fallback_filenames,
+        config: Some(value),
+    })
+}
 
 struct SourceMap<'a> {
     content: &'a str,

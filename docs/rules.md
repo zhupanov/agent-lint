@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 299 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -702,10 +702,8 @@ active; the shared instruction rules above run independently.
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| CX039 | `codex-agents-large` | `AGENTS.md` exceeds 100,000 bytes | Always | warn |
-| CX040 | `codex-agents-limit` | `AGENTS.md` exceeds the effective Codex document limit | Always | warn |
-| CX042 | `codex-agents-override` | Root `AGENTS.override.md` is tracked by Git | Always | warn |
-| CX045 | `codex-agents-conflict` | Explicit `AGENTS.md` setting conflicts with `.codex/config.toml` | Always | error |
+| CX040 | `codex-project-doc-budget` | Active Codex project-document chain exceeds its cumulative byte budget | Always | warn |
+| CX045 | `codex-project-doc-conflict` | Live Codex project-document assertion conflicts with `.codex/config.toml` | Always | warn |
 | CX046 | `codex-plugin-path` | Deprecated — no longer emitted; any recognized manifest directory establishes a valid plugin root | Always | error |
 | CX047 | `codex-plugin-invalid` | Codex plugin manifest is unreadable, invalid JSON, a non-object root, or has an invalid field type | Always | error |
 | CX048--CX049 | — | Codex plugin name is missing/blank or not kebab-case | Always | error |
@@ -717,8 +715,10 @@ active; the shared instruction rules above run independently.
 | CX060 | `codex-skill-frontmatter` | Codex skill uses ignored behavior frontmatter (`allowed-tools`, `when_to_use`, `argument-hint`, `arguments`, `disable-model-invocation`, `user-invocable`, `model`, `effort`, `context`, `agent`, `hooks`, `paths`, `shell`). Nested/block-scalar/quoted-portable fields stay clean; surfaces include nested `.agents/skills` and selected plugin skill roots | Always | warn |
 | CX063 | `codex-prompt-field` | `interface.default_prompt` / `interface.default_prompts` are ignored by Codex; rename to `interface.defaultPrompt` | Always | warn |
 
-CX040 uses Codex's default 32,768-byte project-document budget unless
-`.codex/config.toml` sets `project_doc_max_bytes`. Codex plugin discovery
+CX040 uses Codex's default 32,768-byte cumulative project-document budget unless
+`.codex/config.toml` sets `project_doc_max_bytes`; its compatibility lookup alias is
+`codex-agents-limit`. CX045's compatibility lookup alias is `codex-agents-conflict`.
+Codex plugin discovery
 recognizes `.codex-plugin/`, `.claude-plugin/`, and `.cursor-plugin/`
 `plugin.json` beneath every plugin root (Codex precedence order); a manifest
 directory is matched by exact parent-directory component, never by path suffix.
