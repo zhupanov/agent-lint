@@ -108,18 +108,70 @@ fn validate_rule_file(diag: &mut DiagnosticCollector, path: &str, content: &str)
     validate_rule_paths(diag, path, content, yaml_range, &frontmatter);
 }
 
+/// Which output-style loading surface a file belongs to. The per-file O rules
+/// are identical across surfaces with one documented asymmetry: `force-for-plugin`
+/// is honored only for plugin-bundled styles, so it is a recognized field under
+/// [`OutputStyleSurface::Plugin`] and an ignored-placement O003 under
+/// [`OutputStyleSurface::Private`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OutputStyleSurface {
+    /// Private `.claude/output-styles/` styles (Basic and Plugin mode).
+    Private,
+    /// Plugin-bundled styles: the plugin-root `output-styles/` directory and
+    /// manifest-declared `outputStyles` paths (Plugin mode only).
+    Plugin,
+}
+
 fn validate_output_styles(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
     validate_markdown_directory(
         ".claude/output-styles",
         diag,
         exclude,
         |path, content, diag| {
-            validate_output_style(diag, path, content);
+            validate_output_style(diag, path, content, OutputStyleSurface::Private);
         },
     );
 }
 
-fn validate_output_style(diag: &mut DiagnosticCollector, path: &str, content: &str) {
+/// O001-O006 on plugin-shipped output styles (Plugin mode only).
+///
+/// Discovers the union of the plugin-root `output-styles/` directory and every
+/// manifest-declared `outputStyles` path (`declared_roots`, already
+/// repository-safe, normalized, and deduplicated), then runs the same per-file
+/// checks as `.claude/output-styles/` through [`validate_output_style`] with the
+/// [`OutputStyleSurface::Plugin`] asymmetry. Discovery reuses the shared
+/// recursive-file collector, so it is symlink-safe, honors `[lint].exclude` and
+/// the pruned-directory set, and deduplicates across roots — a file reachable
+/// from both the default directory and a declared path is linted once. A declared
+/// path may name a directory or a single `.md` file; declared paths that do not
+/// exist are silently absent, since their existence and safety remain M-rule
+/// (manifest) territory. `.claude/output-styles/` is not scanned here: it is a
+/// distinct surface covered by [`validate_output_styles`] in both modes.
+pub(crate) fn validate_plugin_output_styles(
+    diag: &mut DiagnosticCollector,
+    exclude: &ExcludeSet,
+    declared_roots: &[String],
+) {
+    // The implicit default plugin-root `output-styles/` first, then each declared
+    // root; the shared collector deduplicates overlapping roots and files.
+    let mut roots: Vec<&str> = vec!["output-styles"];
+    roots.extend(declared_roots.iter().map(String::as_str));
+    for path in &super::agent_discovery::collect(&roots, exclude).lint_files {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        diag.with_subject_path(path, |diag| {
+            validate_output_style(diag, path, &content, OutputStyleSurface::Plugin);
+        });
+    }
+}
+
+fn validate_output_style(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    content: &str,
+    surface: OutputStyleSurface,
+) {
     let (frontmatter, body, yaml_range) = match frontmatter::leading_frontmatter(content) {
         LeadingFrontmatterState::Absent { body } => (Mapping::new(), body, None),
         LeadingFrontmatterState::Unterminated { delimiter_range } => {
@@ -166,7 +218,14 @@ fn validate_output_style(diag: &mut DiagnosticCollector, path: &str, content: &s
         }
     };
 
-    report_output_style_unknown_fields(diag, path, content, yaml_range.clone(), &frontmatter);
+    report_output_style_unknown_fields(
+        diag,
+        path,
+        content,
+        yaml_range.clone(),
+        &frontmatter,
+        surface,
+    );
     validate_output_style_fields(diag, path, content, yaml_range, &frontmatter);
     if body.trim().is_empty() {
         let body_range = body_range(content, body).unwrap_or(0..content.len());
@@ -483,16 +542,25 @@ fn report_output_style_unknown_fields(
     content: &str,
     yaml_range: Option<Range<usize>>,
     frontmatter: &Mapping,
+    surface: OutputStyleSurface,
 ) {
     for key in frontmatter.keys() {
         if OUTPUT_STYLE_FIELDS.contains(&key.as_str()) {
             continue;
         }
         let (message, evidence) = if key == OUTPUT_STYLE_FORCE_FOR_PLUGIN {
-            (
-                "force-for-plugin is honored only for plugin-bundled output styles and is ignored under .claude/output-styles",
-                "force-for-plugin: private-style placement",
-            )
+            match surface {
+                // Plugin-bundled styles honor `force-for-plugin`, so it is a
+                // recognized field and emits no O003. No type validation is added
+                // because no recorded schema type exists for it.
+                OutputStyleSurface::Plugin => continue,
+                // Private `.claude/output-styles/` styles ignore the field; report
+                // the specific placement message rather than a generic unknown one.
+                OutputStyleSurface::Private => (
+                    "force-for-plugin is honored only for plugin-bundled output styles and is ignored under .claude/output-styles",
+                    "force-for-plugin: private-style placement",
+                ),
+            }
         } else {
             (
                 "output-style frontmatter contains an unsupported field",
@@ -1241,6 +1309,292 @@ mod tests {
                     .message
                     .contains("very-long-unknown-key-that-must-not-appear-in-output")
             }));
+        });
+    }
+
+    // ── #392: plugin-shipped output styles ──────────────────────────
+
+    /// Discover and lint plugin-shipped output styles using the current
+    /// directory as a Plugin-mode repository, exactly as `run_plugin` does:
+    /// declared `outputStyles` roots come from the on-disk plugin.json.
+    fn plugin_output_style_diag_with(exclude: &ExcludeSet) -> DiagnosticCollector {
+        let ctx = LintContext::new(
+            &std::env::current_dir().expect("current directory is readable"),
+            crate::context::LintMode::Plugin,
+        );
+        let roots = crate::validators::manifest::declared_output_style_roots(&ctx);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_plugin_output_styles(&mut diag, exclude, &roots);
+        diag
+    }
+
+    fn plugin_output_style_diag() -> DiagnosticCollector {
+        plugin_output_style_diag_with(&ExcludeSet::default())
+    }
+
+    fn diagnostics_for<'a>(
+        diag: &'a DiagnosticCollector,
+        subject: &str,
+    ) -> Vec<&'a crate::diagnostic::Diagnostic> {
+        diag.diagnostics()
+            .iter()
+            .filter(|d| d.subject_path.as_deref() == Some(Path::new(subject)))
+            .collect()
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_root_broken_style_matches_private_twin_identity() {
+        with_temp_dir(|| {
+            fs::create_dir_all("output-styles").unwrap();
+            fs::create_dir_all(".claude/output-styles").unwrap();
+            let broken = "---\ndescription: [\n---\nBody\n";
+            fs::write("output-styles/broken.md", broken).unwrap();
+            fs::write(".claude/output-styles/broken.md", broken).unwrap();
+
+            let private = validate();
+            let plugin = plugin_output_style_diag();
+            let private_twin = diagnostics_for(&private, ".claude/output-styles/broken.md");
+            let plugin_twin = diagnostics_for(&plugin, "output-styles/broken.md");
+
+            assert_eq!(private_twin.len(), 1, "private twin emits one diagnostic");
+            assert_eq!(plugin_twin.len(), 1, "plugin twin emits one diagnostic");
+            assert_eq!(
+                private_twin[0].rule,
+                LintRule::OutputStyleFrontmatterInvalid
+            );
+            // Same rule identity, severity, evidence, and suggestion across surfaces.
+            assert_eq!(plugin_twin[0].rule, private_twin[0].rule);
+            assert_eq!(plugin_twin[0].severity, private_twin[0].severity);
+            assert_eq!(plugin_twin[0].evidence, private_twin[0].evidence);
+            assert_eq!(plugin_twin[0].suggestion, private_twin[0].suggestion);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_root_output_styles_apply_every_active_o_rule_including_nested() {
+        with_temp_dir(|| {
+            fs::create_dir_all("output-styles/nested").unwrap();
+            fs::write("output-styles/o001.md", "---\ndescription: 7\n---\nBody\n").unwrap();
+            fs::write(
+                "output-styles/o002.md",
+                "---\ndescription: Good\nkeep-coding-instructions: nope\n---\nBody\n",
+            )
+            .unwrap();
+            fs::write(
+                "output-styles/nested/o003.md",
+                "---\ndescription: Good\nextra: value\n---\nBody\n",
+            )
+            .unwrap();
+            fs::write("output-styles/o004.md", "---\ndescription: Good\n---\n \n").unwrap();
+            fs::write("output-styles/o006.md", "---\ndescription: [\n---\nBody\n").unwrap();
+
+            let diag = plugin_output_style_diag();
+            let has = |subject: &str, rule: LintRule| {
+                diagnostics_for(&diag, subject)
+                    .iter()
+                    .any(|d| d.rule == rule)
+            };
+            assert!(has(
+                "output-styles/o001.md",
+                LintRule::OutputStyleDescriptionMissing
+            ));
+            assert!(has(
+                "output-styles/o002.md",
+                LintRule::OutputStyleKeepCodingInstructionsInvalid
+            ));
+            assert!(has(
+                "output-styles/nested/o003.md",
+                LintRule::OutputStyleFieldUnknown
+            ));
+            assert!(has("output-styles/o004.md", LintRule::OutputStyleBodyEmpty));
+            assert!(has(
+                "output-styles/o006.md",
+                LintRule::OutputStyleFrontmatterInvalid
+            ));
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn force_for_plugin_is_recognized_on_plugin_styles_and_flagged_on_private() {
+        with_temp_dir(|| {
+            fs::create_dir_all("output-styles").unwrap();
+            fs::create_dir_all(".claude/output-styles").unwrap();
+            let style = "---\ndescription: Good\nforce-for-plugin: true\n---\nBody\n";
+            fs::write("output-styles/s.md", style).unwrap();
+            fs::write(".claude/output-styles/s.md", style).unwrap();
+
+            // Plugin-shipped: force-for-plugin is recognized, so no O003 at all.
+            let plugin = plugin_output_style_diag();
+            assert!(
+                plugin
+                    .diagnostics()
+                    .iter()
+                    .all(|d| d.rule != LintRule::OutputStyleFieldUnknown),
+                "force-for-plugin must not warn on plugin-shipped styles: {:?}",
+                plugin.diagnostics()
+            );
+
+            // Private: keep #348's specific ignored-placement O003 message.
+            let private = validate();
+            let o003 = diagnostics_for(&private, ".claude/output-styles/s.md");
+            assert_eq!(o003.len(), 1);
+            assert_eq!(o003[0].rule, LintRule::OutputStyleFieldUnknown);
+            assert!(o003[0].message.contains("plugin-bundled"));
+            assert_eq!(
+                o003[0].evidence.as_deref(),
+                Some("force-for-plugin: private-style placement")
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_output_styles_discover_declared_forms_and_lint_default_once() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude-plugin").unwrap();
+            fs::create_dir_all("output-styles").unwrap();
+            fs::create_dir_all("declared-dir/deep").unwrap();
+            fs::create_dir_all("single").unwrap();
+            // Declares a directory, a single file, and a duplicate of the default
+            // plugin-root directory. The duplicate must not double-lint its files.
+            fs::write(
+                ".claude-plugin/plugin.json",
+                r#"{"name":"p","version":"1.0.0","outputStyles":["./declared-dir","./single/one.md","./output-styles"]}"#,
+            )
+            .unwrap();
+            fs::write(
+                "output-styles/def.md",
+                "---\ndescription: Good\nextra: 1\n---\nBody\n",
+            )
+            .unwrap();
+            fs::write("declared-dir/deep/d.md", "Body only, no frontmatter.\n").unwrap();
+            fs::write(
+                "single/one.md",
+                "---\ndescription: Good\nweird: 1\n---\nBody\n",
+            )
+            .unwrap();
+
+            let diag = plugin_output_style_diag();
+            // Default directory file linted exactly once despite the `./output-styles`
+            // duplicate declaration.
+            assert_eq!(
+                diagnostics_for(&diag, "output-styles/def.md")
+                    .iter()
+                    .filter(|d| d.rule == LintRule::OutputStyleFieldUnknown)
+                    .count(),
+                1,
+            );
+            // Declared directory is scanned recursively (body-only → O001).
+            assert!(
+                diagnostics_for(&diag, "declared-dir/deep/d.md")
+                    .iter()
+                    .any(|d| d.rule == LintRule::OutputStyleDescriptionMissing)
+            );
+            // Declared single `.md` file contributes that file.
+            assert!(
+                diagnostics_for(&diag, "single/one.md")
+                    .iter()
+                    .any(|d| d.rule == LintRule::OutputStyleFieldUnknown)
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_output_styles_never_read_unsafe_or_nonexistent_declared_paths() {
+        with_temp_dir(|| {
+            fs::create_dir_all(".claude-plugin/output-styles").unwrap();
+            fs::write(
+                ".claude-plugin/plugin.json",
+                r#"{"name":"p","version":"1.0.0","outputStyles":["/abs/x.md","../up/y.md","./.claude-plugin/output-styles","./missing"]}"#,
+            )
+            .unwrap();
+            // A file at a rejected location that must never be read or reported.
+            fs::write(
+                ".claude-plugin/output-styles/nested.md",
+                "---\ndescription: [\n---\n",
+            )
+            .unwrap();
+
+            let diag = plugin_output_style_diag();
+            assert!(
+                diag.diagnostics().is_empty(),
+                "absolute, traversal, nested-plugin-dir, and missing declared paths must not be read: {:?}",
+                diag.diagnostics()
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn basic_mode_never_scans_plugin_shipped_output_styles() {
+        with_temp_dir(|| {
+            fs::create_dir_all("output-styles").unwrap();
+            fs::write("output-styles/plugin-only.md", "---\ndescription: [\n---\n").unwrap();
+            let ctx = LintContext::new(
+                &std::env::current_dir().unwrap(),
+                crate::context::LintMode::Basic,
+            );
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            super::super::run_all(&ctx, &mut diag, &ExcludeSet::default());
+            assert!(
+                diagnostics_for(&diag, "output-styles/plugin-only.md").is_empty(),
+                "Basic mode must never scan the plugin-root output-styles/ surface"
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_output_styles_honor_exclusions() {
+        with_temp_dir(|| {
+            fs::create_dir_all("output-styles/skip").unwrap();
+            fs::write("output-styles/keep.md", "---\ndescription: [\n---\n").unwrap();
+            fs::write("output-styles/skip/drop.md", "---\ndescription: [\n---\n").unwrap();
+            let exclude = ExcludeSet::new(&["output-styles/skip/**".to_string()]).unwrap();
+
+            let diag = plugin_output_style_diag_with(&exclude);
+            assert!(!diagnostics_for(&diag, "output-styles/keep.md").is_empty());
+            assert!(
+                diagnostics_for(&diag, "output-styles/skip/drop.md").is_empty(),
+                "excluded plugin styles must not be read"
+            );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn plugin_output_styles_honor_per_file_suppression() {
+        with_temp_dir(|| {
+            fs::create_dir_all("output-styles").unwrap();
+            fs::write("output-styles/reported.md", "---\ndescription: [\n---\n").unwrap();
+            fs::write("output-styles/muted.md", "---\ndescription: [\n---\n").unwrap();
+            fs::write(
+                "agent-lint.toml",
+                "[lint]\n[[lint.overrides]]\nfiles = [\"output-styles/muted.md\"]\nsuppress = [\"O006\"]\n",
+            )
+            .unwrap();
+            let config = crate::config::LintConfig::load(".").expect("config loads");
+            let ctx = LintContext::new(
+                &std::env::current_dir().unwrap(),
+                crate::context::LintMode::Plugin,
+            );
+            let roots = crate::validators::manifest::declared_output_style_roots(&ctx);
+            let mut diag = DiagnosticCollector::with_config(config);
+            validate_plugin_output_styles(&mut diag, &ExcludeSet::default(), &roots);
+
+            // The plugin-style subject path flows into per-file override matching:
+            // the unsuppressed twin still reports O006; the matched twin is silenced.
+            assert!(
+                diagnostics_for(&diag, "output-styles/reported.md")
+                    .iter()
+                    .any(|d| d.rule == LintRule::OutputStyleFrontmatterInvalid)
+            );
+            assert!(diagnostics_for(&diag, "output-styles/muted.md").is_empty());
+            assert_eq!(diag.suppressed_count(), 1);
         });
     }
 

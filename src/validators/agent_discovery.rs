@@ -1,4 +1,4 @@
-//! Shared recursive agent-file discovery.
+//! Shared recursive Markdown-file discovery across repository-relative roots.
 //!
 //! One collector feeds every agent rule: private `.claude/agents/`, the plugin
 //! default `agents/`, and manifest-declared plugin agent roots. Discovery is
@@ -7,6 +7,12 @@
 //! subdirectory path. Traversal reuses [`crate::traversal::recursive_files`], so
 //! it never follows symlinked directories and skips repository metadata,
 //! dependency, and build trees.
+//!
+//! The discovery, dedup, and symlink-safety behavior is generic `.md`-across-roots
+//! collection, so plugin-shipped output-style discovery
+//! ([`super::claude_config::validate_plugin_output_styles`]) reuses the same
+//! [`collect`] entry point rather than duplicating the security-sensitive
+//! symlink-root handling.
 //!
 //! The returned [`AgentFileInventory`] carries two deterministic, normalized,
 //! repository-relative, path-deduplicated vectors: `all_files` (every discovered

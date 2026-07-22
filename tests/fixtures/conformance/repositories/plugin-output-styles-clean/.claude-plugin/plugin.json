@@ -1,0 +1,6 @@
+{
+  "name": "os-clean",
+  "version": "1.0.0",
+  "description": "Plugin-shipped output styles that all pass O001-O006.",
+  "outputStyles": "./declared-styles"
+}

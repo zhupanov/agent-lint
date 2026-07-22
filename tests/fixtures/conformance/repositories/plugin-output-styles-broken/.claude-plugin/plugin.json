@@ -1,0 +1,6 @@
+{
+  "name": "os-broken",
+  "version": "1.0.0",
+  "description": "Plugin-shipped output styles that trip O001, O003, and O006.",
+  "outputStyles": "./declared-styles"
+}

@@ -61,31 +61,33 @@ fn is_non_empty_string(v: Option<&Value>) -> bool {
 /// into it belong to a separately scanned surface, not to the plugin's own tree.
 const PRIVATE_CLAUDE_DIR: &str = ".claude";
 
-/// Repository-safe agent root paths explicitly declared in plugin.json `agents`.
+/// Repository-safe component root paths explicitly declared for one plugin.json
+/// path-bearing field (for example `agents` or `outputStyles`).
 ///
-/// Returns each distinct safe path once, normalized, in declaration order, for
-/// the shared agent-file collector. Safety (absolute, `..`-escaping, missing
+/// Returns each distinct safe path once, normalized, in declaration order, for a
+/// shared recursive-file collector. Safety (absolute, `..`-escaping, missing
 /// `./` prefix, `.claude-plugin/`-nested) is owned by M012/M013 via the shared
 /// [`safe_component_path`] classifier, so only declarations that pass it reach
 /// discovery — discovery never escapes the repository nor double-reports a
 /// manifest path defect. Paths inside the private `.claude/` tree are also
 /// dropped: that tree is a distinct surface with its own recursive scan and
-/// `Private` per-agent semantics, so admitting it here would validate the same
-/// file twice under two surfaces. Non-string shapes declare no filesystem root
-/// and yield nothing. An absent or invalid manifest, or an undeclared `agents`
-/// field, yields an empty list; the implicit default `agents/` directory is
-/// added by the collector's caller, not here.
-pub(crate) fn declared_agent_roots(ctx: &LintContext) -> Vec<String> {
+/// private per-file semantics, so admitting it here would validate the same file
+/// twice under two surfaces. Non-string shapes declare no filesystem root and
+/// yield nothing. An absent or invalid manifest, or an undeclared field, yields
+/// an empty list; the implicit default directory (`agents/`, `output-styles/`)
+/// is added by the collector's caller, not here.
+fn declared_component_roots(ctx: &LintContext, field: &str) -> Vec<String> {
     let ManifestState::Parsed(val) = &ctx.plugin_json else {
         return Vec::new();
     };
 
+    // A field declares roots through its scalar label "<field>" or an array
+    // element label "<field>[N]".
+    let array_prefix = format!("{field}[");
     let mut roots = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     for declared in declared_component_paths(val) {
-        // Only the `agents` field declares agent roots: label "agents" (scalar)
-        // or "agents[N]" (array element).
-        if declared.label != "agents" && !declared.label.starts_with("agents[") {
+        if declared.label != field && !declared.label.starts_with(&array_prefix) {
             continue;
         }
         // The shared classifier rejects unsafe shapes before any filesystem probe.
@@ -105,6 +107,25 @@ pub(crate) fn declared_agent_roots(ctx: &LintContext) -> Vec<String> {
         }
     }
     roots
+}
+
+/// Repository-safe agent root paths explicitly declared in plugin.json `agents`.
+///
+/// See [`declared_component_roots`]. The implicit default `agents/` directory is
+/// added by the collector's caller, not here.
+pub(crate) fn declared_agent_roots(ctx: &LintContext) -> Vec<String> {
+    declared_component_roots(ctx, "agents")
+}
+
+/// Repository-safe output-style root paths explicitly declared in plugin.json
+/// `outputStyles`.
+///
+/// See [`declared_component_roots`]. Each returned path may name a directory
+/// (recursively scanned for `.md` files) or a single `.md` file. The implicit
+/// default plugin-root `output-styles/` directory is added by the collector's
+/// caller, not here.
+pub(crate) fn declared_output_style_roots(ctx: &LintContext) -> Vec<String> {
+    declared_component_roots(ctx, "outputStyles")
 }
 
 /// V1: Validate .claude-plugin/plugin.json
@@ -1366,6 +1387,60 @@ mod tests {
 
         let invalid = make_ctx(ManifestState::invalid("bad json"), ManifestState::Missing);
         assert!(declared_agent_roots(&invalid).is_empty());
+    }
+
+    // ── #392: declared_output_style_roots ───────────────────────────
+    fn output_style_roots(manifest: Value) -> Vec<String> {
+        let ctx = make_ctx(ManifestState::parsed(manifest), ManifestState::Missing);
+        declared_output_style_roots(&ctx)
+    }
+
+    #[test]
+    fn declared_output_style_roots_selects_only_output_styles_field() {
+        // A sibling path-bearing field (`agents`) must never leak into the
+        // output-style root set; scalar and array `outputStyles` forms survive in
+        // declaration order with the `./` prefix stripped.
+        let manifest = json!({
+            "name": "p", "version": "1.0.0",
+            "agents": "./agents",
+            "outputStyles": ["./styles", "./one.md"],
+        });
+        assert_eq!(
+            output_style_roots(manifest),
+            vec!["styles".to_string(), "one.md".to_string()]
+        );
+        assert_eq!(
+            output_style_roots(json!({"name": "p", "version": "1.0.0", "outputStyles": "./solo"})),
+            vec!["solo".to_string()]
+        );
+    }
+
+    #[test]
+    fn declared_output_style_roots_drop_unsafe_private_and_duplicate_paths() {
+        // Absolute, traversal, missing-`./`, and `.claude-plugin/`-nested paths
+        // are M012/M013 territory; the private `.claude/` tree is scanned under
+        // its own surface; duplicate spellings collapse to one canonical root.
+        let manifest = json!({
+            "name": "p", "version": "1.0.0",
+            "outputStyles": [
+                "/abs.md", "../up.md", "no-prefix.md",
+                "./.claude-plugin/output-styles", "./.claude/output-styles", "./.claude",
+                "./styles", "./styles/", "./styles//sub", {"inline": "object"}, 7
+            ],
+        });
+        assert_eq!(
+            output_style_roots(manifest),
+            vec!["styles".to_string(), "styles/sub".to_string()]
+        );
+    }
+
+    #[test]
+    fn declared_output_style_roots_empty_without_field_or_manifest() {
+        assert!(output_style_roots(json!({"name": "p", "version": "1.0.0"})).is_empty());
+        let missing = make_ctx(ManifestState::Missing, ManifestState::Missing);
+        assert!(declared_output_style_roots(&missing).is_empty());
+        let invalid = make_ctx(ManifestState::invalid("bad json"), ManifestState::Missing);
+        assert!(declared_output_style_roots(&invalid).is_empty());
     }
 
     // V1: validate_plugin_json
