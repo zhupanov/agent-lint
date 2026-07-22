@@ -64,9 +64,63 @@ fn cursor_surface_exists(exclude: &ExcludeSet) -> bool {
         || has_matching_file(".cursor/agents", exclude, |path| {
             path.extension().and_then(|ext| ext.to_str()) == Some("md")
         })
-        || has_matching_file(".cursor/skills", exclude, |path| {
-            path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
-        })
+        || !cursor_skill_candidates(exclude).is_empty()
+}
+
+/// Return the included Cursor-only skill files anywhere in the repository.
+///
+/// The result is the unique Cursor activation surface: shared `.agents/skills`
+/// files deliberately do not appear here, because they must not infer Cursor.
+pub(crate) fn cursor_skill_candidates(exclude: &ExcludeSet) -> Vec<traversal::WalkEntry> {
+    skill_candidates(exclude, is_cursor_skill_path)
+}
+
+/// Return the included shared Agent Skills files anywhere in the repository.
+pub(crate) fn agent_skill_candidates(exclude: &ExcludeSet) -> Vec<traversal::WalkEntry> {
+    skill_candidates(exclude, is_agent_skill_path)
+}
+
+/// Return the normalized Cursor runtime skill inventory.
+///
+/// Cursor loads both `.cursor/skills/` and `.agents/skills/` skill roots,
+/// including roots below monorepo packages. Walking the repository once keeps
+/// overlapping roots deduplicated and gives every Cursor consumer the same
+/// deterministic, exclusion-aware scope.
+pub(crate) fn cursor_runtime_skill_candidates(exclude: &ExcludeSet) -> Vec<traversal::WalkEntry> {
+    skill_candidates(exclude, |path| {
+        is_cursor_skill_path(path) || is_agent_skill_path(path)
+    })
+}
+
+pub(crate) fn is_cursor_skill_path(path: &Path) -> bool {
+    is_skill_path_below(path, ".cursor")
+}
+
+fn is_agent_skill_path(path: &Path) -> bool {
+    is_skill_path_below(path, ".agents")
+}
+
+fn skill_candidates(
+    exclude: &ExcludeSet,
+    includes: impl Fn(&Path) -> bool,
+) -> Vec<traversal::WalkEntry> {
+    traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude))
+        .entries
+        .into_iter()
+        .filter(|entry| includes(&entry.path))
+        .collect()
+}
+
+fn is_skill_path_below(path: &Path, surface_dir: &str) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
+        && path
+            .components()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|pair| {
+                matches!(pair, [Component::Normal(surface), Component::Normal(skills)]
+                if *surface == surface_dir && *skills == "skills")
+            })
 }
 
 /// Return included Cursor project-rule candidates anywhere in the repository.
@@ -114,9 +168,7 @@ fn agents_md_surface_exists(exclude: &ExcludeSet) -> bool {
 }
 
 fn agent_skills_surface_exists(exclude: &ExcludeSet) -> bool {
-    has_matching_file(".agents/skills", exclude, |path| {
-        path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
-    })
+    !agent_skill_candidates(exclude).is_empty()
 }
 
 fn is_included_file(path: &str, exclude: &ExcludeSet) -> bool {
@@ -255,6 +307,91 @@ mod tests {
             ]
         );
         assert!(DetectedSurfaces::discover(&exclude).cursor);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_skill_inventory_is_recursive_deduplicated_and_activation_aware() {
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        for path in [
+            ".cursor/skills/root/SKILL.md",
+            ".cursor/skills/shared/SKILL.md",
+            ".cursor/skills/group/nested/SKILL.md",
+            "packages/api/.cursor/skills/api/SKILL.md",
+            "packages/api/.agents/skills/shared/SKILL.md",
+            ".agents/skills/root-shared/SKILL.md",
+            "packages/web/.agents/skills/excluded/SKILL.md",
+            "node_modules/pkg/.cursor/skills/ignored/SKILL.md",
+            ".cursor/skills/group/.cursor/skills/overlap/SKILL.md",
+        ] {
+            let path = Path::new(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                "---\nname: test\ndescription: Test skill\n---\nBody\n",
+            )
+            .unwrap();
+        }
+        let exclude = ExcludeSet::new(&["packages/web/**".into()]).unwrap();
+
+        assert_eq!(
+            cursor_skill_candidates(&exclude)
+                .iter()
+                .map(|entry| entry.display.as_str())
+                .collect::<Vec<_>>(),
+            [
+                ".cursor/skills/group/.cursor/skills/overlap/SKILL.md",
+                ".cursor/skills/group/nested/SKILL.md",
+                ".cursor/skills/root/SKILL.md",
+                ".cursor/skills/shared/SKILL.md",
+                "packages/api/.cursor/skills/api/SKILL.md",
+            ]
+        );
+        assert_eq!(
+            cursor_runtime_skill_candidates(&exclude)
+                .iter()
+                .map(|entry| entry.display.as_str())
+                .collect::<Vec<_>>(),
+            [
+                ".agents/skills/root-shared/SKILL.md",
+                ".cursor/skills/group/.cursor/skills/overlap/SKILL.md",
+                ".cursor/skills/group/nested/SKILL.md",
+                ".cursor/skills/root/SKILL.md",
+                ".cursor/skills/shared/SKILL.md",
+                "packages/api/.agents/skills/shared/SKILL.md",
+                "packages/api/.cursor/skills/api/SKILL.md",
+            ]
+        );
+        assert!(DetectedSurfaces::discover(&exclude).cursor);
+        assert!(DetectedSurfaces::discover(&exclude).agent_skills);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn nested_shared_skills_do_not_infer_cursor() {
+        let _guard = CwdGuard::new();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        let path = Path::new("packages/api/.agents/skills/shared/SKILL.md");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            "---\nname: shared\ndescription: Shared skill\n---\nBody\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            DetectedSurfaces::discover(&ExcludeSet::default()),
+            DetectedSurfaces {
+                cursor: false,
+                codex: false,
+                claude_md: false,
+                agents_md: false,
+                agent_skills: true,
+            }
+        );
     }
 
     #[cfg(unix)]

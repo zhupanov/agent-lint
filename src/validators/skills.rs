@@ -43,37 +43,57 @@ pub fn collect_skills(base_dir: &str, exclude: &ExcludeSet) -> Vec<SkillInfo> {
         })
         .collect::<Vec<_>>();
 
-    let mut skills = Vec::new();
-    for (path, dir_name) in subdirs {
-        let skill_md = path.join("SKILL.md");
-        if !skill_md.is_file() {
-            continue;
-        }
+    collect_skill_files(
+        subdirs
+            .into_iter()
+            .map(|(path, dir_name)| traversal::WalkEntry {
+                path: path.join("SKILL.md"),
+                display: format!("{base_dir}/{dir_name}/SKILL.md"),
+            }),
+    )
+}
 
-        let content = match fs::read_to_string(&skill_md) {
-            Ok(c) => c,
+/// Collect the shared Cursor runtime skill inventory. This is intentionally
+/// separate from the Claude/plugin shallow layout: Cursor recognizes nested
+/// `.cursor/skills/` and `.agents/skills/` roots throughout a repository.
+pub(crate) fn collect_cursor_runtime_skills(exclude: &ExcludeSet) -> Vec<SkillInfo> {
+    collect_skill_files(crate::platforms::cursor_runtime_skill_candidates(exclude))
+}
+
+/// Collect shared Agent Skills roots throughout a repository.
+pub(crate) fn collect_agent_skills(exclude: &ExcludeSet) -> Vec<SkillInfo> {
+    collect_skill_files(crate::platforms::agent_skill_candidates(exclude))
+}
+
+fn collect_skill_files(entries: impl IntoIterator<Item = traversal::WalkEntry>) -> Vec<SkillInfo> {
+    let mut skills = Vec::new();
+    for entry in entries {
+        let Some(dir_name) = entry
+            .path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let content = match fs::read_to_string(&entry.path) {
+            Ok(content) => content,
             Err(_) => continue,
         };
         let document = MarkdownDocument::parse(content);
-
-        let fm_lines = match document.frontmatter() {
-            Some(lines) => lines.to_vec(),
-            None => continue, // S004 fires from existing validator
+        let Some(fm_lines) = document.frontmatter().map(|lines| lines.to_vec()) else {
+            continue; // S004 fires from existing validators where applicable.
         };
-
-        let body = document.body().to_string();
-        let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
-
-        let scripts_dir = path.join("scripts");
+        let scripts_dir = entry.path.parent().unwrap().join("scripts");
         let has_scripts_dir = !traversal::shallow_entries(&scripts_dir, Path::new("."), None)
             .entries
             .is_empty();
-
         skills.push(SkillInfo {
-            path: skill_path,
+            path: entry.display,
             dir_name,
             fm_lines,
-            body,
+            body: document.body().to_string(),
             document,
             has_scripts_dir,
         });
@@ -160,13 +180,34 @@ fn validate_skill_frontmatter_in_dir(
     exclude: &ExcludeSet,
     mut prompt_pass: Option<&mut super::prompt_content::PromptContentPass>,
 ) {
-    let dir = Path::new(base_dir);
-    if !dir.is_dir() {
-        return;
-    }
+    let skill_files = if platform_neutral && base_dir == ".agents/skills" {
+        crate::platforms::agent_skill_candidates(exclude)
+            .into_iter()
+            .map(|entry| (entry.path, entry.display))
+            .collect::<Vec<_>>()
+    } else {
+        let dir = Path::new(base_dir);
+        if !dir.is_dir() {
+            return;
+        }
+        traversal::shallow_directories(dir, Path::new("."), None)
+            .entries
+            .into_iter()
+            .map(|entry| {
+                let skill_md = entry.path.join("SKILL.md");
+                let skill_path = format!(
+                    "{base_dir}/{}/SKILL.md",
+                    entry.path.file_name().unwrap().to_string_lossy()
+                );
+                (skill_md, skill_path)
+            })
+            .collect()
+    };
 
-    for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
-        let path = entry.path;
+    for (skill_md, skill_path) in skill_files {
+        let Some(path) = skill_md.parent() else {
+            continue;
+        };
         let dir_name = match path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
@@ -178,12 +219,10 @@ fn validate_skill_frontmatter_in_dir(
             continue;
         }
 
-        let skill_md = path.join("SKILL.md");
         if !skill_md.is_file() {
             continue;
         }
 
-        let skill_path = format!("{base_dir}/{dir_name}/SKILL.md");
         if exclude.is_excluded(&skill_path) {
             continue;
         }
@@ -260,7 +299,7 @@ fn validate_skill_frontmatter_in_dir(
 
         if !platform_neutral {
             // S072: skill directory size limit.
-            check_skill_dir_size(&path, &skill_path, diag);
+            check_skill_dir_size(path, &skill_path, diag);
 
             // S073: relative .md refs nested deeper than one level.
             check_skill_ref_depth(&skill_path, &document, diag);

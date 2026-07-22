@@ -164,10 +164,17 @@ Cursor project rules are discovered repository-wide as
 CU020 can report the required rename to `.mdc`. Other Cursor surfaces are
 `.cursorrules`, `.cursor/mcp.json`,
 `.cursor/hooks.json`, `.cursor/agents/**/*.md`, `.cursor/environment.json`,
-`.cursor/skills/*/SKILL.md`. Unique Codex surfaces are
+and `**/.cursor/skills/**/SKILL.md`. Cursor discovers skills below every
+repository `.cursor/skills/` and `.agents/skills/` directory; that shared,
+deduplicated inventory is used for Cursor skill checks, including nested
+monorepo packages. A `.cursor/skills/.../SKILL.md` activates Cursor, while a
+shared `.agents/skills/.../SKILL.md` alone does not. Shared skills join the
+Cursor inventory only when Cursor is activated by another unique surface or
+`[platforms].cursor = true`; `false` disables Cursor checks on both locations.
+Unique Codex surfaces are
 `.codex/config.toml`, `.codex-plugin/plugin.json`, and root
 `AGENTS.override.md`. Root or nested `AGENTS.md` and
-`.agents/skills/*/SKILL.md` are shared surfaces. Discovery skips `.git` and
+`**/.agents/skills/**/SKILL.md` are shared surfaces. Discovery skips `.git` and
 conventional dependency/build directories (`node_modules`, `vendor`, `target`,
 `dist`, and `build`), and respects `[lint].exclude`.
 
