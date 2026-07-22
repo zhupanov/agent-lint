@@ -296,7 +296,7 @@ values — every frontmatter field except the free-prose `description`,
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| S028 | `args-no-hint` | Body uses `$ARGUMENTS` but frontmatter has no `argument-hint` field | Always | error |
+| S028 | `args-no-hint` | Body uses `$ARGUMENTS` but frontmatter has no `argument-hint` field | Always | warn |
 | S029 | `nested-ref-deep` | Referenced shared `.md` itself references other shared `.md` files | Plugin | warn |
 | S030 | `orphaned-skill-files` | Files in skill `scripts/` not referenced from any skill-local `.md` (with name-boundary matching) | Always | error |
 | S031 | `non-https-url` | Non-HTTPS URL (`http://`) found in skill content. XML-namespace/DOCTYPE/`schemaLocation`/`targetNamespace` identifiers and reserved-name hosts (`www.w3.org`, RFC 2606/6761 `*.test`/`*.example`/`*.invalid`/`*.localhost`, `example.com`/`.org`/`.net`, loopback) are opaque identifiers, not fetchable links, and are exempt | All skill surfaces | error |
@@ -305,7 +305,7 @@ values — every frontmatter field except the free-prose `description`,
 | S048 | `ref-name-generic` | Non-descriptive reference file name in skill directory | Always | warn |
 | S054 | `desc-body-misalign` | Skill description keywords not reflected in body | Plugin | warn |
 | S068 | `injection-overflow` | More than 3 dynamic context injections (`!`…``) in skill body | Always | warn |
-| S069 | `hint-no-args` | `argument-hint` set but body never references `$ARGUMENTS` | Always | warn |
+| S069 | `hint-no-args` | `argument-hint` set but body never references `$ARGUMENTS` or a positional `$1`–`$9` | Always | warn |
 
 ## Agent Rules (A)
 

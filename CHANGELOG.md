@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   suggestions, including a targeted quote-the-pattern suggestion when strict
   YAML rejects an unquoted glob (`globs: *.ts`) as an unknown anchor/alias on
   a `globs:` line
+- Aligned S028 (`args-no-hint`) and S069 (`hint-no-args`) with the merged
+  command-argument contract. S028's compiled default is now a warning (still an
+  error under `--pedantic`, suppressible, and per-file overridable) to match its
+  advisory optional-metadata nature and its inverse smell S069. S069 no longer
+  false-positives on positional-argument skills: a body now counts as
+  referencing its arguments when it contains `$ARGUMENTS`/`${ARGUMENTS}`
+  anywhere, or a positional reference `$1`–`$9` / `${1}`–`${9}` on a line
+  outside code fences (`$10` and `$1x` do not count; fenced positional refs such
+  as `awk '{print $1}'` still do not suppress the smell). S028's trigger set is
+  unchanged (`$ARGUMENTS` forms only).
 - Agent discovery is now recursive across `.claude/agents/`, the plugin
   `agents/` default, and manifest-declared `plugin.json` `agents` roots, matching
   Claude Code: agents nested in subdirectories are seen by every agent rule

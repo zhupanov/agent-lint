@@ -1662,12 +1662,39 @@ suppress = ["S014"]
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nUse $ARGUMENTS as input\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+
+        // Normal mode: S028 fires as a warning, not an error.
+        let mut normal = DiagnosticCollector::new();
+        validate_skill_content(&mut normal, &crate::config::ExcludeSet::default());
         assert!(
-            diag.errors()
+            normal
+                .warnings()
                 .iter()
-                .any(|e| e.contains("$ARGUMENTS") && e.contains("argument-hint"))
+                .any(|e| e.contains("body uses $ARGUMENTS")),
+            "S028 should warn in normal mode, got: {:?}",
+            normal.warnings()
+        );
+        assert!(
+            !normal
+                .errors()
+                .iter()
+                .any(|e| e.contains("body uses $ARGUMENTS")),
+            "S028 must not be an error in normal mode, got: {:?}",
+            normal.errors()
+        );
+
+        // Pedantic mode: the same warning is promoted to an error.
+        let mut pedantic_config = crate::config::LintConfig::default();
+        pedantic_config.apply_cli_mode(crate::config::CliMode::Pedantic);
+        let mut pedantic = DiagnosticCollector::with_config(pedantic_config);
+        validate_skill_content(&mut pedantic, &crate::config::ExcludeSet::default());
+        assert!(
+            pedantic
+                .errors()
+                .iter()
+                .any(|e| e.contains("body uses $ARGUMENTS")),
+            "S028 should error under --pedantic, got: {:?}",
+            pedantic.errors()
         );
     }
 
@@ -1682,8 +1709,11 @@ suppress = ["S014"]
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <feature>\n---\nUse $ARGUMENTS as input\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
+        // Hint present and body uses $ARGUMENTS: neither S028 nor S069 fires,
+        // at any severity channel.
+        let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(!diag.warnings().iter().any(|e| e.contains("argument-hint")));
         assert!(!diag.errors().iter().any(|e| e.contains("argument-hint")));
     }
 
@@ -1699,10 +1729,11 @@ suppress = ["S014"]
             "skills/my-skill/SKILL.md",
             "---\nname: my-skill\ndescription: A valid skill description here\n---\nSome body text\n\n```bash\necho $ARGUMENTS\n```\n",
         ).unwrap();
-        let mut diag = DiagnosticCollector::new_all_enabled();
+        let mut diag = DiagnosticCollector::new();
         validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
         assert!(
-            !diag.errors().iter().any(|e| e.contains("argument-hint")),
+            !diag.warnings().iter().any(|e| e.contains("argument-hint"))
+                && !diag.errors().iter().any(|e| e.contains("argument-hint")),
             "$ARGUMENTS inside code fence should not trigger S028"
         );
     }
@@ -7214,6 +7245,109 @@ suppress = ["S055"]
                 .errors()
                 .iter()
                 .any(|e| e.contains("never references $ARGUMENTS"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s069_positional_args_with_hint_ok() {
+        // Evidence-1 fixture from issue #355: a skill that references its
+        // arguments through the positional form ($1/$2) with an argument-hint
+        // set must not fire S069.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <pr-number> [priority]\n---\nReview PR #$1 with priority $2. Fetch it with gh.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("never references $ARGUMENTS")),
+            "positional $1/$2 should suppress S069, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s069_braced_positional_with_hint_ok() {
+        // `${2}` (braced positional) in prose counts as an argument reference.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <first> <second>\n---\nApply ${2} to the target after checking things.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .errors()
+                .iter()
+                .any(|e| e.contains("never references $ARGUMENTS")),
+            "braced positional should suppress S069, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s069_fenced_positional_still_fires() {
+        // A positional ref that appears only inside a code fence (S060's
+        // awk/shell territory) must NOT suppress S069.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <file>\n---\nSome prose here.\n\n```bash\nawk '{print $1}'\n```\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("never references $ARGUMENTS")),
+            "fence-only positional ref should not suppress S069, got: {:?}",
+            diag.errors()
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s069_multidigit_and_identifier_still_fire() {
+        // `$10` (argument-10-shaped) and `$1x` (identifier-shaped) are not
+        // positional references, so S069 still fires when they are the only
+        // `$1`-looking tokens present.
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: A valid skill description here\nargument-hint: <file>\n---\nSpend $10 then set $1x somewhere.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.errors()
+                .iter()
+                .any(|e| e.contains("never references $ARGUMENTS")),
+            "$10/$1x must not suppress S069, got: {:?}",
+            diag.errors()
         );
     }
 
