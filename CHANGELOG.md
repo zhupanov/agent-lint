@@ -187,8 +187,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (`name-invalid-chars`) remains the single diagnostic for angle brackets and
   other invalid name characters. S013 no longer participates in `--autofix`.
 - Narrowed S033 (`name-vague`) to exact domainless implementation labels
-  (`helper`, `helpers`, `utils`, `utility`, `tools`) for published plugin
-  skills, with a domain/task-focused message and suggestion
+  (`helper`, `helpers`, `util`, `utilities`, `utility`, `utils`, `tool`,
+  `tools`) for published plugin skills, with a domain/task-focused message
+  and suggestion; S033 diagnostics now carry the same name-field location
+  and canonical-name evidence as S009-S011
 - Stopped flagging broad subject nouns (`data`, `files`, `documents`) and
   compounds that contain otherwise generic tokens under S033
 - **BREAKING**: Renamed rule G005 from `security-md-missing` to

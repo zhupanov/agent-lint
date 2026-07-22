@@ -13,11 +13,14 @@ pub(super) const MAX_SKILL_NAME_LEN: usize = 64;
 /// Matching remains exact-name only; compounds such as `pdf-helper` are not
 /// flagged.
 pub(super) const VAGUE_SKILL_NAMES: &[&str] = &[
-    "helper",  // pure role label with no domain or task
-    "helpers", // plural of the same domainless role label
-    "utils",   // implementation bucket, not a skill subject
-    "utility", // singular form of the same implementation bucket
-    "tools",   // domainless toolkit label
+    "helper",    // pure role label with no domain or task
+    "helpers",   // plural of the same domainless role label
+    "util",      // abbreviated form of the same implementation bucket
+    "utilities", // plural form of the same implementation bucket
+    "utility",   // singular form of the same implementation bucket
+    "utils",     // implementation bucket, not a skill subject
+    "tool",      // singular form of the same domainless toolkit label
+    "tools",     // domainless toolkit label
 ];
 
 pub(super) fn check_name_format(
@@ -37,13 +40,16 @@ pub(super) fn check_name_format(
     // S033: vague name (plugin-only). S049 (`name-not-gerund`) is retired and
     // never emits; the registry entry remains only for config compatibility.
     if plugin_mode && VAGUE_SKILL_NAMES.contains(&name.as_str()) {
+        let location = name_field_location(&info.fm_lines);
         diag.report_with(
             LintRule::NameVague,
             &format!(
                 "{}: name '{}' is domainless; add the missing domain or task (e.g. 'pdf-helper' or 'lint-utils', not 'helper')",
                 info.path, name
             ),
-            DiagnosticMetadata::default().with_suggestion(
+            name_metadata(
+                location,
+                &name,
                 "Add the missing domain or task to the exact skill name (for example 'pdf-helper' or 'lint-utils'), rather than renaming for morphology alone.",
             ),
         );
@@ -120,22 +126,20 @@ fn name_metadata(location: Option<SourceSpan>, name: &str, suggestion: &str) -> 
 /// line two. YAML permits forms without a simple `name:` line; those retain
 /// the canonical value but intentionally have no fabricated coordinate.
 fn name_field_location(fm_lines: &[String]) -> Option<SourceSpan> {
-    fm_lines
-        .iter()
-        .position(|line| line.starts_with("name:"))
-        .map(|index| SourceSpan::line(index + 2))
+    frontmatter::simple_top_level_key_line(fm_lines, "name").map(SourceSpan::line)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::DiagnosticCollector;
+    use crate::diagnostic::{DiagnosticCollector, Severity, SourceSpan};
     use crate::markdown::MarkdownDocument;
     use crate::validators::skills::SkillInfo;
+    use std::path::Path;
 
-    fn skill_with_name(name: &str) -> SkillInfo {
+    fn skill_with_frontmatter(dir_name: &str, name_line: &str) -> SkillInfo {
         let content = format!(
-            "---\nname: {name}\ndescription: Use when testing skill name validation thoroughly\n---\nBody\n"
+            "---\n{name_line}\ndescription: Use when testing skill name validation thoroughly\n---\nBody\n"
         );
         let document = MarkdownDocument::parse(content);
         let fm_lines = document
@@ -144,8 +148,8 @@ mod tests {
             .to_vec();
         let parsed_frontmatter = crate::frontmatter::parse_yaml_strict(&fm_lines).ok();
         SkillInfo {
-            path: format!("skills/{name}/SKILL.md"),
-            dir_name: name.to_string(),
+            path: format!("skills/{dir_name}/SKILL.md"),
+            dir_name: dir_name.to_string(),
             fm_lines,
             parsed_frontmatter,
             body: document.body().to_string(),
@@ -154,10 +158,16 @@ mod tests {
         }
     }
 
+    fn skill_with_name(name: &str) -> SkillInfo {
+        skill_with_frontmatter(name, &format!("name: {name}"))
+    }
+
     fn name_vague_diagnostics(name: &str, plugin_mode: bool) -> Vec<crate::diagnostic::Diagnostic> {
         let info = skill_with_name(name);
         let mut diag = DiagnosticCollector::new_all_enabled();
-        check_name_format(&info, plugin_mode, &mut diag);
+        diag.with_subject_path(&info.path, |diag| {
+            check_name_format(&info, plugin_mode, diag);
+        });
         diag.diagnostics()
             .iter()
             .filter(|d| d.rule == LintRule::NameVague)
@@ -167,6 +177,11 @@ mod tests {
 
     #[test]
     fn s033_flags_every_retained_denylist_entry() {
+        assert_eq!(
+            VAGUE_SKILL_NAMES.len(),
+            8,
+            "S033 denylist must retain exactly eight domainless labels"
+        );
         for name in VAGUE_SKILL_NAMES {
             let found = name_vague_diagnostics(name, true);
             assert_eq!(
@@ -207,6 +222,9 @@ mod tests {
             "data-tools",
             "helper-scripts",
             "document-tools",
+            "tool-belt",
+            "util-scripts",
+            "report-utilities",
         ] {
             assert!(
                 name_vague_diagnostics(name, true).is_empty(),
@@ -223,6 +241,82 @@ mod tests {
                 "S033 is plugin-only; private mode must not flag '{name}'"
             );
         }
+    }
+
+    #[test]
+    fn s033_ordinary_name_carries_location_evidence_and_suggestion() {
+        let info = skill_with_name("helper");
+        let mut diag = DiagnosticCollector::new();
+        diag.with_subject_path(&info.path, |diag| {
+            check_name_format(&info, true, diag);
+        });
+        let finding = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::NameVague)
+            .expect("S033 diagnostic");
+        assert_eq!(finding.rule.code(), "S033");
+        assert_eq!(finding.rule.name(), "name-vague");
+        assert_eq!(finding.severity, Severity::Warning);
+        assert_eq!(
+            finding.subject_path.as_deref(),
+            Some(Path::new("skills/helper/SKILL.md"))
+        );
+        assert_eq!(finding.location, Some(SourceSpan::line(2)));
+        assert_eq!(finding.evidence.as_deref(), Some("helper"));
+        assert_eq!(
+            finding.suggestion.as_deref(),
+            Some(
+                "Add the missing domain or task to the exact skill name (for example 'pdf-helper' or 'lint-utils'), rather than renaming for morphology alone."
+            )
+        );
+    }
+
+    #[test]
+    fn s033_evidence_is_decoded_scalar_for_quoted_and_commented_yaml() {
+        for (dir_name, name_line, evidence) in [
+            (
+                "quoted-helper",
+                "name: \"helper\" # trailing comment is not the scalar",
+                "helper",
+            ),
+            (
+                "escaped-util",
+                "name: \"util\\x69ties\" # YAML escape decodes to utilities",
+                "utilities",
+            ),
+        ] {
+            let info = skill_with_frontmatter(dir_name, name_line);
+            let mut diag = DiagnosticCollector::new();
+            diag.with_subject_path(&info.path, |diag| {
+                check_name_format(&info, true, diag);
+            });
+            let finding = diag
+                .diagnostics()
+                .iter()
+                .find(|d| d.rule == LintRule::NameVague)
+                .unwrap_or_else(|| panic!("expected S033 for {name_line}"));
+            assert_eq!(finding.evidence.as_deref(), Some(evidence), "{name_line}");
+            assert_eq!(finding.location, Some(SourceSpan::line(2)), "{name_line}");
+        }
+    }
+
+    #[test]
+    fn s033_keeps_null_location_for_unsupported_key_presentation() {
+        // Quoted mapping keys are valid YAML but not a simple `name:` line, so
+        // the shared helper cannot prove a coordinate (same policy as S009-S011).
+        let info = skill_with_frontmatter("quoted-key", "\"name\": tool");
+        let mut diag = DiagnosticCollector::new();
+        diag.with_subject_path(&info.path, |diag| {
+            check_name_format(&info, true, diag);
+        });
+        let finding = diag
+            .diagnostics()
+            .iter()
+            .find(|d| d.rule == LintRule::NameVague)
+            .expect("S033 still fires for decoded name");
+        assert_eq!(finding.evidence.as_deref(), Some("tool"));
+        assert_eq!(finding.location, None);
     }
 
     #[test]
