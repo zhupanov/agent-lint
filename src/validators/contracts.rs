@@ -19,7 +19,7 @@ use crate::rules::LintRule;
 use crate::script_paths::{ScriptKind, script_kind};
 use crate::script_paths::{ScriptReference, ScriptReferenceBase, extract_script_token_references};
 use crate::traversal;
-use crate::validators::common::{classify_inline_code_path, tokenize_tool_scalar};
+use crate::validators::common::{classify_inline_code_path, tokenize_tool_field};
 use crate::validators::shell;
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
@@ -104,33 +104,15 @@ fn read_text(path: &Path, exclude: &ExcludeSet) -> Option<String> {
     fs::read_to_string(path).ok()
 }
 
-/// Line-oriented `allowed-tools` reader for the S058 Skill gate. Scalar values
-/// are split by the shared tool tokenizer in `validators::common`; YAML list
-/// items are already individual entries.
-fn frontmatter_tools(content: &str, key: &str) -> Option<Vec<String>> {
+/// Read S058's gate from the canonical YAML value. Invalid and non-mapping
+/// frontmatter intentionally yields no value: X001/S004 own those states.
+/// The shared tokenizer keeps this gate's accepted grammar aligned with S040,
+/// S067, and the other tool-field consumers.
+fn canonical_tool_field(content: &str, key: &str) -> Option<Vec<String>> {
     let lines = frontmatter::extract_frontmatter(content)?;
-    let prefix = format!("{key}:");
-    for (index, line) in lines.iter().enumerate() {
-        let Some(value) = line.strip_prefix(&prefix) else {
-            continue;
-        };
-        let value = value.split(" #").next().unwrap_or(value).trim();
-        if !value.is_empty() {
-            let value = value.trim_matches(|ch| matches!(ch, '[' | ']' | '\'' | '"'));
-            return Some(tokenize_tool_scalar(value));
-        }
-        let mut tools = Vec::new();
-        for child in &lines[index + 1..] {
-            if !child.starts_with([' ', '\t']) {
-                break;
-            }
-            if let Some(item) = child.trim().strip_prefix("- ") {
-                tools.push(item.trim_matches(['\'', '"']).to_string());
-            }
-        }
-        return Some(tools);
-    }
-    None
+    let yaml = frontmatter::parse_yaml_strict(&lines).ok()?;
+    let value = yaml.as_mapping()?.get(key)?;
+    Some(tokenize_tool_field(value))
 }
 
 fn tool_base_name(tool: &str) -> &str {
@@ -203,7 +185,7 @@ fn validate_skill_contracts_paths(
             continue;
         };
         let document = MarkdownDocument::parse(&content);
-        if frontmatter_tools(&content, "allowed-tools")
+        if canonical_tool_field(&content, "allowed-tools")
             .is_some_and(|tools| tools.iter().any(|tool| tool_base_name(tool) == "Skill"))
         {
             if !document
@@ -2668,8 +2650,10 @@ mod tests {
         for allowed_tools in [
             "allowed-tools: Skill Bash",
             "allowed-tools: Skill(child), Bash",
-            "allowed-tools: [Skill, Bash]",
-            "allowed-tools:\n  - Skill\n  - Bash",
+            "allowed-tools: [\"Skill\", \"Bash\"] # canonical flow list",
+            "allowed-tools:\n  - \"Skill\" # delegation is permitted\n  - Bash",
+            "allowed-tools: >-\n  Skill Bash",
+            "allowed-tools: |-\n  Skill Bash",
         ] {
             assert_eq!(
                 run_case(allowed_tools, "Describe the child workflow."),
@@ -2716,12 +2700,32 @@ mod tests {
             );
         }
 
-        for allowed_tools in ["allowed-tools: Read, Write", "allowed-tools: SkillFoo"] {
+        for allowed_tools in [
+            "allowed-tools: Read, Write",
+            "allowed-tools: SkillFoo",
+            "allowed-tools: { tool: Skill }",
+            "allowed-tools: Skill\nbad: [unclosed",
+        ] {
             assert!(
                 run_case(allowed_tools, "INVOKE `/child` directly.").is_empty(),
                 "{allowed_tools} must leave the S058 gate closed"
             );
         }
+
+        fs::write(
+            ".claude/skills/demo/SKILL.md",
+            "---\n- allowed-tools: Skill\n---\nINVOKE `/child` directly.\n",
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_contracts(&mut diag, &ExcludeSet::default(), false);
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::SkillInvokeMissing),
+            "non-mapping frontmatter must leave the S058 gate closed"
+        );
 
         for body in [
             "Use the Skill tool to invoke the child.\n> INVOKE `/child` directly.",

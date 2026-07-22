@@ -3,14 +3,28 @@
   "repository": "s058-skill-invoke-broken",
   "covers": ["s058-skill-invoke"],
   "invocation": {
-    "mode": "basic",
+    "mode": "plugin",
     "arguments": ["--format", "json", "--only", "S058", "."]
   },
   "expected_exit_code": 1,
   "expected_status": "errors",
-  "expected_active_platforms": ["claude"],
+  "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
+    {
+      "code": "S058",
+      "name": "skill-invoke-missing",
+      "severity": "error",
+      "subject_path": ".claude/skills/ambiguous/SKILL.md",
+      "suggestion": "add an operative Skill-tool invocation step"
+    },
+    {
+      "code": "S058",
+      "name": "skill-invoke-missing",
+      "severity": "error",
+      "subject_path": ".claude/skills/ambiguous/SKILL.md",
+      "suggestion": "name the Skill tool on this line"
+    },
     {
       "code": "S058",
       "name": "skill-invoke-missing",
@@ -22,8 +36,8 @@
       "code": "S058",
       "name": "skill-invoke-missing",
       "severity": "error",
-      "subject_path": ".claude/skills/demo/SKILL.md",
-      "suggestion": "name the Skill tool on this line"
+      "subject_path": "skills/commented/SKILL.md",
+      "suggestion": "add an operative Skill-tool invocation step"
     }
   ],
   "allowed_additional_diagnostics": []
