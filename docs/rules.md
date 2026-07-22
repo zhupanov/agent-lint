@@ -1129,6 +1129,33 @@ and legacy `sse` remains supported but deprecated. A Claude entry that has a
 `url` member but no `type` is a documented configuration error owned by P027
 (Claude Code skips that server); P009 remains for url-less stdio entries.
 
+P010 accepts two additional documented Claude URL states on the standalone,
+inline-plugin, and plugin-referenced adapters (Cursor URL ownership is
+unchanged). An explicit exact empty `url` on a selected remote transport is
+the disabled/not-configured connector placeholder documented since Claude Code
+v2.1.208: it receives neither P010 nor P017, while P012 still applies to a
+selected `sse` type. A missing `url`, a whitespace-only or otherwise malformed
+string, and a null or non-string value remain P010. Documented `${VAR}` and
+`${VAR:-default}` expansion is recognized in `url` before concrete URL
+parsing: a template is valid when a leading reference supplies the URL or base
+URL (`${MCP_URL}`, `${BASE}/path`, `${API_BASE_URL:-https://api.example.com}/mcp`)
+or when a transport-appropriate literal scheme prefix is followed by tokens in
+later URL components (`https://${HOST}/mcp`, `wss://${HOST}/socket`).
+Templates are judged only on facts decidable from the source text, without
+reading environment values: `${NAME:-DEFAULT}` tokens are checked with their
+defaults substituted (`${BASE:-ftp://x}/mcp` stays P010 for HTTP), stray or
+unclosed `${` fragments never make an unparseable value valid, and junk
+literal prefixes or transport-inappropriate literal schemes (`ftp://${HOST}`
+for HTTP, `https://${HOST}` for `ws`) remain P010. P017 applies to a template
+only when its insecure scheme and non-local authority are both decidable from
+the source: a concrete non-local `http://` host with only path or query tokens
+(`http://remote.example/${PATH}`) or a decidable default
+(`http://${HOST:-remote.example}/x`) still errors, while a reference-supplied
+host or base is locality-unknown and is never speculatively flagged. Empty
+placeholder and expansion semantics follow the
+[Claude MCP documentation](https://code.claude.com/docs/en/mcp) (retrieved
+2026-07-22).
+
 P027 owns MCP document and entry shape failures. Standalone Claude and Cursor
 MCP documents require a top-level object-valued `mcpServers`. An inline plugin
 manifest may omit `mcpServers`; a present value must be an object, a string
@@ -1196,10 +1223,10 @@ P026 reserved names follow Claude Code's documented built-in server list
 |------|------|-------------|------|---------|
 | P001 | `mcp-json-invalid` | MCP configuration is not valid JSON | Always | error |
 | P009 | `mcp-stdio-command` | `stdio` server (including omitted type) has no non-empty `command` | Always | error |
-| P010 | `mcp-http-url` | Remote server has no syntactically valid URL for its selected transport (`http`/`streamable-http`/`sse`: `http(s)`; `ws`: `ws(s)`) | Always | error |
+| P010 | `mcp-http-url` | Remote server has no syntactically valid URL for its selected transport (`http`/`streamable-http`/`sse`: `http(s)`; `ws`: `ws(s)`); an exact empty `url` (disabled placeholder) and documented Claude `${VAR}` / `${VAR:-default}` URL templates are valid | Always | error |
 | P011 | `mcp-type-invalid` | Server `type` is not `stdio`, `http`, `streamable-http`, `sse`, or `ws` | Always | error |
 | P012 | `mcp-sse-deprecated` | `sse` transport is deprecated; use Streamable HTTP | Always | warn |
-| P017 | `mcp-insecure-url` | Non-local `http://` or `ws://` server URL is insecure (use `https://` or `wss://`). `localhost` and `*.localhost` (RFC 6761) are local | Always | error |
+| P017 | `mcp-insecure-url` | Non-local `http://` or `ws://` server URL is insecure (use `https://` or `wss://`). `localhost` and `*.localhost` (RFC 6761) are local; a Claude URL template is flagged only when scheme and authority are decidable from its source text | Always | error |
 | P018 | `mcp-env-secret` | Secret-like MCP credential field contains a literal plaintext value | Always | warn |
 | P019 | `mcp-command-dangerous` | Server command contains a dangerous shell pattern | Always | warn |
 | P022 | `mcp-args-invalid` | `args` is not an array of strings | Always | error |

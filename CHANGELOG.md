@@ -40,6 +40,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   plugin-entry `name` that is not kebab-case; the claude.ai marketplace sync
   rejects other forms.
 
+### Fixed
+
+- P010 (`mcp-http-url`) no longer rejects two documented Claude remote URL
+  states on the standalone, inline-plugin, and plugin-referenced adapters: an
+  explicit exact empty `url` (the documented disabled/not-configured connector
+  placeholder since Claude Code v2.1.208, which now receives neither P010 nor
+  P017 while P012 still applies to `sse`) and documented `${VAR}` /
+  `${VAR:-default}` URL templates such as
+  `${API_BASE_URL:-https://api.example.com}/mcp`. Templates are judged only on
+  facts decidable from the source text — defaults are substituted, malformed
+  `${` fragments get no template rescue, and transport-inappropriate literal
+  schemes remain P010. P017 (`mcp-insecure-url`) now fires on a URL template
+  only when its insecure scheme and non-local authority are decidable from the
+  source; a reference-supplied host or base is locality-unknown and is no
+  longer speculatively flagged. Cursor URL ownership is unchanged.
+
 ### Changed
 
 - M001 no longer fires for marketplace-only repositories (a repo with

@@ -1,0 +1,21 @@
+{
+  "class": "broken",
+  "repository": "mcp-url-template-broken",
+  "covers": ["mcp", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--autofix", "--only", "P010,P017", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "P010", "name": "mcp-http-url", "severity": "error", "subject_path": ".mcp.json", "suggestion": "use a valid URL with http:// or https://", "location": { "line": 3 } },
+    { "code": "P010", "name": "mcp-http-url", "severity": "error", "subject_path": ".mcp.json", "suggestion": "use a valid URL with http:// or https://", "location": { "line": 5 } },
+    { "code": "P010", "name": "mcp-http-url", "severity": "error", "subject_path": ".mcp.json", "suggestion": "use a valid URL with http:// or https://", "location": { "line": 4 } },
+    { "code": "P010", "name": "mcp-http-url", "severity": "error", "subject_path": ".mcp.json", "suggestion": "use a valid URL with ws:// or wss://", "location": { "line": 6 } },
+    { "code": "P017", "name": "mcp-insecure-url", "severity": "error", "subject_path": ".mcp.json", "suggestion": "use a https:// URL for this non-local server", "location": { "line": 7 } }
+  ],
+  "allowed_additional_diagnostics": [],
+  "post_fix": [
+    { "path": ".mcp.json", "contents": "{\n  \"mcpServers\": {\n    \"bad-default\": { \"type\": \"http\", \"url\": \"${BASE:-ftp://x}/mcp\" },\n    \"unclosed\": { \"type\": \"http\", \"url\": \"${MCP_URL\" },\n    \"junk-prefix\": { \"type\": \"http\", \"url\": \"junk${HOST}/mcp\" },\n    \"wrong-ws\": { \"type\": \"ws\", \"url\": \"https://${HOST}/socket\" },\n    \"insecure-default\": { \"type\": \"http\", \"url\": \"http://${HOST:-remote.example}/x\" }\n  }\n}\n" }
+  ]
+}

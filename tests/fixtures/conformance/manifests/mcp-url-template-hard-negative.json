@@ -1,0 +1,12 @@
+{
+  "class": "hard-negative",
+  "repository": "mcp-url-template-hard-negative",
+  "covers": ["mcp", "all", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--all", "--only", "P010,P017", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "clean",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [],
+  "allowed_additional_diagnostics": []
+}
