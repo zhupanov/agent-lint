@@ -1036,7 +1036,7 @@ fn extract_import_directives(source: &Path, content: &str) -> Vec<ImportDirectiv
                 || document.links().iter().any(|link| {
                     (link.line..=link.end_line).contains(&line.line)
                         && (line.line != link.line || index + 1 >= link.start_column)
-                        && (line.line != link.end_line || index + 1 <= link.end_column)
+                        && (line.line != link.end_line || index < link.end_column)
                 })
             {
                 index += 1;
