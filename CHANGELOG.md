@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- M021 (`marketplace-name-format`) now matches the raw, untrimmed marketplace
+  and plugin entry `name`, so a value that is kebab-case only after trimming
+  (for example `" my-market "`) is flagged instead of silently passing the
+  claude.ai marketplace sync contract; both messages quote the raw value.
+  Blank/non-string ownership (M007/M009) and M009 duplicate-name keying keep
+  their existing trimmed semantics
 - Narrowed D003/G006/G007 unfinished-work detection to a shared syntactic
   marker grammar (`TODO:` / `FIXME(owner):` / comment and unchecked-task
   forms) with Markdown context exclusions, structured span/evidence/suggestion

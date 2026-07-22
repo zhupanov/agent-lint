@@ -208,14 +208,14 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             LintRule::MarketplaceFieldMissing,
             &format!("{f} missing required field: name"),
         );
-    } else {
-        let trimmed = mp_name.trim();
-        if !trimmed.is_empty() && !RE_MARKETPLACE_KEBAB.is_match(trimmed) {
-            diag.report(
-                LintRule::MarketplaceNameFormat,
-                &format!("{f} name '{mp_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
-            );
-        }
+    } else if !RE_MARKETPLACE_KEBAB.is_match(mp_name) {
+        // Match the raw, untrimmed value: a name that is kebab-case only after
+        // trimming (e.g. " my-market ") is still rejected by the claude.ai
+        // marketplace sync, so an edge-padded name must not pass silently.
+        diag.report(
+            LintRule::MarketplaceNameFormat,
+            &format!("{f} name '{mp_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"),
+        );
     }
     if mp_owner.trim().is_empty() {
         diag.report(
@@ -258,19 +258,19 @@ pub fn validate_marketplace_json(ctx: &LintContext, diag: &mut DiagnosticCollect
             let mut name_indexes: HashMap<String, Vec<usize>> = HashMap::new();
 
             for (i, plugin) in arr.iter().enumerate() {
-                let pname = plugin
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
+                let raw_name = plugin.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                // Blank detection and duplicate-name keying stay trimmed (M007/M009
+                // ownership is unchanged); only the M021 kebab check reads the raw
+                // value so an edge-padded name is caught and shown.
+                let pname = raw_name.trim();
                 let name_missing = pname.is_empty();
                 if !name_missing {
                     name_indexes.entry(pname.to_string()).or_default().push(i);
-                    if !RE_MARKETPLACE_KEBAB.is_match(pname) {
+                    if !RE_MARKETPLACE_KEBAB.is_match(raw_name) {
                         diag.report(
                             LintRule::MarketplaceNameFormat,
                             &format!(
-                                "{f} plugins[{i}] name '{pname}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"
+                                "{f} plugins[{i}] name '{raw_name}' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)"
                             ),
                         );
                     }
@@ -1081,38 +1081,98 @@ mod tests {
 
     #[test]
     fn test_v2_name_format_warnings() {
-        let cases: &[(&str, serde_json::Value, bool)] = &[
+        // Each case lists the exact M021 messages expected in report order, so
+        // both the fire/clean decision and the raw-value interpolation are pinned.
+        let cases: &[(&str, serde_json::Value, &[&str])] = &[
             (
                 "top_ok",
                 json!({"name": "a", "owner": {"name": "o"}, "plugins": [{"name": "a-b2", "source": "./p"}]}),
-                false,
+                &[],
+            ),
+            (
+                "clean_hyphenated_and_single_char",
+                json!({"name": "my-plugin", "owner": {"name": "o"}, "plugins": [{"name": "a", "source": "./p"}]}),
+                &[],
             ),
             (
                 "top_bad",
                 json!({"name": "My_Plugin", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
-                true,
+                &[
+                    ".claude-plugin/marketplace.json name 'My_Plugin' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)",
+                ],
             ),
             (
                 "entry_upper",
                 json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "UPPER", "source": "./p"}]}),
-                true,
+                &[
+                    ".claude-plugin/marketplace.json plugins[0] name 'UPPER' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)",
+                ],
             ),
             (
                 "entry_double_hyphen",
                 json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "a--b", "source": "./p"}]}),
-                true,
+                &[
+                    ".claude-plugin/marketplace.json plugins[0] name 'a--b' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)",
+                ],
+            ),
+            (
+                "top_padded",
+                json!({"name": " my-market ", "owner": {"name": "o"}, "plugins": [{"name": "p", "source": "./p"}]}),
+                &[
+                    ".claude-plugin/marketplace.json name ' my-market ' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)",
+                ],
+            ),
+            (
+                "entry_padded",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": " my-plugin ", "source": "./p"}]}),
+                &[
+                    ".claude-plugin/marketplace.json plugins[0] name ' my-plugin ' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)",
+                ],
+            ),
+            (
+                "entry_internal_space",
+                json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "my plugin", "source": "./p"}]}),
+                &[
+                    ".claude-plugin/marketplace.json plugins[0] name 'my plugin' is not kebab-case ([a-z0-9]+(-[a-z0-9]+)*)",
+                ],
             ),
         ];
-        for (label, val, expect_warn) in cases {
+        for (label, val, expected_messages) in cases {
             let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val.clone()));
             let mut diag = DiagnosticCollector::new_all_enabled();
             validate_marketplace_json(&ctx, &mut diag);
-            let has = diag
+            let messages: Vec<&str> = diag
                 .diagnostics()
                 .iter()
-                .any(|d| d.rule == LintRule::MarketplaceNameFormat);
-            assert_eq!(has, *expect_warn, "{label}");
+                .filter(|d| d.rule == LintRule::MarketplaceNameFormat)
+                .map(|d| d.message.as_str())
+                .collect();
+            assert_eq!(messages, *expected_messages, "{label}");
         }
+    }
+
+    #[test]
+    fn test_v2_whitespace_only_entry_name_is_m009_only_not_m021() {
+        // A whitespace-only entry name is a blank/usability defect owned by M009;
+        // M021 must not also fire on it (the raw value never reaches the kebab
+        // check because the trimmed form is empty).
+        let val = json!({"name": "mp", "owner": {"name": "o"}, "plugins": [{"name": "   ", "source": "./p"}]});
+        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_marketplace_json(&ctx, &mut diag);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::MarketplacePluginInvalid),
+            "whitespace-only entry name must report M009"
+        );
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|d| d.rule == LintRule::MarketplaceNameFormat),
+            "whitespace-only entry name must not report M021"
+        );
     }
 
     // V12: validate_marketplace_enriched
