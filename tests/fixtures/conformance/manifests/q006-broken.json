@@ -8,6 +8,7 @@
   "expected_active_platforms": ["claude"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
+    { "code": "Q006", "name": "prompt-output-conflict", "severity": "warning", "subject_path": "nested/AGENTS.md" },
     { "code": "Q006", "name": "prompt-output-conflict", "severity": "warning", "subject_path": "nested/AGENTS.md" }
   ],
   "allowed_additional_diagnostics": []

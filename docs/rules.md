@@ -461,10 +461,13 @@ do not inherit each other's incompatible constraints, so explicitly delineated
 response modes and artifacts stay clean while an ordinary subsection cannot hide
 a same-response conflict. It never counts raw format keywords: mere multi-format
 mention, conditional routing, either/or alternatives, input-format mentions, and
-examples stay clean. The diagnostic exposes both conflicting constraints — each
-with its line and column — as structured evidence and suggests clarification
-without choosing between them; it has no autofix. Typed frontmatter
-output-contract conflicts are intentionally out of scope for the first version.
+examples stay clean. Ordinary hard-wrapped prose is evaluated as joined sentences
+(same contiguous-scope model as Q005) while retaining source locations, so a
+leading conditional guard still applies when the directive continues on the next
+line. The diagnostic exposes both conflicting constraints — each with its line
+and column — as structured evidence and suggests clarification without choosing
+between them; it has no autofix. Typed frontmatter output-contract conflicts are
+intentionally out of scope for the first version.
 
 ## Claude Configuration Rules (R/O/T)
 
