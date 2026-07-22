@@ -550,7 +550,7 @@ blank boundary. Its imperative form begins with a documented directive verb:
 `acknowledge`, `add`, `answer`, `apply`, `ask`, `build`, `call`, `check`,
 `clarify`, `commit`, `communicate`, `confirm`, `correct`, `create`, `describe`,
 `document`, `edit`, `ensure`, `explain`, `fix`, `follow`, `give`, `include`,
-`keep`, `list`, `make`, `offer`, `prefer`, `provide`, `record`, `report`,
+`keep`, `list`, `make`, `offer`, `prefer`, `preserve`, `provide`, `record`, `report`,
 `respond`, `return`, `review`, `run`, `save`, `serialize`, `set`, `state`,
 `summarize`, `tell`, `update`, `use`, `verify`, or `write`; current-agent
 modal and allowed setup-clause forms remain operative.

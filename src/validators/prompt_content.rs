@@ -390,6 +390,7 @@ const Q002_IMPERATIVE_VERBS: &[&str] = &[
     "make",
     "offer",
     "prefer",
+    "preserve",
     "provide",
     "record",
     "report",
@@ -4095,6 +4096,7 @@ Markdown.
         for repaired in [
             "Never apologize. Serialize responses as JSON instead.",
             "Never apologize. When responding, serialize responses as JSON instead.",
+            "Never apologize. Preserve the classifier result instead.",
         ] {
             assert!(
                 q002_diagnostics(repaired).is_empty(),
