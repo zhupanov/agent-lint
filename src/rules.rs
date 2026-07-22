@@ -872,7 +872,7 @@ pub enum LintRule {
     /// D003: TODO/FIXME/HACK/XXX marker in CLAUDE.md
     #[strum(props(code = "D003", name = "todo-in-docs"))]
     TodoInDocs,
-    /// D004: CLAUDE.md import closure exceeds configured budget
+    /// D004: repository-local CLAUDE.md import closure exceeds configured budget
     #[strum(props(code = "D004", name = "claude-import-large"))]
     ClaudeImportLarge,
     /// D005: inline-code repository path does not exist
@@ -924,16 +924,16 @@ pub enum LintRule {
     McpStructureInvalid,
 
     // ── Link/import integrity (L) ────────────────────────────────
-    /// L001: @import target markdown file does not exist
+    /// L001: repository-relative @import target is missing or unreadable
     #[strum(props(code = "L001", name = "import-path-missing"))]
     ImportPathMissing,
-    /// L002: circular @import chain detected
+    /// L002: circular repository-local @import chain detected
     #[strum(props(code = "L002", name = "circular-import"))]
     CircularImport,
-    /// L003: @import chain depth exceeds 5 hops
+    /// L003: repository-local @import chain depth exceeds 5 hops
     #[strum(props(code = "L003", name = "import-depth-exceeded"))]
     ImportDepthExceeded,
-    /// L004: duplicate @import of the same file
+    /// L004: duplicate normalized direct @import edge
     #[strum(props(code = "L004", name = "duplicate-import"))]
     DuplicateImport,
     /// L005: broken relative markdown link target

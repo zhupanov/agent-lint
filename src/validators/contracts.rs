@@ -15,7 +15,7 @@ use crate::validators::common::{
     classify_inline_code_path, is_unsafe_inline_code_path_probe, normalize_inline_code_path_probe,
 };
 use regex::Regex;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
@@ -29,8 +29,6 @@ static SKILL_INVOKE: LazyLock<Regex> = LazyLock::new(|| {
 static FLAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|\s)--([A-Za-z0-9][A-Za-z0-9_-]*)\b").unwrap());
 static AWK_FIELD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\$[0-9]+").unwrap());
-static IMPORT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|\s)@([A-Za-z0-9._/-]+\.md)\b").unwrap());
 static HEREDOC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r#"<<-?\s*(?:'([A-Za-z_][A-Za-z0-9_]*)'|\"([A-Za-z_][A-Za-z0-9_]*)\"|([A-Za-z_][A-Za-z0-9_]*))"#,
@@ -124,10 +122,11 @@ pub fn validate_contracts(
     validate_skill_contracts(diag, exclude, include_public);
     validate_reference_consecutive_bash(diag, exclude, include_public);
     validate_script_contracts(diag, exclude, include_public);
-    validate_claude_import_budget(diag, exclude);
+    let import_graph = InstructionImportGraph::build(&diag.config().instruction_files, exclude);
+    validate_claude_import_budget(&import_graph, diag);
     validate_prompt_source_budgets(diag);
     validate_inline_paths(diag, exclude);
-    validate_import_graph(diag, exclude);
+    validate_import_graph(&import_graph, diag);
     validate_markdown_links(diag, exclude);
     super::npm_scripts::validate_npm_scripts(diag, exclude);
 }
@@ -860,63 +859,307 @@ fn validate_prompt_source_budgets(diag: &mut DiagnosticCollector) {
     }
 }
 
-fn validate_claude_import_budget(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
+/// A source-positioned `@path` directive. `target == None` means that the
+/// directive is intentionally external (home, absolute, or root-escaping).
+#[derive(Debug, Clone)]
+struct ImportDirective {
+    target: Option<PathBuf>,
+    span: SourceSpan,
+}
+
+#[derive(Debug)]
+struct ImportNode {
+    content: String,
+    directives: Vec<ImportDirective>,
+}
+
+/// Shared, repository-local instruction import graph used by D004 and L001--L004.
+/// It deliberately owns parsing, safe resolution, and exclusion boundaries so
+/// the two rule families cannot drift.
+#[derive(Debug)]
+struct InstructionImportGraph {
+    roots: Vec<PathBuf>,
+    nodes: BTreeMap<PathBuf, ImportNode>,
+    opaque_targets: BTreeSet<PathBuf>,
+}
+
+impl InstructionImportGraph {
+    fn build(instruction_files: &[String], exclude: &ExcludeSet) -> Self {
+        let mut roots = BTreeSet::new();
+        for raw in instruction_files {
+            let Some(path) = normalize_repo_relative(Path::new(raw)) else {
+                continue;
+            };
+            if !exclude.is_excluded(&path.to_string_lossy()) && safe_read_repo_file(&path).is_some()
+            {
+                roots.insert(path);
+            }
+        }
+        let roots: Vec<_> = roots.into_iter().collect();
+        let mut graph = Self {
+            roots: roots.clone(),
+            nodes: BTreeMap::new(),
+            opaque_targets: BTreeSet::new(),
+        };
+        let mut pending = VecDeque::new();
+        for root in roots {
+            pending.push_back(root);
+        }
+        while let Some(source) = pending.pop_front() {
+            if graph.nodes.contains_key(&source) {
+                continue;
+            }
+            let Some(content) = safe_read_repo_file(&source) else {
+                continue;
+            };
+            let directives = extract_import_directives(&source, &content);
+            let node = ImportNode {
+                content,
+                directives,
+            };
+            for directive in &node.directives {
+                let Some(target) = &directive.target else {
+                    continue;
+                };
+                // An excluded target is an opaque existing boundary. Do not
+                // parse or measure it, but retain its lexical identity for L001.
+                if exclude.is_excluded(&target.to_string_lossy()) {
+                    graph.opaque_targets.insert(target.clone());
+                    continue;
+                }
+                if safe_read_repo_file(target).is_some() && !graph.nodes.contains_key(target) {
+                    pending.push_back(target.clone());
+                }
+            }
+            graph.nodes.insert(source, node);
+        }
+        graph
+    }
+
+    fn node(&self, path: &Path) -> Option<&ImportNode> {
+        self.nodes.get(path)
+    }
+
+    fn reachable_from(&self, root: &Path) -> BTreeSet<PathBuf> {
+        let mut result = BTreeSet::new();
+        let mut pending = VecDeque::from([root.to_path_buf()]);
+        while let Some(source) = pending.pop_front() {
+            if !result.insert(source.clone()) {
+                continue;
+            }
+            let Some(node) = self.node(&source) else {
+                continue;
+            };
+            for directive in &node.directives {
+                if let Some(target) = &directive.target {
+                    if self.nodes.contains_key(target) {
+                        pending.push_back(target.clone());
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn first_path_from(&self, root: &Path, target: &Path) -> Option<Vec<PathBuf>> {
+        let mut pending = VecDeque::from([(root.to_path_buf(), vec![root.to_path_buf()])]);
+        let mut seen = BTreeSet::new();
+        while let Some((source, chain)) = pending.pop_front() {
+            if !seen.insert(source.clone()) {
+                continue;
+            }
+            if source == target {
+                return Some(chain);
+            }
+            for next in graph_targets(self, &source) {
+                let mut next_chain = chain.clone();
+                next_chain.push(next.clone());
+                pending.push_back((next.clone(), next_chain));
+            }
+        }
+        None
+    }
+}
+
+/// Return readable regular repository files without following a final or
+/// ancestor symlink. The lexical resolver supplies a root-relative path, so
+/// this does not disclose or traverse an outside target.
+fn safe_read_repo_file(path: &Path) -> Option<String> {
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        let Component::Normal(part) = component else {
+            return None;
+        };
+        current.push(part);
+        let metadata = fs::symlink_metadata(&current).ok()?;
+        if metadata.file_type().is_symlink() {
+            return None;
+        }
+    }
+    let metadata = fs::symlink_metadata(path).ok()?;
+    metadata
+        .is_file()
+        .then(|| fs::read_to_string(path).ok())
+        .flatten()
+}
+
+fn target_exists_as_regular_file(path: &Path) -> bool {
+    safe_read_repo_file(path).is_some()
+}
+
+fn resolve_instruction_import(source: &Path, raw: &str) -> Option<PathBuf> {
+    if raw.starts_with("~/") || Path::new(raw).is_absolute() {
+        return None;
+    }
+    normalize_repo_relative(&source.parent().unwrap_or_else(|| Path::new(".")).join(raw))
+}
+
+/// Extract repository import tokens from live Markdown prose. MarkdownDocument
+/// removes frontmatter, fences, indented code, links, blockquotes, inline code,
+/// and balanced quoted examples while preserving Unicode columns.
+fn extract_import_directives(source: &Path, content: &str) -> Vec<ImportDirective> {
+    let document = MarkdownDocument::parse(content);
+    let mut directives = Vec::new();
+    let example_scopes = crate::live_instructions::example_scopes_for(&document);
+    for (line, is_example) in document.body_prose().iter().zip(example_scopes) {
+        if is_example {
+            continue;
+        }
+        let chars: Vec<char> = line.text.chars().collect();
+        let mut index = 0;
+        while index < chars.len() {
+            if chars[index] != '@'
+                || !import_token_boundary(chars.get(index.wrapping_sub(1)).copied())
+                || document.links().iter().any(|link| {
+                    (link.line..=link.end_line).contains(&line.line)
+                        && (line.line != link.line || index + 1 >= link.start_column)
+                        && (line.line != link.end_line || index + 1 <= link.end_column)
+                })
+            {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            index += 1;
+            let token_start = index;
+            while index < chars.len() && !chars[index].is_whitespace() {
+                index += 1;
+            }
+            let mut token_end = index;
+            while token_end > token_start
+                && matches!(
+                    chars[token_end - 1],
+                    ')' | ']' | '}' | '>' | ',' | '.' | ';' | ':' | '!' | '?'
+                )
+            {
+                token_end -= 1;
+            }
+            if token_end == token_start {
+                continue;
+            }
+            let raw: String = chars[token_start..token_end].iter().collect();
+            if raw.contains('@')
+                || raw.starts_with('/')
+                || looks_like_package_scope(&line.text, start, &raw)
+            {
+                continue;
+            }
+            directives.push(ImportDirective {
+                target: resolve_instruction_import(source, &raw),
+                span: SourceSpan::range(line.line, start + 1, line.line, token_end + 1),
+            });
+        }
+    }
+    directives
+}
+
+fn import_token_boundary(previous: Option<char>) -> bool {
+    previous.is_none_or(|ch| ch.is_whitespace() || matches!(ch, '(' | '[' | '{' | '<' | '"' | '\''))
+}
+
+fn looks_like_package_scope(line: &str, at: usize, raw: &str) -> bool {
+    if !raw.contains('/') {
+        return false;
+    }
+    let prefix: String = line.chars().take(at).collect();
+    let prior = prefix.to_ascii_lowercase();
+    prior.ends_with("install ") || prior.ends_with("package ") || prior.ends_with("dependency ")
+}
+
+fn import_metadata(
+    directive: &ImportDirective,
+    evidence: impl AsRef<str>,
+    suggestion: &str,
+) -> DiagnosticMetadata {
+    DiagnosticMetadata::default()
+        .with_location(directive.span)
+        .with_evidence(evidence)
+        .with_suggestion(suggestion)
+}
+
+fn validate_claude_import_budget(graph: &InstructionImportGraph, diag: &mut DiagnosticCollector) {
     let per_file = diag.config().claude_import_max_lines;
     let total_cap = diag.config().claude_import_total_max_lines;
     let path_budgets = diag.config().claude_import_path_budgets.clone();
-    if per_file.is_none() && total_cap.is_none() && path_budgets.is_empty()
-        || exclude.is_excluded("CLAUDE.md")
-    {
+    if per_file.is_none() && total_cap.is_none() && path_budgets.is_empty() {
         return;
     }
-    let mut seen = BTreeSet::new();
-    let mut pending = vec![PathBuf::from("CLAUDE.md")];
+    let root = Path::new("CLAUDE.md");
+    if !graph.roots.iter().any(|item| item == root) {
+        return;
+    }
+    let closure = graph.reachable_from(root);
     let mut total = 0;
-    while let Some(path) = pending.pop() {
-        let Some(path) = normalize_repo_relative(&path) else {
-            continue;
-        };
-        if seen.contains(&path) || !path.is_file() || path.is_symlink() {
+    for path in &closure {
+        let node = &graph.nodes[path];
+        let count = crate::prompt_budget::source_metrics(&node.content).lines;
+        total += count;
+        if path == root {
             continue;
         }
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
-        };
-        seen.insert(path.clone());
-        let count = crate::prompt_budget::source_metrics(&content).lines;
-        total += count;
-        if path != Path::new("CLAUDE.md") {
-            let normalized = crate::config::normalize_path(&path.to_string_lossy());
-            let effective_cap = path_budgets.get(&normalized).copied().or(per_file);
-            if effective_cap.is_some_and(|cap| count > cap) {
-                diag.report_at(
+        let normalized = crate::config::normalize_path(&path.to_string_lossy());
+        let effective_cap = path_budgets.get(&normalized).copied().or(per_file);
+        if effective_cap.is_some_and(|cap| count > cap) {
+            let chain = graph.first_path_from(root, path).unwrap_or_default();
+            let importing = chain.get(chain.len().saturating_sub(2));
+            let directive = importing
+                .and_then(|source| graph.node(source))
+                .and_then(|node| {
+                    node.directives
+                        .iter()
+                        .find(|item| item.target.as_deref() == Some(path.as_path()))
+                });
+            if let Some(directive) = directive {
+                diag.report_at_with(
                     LintRule::ClaudeImportLarge,
-                    &path,
+                    path,
                     &format!(
                         "{}: imported prompt source has {count} lines (effective maximum {})",
                         path.display(),
                         effective_cap.unwrap_or_default()
                     ),
+                    import_metadata(
+                        directive,
+                        path.to_string_lossy(),
+                        "Split this imported source or reduce its live instruction lines.",
+                    )
+                    .with_related_subjects(chain),
                 );
-            }
-        }
-        for line in crate::fence::lines_outside_fences(&content) {
-            for capture in IMPORT.captures_iter(line) {
-                if let Some(candidate) = resolve_repo_reference(&path, &capture[1]) {
-                    pending.push(candidate);
-                }
             }
         }
     }
     if total_cap.is_some_and(|cap| total > cap) {
-        diag.report_at(
+        diag.report_at_with(
             LintRule::ClaudeImportLarge,
-            "CLAUDE.md",
-            &format!(
-                "CLAUDE.md import closure has {total} lines across {} files (configured maximum {})",
-                seen.len(),
-                total_cap.unwrap_or_default()
-            ),
+            root,
+            &format!("CLAUDE.md repository-local import closure has {total} lines across {} files (configured maximum {})", closure.len(), total_cap.unwrap_or_default()),
+            DiagnosticMetadata::default()
+                .with_evidence(format!("CLAUDE.md closure: {total} lines"))
+                .with_suggestion("Split imported instruction sources or reduce their live instruction lines.")
+                .with_related_subjects(closure),
         );
     }
 }
@@ -969,137 +1212,192 @@ fn validate_inline_paths(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
 /// Maximum number of `@import` hops Claude Code resolves before giving up.
 const IMPORT_MAX_DEPTH: usize = 5;
 
-/// Resolve an `@import` target to a normalized repository-relative path
-/// without requiring it to exist. Returns `None` if the path is absolute,
-/// escapes the repository root, or cannot be normalized. Mirrors
-/// [`resolve_repo_reference`] minus the existence check so callers can
-/// distinguish "unresolvable" from "missing on disk".
-fn resolve_import_target(source: &Path, raw: &str) -> Option<PathBuf> {
-    let direct = PathBuf::from(raw.trim_start_matches("./"));
-    if !direct.is_absolute() && !direct.components().any(|part| part == Component::ParentDir) {
-        return normalize_repo_relative(&direct);
-    }
-    let joined = source.parent().unwrap_or_else(|| Path::new(".")).join(raw);
-    normalize_repo_relative(&joined)
+fn format_import_chain(chain: &[PathBuf]) -> String {
+    chain
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" → ")
 }
 
-fn format_import_chain(chain: &[PathBuf], target: &Path) -> String {
-    let mut parts: Vec<String> = chain.iter().map(|p| p.display().to_string()).collect();
-    parts.push(target.display().to_string());
-    parts.join(" → ")
-}
-
-/// L001--L004: `@import` graph integrity for each configured instruction file.
-///
-/// Walks the `@import` tree once per root instruction file, reporting missing
-/// targets (L001), circular chains (L002), chains deeper than
-/// [`IMPORT_MAX_DEPTH`] hops (L003), and duplicate imports of the same file
-/// within a single source (L004, after normalizing leading `./`).
-fn validate_import_graph(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
-    for relpath in diag.config().instruction_files.clone() {
-        if exclude.is_excluded(&relpath) {
-            continue;
-        }
-        let root = PathBuf::from(&relpath);
-        let Some(root) = normalize_repo_relative(&root) else {
-            continue;
-        };
-        if !root.is_file() || root.is_symlink() {
-            continue;
-        }
-        let mut visited: HashSet<PathBuf> = HashSet::new();
-        visited.insert(root.clone());
-        let mut stack: Vec<PathBuf> = vec![root.clone()];
-        walk_imports(&root, &mut stack, &mut visited, diag);
-    }
-}
-
-fn walk_imports(
-    source: &Path,
-    stack: &mut Vec<PathBuf>,
-    visited: &mut HashSet<PathBuf>,
-    diag: &mut DiagnosticCollector,
-) {
-    let Ok(content) = fs::read_to_string(source) else {
-        return;
-    };
-    let mut reported_missing: HashSet<PathBuf> = HashSet::new();
-    let mut seen_targets: HashSet<PathBuf> = HashSet::new();
-    for (number, line) in lines_outside_fences_with_numbers(&content) {
-        for capture in IMPORT.captures_iter(line) {
-            let raw = &capture[1];
-            let resolved = resolve_import_target(source, raw);
-            let Some(target) = resolved else {
-                let key = PathBuf::from(raw);
-                if reported_missing.insert(key.clone()) {
-                    diag.report_at(
-                        LintRule::ImportPathMissing,
-                        source,
-                        &format!(
-                            "{}:{number}: @import target does not resolve in the repository: {raw}",
-                            source.display()
-                        ),
-                    );
-                }
+/// L001--L004: report facts from the shared graph without changing the
+/// graph's inclusion policy. Per-file policy is resolved by report_at_with.
+fn validate_import_graph(graph: &InstructionImportGraph, diag: &mut DiagnosticCollector) {
+    for (source, node) in &graph.nodes {
+        let mut missing = BTreeSet::new();
+        let mut direct = BTreeSet::new();
+        for directive in &node.directives {
+            let Some(target) = &directive.target else {
                 continue;
             };
-            if !target.is_file() {
-                if reported_missing.insert(target.clone()) {
-                    diag.report_at(
-                        LintRule::ImportPathMissing,
-                        source,
-                        &format!(
-                            "{}:{number}: @import target does not exist: {}",
-                            source.display(),
-                            target.display()
-                        ),
-                    );
-                }
-                continue;
-            }
-            if !seen_targets.insert(target.clone()) {
-                diag.report_at(
-                    LintRule::DuplicateImport,
+            if !graph.opaque_targets.contains(target)
+                && !target_exists_as_regular_file(target)
+                && missing.insert(target.clone())
+            {
+                diag.report_at_with(
+                    LintRule::ImportPathMissing,
                     source,
                     &format!(
-                        "{}:{number}: duplicate @import of {}",
+                        "{}: @import target is missing or unreadable: {}",
                         source.display(),
                         target.display()
                     ),
-                );
-                continue;
-            }
-            if stack.len() > IMPORT_MAX_DEPTH {
-                diag.report_at(
-                    LintRule::ImportDepthExceeded,
-                    source,
-                    &format!(
-                        "{}:{number}: @import chain depth exceeds {IMPORT_MAX_DEPTH} hops: {}",
-                        source.display(),
-                        format_import_chain(stack, &target)
+                    import_metadata(
+                        directive,
+                        target.to_string_lossy(),
+                        "Create the repository-local target or correct this import path.",
                     ),
                 );
-                continue;
             }
-            if let Some(index) = stack.iter().position(|p| p == &target) {
-                diag.report_at(
-                    LintRule::CircularImport,
+            if !direct.insert(target.clone()) {
+                diag.report_at_with(
+                    LintRule::DuplicateImport,
                     source,
                     &format!(
-                        "{}:{number}: circular @import chain: {}",
+                        "{}: duplicate @import of {}",
                         source.display(),
-                        format_import_chain(&stack[index..], &target)
+                        target.display()
+                    ),
+                    import_metadata(
+                        directive,
+                        target.to_string_lossy(),
+                        "Keep one normalized direct import for this target.",
                     ),
                 );
-                continue;
-            }
-            if visited.insert(target.clone()) {
-                stack.push(target.clone());
-                walk_imports(&target, stack, visited, diag);
-                stack.pop();
             }
         }
     }
+    for root in &graph.roots {
+        let mut cycles = BTreeSet::new();
+        let mut stack = vec![root.clone()];
+        collect_cycles(graph, root, &mut stack, &mut cycles);
+        for cycle in cycles {
+            let source = cycle.last().expect("cycles are nonempty");
+            let target = &cycle[0];
+            let directive = graph
+                .node(source)
+                .and_then(|node| {
+                    node.directives
+                        .iter()
+                        .find(|item| item.target.as_deref() == Some(target.as_path()))
+                })
+                .expect("cycle edge is present in graph");
+            let mut chain = cycle.clone();
+            chain.push(target.clone());
+            diag.report_at_with(
+                LintRule::CircularImport,
+                source,
+                &format!(
+                    "{}: circular @import chain: {}",
+                    source.display(),
+                    format_import_chain(&chain)
+                ),
+                import_metadata(
+                    directive,
+                    format_import_chain(&chain),
+                    "Break this repository-local import cycle.",
+                ),
+            );
+        }
+        if let Some(chain) = shortest_overdepth_prefix(graph, root) {
+            let source = &chain[IMPORT_MAX_DEPTH];
+            let target = &chain[IMPORT_MAX_DEPTH + 1];
+            let directive = graph
+                .node(source)
+                .and_then(|node| {
+                    node.directives
+                        .iter()
+                        .find(|item| item.target.as_deref() == Some(target.as_path()))
+                })
+                .expect("over-depth edge is present in graph");
+            diag.report_at_with(
+                LintRule::ImportDepthExceeded,
+                source,
+                &format!(
+                    "{}: @import chain depth exceeds {IMPORT_MAX_DEPTH} hops: {}",
+                    source.display(),
+                    format_import_chain(&chain)
+                ),
+                import_metadata(
+                    directive,
+                    format_import_chain(&chain),
+                    "Reduce this repository-local import chain to at most five hops.",
+                ),
+            );
+        }
+    }
+}
+
+fn graph_targets<'a>(
+    graph: &'a InstructionImportGraph,
+    source: &Path,
+) -> impl Iterator<Item = &'a PathBuf> {
+    graph
+        .node(source)
+        .into_iter()
+        .flat_map(|node| node.directives.iter())
+        .filter_map(|directive| directive.target.as_ref())
+        .filter(|target| graph.nodes.contains_key(*target))
+}
+
+fn collect_cycles(
+    graph: &InstructionImportGraph,
+    source: &Path,
+    stack: &mut Vec<PathBuf>,
+    cycles: &mut BTreeSet<Vec<PathBuf>>,
+) {
+    for target in graph_targets(graph, source) {
+        if let Some(index) = stack.iter().position(|item| item == target) {
+            cycles.insert(canonical_cycle(&stack[index..]));
+        } else {
+            stack.push(target.clone());
+            collect_cycles(graph, target, stack, cycles);
+            stack.pop();
+        }
+    }
+}
+
+fn canonical_cycle(cycle: &[PathBuf]) -> Vec<PathBuf> {
+    (0..cycle.len())
+        .map(|start| {
+            cycle[start..]
+                .iter()
+                .chain(&cycle[..start])
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .min()
+        .unwrap_or_default()
+}
+
+fn shortest_overdepth_prefix(graph: &InstructionImportGraph, root: &Path) -> Option<Vec<PathBuf>> {
+    fn visit(
+        graph: &InstructionImportGraph,
+        source: &Path,
+        path: &mut Vec<PathBuf>,
+        best: &mut Option<Vec<PathBuf>>,
+    ) {
+        if path.len() == IMPORT_MAX_DEPTH + 2 {
+            if best
+                .as_ref()
+                .is_none_or(|current| path.as_slice() < current.as_slice())
+            {
+                *best = Some(path.clone());
+            }
+            return;
+        }
+        for target in graph_targets(graph, source) {
+            if !path.contains(target) {
+                path.push(target.clone());
+                visit(graph, target, path, best);
+                path.pop();
+            }
+        }
+    }
+    let mut best = None;
+    let mut path = vec![root.to_path_buf()];
+    visit(graph, root, &mut path, &mut best);
+    best
 }
 
 fn is_external_link(target: &str) -> bool {
@@ -1125,7 +1423,7 @@ fn validate_markdown_links(diag: &mut DiagnosticCollector, exclude: &ExcludeSet)
                 if is_external_link(target) {
                     continue;
                 }
-                let Some(resolved) = resolve_import_target(path, target) else {
+                let Some(resolved) = resolve_repo_reference(path, target) else {
                     diag.report_at(
                         LintRule::BrokenMarkdownLink,
                         &relpath,
@@ -1719,7 +2017,9 @@ mod tests {
         };
         let mut diag = all_enabled_with(config);
         validate_skill_closure(Path::new("skills/demo/SKILL.md"), &mut diag);
-        validate_claude_import_budget(&mut diag, &ExcludeSet::default());
+        let import_graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_claude_import_budget(&import_graph, &mut diag);
         validate_inline_paths(&mut diag, &ExcludeSet::default());
         for rule in [
             LintRule::SkillClosureLarge,
@@ -1820,7 +2120,9 @@ mod tests {
         };
         let mut diag = all_enabled_with(config);
 
-        validate_claude_import_budget(&mut diag, &ExcludeSet::default());
+        let import_graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_claude_import_budget(&import_graph, &mut diag);
 
         let findings: Vec<_> = diag
             .diagnostics()
@@ -1837,6 +2139,17 @@ mod tests {
                 && message.contains("4 lines")
                 && message.contains("maximum 3")
         }));
+        let agent_budget = diag
+            .diagnostics()
+            .iter()
+            .find(|item| {
+                item.rule == LintRule::ClaudeImportLarge
+                    && item.subject_path.as_deref() == Some(Path::new("AGENTS.md"))
+            })
+            .expect("AGENTS.md budget diagnostic");
+        assert!(agent_budget.location.is_some());
+        assert_eq!(agent_budget.evidence.as_deref(), Some("AGENTS.md"));
+        assert!(agent_budget.suggestion.is_some());
         assert!(
             !findings
                 .iter()
@@ -2619,14 +2932,30 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
         std::env::set_current_dir(tmp.path()).unwrap();
         fs::write("CLAUDE.md", "@docs/missing.md\n@./docs/missing.md\n").unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_import_graph(&graph, &mut diag);
         let l001: Vec<_> = diag
             .diagnostics()
             .iter()
             .filter(|item| item.rule == LintRule::ImportPathMissing)
             .collect();
         assert_eq!(l001.len(), 1, "dedup missing target per (source, target)");
-        assert!(l001[0].message.contains("does not exist"));
+        assert!(l001[0].message.contains("missing or unreadable"));
+        assert_eq!(
+            l001[0].subject_path.as_deref(),
+            Some(Path::new("CLAUDE.md"))
+        );
+        assert_eq!(
+            l001[0]
+                .location
+                .expect("directive span")
+                .start()
+                .line_number(),
+            1
+        );
+        assert_eq!(l001[0].evidence.as_deref(), Some("docs/missing.md"));
+        assert!(l001[0].suggestion.is_some());
     }
 
     // ── L002: circular-import ───────────────────────────────────────
@@ -2639,9 +2968,11 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
         std::env::set_current_dir(tmp.path()).unwrap();
         fs::create_dir_all("docs").unwrap();
         fs::write("CLAUDE.md", "@docs/a.md\n").unwrap();
-        fs::write("docs/a.md", "@CLAUDE.md\n").unwrap();
+        fs::write("docs/a.md", "@../CLAUDE.md\n").unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_import_graph(&graph, &mut diag);
         let cycle: Vec<_> = diag
             .diagnostics()
             .iter()
@@ -2663,14 +2994,16 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
         std::env::set_current_dir(tmp.path()).unwrap();
         fs::create_dir_all("docs").unwrap();
         fs::write("CLAUDE.md", "@docs/a.md\n").unwrap();
-        fs::write("docs/a.md", "@docs/b.md\n").unwrap();
-        fs::write("docs/b.md", "@docs/c.md\n").unwrap();
-        fs::write("docs/c.md", "@docs/d.md\n").unwrap();
-        fs::write("docs/d.md", "@docs/e.md\n").unwrap();
-        fs::write("docs/e.md", "@docs/f.md\n").unwrap();
+        fs::write("docs/a.md", "@b.md\n").unwrap();
+        fs::write("docs/b.md", "@c.md\n").unwrap();
+        fs::write("docs/c.md", "@d.md\n").unwrap();
+        fs::write("docs/d.md", "@e.md\n").unwrap();
+        fs::write("docs/e.md", "@f.md\n").unwrap();
         fs::write("docs/f.md", "end\n").unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_import_graph(&graph, &mut diag);
         let depth: Vec<_> = diag
             .diagnostics()
             .iter()
@@ -2689,13 +3022,15 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
         fs::create_dir_all("docs").unwrap();
         // CLAUDE → a → b → c → d → e: exactly 5 hops, no violation.
         fs::write("CLAUDE.md", "@docs/a.md\n").unwrap();
-        fs::write("docs/a.md", "@docs/b.md\n").unwrap();
-        fs::write("docs/b.md", "@docs/c.md\n").unwrap();
-        fs::write("docs/c.md", "@docs/d.md\n").unwrap();
-        fs::write("docs/d.md", "@docs/e.md\n").unwrap();
+        fs::write("docs/a.md", "@b.md\n").unwrap();
+        fs::write("docs/b.md", "@c.md\n").unwrap();
+        fs::write("docs/c.md", "@d.md\n").unwrap();
+        fs::write("docs/d.md", "@e.md\n").unwrap();
         fs::write("docs/e.md", "end\n").unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_import_graph(&graph, &mut diag);
         assert!(
             !diag
                 .diagnostics()
@@ -2716,7 +3051,9 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
         fs::write("docs/a.md", "shared\n").unwrap();
         fs::write("CLAUDE.md", "@docs/a.md\n@./docs/a.md\n").unwrap();
         let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_import_graph(&mut diag, &ExcludeSet::default());
+        let graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_import_graph(&graph, &mut diag);
         let dup: Vec<_> = diag
             .diagnostics()
             .iter()
@@ -2724,6 +3061,80 @@ awk -v no_reason='テスト' 'BEGIN { print }' # lint-awk-multibyte-regex: ok
             .collect();
         assert_eq!(dup.len(), 1);
         assert!(dup[0].message.contains("duplicate"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_graph_is_source_relative_and_ignores_non_live_markdown_contexts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs").unwrap();
+        fs::write("child.txt", "root shadow\n").unwrap();
+        fs::write(
+            "CLAUDE.md",
+            "@docs/a.md\nExample: @missing.txt\n`@missing.txt` [link](@missing.txt)\n> @missing.txt\n    @missing.txt\n```text\n@missing.txt\n```\n",
+        )
+        .unwrap();
+        fs::write("docs/a.md", "@child.txt\n").unwrap();
+        fs::write("docs/child.txt", "nested source\n").unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        let graph =
+            InstructionImportGraph::build(&diag.config().instruction_files, &ExcludeSet::default());
+        validate_import_graph(&graph, &mut diag);
+        assert!(graph.nodes.contains_key(Path::new("docs/child.txt")));
+        assert!(!graph.nodes.contains_key(Path::new("child.txt")));
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::ImportPathMissing)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn import_graph_keeps_excluded_targets_opaque_and_reports_depth_with_cycles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("docs/excluded").unwrap();
+        fs::write("CLAUDE.md", "@docs/a.txt\n@docs/excluded/hidden.txt\n").unwrap();
+        for (name, next) in [
+            ("a.txt", "b.txt"),
+            ("b.txt", "c.txt"),
+            ("c.txt", "d.txt"),
+            ("d.txt", "e.txt"),
+            ("e.txt", "f.txt"),
+        ] {
+            fs::write(format!("docs/{name}"), format!("@{next}\n")).unwrap();
+        }
+        fs::write("docs/f.txt", "@a.txt\n").unwrap();
+        let exclude = ExcludeSet::new(&["docs/excluded/**".to_string()]).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        let graph = InstructionImportGraph::build(&diag.config().instruction_files, &exclude);
+        validate_import_graph(&graph, &mut diag);
+        assert!(
+            !graph
+                .nodes
+                .contains_key(Path::new("docs/excluded/hidden.txt"))
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::CircularImport)
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::ImportDepthExceeded)
+        );
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|item| item.rule == LintRule::ImportPathMissing)
+        );
     }
 
     // ── L005: broken-markdown-link ──────────────────────────────────
