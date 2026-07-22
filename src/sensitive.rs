@@ -260,13 +260,11 @@ fn find_markdown_secret(
             continue;
         }
         let full = captures.get(0).expect("full assignment match");
-        let raw_value = parse_assignment_value(&content[full.end()..]);
-        // `strip_assignment_quotes` removes source whitespace before deciding
-        // whether one pair of outer quotes is present. Do not trim again here:
-        // whitespace inside those quotes is part of the value and therefore
-        // prevents a command substitution from being the entire placeholder.
-        let value = strip_assignment_quotes(raw_value);
-        if value.trim().is_empty() || is_secret_placeholder(value, policy) {
+        // Skill surfaces join shell `\` continuations before classifying the
+        // value so multi-line `TOKEN=$(...)` is not treated as a truncated
+        // literal. Instruction (I002) stays single-line.
+        let raw_value = parse_assignment_value(&content[full.end()..], policy);
+        if !is_hardcoded_literal_assignment(&raw_value, policy) {
             continue;
         }
         consider(MarkdownSecretFinding {
@@ -315,24 +313,109 @@ pub(crate) fn find_skill_secret(content: &str) -> Option<MarkdownSecretFinding> 
     find_markdown_secret(content, MarkdownSecretPolicy::Skill)
 }
 
-fn parse_assignment_value(after_separator: &str) -> &str {
-    let line_end = after_separator
-        .find(['\n', '\r'])
-        .unwrap_or(after_separator.len());
-    &after_separator[..line_end]
+/// Maximum shell `\` continuation lines joined for one S032 assignment value.
+/// Bounds work on adversarial input while covering ordinary multi-line scripts.
+const SKILL_ASSIGNMENT_CONTINUATION_LIMIT: usize = 64;
+
+fn parse_assignment_value(after_separator: &str, policy: MarkdownSecretPolicy) -> String {
+    match policy {
+        MarkdownSecretPolicy::Instruction => {
+            let line_end = after_separator
+                .find(['\n', '\r'])
+                .unwrap_or(after_separator.len());
+            after_separator[..line_end].to_string()
+        }
+        MarkdownSecretPolicy::Skill => parse_skill_assignment_value(after_separator),
+    }
 }
 
-fn strip_assignment_quotes(value: &str) -> &str {
+/// Join physical lines that end in an unescaped shell `\` continuation.
+///
+/// The backslash and the following newline are removed; leading whitespace on
+/// the next physical line is preserved, matching shell line-continuation rules.
+fn parse_skill_assignment_value(after_separator: &str) -> String {
+    let mut result = String::new();
+    let mut rest = after_separator;
+    for _ in 0..=SKILL_ASSIGNMENT_CONTINUATION_LIMIT {
+        let line_end = rest.find(['\n', '\r']).unwrap_or(rest.len());
+        let line = &rest[..line_end];
+        if let Some(without_backslash) = line.strip_suffix('\\') {
+            result.push_str(without_backslash);
+            rest = &rest[line_end..];
+            if rest.starts_with("\r\n") {
+                rest = &rest[2..];
+            } else if rest.starts_with('\n') || rest.starts_with('\r') {
+                rest = &rest[1..];
+            } else {
+                // Trailing `\` at EOF: keep the collected prefix only.
+                break;
+            }
+            continue;
+        }
+        result.push_str(line);
+        break;
+    }
+    result
+}
+
+/// Whether an assignment value is a hardcoded credential literal under `policy`.
+///
+/// Secret-key identification is separate: callers already matched a sensitive
+/// key. This gate requires evidence of a committed literal value.
+///
+/// For S032, an unquoted value that contains whitespace is treated as prose
+/// (for example `First token = alias name`) unless it also contains secret
+/// placeholder syntax (`$`, mustache, a leading backtick command substitution,
+/// or a leading angle placeholder) — those remain literal-remnant findings when
+/// they are not complete placeholders. Quoted values and compact unquoted
+/// literals remain findings. Placeholders stay clean for both policies. I002
+/// still treats every non-empty non-placeholder as a finding.
+fn is_hardcoded_literal_assignment(raw_value: &str, policy: MarkdownSecretPolicy) -> bool {
+    let trimmed = raw_value.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let (quoted, value) = strip_assignment_quotes(trimmed);
+    // Do not trim again after quote removal: whitespace inside the quotes is
+    // part of the value and therefore prevents a command substitution from
+    // being the entire placeholder.
+    if value.trim().is_empty() || is_secret_placeholder(value, policy) {
+        return false;
+    }
+    match policy {
+        MarkdownSecretPolicy::Instruction => true,
+        MarkdownSecretPolicy::Skill => {
+            quoted
+                || !value.chars().any(char::is_whitespace)
+                || has_secret_placeholder_syntax(value)
+        }
+    }
+}
+
+/// True when `value` contains secret-placeholder syntax that can leave a
+/// literal remnant. Markdown inline code such as `` `/` `` mid-prose is not
+/// enough: backtick forms must begin the value (shell `` `cmd` `` style), and
+/// `$` / mustache / leading angle brackets remain strong signals.
+fn has_secret_placeholder_syntax(value: &str) -> bool {
+    if value.contains('$') || value.contains("{{") {
+        return true;
+    }
+    let trimmed = value.trim_start();
+    trimmed.starts_with('`') || (trimmed.starts_with('<') && trimmed.contains('>'))
+}
+
+/// Strip one pair of matching outer quotes. Returns `(was_quoted, value)`.
+fn strip_assignment_quotes(value: &str) -> (bool, &str) {
     let trimmed = value.trim();
     if trimmed.len() >= 2 {
         let bytes = trimmed.as_bytes();
         if (bytes[0] == b'"' && bytes[trimmed.len() - 1] == b'"')
             || (bytes[0] == b'\'' && bytes[trimmed.len() - 1] == b'\'')
         {
-            return &trimmed[1..trimmed.len() - 1];
+            return (true, &trimmed[1..trimmed.len() - 1]);
         }
     }
-    trimmed
+    (false, trimmed)
 }
 
 fn is_secret_placeholder(value: &str, policy: MarkdownSecretPolicy) -> bool {
@@ -691,12 +774,30 @@ mod tests {
             "password = <your api key>",
             "sk-xxxxxxxxxxxxxxxxxxxxxxxx",
             "ghp_000000000000000000000000000000000000",
+            // Generic noun + prose value (no credential-bearing literal).
+            "First token = alias name",
+            "First token = **alias name**",
+            "Second token = **target skill name** (without `/` prefix)",
+            "token: something ordinary",
+            // Shell assignment whose value is only a (possibly multi-line) command
+            // substitution — identifier alone is not secret evidence.
+            "TOKEN_SPEND=$(date)",
+            "TOKEN_SPEND=$(gh auth token)",
+            "TOKEN=$OTHER",
+            "TOKEN=",
+            "TOKEN=\"\"",
         ] {
             assert!(
                 find_skill_secret(content).is_none(),
                 "expected clean skill content: {content}"
             );
         }
+
+        let multiline = "TOKEN_SPEND=$(python3 \"${CLAUDE_PLUGIN_ROOT}/python/cli.py\" token lane-report \\\n  --dir \"$RESEARCH_TMPDIR\" 2>/dev/null || echo \"_(token telemetry unavailable)_\")\n";
+        assert!(
+            find_skill_secret(multiline).is_none(),
+            "expected clean multi-line TOKEN_SPEND command substitution"
+        );
     }
 
     #[test]
@@ -768,9 +869,20 @@ mod tests {
             "token = ${TOKEN:-committed-default}",
             "secret = `read_secret` suffix",
             "api_key = $(read_secret) suffix",
+            // Quoted values keep spaces as literal secret evidence.
+            "token = \"alias name\"",
+            "TOKEN='prose still quoted'",
+            // Nearby true hardcoded token literals still report via signatures.
+            "First token = alias name\nsk-aBcDeFgHiJkLmNoPqRsT1234\n",
         ] {
             assert!(find_skill_secret(content).is_some(), "{content}");
         }
+        assert_eq!(
+            find_skill_secret("First token = alias name\nsk-aBcDeFgHiJkLmNoPqRsT1234\n")
+                .unwrap()
+                .evidence,
+            "openai-api-key-signature"
+        );
         for (content, evidence) in [
             ("sk-aBcDeFgHiJkLmNoPqRsT1234", "openai-api-key-signature"),
             (
@@ -793,6 +905,27 @@ mod tests {
                 "{content}"
             );
         }
+    }
+
+    #[test]
+    fn skill_scanner_shell_continuations_do_not_mask_literal_remainders() {
+        // Continuation joins the value, but a non-placeholder remainder still
+        // counts as a hardcoded literal.
+        let content = "API_KEY=$(gh auth token) \\\n  literal-suffix\n";
+        let finding = find_skill_secret(content).unwrap();
+        assert_eq!(finding.evidence, "API_KEY");
+    }
+
+    #[test]
+    fn instruction_scanner_still_flags_prose_token_assignments() {
+        // I002 remains strict: any non-empty non-placeholder on a sensitive key.
+        assert_eq!(
+            find_instruction_secret("First token = alias name")
+                .unwrap()
+                .evidence,
+            "token"
+        );
+        assert!(find_instruction_secret("TOKEN_SPEND=$(date)").is_some());
     }
 
     #[test]

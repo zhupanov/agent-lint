@@ -763,14 +763,23 @@ including frontmatter, fences, and inline code, and emits the earliest match
 once per file with line metadata. It has the same sensitive-key vocabulary and
 signature families as I002, but intentionally accepts additional safe skill
 documentation forms: `$(...)`, backtick command substitution, and angle
-placeholders with hyphens or spaces (such as `<your-api-key>`). A signature
-whose entire post-prefix payload is one repeated character is also clean for
-S032 (for example `sk-xxxxxxxxxxxxxxxxxxxxxxxx`), while I002 deliberately
-continues to report it. This is an intentional S032-vs-I002 divergence: I002
-is a stricter instruction-file policy, whereas S032 must not reject examples
-of safe credential indirection. Literal remainders and non-empty defaults
-remain findings. S032 evidence is only the assignment key token or a fixed
-signature category; it never includes a candidate value or its source line.
+placeholders with hyphens or spaces (such as `<your-api-key>`). Shell
+assignment values also join `\` line continuations before classification, so a
+multi-line `TOKEN_SPEND=$(...)` is recognized as a command substitution rather
+than a truncated literal. Separately, S032 requires credential-bearing value
+evidence for assignment findings: an unquoted value that contains whitespace is
+treated as prose (for example `First token = alias name`) unless it also
+contains secret placeholder syntax (`$`, mustache, a leading backtick command
+substitution, or a leading angle placeholder), in which case incomplete
+placeholders with literal remnants remain findings; quoted values and compact
+unquoted literals remain findings. A signature whose entire post-prefix payload
+is one repeated character is also clean for S032 (for example
+`sk-xxxxxxxxxxxxxxxxxxxxxxxx`), while I002 deliberately continues to report it. This is an intentional S032-vs-I002
+divergence: I002 is a stricter instruction-file policy, whereas S032 must not
+reject examples of safe credential indirection or ordinary prose that mentions
+sensitive nouns. Literal remainders and non-empty defaults remain findings.
+S032 evidence is only the assignment key token or a fixed signature category;
+it never includes a candidate value or its source line.
 
 I003 scans inline-code spans from the shared Comrak Markdown adapter, including
 arbitrary backtick delimiter lengths (for example ``docs/guide.md``). Fence
