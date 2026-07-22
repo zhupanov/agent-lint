@@ -375,25 +375,44 @@ identifiable quoted examples. A missing or malformed frontmatter block does
 not exempt the remaining live prose. Q004 applies only when both root
 `CLAUDE.md` and `README.md` exist.
 
+Q001-Q003 share one operativity contract: within its sentence a directive
+phrase counts only when, after list markers and an optional `always`/`please`,
+it opens the instruction, a current-agent subject (`you`, `the agent`, `this
+agent`, `agent`, `agents`, `assistant`, `model`) uses `must`/`shall`/`should`/
+`will`/`need to` before it, or it follows an `if`/`when`/`before`/`after`/
+`unless`/`while` setup clause closed by a comma. Descriptive, historical, and
+interrogative prose and every example scope are inert. Each of Q001-Q003
+reports every violating source line (not only the first), sorted by line, with
+the matched source range, bounded masked evidence, and a concrete suggestion.
+
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
-| Q001 | `prompt-generic-filler` | Generic instruction that adds no actionable guidance | Always | warn |
-| Q002 | `prompt-negative-only` | Operative style/behavior negative without `instead`/`rather`/`prefer` within three prose lines; precise safety and integrity prohibitions are exempt | Always | error |
-| Q003 | `prompt-weak-critical` | `should`/`try to`/`consider`/`maybe` inside a critical or important Markdown section | Always | error |
+| Q001 | `prompt-generic-filler` | Generic instruction that adds no actionable guidance, matched only inside an operative directive | Always | warn |
+| Q002 | `prompt-negative-only` | Operative style/behavior negative without an operative `instead`/`rather`/`prefer` alternative in the same Markdown instruction scope (same paragraph or list item, no heading/example/fence/blank boundary, within three source lines); precise safety and integrity prohibitions are exempt | Always | error |
+| Q003 | `prompt-weak-critical` | Operative `should`/`try to`/`consider`/`maybe` inside a live critical or important Markdown section | Always | error |
 | Q004 | `claude-readme-duplicate` | More than 40% of eligible `CLAUDE.md` live-prose lines are duplicated in `README.md`, counted as a multiset (at least three matched lines) | Always | warn |
 | Q005 | `prompt-unbounded-retry` | Operative unbounded retry or continuation instruction without an applicable bound or concrete failure outcome | Always | error |
 | Q006 | `prompt-output-conflict` | Two mechanically incompatible operative output instructions (exclusive formats, or contradictory size/shape bounds) in one response scope | Always | warn |
 
 Q001 recognizes: `be helpful`, `be accurate`, `be concise`, `follow
 instructions`, `do your best`, `be professional`, `use best judgment`, and
-`provide high-quality`. Prefer a concrete project-specific requirement over
-these phrases.
+`provide high-quality`, at word boundaries within an operative directive.
+Prefer a concrete project-specific requirement over these phrases.
 
-Q002 evaluates explicit sentence-scoped patterns. It exempts precise
-prohibitions against secret/private-data disclosure, authorization bypass,
-destructive or irreversible actions, fabricated evidence, and explicit legal
-or security policy violations. Safety-adjacent words elsewhere in a sentence
-do not exempt an unrelated style negative.
+Q002 exempts precise prohibitions against secret/private-data disclosure,
+authorization bypass, destructive or irreversible actions, fabricated evidence,
+and explicit legal or security policy violations. Safety-adjacent words
+elsewhere in a sentence do not exempt an unrelated style negative. A conjoined
+negative after a safety-exempt one (`Never expose credentials, and never
+apologize.`) is still evaluated. A positive alternative repairs a negative only
+within the same instruction scope, never across a heading, example, fence, or
+blank boundary.
+
+Q003 activates only under a live `critical` or `important` heading whose example
+scope is false; a heading naming an example (`# Important examples`) is an
+example boundary. A sentence-leading `Should` is treated as a conditional
+inversion (`Should any test fail, stop.`) and is not weak language, while a
+mid-sentence agent `should` (`You should verify.`) still reports.
 
 Q005 recognizes narrow, operative forms such as `continue indefinitely`, `loop
 forever`, `retry indefinitely`, `keep trying until it succeeds`, `try again

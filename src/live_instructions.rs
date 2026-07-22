@@ -119,7 +119,7 @@ pub(crate) fn example_scopes_for(markdown: &MarkdownDocument) -> Vec<bool> {
         .collect()
 }
 
-fn is_example_heading(text: &str) -> bool {
+pub(crate) fn is_example_heading(text: &str) -> bool {
     text.split(|character: char| !character.is_alphanumeric())
         .any(|word| matches!(word.to_ascii_lowercase().as_str(), "example" | "examples"))
 }
