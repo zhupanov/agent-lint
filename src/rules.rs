@@ -62,16 +62,16 @@ pub enum LintRule {
     /// M013: plugin or marketplace component path is absolute, traverses, or lacks ./
     #[strum(props(code = "M013", name = "component-path-unsafe"))]
     ComponentPathUnsafe,
-    /// M014: plugin.json author object present but author.name missing/invalid
+    /// M014: plugin metadata author object present but author.name missing/invalid
     #[strum(props(code = "M014", name = "author-name-missing"))]
     AuthorNameMissing,
-    /// M015: plugin.json homepage is not a valid http(s) URL
+    /// M015: plugin metadata homepage is not a valid http(s) URL
     #[strum(props(code = "M015", name = "homepage-url-invalid"))]
     HomepageUrlInvalid,
-    /// M016: plugin.json lspServers entry missing command or extensionToLanguage
+    /// M016: plugin metadata lspServers has an unsupported or invalid inline server
     #[strum(props(code = "M016", name = "lsp-server-invalid"))]
     LspServerInvalid,
-    /// M017: plugin.json channels entry does not reference a server
+    /// M017: plugin metadata channels has an invalid server entry or reference
     #[strum(props(code = "M017", name = "channel-server-missing"))]
     ChannelServerMissing,
     /// M018: plugin.json omits its optional version field
@@ -80,12 +80,15 @@ pub enum LintRule {
     /// M019: marketplace.json relative string source lacks `./` without pluginRoot
     #[strum(props(code = "M019", name = "marketplace-bare-path"))]
     MarketplaceBarePath,
-    /// M020: plugin.json author is present but not an object
+    /// M020: plugin metadata author is present but not an object
     #[strum(props(code = "M020", name = "author-type-invalid"))]
     AuthorTypeInvalid,
     /// M021: marketplace.json marketplace or plugin name is not kebab-case
     #[strum(props(code = "M021", name = "marketplace-name-format"))]
     MarketplaceNameFormat,
+    /// M022: plugin metadata homepage is present but not a string
+    #[strum(props(code = "M022", name = "homepage-type-invalid"))]
+    HomepageTypeInvalid,
 
     // ── Hooks (H) ─────────────────────────────────────────────────
     /// H001: a declared plugin hook configuration file is missing
@@ -1049,8 +1052,7 @@ impl LintRule {
             Self::HookCommandDangerous | Self::HookHeadersInterpolated |
 
             // ── Default-warning: optional manifest sections ──────────
-            Self::AuthorNameMissing | Self::HomepageUrlInvalid |
-            Self::ChannelServerMissing | Self::PluginVersionMissing |
+            Self::HomepageUrlInvalid | Self::PluginVersionMissing |
 
             // ── Default-warning: marketplace entry advisories ────────
             Self::MarketplaceBarePath | Self::MarketplaceNameFormat |
@@ -1292,7 +1294,7 @@ mod tests {
         assert_eq!(ALL_RULES, iterated);
         assert_eq!(
             ALL_RULES.len(),
-            297,
+            298,
             "every enum variant must be registered"
         );
     }
@@ -1490,8 +1492,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            122,
-            "Expected 122 active default-warning rules, got {}",
+            120,
+            "Expected 120 active default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1636,8 +1638,8 @@ mod tests {
             .collect();
         assert_eq!(
             errors.len(),
-            171,
-            "Expected 171 default-error rules, got {}",
+            174,
+            "Expected 174 default-error rules, got {}",
             errors.len()
         );
     }

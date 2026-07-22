@@ -186,18 +186,8 @@ fn run_plugin(
     diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
         manifest::validate_component_paths(ctx, diag);
     });
-    // V30: plugin.json optional metadata (author.name, homepage)
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        manifest::validate_plugin_metadata(ctx, diag);
-    });
-    // V31: plugin.json lspServers entries
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        manifest::validate_lsp_servers(ctx, diag);
-    });
-    // V32: plugin.json channels entries
-    diag.with_subject_path(".claude-plugin/plugin.json", |diag| {
-        manifest::validate_channels(ctx, diag);
-    });
+    // V30–V32: shared plugin-field validation on plugin and marketplace manifests.
+    manifest::validate_plugin_fields(ctx, diag);
     // Original skill content checks (S009-S057, including plugin-only rules)
     skill_content::validate_discovered_skill_content_with_prompt_pass(
         ctx,

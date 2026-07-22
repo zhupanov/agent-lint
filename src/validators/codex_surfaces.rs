@@ -1035,7 +1035,7 @@ fn type_name(value: &Value) -> &'static str {
 
 /// One access-path segment used to locate a JSON value's source span.
 #[derive(Clone, Copy)]
-enum Seg<'a> {
+pub(crate) enum Seg<'a> {
     Key(&'a str),
     Index(usize),
 }
@@ -1046,13 +1046,13 @@ enum Seg<'a> {
 /// and returns `None` rather than failing when a shape is unexpected; a missing
 /// location simply omits the optional metadata. On a duplicate key the first
 /// occurrence is located.
-struct JsonScanner<'a> {
+pub(crate) struct JsonScanner<'a> {
     bytes: &'a [u8],
     pos: usize,
 }
 
 impl<'a> JsonScanner<'a> {
-    fn locate(source: &'a str, path: &[Seg]) -> Option<Range<usize>> {
+    pub(crate) fn locate(source: &'a str, path: &[Seg]) -> Option<Range<usize>> {
         let mut scanner = Self {
             bytes: source.as_bytes(),
             pos: 0,

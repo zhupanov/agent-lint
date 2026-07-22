@@ -89,12 +89,12 @@ checked-in schema and examples are in
 
 ## Lint Rules
 
-Agent Lint ships 296 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 
 | Category | Prefix | Rules | Description |
 |----------|--------|-------|-------------|
-| Manifest | M | 21 | `plugin.json` and `marketplace.json` validation, component path safety |
+| Manifest | M | 22 | `plugin.json` and `marketplace.json` validation, component path safety |
 | Hooks | H | 26 | `hooks.json` / `settings.json` hook paths and hook object schema |
 | Skills | S | 72 | Skill frontmatter, prompt contracts, execution fields, descriptions, shell fences, security |
 | Agents | A | 30 | Agent frontmatter, field values, tool/evidence/stop contracts, templates, description quality |

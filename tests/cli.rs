@@ -2091,23 +2091,14 @@ fn manifest_author_and_channel_diagnostics_preserve_strictness_policy() {
     std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
     std::fs::write(
         plugin,
-        r#"{"name":"plugin","version":"1.0.0","author":"Ada","mcpServers":{"existing":{"command":"server"}},"channels":{"alerts":{"server":"missing"}}}"#,
+        r#"{"name":"plugin","version":"1.0.0","author":"Ada","mcpServers":{"existing":{"command":"server"}},"channels":[{"server":"missing"}]}"#,
     )
     .unwrap();
 
-    for (arguments, channel_severity) in [
-        (
-            vec!["--format", "json", "--only", "M017,M020", "."],
-            "warning",
-        ),
-        (
-            vec!["--format", "json", "--pedantic", "--only", "M017,M020", "."],
-            "error",
-        ),
-        (
-            vec!["--format", "json", "--all", "--only", "M017,M020", "."],
-            "error",
-        ),
+    for arguments in [
+        vec!["--format", "json", "--only", "M017,M020", "."],
+        vec!["--format", "json", "--pedantic", "--only", "M017,M020", "."],
+        vec!["--format", "json", "--all", "--only", "M017,M020", "."],
     ] {
         let output = run_in(tmp.path(), &arguments);
         assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
@@ -2117,13 +2108,78 @@ fn manifest_author_and_channel_diagnostics_preserve_strictness_policy() {
             .iter()
             .find(|diagnostic| diagnostic["code"] == "M017")
             .unwrap();
-        assert_eq!(channel["severity"], channel_severity);
+        assert_eq!(channel["severity"], "error");
         let author = diagnostics
             .iter()
             .find(|diagnostic| diagnostic["code"] == "M020")
             .unwrap();
         assert_eq!(author["severity"], "error");
     }
+}
+
+#[test]
+fn plugin_field_rules_cover_marketplace_entries_with_safe_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"plugin","version":"1.0.0","homepage":"ftp://example.invalid/?token=sk_this-must-not-leak"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/marketplace.json"),
+        r#"{"name":"market","owner":{"name":"Owner"},"plugins":[{"name":"a","source":"./a","author":{}},{"name":"b","source":"./b","author":7},{"name":"c","source":"./c","homepage":false},{"name":"d","source":"./d","lspServers":{"bad":{"command":" ","extensionToLanguage":{}}}},{"name":"e","source":"./e","channels":{"alerts":{"server":"missing"}}}]}"#,
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--only",
+            "M014,M015,M016,M017,M020,M022",
+            ".",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let rendered = String::from_utf8_lossy(&output.stdout);
+    assert!(!rendered.contains("sk_this-must-not-leak"), "{rendered}");
+    let output_json = json(&output);
+    let diagnostics = output_json["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 6, "{diagnostics:?}");
+    for code in ["M014", "M015", "M016", "M017", "M020", "M022"] {
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == code),
+            "{diagnostics:?}"
+        );
+    }
+    for code in ["M015", "M022"] {
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic["code"] == code)
+            .unwrap();
+        assert_eq!(diagnostic["evidence"], "[redacted: possible secret]");
+        assert!(diagnostic["location"].is_object(), "{diagnostic:?}");
+    }
+    let marketplace = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "M014")
+        .unwrap();
+    assert_eq!(
+        marketplace["subject_path"],
+        ".claude-plugin/marketplace.json"
+    );
+    assert!(marketplace["location"].is_object(), "{marketplace:?}");
+    assert!(
+        marketplace["message"]
+            .as_str()
+            .unwrap()
+            .contains("plugins[0].author.name")
+    );
 }
 
 #[test]
