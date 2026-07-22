@@ -1,0 +1,8 @@
+{
+  "name": "UPPER_CASE",
+  "owner": {"name": "owner"},
+  "plugins": [
+    {"name": "a--b", "source": "./one"},
+    {"name": "café", "source": "./two"}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "class": "broken",
+  "repository": "m024-whitespace-broken",
+  "covers": ["m024-whitespace", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "M021,M024", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "M024", "name": "marketplace-name-whitespace", "severity": "error", "subject_path": ".claude-plugin/marketplace.json", "suggestion": "replace whitespace with hyphens and use a whitespace-free identifier" },
+    { "code": "M024", "name": "marketplace-name-whitespace", "severity": "error", "subject_path": ".claude-plugin/marketplace.json", "suggestion": "replace whitespace with hyphens and use a whitespace-free identifier" },
+    { "code": "M024", "name": "marketplace-name-whitespace", "severity": "error", "subject_path": ".claude-plugin/marketplace.json", "suggestion": "replace whitespace with hyphens and use a whitespace-free identifier" }
+  ],
+  "allowed_additional_diagnostics": []
+}
