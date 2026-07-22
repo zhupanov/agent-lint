@@ -2,9 +2,9 @@
   "class": "broken",
   "repository": "agent-canonical-yaml-broken",
   "covers": ["plugin-mode", "normal", "json", "agent-canonical-yaml"],
-  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A002,A003,A008,A009,A010,A011", "."] },
-  "expected_exit_code": 0,
-  "expected_status": "warnings",
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "A002,A003,A008,A009,A010,A011,A017,A019,A020", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
   "expected_active_platforms": ["claude", "codex"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
@@ -21,6 +21,18 @@
       "severity": "warning",
       "subject_path": "agents/routing.md",
       "suggestion": "add concrete capability plus when-to-use context"
+    },
+    {
+      "code": "A017",
+      "name": "agent-tools-overlap",
+      "severity": "error",
+      "subject_path": "agents/routing.md"
+    },
+    {
+      "code": "A019",
+      "name": "agent-tools-unknown",
+      "severity": "error",
+      "subject_path": "agents/routing.md"
     }
   ],
   "allowed_additional_diagnostics": []

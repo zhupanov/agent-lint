@@ -1,27 +1,33 @@
 use crate::diagnostic::DiagnosticCollector;
-use crate::frontmatter;
 use crate::rules::LintRule;
+use crate::validators::common::{is_known_tool_name, tokenize_tool_field};
 use crate::validators::skills::SkillInfo;
 use crate::yaml::Mapping;
+use std::collections::HashSet;
+
+/// The two skill tool-declaration fields validated by S040 (and S067 for
+/// `allowed-tools`). Both accept a space- or comma-separated string or a YAML
+/// list per the Claude Code skills reference.
+const TOOL_FIELDS: &[&str] = &["allowed-tools", "disallowed-tools"];
 
 pub(super) fn check_frontmatter_extended(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    // S035, S039, and S043 read canonical YAML values so comments, quoting, and
-    // multiline scalars cannot corrupt the compared value. Invalid or
-    // non-mapping frontmatter is owned by X001/S004/S005, so they skip it.
+    // S035, S039, S043, and the S040/S067 tool rules read canonical YAML
+    // values so comments, quoting, and multiline scalars cannot corrupt the
+    // compared value. Invalid or non-mapping frontmatter is owned by
+    // X001/S004/S005, so they skip it.
     if let Some(map) = info.frontmatter_mapping() {
         check_compatibility_length(info, map, diag);
         check_metadata_values(info, map, diag);
         check_frontmatter_backslash(info, map, diag);
+        check_tool_fields(info, map, diag);
     }
 
-    // S045 and S040/S067 remain line-oriented and are outside this migration's
-    // scope; they keep their existing behavior.
-    check_allowed_tools_list_syntax(info, diag);
-    check_allowed_tools(info, diag);
-
     // S042 (dmi-empty-desc) is soft-retired: it was a strict subset of
-    // S005/frontmatter-field-missing and no longer fires from any path. Its
-    // registry code/name remain as a deprecated, config-only identifier.
+    // S005/frontmatter-field-missing and no longer fires from any path.
+    // S045 (tools-list-syntax) is soft-retired: a YAML list is a documented
+    // accepted `allowed-tools` spelling, not a mistake, and its autofix could
+    // corrupt valid YAML. Both registry codes/names remain as deprecated,
+    // config-only identifiers.
 }
 
 /// S035: cap `compatibility` length, measured in Unicode scalar values so the
@@ -89,76 +95,50 @@ fn check_frontmatter_backslash(info: &SkillInfo, map: &Mapping, diag: &mut Diagn
     }
 }
 
-/// S045: `allowed-tools` written as a YAML list instead of a comma scalar.
-fn check_allowed_tools_list_syntax(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    if frontmatter::field_exists(&info.fm_lines, "allowed-tools")
-        && frontmatter::get_field(&info.fm_lines, "allowed-tools").is_none()
-    {
-        // Check for actual YAML list items ("- " lines after the key, possibly unindented or
-        // separated by blank lines)
-        let has_list_items = info
-            .fm_lines
-            .iter()
-            .position(|l| l.starts_with("allowed-tools:"))
-            .is_some_and(|i| {
-                info.fm_lines[i + 1..]
-                    .iter()
-                    .take_while(|l| {
-                        l.is_empty()
-                            || l.starts_with(' ')
-                            || l.starts_with('\t')
-                            || l.starts_with("- ")
-                    })
-                    .any(|l| l.trim_start().starts_with("- "))
-            });
-        if has_list_items {
-            diag.report(
-                LintRule::ToolsListSyntax,
-                &format!(
-                    "{}: 'allowed-tools' uses YAML list syntax; use comma-separated scalar instead (e.g., allowed-tools: Bash, Read, Write)",
-                    info.path
-                ),
-            );
-        }
-    }
-}
-
-/// S040 / S067: unrecognized or unscoped `allowed-tools` entries.
-fn check_allowed_tools(info: &SkillInfo, diag: &mut DiagnosticCollector) {
-    if let Some(tools_str) = frontmatter::get_field(&info.fm_lines, "allowed-tools") {
-        for tool in tools_str.split(',') {
-            let tool = tool.trim();
-            if tool.is_empty() {
-                continue;
-            }
-            // Reuse the shared known-tool checker (also used by agent tools rules).
-            // Base name is reported (argument-restriction suffix like "Bash(git *)" stripped).
-            let base_name = match tool.find('(') {
-                Some(paren) => tool[..paren].trim(),
-                None => tool,
+/// S040 / S067: unrecognized or unscoped tool declarations.
+///
+/// Every documented spelling of `allowed-tools` and `disallowed-tools` — a
+/// space- or comma-separated string or a YAML list — is tokenized by the
+/// shared tool tokenizer, so `Bash(npm install, npm test)` stays one entry.
+/// S040 reports each unknown entry once per (field, name) per file; S067
+/// fires when any `allowed-tools` entry is exactly `Bash` (denying all of
+/// Bash via `disallowed-tools` is not a scoping problem).
+fn check_tool_fields(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticCollector) {
+    let mut reported: HashSet<(&str, String)> = HashSet::new();
+    for &field in TOOL_FIELDS {
+        let Some(value) = map.get(field) else {
+            continue;
+        };
+        let entries = tokenize_tool_field(value);
+        for entry in &entries {
+            // Base name is reported (argument-restriction suffix like
+            // "Bash(git *)" stripped).
+            let base_name = match entry.find('(') {
+                Some(paren) => entry[..paren].trim(),
+                None => entry.as_str(),
             };
             if base_name.is_empty() {
                 continue;
             }
-            if !crate::validators::common::is_known_tool_name(tool) {
+            if !is_known_tool_name(entry) && reported.insert((field, base_name.to_owned())) {
                 diag.report(
                     LintRule::ToolsUnknown,
                     &format!(
-                        "{}: allowed-tools lists unrecognized tool '{}' (tool names are case-sensitive PascalCase; may be an MCP tool — verify spelling)",
-                        info.path, base_name
-                    ),
-                );
-            }
-            // S067: unscoped Bash (no Bash(pattern) form)
-            if tool == "Bash" {
-                diag.report(
-                    LintRule::BashUnscoped,
-                    &format!(
-                        "{}: allowed-tools lists unscoped Bash; prefer scoped form like Bash(git:*)",
+                        "{}: {field} lists unrecognized tool '{base_name}' (tool names are case-sensitive PascalCase; may be an MCP tool — verify spelling)",
                         info.path
                     ),
                 );
             }
+        }
+        // S067: unscoped Bash (no Bash(pattern) form) in allowed-tools only.
+        if field == "allowed-tools" && entries.iter().any(|entry| entry == "Bash") {
+            diag.report(
+                LintRule::BashUnscoped,
+                &format!(
+                    "{}: allowed-tools lists unscoped Bash; prefer scoped form like Bash(git *)",
+                    info.path
+                ),
+            );
         }
     }
 }

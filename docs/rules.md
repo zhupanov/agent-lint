@@ -1,6 +1,6 @@
 # Lint Rules Reference
 
-Agent Lint ships 299 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 298 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry. Every rule has a unique code (e.g.,
 `M001`) and a human-readable name (e.g., `plugin-json-missing`). Either form can
 be used in `agent-lint.toml` to configure rule severity.
@@ -279,18 +279,29 @@ values — every frontmatter field except the free-prose `description`,
 | S072 | `skill-dir-oversized` | Skill directory exceeds 8MB platform upload limit (counts build/dependency trees; skips `.git`; does not follow directory symlinks) | Always | warn |
 | S073 | `skill-ref-nested` | Skill-relative `.md` link nested deeper than one directory level (`..` counts; URI schemes and non-`.md` targets are skipped) | Always | error |
 
-### Extended Frontmatter (S035, S039--S040, S042--S045, S067)
+### Extended Frontmatter (S035, S039--S040, S042--S044, S067)
 
 | Code | Name | Description | Mode | Default |
 |------|------|-------------|------|---------|
 | S035 | `compat-too-long` | `compatibility` field exceeds 500 characters | Always | warn |
 | S039 | `metadata-not-string` | Metadata map values must be strings | Always | error |
-| S040 | `tools-unknown` | `allowed-tools` lists unrecognized tool name | Always | warn |
+| S040 | `tools-unknown` | `allowed-tools` or `disallowed-tools` lists an unrecognized tool name | Always | warn |
 | S042 | `dmi-empty-desc` | Deprecated — no longer fires (a strict subset of S005; the code/name remain accepted in config) | Always | error |
 | S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Always | error |
 | S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Always | warn |
-| S045 | `tools-list-syntax` | `allowed-tools` uses YAML list syntax instead of comma-separated scalar | Always | warn |
-| S067 | `bash-unscoped` | `allowed-tools` lists unscoped `Bash` (prefer `Bash(…)` scoping) | Always | warn |
+| S067 | `bash-unscoped` | `allowed-tools` lists unscoped `Bash` (prefer scoping such as `Bash(git *)`) | Always | warn |
+
+> **Tool declarations (S040/S067).** `allowed-tools` and `disallowed-tools`
+> accept every documented spelling: a space- or comma-separated string or a
+> YAML list. Scalar values split at commas and whitespace outside
+> parentheses, so `Bash(npm install, npm test), Read` is two entries; list
+> items are individual entries with comments and quoting resolved by the
+> YAML parser. S040 reports each unrecognized entry once per field and name;
+> S067 fires only when an `allowed-tools` entry is exactly `Bash`
+> (`disallowed-tools: Bash` denies the whole tool and is not a scoping
+> problem). S045 (`tools-list-syntax`) is retired: a YAML list is a
+> documented accepted form, so the rule no longer fires and has no autofix;
+> its code/name remain accepted in config.
 
 ### Cross-Field and Structural (S028--S032, S036, S048, S054, S068--S069)
 
@@ -441,6 +452,11 @@ values — every frontmatter field except the free-prose `description`,
 > Model aliases/`claude-…` IDs share one vocabulary with S063 (`skill model`);
 > the known-tool list is shared with S040
 > (`skill allowed-tools`); `mcp__<server>__<tool>` names are accepted.
+> Scalar `tools`/`disallowedTools` values use the same tool tokenizer as
+> S040/S067: commas and whitespace split outside parentheses, so
+> `Bash(npm install, npm test), Read` is two declarations. A017 overlap is an
+> exact full-token match reported once per token in first-declaration order —
+> `Bash(git *)` and `Bash(rm *)` do not overlap.
 > **Stop controls (A029).** A029 applies only to valid Claude/plugin agent
 > frontmatter that explicitly declares an execution-capable tool: `Agent`,
 > `Bash`, `Edit`, `NotebookEdit`, `Task`, `WebFetch`, `WebSearch`, `Write`, or
@@ -1201,7 +1217,7 @@ violations for rules that have purely mechanical, unambiguous fixes. After
 all possible fixes are applied, it runs a final validation pass and reports
 any remaining issues with normal exit semantics (exit 1 if errors remain).
 
-**Auto-fixable rules (11 of 299):**
+**Auto-fixable rules (10 of 298):**
 
 | Rule | Code | Fix |
 |------|------|-----|
@@ -1214,7 +1230,6 @@ any remaining issues with normal exit semantics (exit 1 if errors remain).
 | backslash-path | S022 | Replace every separator in each detected body path run with `/` |
 | non-https-url | S031 | `http://` → `https://` (Claude surfaces only: `skills/` and `.claude/skills/`; `.agents/skills/` and `.cursor/skills/` report diagnostics without rewriting). Exempt identifier and reserved-name matches (shared with the checker) are left byte-identical, so an XML namespace such as `xmlns="http://www.w3.org/2000/svg"` is never rewritten |
 | frontmatter-backslash | S043 | Replace `\` with `/` in frontmatter |
-| tools-list-syntax | S045 | YAML list → comma-separated scalar |
 | pwd-in-skill | G001 | Existing bundled asset `$PWD/` or `${PWD}/` → `${CLAUDE_PLUGIN_ROOT}/` |
 
 Each fix is logged to stderr. H005 enforcement and its `chmod +x` autofix are

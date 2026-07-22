@@ -320,7 +320,10 @@ pub enum LintRule {
     /// S044: MCP tool reference without server prefix
     #[strum(props(code = "S044", name = "mcp-tool-unqualified"))]
     McpToolUnqualified,
-    /// S045: allowed-tools uses YAML list syntax instead of comma-separated scalar
+    /// S045: allowed-tools uses YAML list syntax (deprecated — no longer
+    /// fires; a YAML list is a documented accepted spelling, so S040/S067
+    /// validate its entries instead; retained so existing config identifiers
+    /// keep parsing)
     #[strum(props(code = "S045", name = "tools-list-syntax"))]
     ToolsListSyntax,
     /// S046: Long skill body lacks workflow structure
@@ -1043,7 +1046,6 @@ impl LintRule {
                 | Self::BackslashPath
                 | Self::NonHttpsUrl
                 | Self::FrontmatterBackslash
-                | Self::ToolsListSyntax
                 | Self::PwdInSkill
         )
     }
@@ -1088,7 +1090,7 @@ impl LintRule {
             // ── Default-warning: niche (skills) ──────────────────────
             Self::NestedRefDeep | Self::CompatTooLong | Self::RefNoToc |
             Self::TimeSensitive | Self::ToolsUnknown |
-            Self::McpToolUnqualified | Self::ToolsListSyntax |
+            Self::McpToolUnqualified |
             Self::SideEffectAuto | Self::BashUnscoped |
             Self::InjectionOverflow | Self::ArgsNoHint | Self::HintNoArgs |
             Self::UnknownFmField | Self::PathsEmpty |
@@ -1180,7 +1182,12 @@ pub static ACTIVE_RULES: LazyLock<Vec<LintRule>> = LazyLock::new(|| {
     LintRule::VARIANTS
         .iter()
         .copied()
-        .filter(|rule| *rule != LintRule::OutputStyleNameTooLong)
+        .filter(|rule| {
+            !matches!(
+                rule,
+                LintRule::OutputStyleNameTooLong | LintRule::ToolsListSyntax
+            )
+        })
         .collect()
 });
 
@@ -1387,6 +1394,23 @@ mod tests {
     }
 
     #[test]
+    fn retired_s045_stays_a_config_only_identifier() {
+        // #342: S045 is soft-retired — both identifiers still resolve so
+        // existing configuration keeps parsing, it is not autofixable, and it
+        // no longer participates in active selection or documentation.
+        assert_eq!(
+            LintRule::from_code_or_name("S045"),
+            Some(LintRule::ToolsListSyntax)
+        );
+        assert_eq!(
+            LintRule::from_code_or_name("tools-list-syntax"),
+            Some(LintRule::ToolsListSyntax)
+        );
+        assert!(!LintRule::ToolsListSyntax.is_autofixable());
+        assert!(!ACTIVE_RULES.contains(&LintRule::ToolsListSyntax));
+    }
+
+    #[test]
     fn migrated_codex_agents_identifiers_resolve_to_shared_rules() {
         for (identifier, expected) in [
             ("CX037", LintRule::InstructionFileEmpty),
@@ -1524,8 +1548,8 @@ mod tests {
             .collect();
         assert_eq!(
             warnings.len(),
-            121,
-            "Expected 121 active default-warning rules, got {}",
+            120,
+            "Expected 120 active default-warning rules, got {}",
             warnings.len()
         );
     }
@@ -1642,8 +1666,8 @@ mod tests {
         let fixable: Vec<_> = ACTIVE_RULES.iter().filter(|r| r.is_autofixable()).collect();
         assert_eq!(
             fixable.len(),
-            11,
-            "Expected 11 auto-fixable rules, got {}",
+            10,
+            "Expected 10 auto-fixable rules, got {}",
             fixable.len()
         );
     }

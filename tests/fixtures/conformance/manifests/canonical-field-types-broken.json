@@ -2,14 +2,16 @@
   "class": "broken",
   "repository": "canonical-field-types-broken",
   "covers": ["canonical-field-types", "basic-mode", "normal", "json"],
-  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S023,S063,S070,S071", "."] },
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S023,S040,S063,S067,S070,S071", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",
   "expected_active_platforms": ["claude"],
   "expected_suppressed": 0,
   "expected_diagnostics": [
     { "code": "S023", "name": "bool-field-invalid", "severity": "error", "subject_path": ".claude/skills/canonical/SKILL.md" },
+    { "code": "S040", "name": "tools-unknown", "severity": "warning", "subject_path": ".claude/skills/canonical/SKILL.md" },
     { "code": "S063", "name": "model-invalid", "severity": "error", "subject_path": ".claude/skills/canonical/SKILL.md" },
+    { "code": "S067", "name": "bash-unscoped", "severity": "warning", "subject_path": ".claude/skills/canonical/SKILL.md" },
     { "code": "S070", "name": "unknown-fm-field", "severity": "warning", "subject_path": ".claude/skills/canonical/SKILL.md" },
     { "code": "S071", "name": "paths-empty", "severity": "warning", "subject_path": ".claude/skills/canonical/SKILL.md" }
   ],

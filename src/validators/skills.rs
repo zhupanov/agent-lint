@@ -550,7 +550,10 @@ fn validate_skill_frontmatter_in_dir(
                     field,
                 );
                 if is_empty {
-                    // For allowed-tools: suppress S007 if YAML list items follow (S045 handles that case)
+                    // For allowed-tools: a following YAML list means the field
+                    // is a documented list form, not empty. Canonical parses
+                    // already treat a sequence as non-empty; this guard keeps
+                    // the invalid-YAML line-oriented fallback consistent.
                     if *field == "allowed-tools" {
                         let has_list_items = fm_lines
                             .iter()

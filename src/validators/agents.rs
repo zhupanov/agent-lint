@@ -738,6 +738,26 @@ fn canonical_string_list(frontmatter: &AgentFrontmatter, key: &str) -> StringLis
                 .collect(),
         );
     }
+    sequence_string_list(value)
+}
+
+/// Canonical reader for the agent tool fields (`tools`/`disallowedTools`).
+/// Shape ownership matches [`canonical_string_list`], but a string scalar is
+/// split by the shared tool tokenizer (#342) — commas and whitespace outside
+/// `(...)` — so `Bash(npm install, npm test), Read` stays two declarations.
+/// A sequence still contributes each string item as one entry; comments and
+/// quoting are handled only by the YAML parser.
+fn canonical_tool_list(frontmatter: &AgentFrontmatter, key: &str) -> StringList {
+    let Some(value) = frontmatter.value(key) else {
+        return StringList::Missing;
+    };
+    if let Some(scalar) = value.as_str() {
+        return StringList::Valid(crate::validators::common::tokenize_tool_scalar(scalar));
+    }
+    sequence_string_list(value)
+}
+
+fn sequence_string_list(value: &crate::yaml::Value) -> StringList {
     let Some(sequence) = value.as_sequence() else {
         return StringList::Invalid;
     };
@@ -818,7 +838,7 @@ fn check_agent_evidence_contracts(
         EXPLICIT_READ_MANDATE.is_match(&normalize_emphasis_for_gates(sentence))
     });
     if let Some((line, mandate)) = read_tool_mandate {
-        let has_read = matches!(canonical_string_list(parsed_frontmatter, "tools"), StringList::Valid(tools) if tools.iter().any(|tool| is_known_tool_name(tool) && tool_base_name(tool) == "Read"));
+        let has_read = matches!(canonical_tool_list(parsed_frontmatter, "tools"), StringList::Valid(tools) if tools.iter().any(|tool| is_known_tool_name(tool) && tool_base_name(tool) == "Read"));
         if !has_read {
             diag.report_with(
                 LintRule::AgentReadMismatch,
@@ -904,7 +924,7 @@ fn check_agent_stop_control(
     max_turns: Option<NonZeroU64>,
     document: &LiveInstructionDocument<'_>,
 ) {
-    let execution_tools: Vec<_> = match canonical_string_list(parsed_frontmatter, "tools") {
+    let execution_tools: Vec<_> = match canonical_tool_list(parsed_frontmatter, "tools") {
         StringList::Valid(items) => items,
         StringList::Missing | StringList::Invalid => Vec::new(),
     }
@@ -1187,7 +1207,7 @@ fn check_agent_field_values(
         );
     }
 
-    let tools = match canonical_string_list(frontmatter, "tools") {
+    let tools = match canonical_tool_list(frontmatter, "tools") {
         StringList::Missing => Vec::new(),
         StringList::Valid(items) => dedupe_in_declaration_order(items),
         StringList::Invalid => {
@@ -1198,7 +1218,7 @@ fn check_agent_field_values(
             Vec::new()
         }
     };
-    let disallowed = match canonical_string_list(frontmatter, "disallowedTools") {
+    let disallowed = match canonical_tool_list(frontmatter, "disallowedTools") {
         StringList::Missing => Vec::new(),
         StringList::Valid(items) => dedupe_in_declaration_order(items),
         StringList::Invalid => {
@@ -1234,7 +1254,10 @@ fn check_agent_field_values(
         }
     }
 
-    // A017: no tool in both tools and disallowedTools (CC-AG-006).
+    // A017: no tool in both tools and disallowedTools (CC-AG-006). Overlap is
+    // an exact full-token match in first-declaration order: restricted forms
+    // are never collapsed to base names, so Bash(git *) and Bash(rm *) do not
+    // overlap.
     let disallowed_set: HashSet<&str> = disallowed.iter().map(String::as_str).collect();
     for tool in &tools {
         if disallowed_set.contains(tool.as_str()) {
@@ -3466,6 +3489,60 @@ Body ## Reviewer
         });
     }
 
+    /// #342: overlap is exact-full-token — restricted forms are never
+    /// collapsed to base names, so different restrictions do not overlap
+    /// while identical normalized declarations do.
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH17PH_restricted_forms_overlap_only_when_identical() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash(git *)\ndisallowedTools: Bash(rm *)\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag.errors().iter().any(|e| e.contains("appears in both")),
+                "different restrictions must not overlap: {:?}",
+                diag.errors()
+            );
+        });
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash(git *)\ndisallowedTools: Bash(git *)\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                diag.errors()
+                    .iter()
+                    .any(|e| e.contains("tool 'Bash(git *)' appears in both")),
+                "identical restricted declarations must overlap: {:?}",
+                diag.errors()
+            );
+        });
+    }
+
+    /// #342: each exact overlap reports once, in first-declaration order.
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH17PH_overlaps_report_once_in_declaration_order() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bash, Read, Bash\ndisallowedTools: Read, Bash\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            let overlaps: Vec<_> = diag
+                .errors()
+                .iter()
+                .filter(|e| e.contains("appears in both"))
+                .cloned()
+                .collect();
+            assert_eq!(
+                overlaps.len(),
+                2,
+                "each overlap reports exactly once: {overlaps:?}"
+            );
+            assert!(overlaps[0].contains("'Bash'"), "{overlaps:?}");
+            assert!(overlaps[1].contains("'Read'"), "{overlaps:?}");
+        });
+    }
+
     // ── A018: agent-memory-invalid ───────────────────────────────────
 
     #[test]
@@ -3563,6 +3640,85 @@ Body ## Reviewer
                 diag.errors()
                     .iter()
                     .any(|e| e.contains("disallowedTools lists unrecognized tool 'Bsh'"))
+            );
+        });
+    }
+
+    /// #342: agent tool scalars use the shared tokenizer — commas inside a
+    /// restriction are pattern text, and whitespace separation is accepted as
+    /// a conservative superset.
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_scalar_tokenizer_forms_clean() {
+        for tools in [
+            "tools: Bash(npm install, npm test), Read",
+            "tools: Read Write",
+            "tools: Bash(git add *) Bash(git commit *) Bash(git status *)",
+        ] {
+            let content =
+                format!("---\nname: general\ndescription: {GOOD_DESC}\n{tools}\n---\nBody\n");
+            run_agent(&content, |diag| {
+                assert!(
+                    !diag
+                        .errors()
+                        .iter()
+                        .any(|e| e.contains("unrecognized tool")),
+                    "{tools} must not fire A019: {:?}",
+                    diag.errors()
+                );
+            });
+        }
+    }
+
+    /// #342: commented flow and block lists are resolved by the YAML parser
+    /// and must not produce comment-bearing tokens.
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_aPH20PH_commented_lists_clean() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: [Bash, Read] # comment\ndisallowedTools:\n  - Write # comment\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            assert!(
+                !diag
+                    .errors()
+                    .iter()
+                    .any(|e| e.contains("unrecognized tool")),
+                "commented lists must stay clean: {:?}",
+                diag.errors()
+            );
+        });
+    }
+
+    /// #342: duplicate unknown entries report once per (field, token).
+    #[test]
+    #[serial_test::serial]
+    fn test_aPH19PH_aPH20PH_duplicate_unknowns_report_once_per_field() {
+        let content = format!(
+            "---\nname: general\ndescription: {GOOD_DESC}\ntools: Bsh, Bsh\ndisallowedTools: Bsh\n---\nBody\n"
+        );
+        run_agent(&content, |diag| {
+            let tools_findings = diag
+                .errors()
+                .iter()
+                .filter(|e| e.contains("tools lists unrecognized tool 'Bsh'"))
+                .count();
+            let disallowed_findings = diag
+                .errors()
+                .iter()
+                .filter(|e| e.contains("disallowedTools lists unrecognized tool 'Bsh'"))
+                .count();
+            assert_eq!(
+                tools_findings,
+                1,
+                "duplicate unknown tools entries report once: {:?}",
+                diag.errors()
+            );
+            assert_eq!(
+                disallowed_findings,
+                1,
+                "disallowedTools reports its own token once: {:?}",
+                diag.errors()
             );
         });
     }
@@ -3865,6 +4021,42 @@ Body ## Reviewer
         let frontmatter = AgentFrontmatter::from_yaml(&yaml, &lines).unwrap();
         assert!(matches!(
             canonical_string_list(&frontmatter, "tools"),
+            StringList::Invalid
+        ));
+    }
+
+    /// #342: the tool-field reader shares shape ownership with
+    /// `canonical_string_list` but tokenizes scalars with the shared
+    /// outside-parentheses splitter.
+    #[test]
+    fn test_canonical_tool_list_uses_shared_tokenizer() {
+        for (source, expected) in [
+            (
+                "tools: Bash(npm install, npm test), Read\n",
+                vec!["Bash(npm install, npm test)", "Read"],
+            ),
+            ("tools: Read Write\n", vec!["Read", "Write"]),
+            // Flow-sequence commas are YAML separators; a comma-bearing
+            // restriction must be quoted to stay one item.
+            (
+                "tools: [\"Bash(a, b)\", Read]\n",
+                vec!["Bash(a, b)", "Read"],
+            ),
+        ] {
+            let yaml = crate::yaml::parse(source).unwrap();
+            let lines = vec!["name: example".to_string()];
+            let frontmatter = AgentFrontmatter::from_yaml(&yaml, &lines).unwrap();
+            match canonical_tool_list(&frontmatter, "tools") {
+                StringList::Valid(items) => assert_eq!(items, expected, "{source}"),
+                _ => panic!("expected a canonical tool list for {source}"),
+            }
+        }
+
+        let yaml = crate::yaml::parse("tools: [Bash, 1]\n").unwrap();
+        let lines = vec!["name: example".to_string()];
+        let frontmatter = AgentFrontmatter::from_yaml(&yaml, &lines).unwrap();
+        assert!(matches!(
+            canonical_tool_list(&frontmatter, "tools"),
             StringList::Invalid
         ));
     }

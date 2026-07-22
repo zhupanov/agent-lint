@@ -1325,6 +1325,32 @@ suppress = ["S033"]
 
     #[test]
     #[serial_test::serial]
+    fn soft_retired_rules_stay_valid_config_identifiers() {
+        // S042/S045/S049/O005 are soft-retired: they never fire, but their
+        // registry identifiers keep parsing so existing configuration loads.
+        let tmp = tempfile::tempdir().unwrap();
+        for identifier in [
+            "S042",
+            "dmi-empty-desc",
+            "S045",
+            "tools-list-syntax",
+            "S049",
+            "name-not-gerund",
+            "O005",
+            "style-name-long",
+        ] {
+            std::fs::write(
+                tmp.path().join("agent-lint.toml"),
+                format!("[lint]\nsuppress = [\"{identifier}\"]\n"),
+            )
+            .unwrap();
+            LintConfig::load(tmp.path().to_str().unwrap())
+                .unwrap_or_else(|err| panic!("{identifier} must stay accepted: {err}"));
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn malformed_toml_returns_error() {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("agent-lint.toml"), "not valid toml {{{\n").unwrap();
@@ -2188,7 +2214,7 @@ root-max-lines = 10
         config.apply_cli_mode(CliMode::All);
         assert!(config.suppress.is_empty());
         assert!(config.warn.is_empty());
-        assert_eq!(config.error.len(), 299);
+        assert_eq!(config.error.len(), 298);
         // Exclude is NOT cleared — it's about file paths, not rule severity
         assert_eq!(config.exclude.len(), 1);
     }
