@@ -457,70 +457,245 @@ fn json_type(value: &Value) -> &'static str {
     }
 }
 
-/// V12: Validate marketplace.json enriched metadata (larch convention)
+/// V12: Validate marketplace.json enriched metadata (agent-lint convention).
+///
+/// M010 is a discovery-quality advisory, not a Claude Code load requirement.
+/// Present `owner.email` values are owned exclusively by E001/E002. Category is
+/// checked only on object plugin entries so scalar/malformed parents stay with
+/// M009 and do not cascade enrichment warnings.
 pub fn validate_marketplace_enriched(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/marketplace.json";
     let val = match &ctx.marketplace_json {
         ManifestState::Parsed(v) => v,
         _ => return, // Missing/invalid already reported by V2
     };
+    let source = val.source();
 
-    if val.get("owner").and_then(|o| o.get("email")).is_none() {
-        diag.report(
-            LintRule::MarketplaceEnrichedMissing,
-            &format!("{f} missing required field: owner.email"),
-        );
+    // Field order: owner.email, then plugins[i].category by ascending index.
+    match val.get("owner") {
+        Some(owner) if owner.is_object() => {
+            if owner.get("email").is_none() {
+                diag.report_at_with(
+                    LintRule::MarketplaceEnrichedMissing,
+                    f,
+                    &format!("{f} missing usable enrichment field: owner.email"),
+                    metadata_at(
+                        source,
+                        &[Seg::Key("owner")],
+                        "owner.email",
+                        "add owner.email as a string contact address",
+                        false,
+                    ),
+                );
+            }
+        }
+        // Absent or non-object owner is exclusively M007 structural territory.
+        _ => {}
     }
 
     if let Some(plugins) = val.get("plugins").and_then(|v| v.as_array()) {
         for (i, plugin) in plugins.iter().enumerate() {
-            let cat = plugin
-                .get("category")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if cat.is_empty() {
-                diag.report(
-                    LintRule::MarketplaceEnrichedMissing,
-                    &format!("{f} plugins[{i}] missing required field: category"),
-                );
+            // Object-only gate: scalar/non-object entries are M009-owned.
+            if !plugin.is_object() {
+                continue;
+            }
+            let label = format!("plugins[{i}].category");
+            let path_prefix = [Seg::Key("plugins"), Seg::Index(i)];
+            match plugin.get("category") {
+                None => {
+                    diag.report_at_with(
+                        LintRule::MarketplaceEnrichedMissing,
+                        f,
+                        &format!("{f} {label} must be a non-empty string after trimming"),
+                        metadata_at(
+                            source,
+                            &path_prefix,
+                            &label,
+                            "set category to a non-empty discovery category string",
+                            false,
+                        ),
+                    );
+                }
+                Some(Value::String(category)) if !category.trim().is_empty() => {}
+                Some(Value::String(_)) => {
+                    let path = extend_path(&path_prefix, &[Seg::Key("category")]);
+                    diag.report_at_with(
+                        LintRule::MarketplaceEnrichedMissing,
+                        f,
+                        &format!("{f} {label} must be a non-empty string after trimming"),
+                        metadata_at(
+                            source,
+                            &path,
+                            &label,
+                            "set category to a non-empty discovery category string",
+                            false,
+                        ),
+                    );
+                }
+                Some(other) => {
+                    let path = extend_path(&path_prefix, &[Seg::Key("category")]);
+                    diag.report_at_with(
+                        LintRule::MarketplaceEnrichedMissing,
+                        f,
+                        &format!("{f} {label} must be a non-empty string after trimming"),
+                        metadata_at(
+                            source,
+                            &path,
+                            &format!("{label}: {}", json_type(other)),
+                            "set category to a non-empty discovery category string",
+                            false,
+                        ),
+                    );
+                }
             }
         }
     }
 }
 
-/// V13: Validate plugin.json enriched metadata (larch convention)
+/// V13: Validate plugin.json enriched metadata (agent-lint convention).
+///
+/// M011 is a discovery-quality advisory, not a Claude Code load requirement.
+/// Present `author.email` values are owned exclusively by E001/E002. A
+/// non-object `author` stays with M020 and does not cascade an email advisory.
 pub fn validate_plugin_enriched(ctx: &LintContext, diag: &mut DiagnosticCollector) {
     let f = ".claude-plugin/plugin.json";
     let val = match &ctx.plugin_json {
         ManifestState::Parsed(v) => v,
         _ => return, // Missing/invalid already reported by V1
     };
+    let source = val.source();
 
-    let desc = val
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if desc.is_empty() {
-        diag.report(
-            LintRule::PluginEnrichedMissing,
-            &format!("{f} missing required field: description"),
-        );
-    }
-
-    if val.get("author").and_then(|o| o.get("email")).is_none() {
-        diag.report(
-            LintRule::PluginEnrichedMissing,
-            &format!("{f} missing required field: author.email"),
-        );
-    }
-
-    // keywords must be a non-empty array
-    match val.get("keywords") {
-        Some(kw) if kw.is_array() && !kw.as_array().unwrap().is_empty() => {}
-        _ => {
-            diag.report(
+    // Field order: description, author.email, keywords.
+    match val.get("description") {
+        None => {
+            diag.report_at_with(
                 LintRule::PluginEnrichedMissing,
-                &format!("{f} keywords must be a non-empty array"),
+                f,
+                &format!("{f} missing usable enrichment field: description"),
+                DiagnosticMetadata::default()
+                    .with_evidence("description")
+                    .with_suggestion("set description to a non-empty string"),
+            );
+        }
+        Some(Value::String(description)) if !description.trim().is_empty() => {}
+        Some(Value::String(_)) => {
+            diag.report_at_with(
+                LintRule::PluginEnrichedMissing,
+                f,
+                &format!("{f} description must be a non-empty string after trimming"),
+                metadata_at(
+                    source,
+                    &[Seg::Key("description")],
+                    "description",
+                    "set description to a non-empty string",
+                    false,
+                ),
+            );
+        }
+        Some(other) => {
+            diag.report_at_with(
+                LintRule::PluginEnrichedMissing,
+                f,
+                &format!("{f} description must be a non-empty string after trimming"),
+                metadata_at(
+                    source,
+                    &[Seg::Key("description")],
+                    &format!("description: {}", json_type(other)),
+                    "set description to a non-empty string",
+                    false,
+                ),
+            );
+        }
+    }
+
+    match val.get("author") {
+        None => {
+            diag.report_at_with(
+                LintRule::PluginEnrichedMissing,
+                f,
+                &format!("{f} missing usable enrichment field: author.email"),
+                DiagnosticMetadata::default()
+                    .with_evidence("author.email")
+                    .with_suggestion("add author.email as a string contact address"),
+            );
+        }
+        Some(author) if author.is_object() => {
+            if author.get("email").is_none() {
+                diag.report_at_with(
+                    LintRule::PluginEnrichedMissing,
+                    f,
+                    &format!("{f} missing usable enrichment field: author.email"),
+                    metadata_at(
+                        source,
+                        &[Seg::Key("author")],
+                        "author.email",
+                        "add author.email as a string contact address",
+                        false,
+                    ),
+                );
+            }
+        }
+        // Non-object author is exclusively M020 territory.
+        Some(_) => {}
+    }
+
+    match val.get("keywords") {
+        None => {
+            diag.report_at_with(
+                LintRule::PluginEnrichedMissing,
+                f,
+                &format!("{f} keywords must be a non-empty array of non-empty strings"),
+                DiagnosticMetadata::default()
+                    .with_evidence("keywords")
+                    .with_suggestion("set keywords to a non-empty array of non-empty strings"),
+            );
+        }
+        Some(Value::Array(items)) => {
+            let mut bad_indexes = Vec::new();
+            for (index, item) in items.iter().enumerate() {
+                match item {
+                    Value::String(keyword) if !keyword.trim().is_empty() => {}
+                    _ => bad_indexes.push(index),
+                }
+            }
+            if items.is_empty() || !bad_indexes.is_empty() {
+                // Empty array: field name. Otherwise list offending indexes only
+                // (never keyword text). One aggregate finding per field.
+                let evidence = if items.is_empty() {
+                    "keywords".to_owned()
+                } else {
+                    bad_indexes
+                        .iter()
+                        .map(|index| format!("keywords[{index}]"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                diag.report_at_with(
+                    LintRule::PluginEnrichedMissing,
+                    f,
+                    &format!("{f} keywords must be a non-empty array of non-empty strings"),
+                    metadata_at(
+                        source,
+                        &[Seg::Key("keywords")],
+                        &evidence,
+                        "set keywords to a non-empty array of non-empty strings",
+                        false,
+                    ),
+                );
+            }
+        }
+        Some(other) => {
+            diag.report_at_with(
+                LintRule::PluginEnrichedMissing,
+                f,
+                &format!("{f} keywords must be a non-empty array of non-empty strings"),
+                metadata_at(
+                    source,
+                    &[Seg::Key("keywords")],
+                    &format!("keywords: {}", json_type(other)),
+                    "set keywords to a non-empty array of non-empty strings",
+                    false,
+                ),
             );
         }
     }
@@ -1968,62 +2143,231 @@ mod tests {
         }
     }
 
-    // V12: validate_marketplace_enriched
+    // V12: validate_marketplace_enriched (M010)
     #[test]
     fn test_v12_valid_enriched() {
         let val = json!({
             "name": "mp",
             "owner": {"name": "o", "email": "a@b.com"},
-            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+            "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
+        assert!(diag.diagnostics().is_empty());
     }
 
     #[test]
-    fn test_v12_missing_owner_email() {
+    fn test_v12_owner_email_ownership_matrix() {
+        let cases = [
+            (
+                "absent owner",
+                json!({"plugins": [{"name": "p", "source": "./p", "category": "lint"}]}),
+                0,
+                false,
+            ),
+            (
+                "non-object owner",
+                json!({
+                    "owner": "not-an-object",
+                    "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                0,
+                false,
+            ),
+            (
+                "object missing email",
+                json!({
+                    "owner": {"name": "o"},
+                    "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                1,
+                true,
+            ),
+            (
+                "present string email",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                0,
+                false,
+            ),
+            (
+                "present blank email",
+                json!({
+                    "owner": {"name": "o", "email": "   "},
+                    "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                0,
+                false,
+            ),
+            (
+                "present non-string email",
+                json!({
+                    "owner": {"name": "o", "email": 42},
+                    "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                0,
+                false,
+            ),
+            (
+                "present null email",
+                json!({
+                    "owner": {"name": "o", "email": null},
+                    "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                0,
+                false,
+            ),
+        ];
+        for (label, val, expected, expect_owner_email) in cases {
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_enriched(&ctx, &mut diag);
+            assert_eq!(
+                diag.diagnostics().len(),
+                expected,
+                "{label}: {:?}",
+                diag.diagnostics()
+            );
+            if expect_owner_email {
+                assert_eq!(
+                    diag.diagnostics()[0].rule,
+                    LintRule::MarketplaceEnrichedMissing
+                );
+                assert!(diag.diagnostics()[0].message.contains("owner.email"));
+                assert_eq!(
+                    diag.diagnostics()[0].evidence.as_deref(),
+                    Some("owner.email")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_v12_category_matrix_and_object_only_gate() {
+        let cases = [
+            (
+                "absent category",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": "./p"}]
+                }),
+                Some("plugins[0].category"),
+            ),
+            (
+                "wrong-type category",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": "./p", "category": 1}]
+                }),
+                Some("plugins[0].category: number"),
+            ),
+            (
+                "empty category",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": "./p", "category": ""}]
+                }),
+                Some("plugins[0].category"),
+            ),
+            (
+                "ascii whitespace category",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": "./p", "category": "   "}]
+                }),
+                Some("plugins[0].category"),
+            ),
+            (
+                "unicode whitespace category",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": "./p", "category": "\u{00A0}\u{2003}"}]
+                }),
+                Some("plugins[0].category"),
+            ),
+            (
+                "substantive category",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": [{"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                None,
+            ),
+            (
+                "scalar plugin entry no cascade",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": ["not-an-object", {"name": "p", "source": "./p", "category": "lint"}]
+                }),
+                None,
+            ),
+            (
+                "scalar plugin entry with sibling usable",
+                json!({
+                    "owner": {"name": "o", "email": "a@b.com"},
+                    "plugins": ["not-an-object", {"name": "p", "source": "./p"}]
+                }),
+                Some("plugins[1].category"),
+            ),
+        ];
+        for (label, val, expected_evidence) in cases {
+            let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_marketplace_enriched(&ctx, &mut diag);
+            match expected_evidence {
+                None => assert!(
+                    diag.diagnostics().is_empty(),
+                    "{label}: {:?}",
+                    diag.diagnostics()
+                ),
+                Some(evidence) => {
+                    assert_eq!(
+                        diag.diagnostics().len(),
+                        1,
+                        "{label}: {:?}",
+                        diag.diagnostics()
+                    );
+                    assert_eq!(
+                        diag.diagnostics()[0].rule,
+                        LintRule::MarketplaceEnrichedMissing
+                    );
+                    assert!(diag.diagnostics()[0].message.contains("category"));
+                    assert_eq!(
+                        diag.diagnostics()[0].evidence.as_deref(),
+                        Some(evidence),
+                        "{label}"
+                    );
+                    assert!(diag.diagnostics()[0].suggestion.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_v12_field_then_index_ordering() {
         let val = json!({
-            "name": "mp",
             "owner": {"name": "o"},
-            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
+            "plugins": [
+                {"name": "a", "source": "./a"},
+                "scalar",
+                {"name": "c", "source": "./c", "category": "   "}
+            ]
         });
         let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("owner.email"));
-    }
-
-    #[test]
-    fn test_v12_missing_category() {
-        let val = json!({
-            "name": "mp",
-            "owner": {"name": "o", "email": "a@b.com"},
-            "plugins": [{"name": "p", "source": "s"}]
-        });
-        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_marketplace_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("category"));
-    }
-
-    #[test]
-    fn test_v12_non_string_email_no_missing_report() {
-        let val = json!({
-            "owner": {"name": "o", "email": 42},
-            "plugins": [{"name": "p", "source": "s", "category": "lint"}]
-        });
-        let ctx = make_ctx(ManifestState::Missing, ManifestState::parsed(val));
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_marketplace_enriched(&ctx, &mut diag);
-        assert_eq!(
-            diag.error_count(),
-            0,
-            "non-string email should not fire M010"
-        );
+        let messages: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages[0].contains("owner.email"));
+        assert!(messages[1].contains("plugins[0].category"));
+        assert!(messages[2].contains("plugins[2].category"));
     }
 
     #[test]
@@ -2031,10 +2375,10 @@ mod tests {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_marketplace_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
+        assert!(diag.diagnostics().is_empty());
     }
 
-    // V13: validate_plugin_enriched
+    // V13: validate_plugin_enriched (M011)
     #[test]
     fn test_v13_valid_enriched() {
         let val = json!({
@@ -2047,55 +2391,222 @@ mod tests {
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
+        assert!(diag.diagnostics().is_empty());
     }
 
     #[test]
-    fn test_v13_missing_description() {
+    fn test_v13_description_matrix() {
+        let cases = [
+            (
+                "absent",
+                json!({"author": {"email": "a@b.com"}, "keywords": ["lint"]}),
+                true,
+            ),
+            (
+                "wrong type",
+                json!({"description": 1, "author": {"email": "a@b.com"}, "keywords": ["lint"]}),
+                true,
+            ),
+            (
+                "empty",
+                json!({"description": "", "author": {"email": "a@b.com"}, "keywords": ["lint"]}),
+                true,
+            ),
+            (
+                "ascii whitespace",
+                json!({"description": "  ", "author": {"email": "a@b.com"}, "keywords": ["lint"]}),
+                true,
+            ),
+            (
+                "unicode whitespace",
+                json!({
+                    "description": "\u{00A0}",
+                    "author": {"email": "a@b.com"},
+                    "keywords": ["lint"]
+                }),
+                true,
+            ),
+            (
+                "substantive",
+                json!({
+                    "description": "usable",
+                    "author": {"email": "a@b.com"},
+                    "keywords": ["lint"]
+                }),
+                false,
+            ),
+        ];
+        for (label, val, expect) in cases {
+            let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_enriched(&ctx, &mut diag);
+            let description_hits: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|d| d.message.contains("description"))
+                .collect();
+            assert_eq!(
+                !description_hits.is_empty(),
+                expect,
+                "{label}: {:?}",
+                diag.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn test_v13_author_email_ownership_matrix() {
+        let base = |author: Value| {
+            json!({
+                "description": "usable",
+                "author": author,
+                "keywords": ["lint"]
+            })
+        };
+        let cases = [
+            (
+                "absent author",
+                json!({"description": "usable", "keywords": ["lint"]}),
+                true,
+            ),
+            ("object missing email", base(json!({"name": "a"})), true),
+            ("present string", base(json!({"email": "a@b.com"})), false),
+            ("present blank", base(json!({"email": "  "})), false),
+            ("present non-string", base(json!({"email": true})), false),
+            ("present null", base(json!({"email": null})), false),
+            (
+                "non-object author no cascade",
+                json!({
+                    "description": "usable",
+                    "author": "not-an-object",
+                    "keywords": ["lint"]
+                }),
+                false,
+            ),
+        ];
+        for (label, val, expect_m011_email) in cases {
+            let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_enriched(&ctx, &mut diag);
+            let email_hits: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|d| d.message.contains("author.email"))
+                .collect();
+            assert_eq!(
+                !email_hits.is_empty(),
+                expect_m011_email,
+                "{label}: {:?}",
+                diag.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn test_v13_keywords_matrix_one_finding_per_field() {
+        let cases = [
+            (
+                "absent",
+                json!({"description": "d", "author": {"email": "a@b.com"}}),
+                Some("keywords"),
+            ),
+            (
+                "non-array",
+                json!({
+                    "description": "d",
+                    "author": {"email": "a@b.com"},
+                    "keywords": "lint"
+                }),
+                Some("keywords: string"),
+            ),
+            (
+                "empty",
+                json!({
+                    "description": "d",
+                    "author": {"email": "a@b.com"},
+                    "keywords": []
+                }),
+                Some("keywords"),
+            ),
+            (
+                "all valid",
+                json!({
+                    "description": "d",
+                    "author": {"email": "a@b.com"},
+                    "keywords": ["lint", "tools"]
+                }),
+                None,
+            ),
+            (
+                "blank item",
+                json!({
+                    "description": "d",
+                    "author": {"email": "a@b.com"},
+                    "keywords": ["ok", " ", "fine"]
+                }),
+                Some("keywords[1]"),
+            ),
+            (
+                "non-string item",
+                json!({
+                    "description": "d",
+                    "author": {"email": "a@b.com"},
+                    "keywords": [42]
+                }),
+                Some("keywords[0]"),
+            ),
+            (
+                "mixed bad items aggregate",
+                json!({
+                    "description": "d",
+                    "author": {"email": "a@b.com"},
+                    "keywords": ["ok", null, "  ", 7]
+                }),
+                Some("keywords[1],keywords[2],keywords[3]"),
+            ),
+        ];
+        for (label, val, expected_evidence) in cases {
+            let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_plugin_enriched(&ctx, &mut diag);
+            let keyword_hits: Vec<_> = diag
+                .diagnostics()
+                .iter()
+                .filter(|d| d.message.contains("keywords"))
+                .collect();
+            match expected_evidence {
+                None => assert!(keyword_hits.is_empty(), "{label}: {keyword_hits:?}"),
+                Some(evidence) => {
+                    assert_eq!(keyword_hits.len(), 1, "{label}: {keyword_hits:?}");
+                    assert_eq!(
+                        keyword_hits[0].evidence.as_deref(),
+                        Some(evidence),
+                        "{label}"
+                    );
+                    assert!(keyword_hits[0].suggestion.is_some());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_v13_field_ordering() {
         let val = json!({
-            "name": "p",
-            "version": "1.0.0",
-            "author": {"email": "a@b.com"},
-            "keywords": ["lint"]
+            "description": "  ",
+            "keywords": [null, " "]
         });
         let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("description"));
-    }
-
-    #[test]
-    fn test_v13_empty_keywords() {
-        let val = json!({
-            "name": "p",
-            "version": "1.0.0",
-            "description": "desc",
-            "author": {"email": "a@b.com"},
-            "keywords": []
-        });
-        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_plugin_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 1);
-        assert!(diag.errors()[0].contains("keywords"));
-    }
-
-    #[test]
-    fn test_v13_non_string_email_no_missing_report() {
-        let val = json!({
-            "description": "desc",
-            "author": {"email": true},
-            "keywords": ["lint"]
-        });
-        let ctx = make_ctx(ManifestState::parsed(val), ManifestState::Missing);
-        let mut diag = DiagnosticCollector::new_all_enabled();
-        validate_plugin_enriched(&ctx, &mut diag);
-        assert_eq!(
-            diag.error_count(),
-            0,
-            "non-string email should not fire M011"
-        );
+        let messages: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert!(messages[0].contains("description"));
+        assert!(messages[1].contains("author.email"));
+        assert!(messages[2].contains("keywords"));
     }
 
     #[test]
@@ -2103,7 +2614,7 @@ mod tests {
         let ctx = make_ctx(ManifestState::Missing, ManifestState::Missing);
         let mut diag = DiagnosticCollector::new_all_enabled();
         validate_plugin_enriched(&ctx, &mut diag);
-        assert_eq!(diag.error_count(), 0);
+        assert!(diag.diagnostics().is_empty());
     }
 
     // ── M003: empty and whitespace-only name ────────────────────────

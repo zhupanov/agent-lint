@@ -23,6 +23,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "json",
     "mcp",
     "m024-whitespace",
+    "m010-m011-enrichment",
     "nested-agents-md",
     "normal",
     "pedantic",

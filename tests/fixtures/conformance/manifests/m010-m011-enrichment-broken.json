@@ -1,0 +1,48 @@
+{
+  "class": "broken",
+  "repository": "m010-m011-enrichment-broken",
+  "covers": ["m010-m011-enrichment", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "M010,M011", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    {
+      "code": "M010",
+      "name": "marketplace-enriched-missing",
+      "severity": "warning",
+      "subject_path": ".claude-plugin/marketplace.json",
+      "suggestion": "add owner.email as a string contact address"
+    },
+    {
+      "code": "M010",
+      "name": "marketplace-enriched-missing",
+      "severity": "warning",
+      "subject_path": ".claude-plugin/marketplace.json",
+      "suggestion": "set category to a non-empty discovery category string"
+    },
+    {
+      "code": "M011",
+      "name": "plugin-enriched-missing",
+      "severity": "warning",
+      "subject_path": ".claude-plugin/plugin.json",
+      "suggestion": "set description to a non-empty string"
+    },
+    {
+      "code": "M011",
+      "name": "plugin-enriched-missing",
+      "severity": "warning",
+      "subject_path": ".claude-plugin/plugin.json",
+      "suggestion": "add author.email as a string contact address"
+    },
+    {
+      "code": "M011",
+      "name": "plugin-enriched-missing",
+      "severity": "warning",
+      "subject_path": ".claude-plugin/plugin.json",
+      "suggestion": "set keywords to a non-empty array of non-empty strings"
+    }
+  ],
+  "allowed_additional_diagnostics": []
+}

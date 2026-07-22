@@ -50,10 +50,10 @@ pub enum LintRule {
     /// M009: marketplace plugin entry has an invalid source or effective local root
     #[strum(props(code = "M009", name = "marketplace-plugin-invalid"))]
     MarketplacePluginInvalid,
-    /// M010: marketplace.json enriched metadata missing (owner.email or plugin category)
+    /// M010: marketplace.json enrichment unusable (missing owner.email, or missing/blank/non-string plugin category). Agent-lint quality convention; present emails are E001/E002-owned.
     #[strum(props(code = "M010", name = "marketplace-enriched-missing"))]
     MarketplaceEnrichedMissing,
-    /// M011: plugin.json enriched metadata missing (description, author.email, or keywords)
+    /// M011: plugin.json enrichment unusable (missing/blank/non-string description, missing author.email, or unusable keywords). Agent-lint quality convention; present emails are E001/E002-owned.
     #[strum(props(code = "M011", name = "plugin-enriched-missing"))]
     PluginEnrichedMissing,
     /// M012: plugin or marketplace component path points inside .claude-plugin/

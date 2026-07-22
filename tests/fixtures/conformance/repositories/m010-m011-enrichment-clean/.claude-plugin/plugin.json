@@ -1,0 +1,7 @@
+{
+  "name": "plugin",
+  "version": "1.0.0",
+  "description": "Usable plugin description",
+  "author": {"name": "Ada", "email": "ada@example.com"},
+  "keywords": ["lint", "tools"]
+}
