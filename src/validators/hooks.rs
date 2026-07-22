@@ -13,6 +13,7 @@ use std::path::Path;
 /// Validate hook command paths in a parsed JSON value.
 /// Verifies invoked hook script paths. Data references are deliberately
 /// ignored; an interpreter or sourced script must exist but is not direct.
+#[cfg(test)]
 fn validate_hook_command_paths(
     val: &Value,
     label: &str,
@@ -20,47 +21,72 @@ fn validate_hook_command_paths(
     not_exec_rule: LintRule,
     diag: &mut DiagnosticCollector,
 ) {
-    for reference in extract_hook_command_paths(val) {
+    validate_hook_command_paths_with_source(val, None, label, missing_rule, not_exec_rule, diag);
+}
+
+fn validate_hook_command_paths_with_source(
+    val: &Value,
+    source: Option<&str>,
+    label: &str,
+    missing_rule: LintRule,
+    not_exec_rule: LintRule,
+    diag: &mut DiagnosticCollector,
+) {
+    for reference in extract_hook_command_paths(val, source) {
         if reference.invocation == Invocation::Mention {
             continue;
         }
+        let location = source.and_then(|source| {
+            reference
+                .source_range
+                .clone()
+                .and_then(|range| SourceSpan::from_byte_range(source, range))
+        });
         check_hook_path(
-            &reference.path,
-            &reference.reference,
-            reference.invocation,
+            &reference,
             label,
             missing_rule,
             not_exec_rule,
+            location,
             diag,
         );
     }
 }
 
 fn check_hook_path(
-    path: &Path,
-    reference: &str,
-    invocation: Invocation,
+    reference: &crate::hook_commands::HookCommandPath,
     label: &str,
     missing_rule: LintRule,
     not_exec_rule: LintRule,
+    location: Option<SourceSpan>,
     diag: &mut DiagnosticCollector,
 ) {
-    if path.as_os_str().is_empty() {
+    let metadata = |metadata: DiagnosticMetadata| match location {
+        Some(location) => metadata.with_location(location),
+        None => metadata,
+    };
+    if reference.path.as_os_str().is_empty() {
         diag.report_with(
             missing_rule,
-            &format!("{label}: hook command escapes the repository: {reference}"),
-            DiagnosticMetadata::default()
-                .with_evidence(reference)
-                .with_suggestion("use an in-repository normalized path such as ${CLAUDE_PLUGIN_ROOT}/scripts/your-hook"),
+            &format!(
+                "{label}: hook command escapes the repository: {}",
+                reference.reference
+            ),
+            metadata(DiagnosticMetadata::default()
+                .with_evidence(&reference.reference)
+                .with_suggestion("use an in-repository normalized path such as ${CLAUDE_PLUGIN_ROOT}/scripts/your-hook")),
         );
         return;
     }
-    if !path.is_file() {
+    if !reference.path.is_file() {
         diag.report_at_with(
             missing_rule,
-            path,
-            &format!("{label}: hook command missing on disk: {reference}"),
-            DiagnosticMetadata::default().with_evidence(reference),
+            &reference.path,
+            &format!(
+                "{label}: hook command missing on disk: {}",
+                reference.reference
+            ),
+            metadata(DiagnosticMetadata::default().with_evidence(&reference.reference)),
         );
         return;
     }
@@ -68,17 +94,22 @@ fn check_hook_path(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if invocation == Invocation::Direct
-            && let Ok(meta) = path.metadata()
+        if reference.invocation == Invocation::Direct
+            && let Ok(meta) = reference.path.metadata()
             && meta.permissions().mode() & 0o111 == 0
         {
             diag.report_at_with(
                 not_exec_rule,
-                path,
-                &format!("{label}: hook command not executable: {reference}"),
-                DiagnosticMetadata::default()
-                    .with_evidence(reference)
-                    .with_suggestion("run chmod +x on this file"),
+                &reference.path,
+                &format!(
+                    "{label}: hook command not executable: {}",
+                    reference.reference
+                ),
+                metadata(
+                    DiagnosticMetadata::default()
+                        .with_evidence(&reference.reference)
+                        .with_suggestion("run chmod +x on this file"),
+                ),
             );
         }
     }
@@ -152,8 +183,9 @@ fn validate_hook_config(
     }
 
     diag.with_subject_path(subject_path, |diag| {
-        validate_hook_command_paths(
+        validate_hook_command_paths_with_source(
             val,
+            val.source(),
             &f,
             LintRule::HookCommandMissing,
             LintRule::HookNotExecutable,
@@ -291,8 +323,9 @@ pub fn validate_settings_hooks(ctx: &LintContext, diag: &mut DiagnosticCollector
     };
 
     diag.with_subject_path(".claude/settings.json", |diag| {
-        validate_hook_command_paths(
+        validate_hook_command_paths_with_source(
             val,
+            val.source(),
             ".claude/settings.json",
             LintRule::HookCommandMissing,
             LintRule::HookNotExecutable,
@@ -358,8 +391,9 @@ pub fn validate_settings_local(ctx: &LintContext, diag: &mut DiagnosticCollector
         ),
         ManifestState::Parsed(val) => {
             diag.with_subject_path(".claude/settings.local.json", |diag| {
-                validate_hook_command_paths(
+                validate_hook_command_paths_with_source(
                     val,
+                    val.source(),
                     ".claude/settings.local.json",
                     LintRule::HookCommandMissing,
                     LintRule::HookNotExecutable,
@@ -572,6 +606,38 @@ mod tests {
         );
         assert_eq!(diag.error_count(), 1);
         assert!(diag.errors()[0].contains("missing on disk"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn exec_form_arguments_report_their_own_source_locations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude").unwrap();
+        let source = r#"{
+  "hooks": {"PreToolUse": [{"hooks": [
+    {"type": "command", "command": "python3", "args": ["${CLAUDE_PROJECT_DIR}/scripts/missing.py"]},
+    {"type": "command", "command": ["${CLAUDE_PROJECT_DIR}/scripts/missing-direct"]}
+  ]}]}
+}"#;
+        std::fs::write(".claude/settings.json", source).unwrap();
+
+        let ctx = LintContext::new(Path::new("."), LintMode::Basic);
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_settings_hooks(&ctx, &mut diag);
+
+        assert_eq!(diag.error_count(), 2);
+        for (diagnostic, token) in diag.diagnostics().iter().zip([
+            "\"${CLAUDE_PROJECT_DIR}/scripts/missing.py\"",
+            "\"${CLAUDE_PROJECT_DIR}/scripts/missing-direct\"",
+        ]) {
+            let start = source.find(token).unwrap();
+            assert_eq!(
+                diagnostic.location,
+                SourceSpan::from_byte_range(source, start..start + token.len()),
+            );
+        }
     }
 
     #[test]

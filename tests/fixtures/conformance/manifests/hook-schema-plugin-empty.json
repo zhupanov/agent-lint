@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "hook-schema-plugin-empty",
+  "covers": ["hook-schema", "plugin-mode", "normal", "json"],
+  "invocation": { "mode": "plugin", "arguments": ["--format", "json", "--only", "H007,H026", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "codex"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "H007", "name": "hooks-array-empty", "severity": "error", "subject_path": "hooks/hooks.json" }
+  ],
+  "allowed_additional_diagnostics": []
+}

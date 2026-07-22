@@ -27,6 +27,10 @@ impl ParsedManifest {
     pub fn source(&self) -> Option<&str> {
         self.source.as_deref()
     }
+
+    fn from_value_with_source(value: Value, source: Option<String>) -> Self {
+        Self { value, source }
+    }
 }
 
 impl Deref for ParsedManifest {
@@ -94,6 +98,7 @@ impl ManifestErrorLocation {
 impl ManifestState {
     /// Construct a parsed manifest for callers that only have a
     /// semantic JSON value. Source locations are unavailable in this form.
+    #[cfg(test)]
     pub fn from_value(value: Value) -> Self {
         Self::Parsed(ParsedManifest {
             value,
@@ -275,10 +280,13 @@ fn collect_declared_hook_configs(
         }
         Value::Object(inline) => configs.push(DeclaredHookConfig {
             subject_path: PathBuf::from(".claude-plugin/plugin.json"),
-            state: ManifestState::from_value(Value::Object(serde_json::Map::from_iter([(
-                "hooks".to_owned(),
-                Value::Object(inline.clone()),
-            )]))),
+            state: ManifestState::Parsed(ParsedManifest::from_value_with_source(
+                Value::Object(serde_json::Map::from_iter([(
+                    "hooks".to_owned(),
+                    Value::Object(inline.clone()),
+                )])),
+                plugin.source().map(str::to_owned),
+            )),
             kind: DeclaredHookConfigKind::Inline,
         }),
         _ => {}

@@ -1,0 +1,4 @@
+{
+  "name": "hook-schema-plugin-broken",
+  "hooks": ["", "./hooks/absent.json"]
+}
