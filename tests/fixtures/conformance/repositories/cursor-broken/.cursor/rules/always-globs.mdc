@@ -1,0 +1,5 @@
+---
+globs: "*.rs"
+alwaysApply: true
+---
+Use the repository's established conventions.

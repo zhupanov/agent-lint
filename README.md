@@ -89,7 +89,7 @@ checked-in schema and examples are in
 
 ## Lint Rules
 
-Agent Lint ships 297 rules organized into 19 code-prefix categories. A category
+Agent Lint ships 296 rules organized into 19 code-prefix categories. A category
 is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 
 | Category | Prefix | Rules | Description |
@@ -108,7 +108,7 @@ is one rule-code prefix in the registry (for example, `S`, `CX`, or `I`).
 | MCP | P | 14 | MCP server configuration, transport, security, and compatibility |
 | Codex | CX | 55 | Codex configuration, instructions, plugins, and skills |
 | Shared Instruction Files | I | 4 | Shared instruction-file content, secrets, path references, and generic-only guidance |
-| Cursor Rules | CU | 20 | Cursor rules, hooks, subagents, and cloud environment configuration |
+| Cursor Rules | CU | 19 | Cursor rules, hooks, subagents, and cloud environment configuration |
 | Cursor Skills | CR-SK | 1 | Unsupported Cursor skill frontmatter fields |
 | Docs | D | 5 | Docs pointers, CLAUDE.md import closure and size, TODO detection |
 | Markdown Structure | X | 5 | Strict YAML frontmatter, unclosed fences, XML tag balance |

@@ -12,7 +12,7 @@ use serde_json::Value as JsonValue;
 use serde_json::json;
 
 use crate::config::ExcludeSet;
-use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata};
+use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::frontmatter;
 use crate::live_instructions::{InstructionSurfaceKind, LiveInstructionDocument};
 use crate::markdown::MarkdownDocument;
@@ -94,8 +94,14 @@ fn report(diag: &mut DiagnosticCollector, rule: LintRule, path: &str, message: &
     diag.report_at(rule, path, &format!("{path}: {message}"));
 }
 
-fn yaml_string<'a>(map: &'a Mapping, name: &str) -> Option<&'a str> {
-    map.get(name).and_then(YamlValue::as_str)
+fn report_meta(
+    diag: &mut DiagnosticCollector,
+    rule: LintRule,
+    path: &str,
+    message: &str,
+    metadata: DiagnosticMetadata,
+) {
+    diag.report_at_with(rule, path, &format!("{path}: {message}"), metadata);
 }
 
 /// Whether `name` matches Cursor's documented lowercase-letter-and-hyphen
@@ -261,6 +267,140 @@ fn validate_project_rules(
     }
 }
 
+/// One Cursor rule type, derived from the effective values of `alwaysApply`,
+/// `globs`, and `description`. Key presence is never a signal: Cursor's own
+/// canonical MDC example ships an empty `globs:` line (issue #308).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CursorRuleActivation {
+    Always,
+    AutoAttached,
+    AgentRequested,
+    Manual,
+}
+
+/// Derive the single activation state in the binding precedence order:
+/// `alwaysApply: true` wins; otherwise a non-empty glob selects file
+/// attachment; otherwise a non-empty description selects agent-requested
+/// loading; otherwise the rule is Manual. A missing or invalid `alwaysApply`
+/// behaves as `false`.
+fn derive_cursor_activation(
+    always_apply: bool,
+    has_effective_glob: bool,
+    has_description: bool,
+) -> CursorRuleActivation {
+    if always_apply {
+        CursorRuleActivation::Always
+    } else if has_effective_glob {
+        CursorRuleActivation::AutoAttached
+    } else if has_description {
+        CursorRuleActivation::AgentRequested
+    } else {
+        CursorRuleActivation::Manual
+    }
+}
+
+/// Effective `globs` content after the CU004 field contract has been applied.
+#[derive(Default)]
+struct GlobsAnalysis {
+    /// A well-shaped field holds at least one non-empty pattern.
+    has_effective: bool,
+    /// How many effective patterns are structurally valid globset syntax.
+    effective_valid: usize,
+}
+
+/// Structured location for an unindented `key: value` frontmatter line, or no
+/// location when the lexical helper cannot map the key exactly.
+fn rule_key_metadata(lines: &[String], key: &str) -> DiagnosticMetadata {
+    frontmatter::simple_top_level_key_line(lines, key)
+        .map_or_else(DiagnosticMetadata::default, DiagnosticMetadata::at_line)
+}
+
+/// Whether a strict-YAML failure is the anchor/alias class that unquoted glob
+/// values such as `globs: *.ts` produce.
+fn is_anchor_alias_error(raw_message: &str) -> bool {
+    let lowered = raw_message.to_ascii_lowercase();
+    lowered.contains("anchor") || lowered.contains("alias")
+}
+
+/// Mechanical fix for an unquoted glob that strict YAML reads as an alias.
+/// A trailing YAML comment is not part of what Cursor reads, so it stays
+/// outside the quotes. Withheld when the raw value looks sensitive, so the
+/// suggestion never echoes a possible secret.
+fn quote_globs_suggestion(globs_line: &str) -> Option<String> {
+    let raw = globs_line.trim_start().strip_prefix("globs:")?;
+    // A YAML comment starts at a `#` that opens the value or follows
+    // whitespace.
+    let value = raw
+        .char_indices()
+        .find(|(index, character)| {
+            *character == '#' && raw[..*index].chars().last().is_none_or(char::is_whitespace)
+        })
+        .map_or(raw, |(index, _)| &raw[..index])
+        .trim();
+    if value.is_empty() || contains_sensitive_evidence(value) {
+        return None;
+    }
+    Some(format!(
+        "quote the pattern so it is valid YAML, e.g. globs: \"{value}\""
+    ))
+}
+
+/// Reduce a YAML parser failure to its constraint: parser-relative coordinates
+/// are stripped (the diagnostic carries a structured file location instead)
+/// and messages that embed a possible secret collapse to a stable constraint.
+/// The wrapper-form strip is owned by `frontmatter::strip_parser_location_prefix`;
+/// only the colon-less trailing form of anchor/alias errors is Cursor-local.
+fn cursor_rule_yaml_constraint(raw_message: &str) -> String {
+    static TRAILING_LOCATION: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\s+at line \d+, column \d+$").expect("cursor yaml trailing-location regex")
+    });
+    let unwrapped = frontmatter::strip_parser_location_prefix(raw_message);
+    let unwrapped = TRAILING_LOCATION.replace(&unwrapped, "");
+    yaml_parse_constraint(unwrapped.trim())
+}
+
+/// Report CU003 for frontmatter that is not valid YAML. The location is the
+/// parser's line/column translated to file coordinates (the opening `---` is
+/// file line 1). Syntax errors carry no suggestion — the parser constraint is
+/// the action — except the anchor/alias class reported on a `globs:` line,
+/// where quoting the unquoted pattern makes the file valid YAML without
+/// changing what Cursor reads.
+fn report_rule_yaml_error(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    lines: &[String],
+    raw_message: &str,
+    yaml_line: Option<usize>,
+    yaml_column: Option<usize>,
+) {
+    // Position-less failures such as duplicate keys anchor at the opening
+    // delimiter, keeping every CU003 located.
+    let mut metadata =
+        DiagnosticMetadata::default().with_location(match (yaml_line, yaml_column) {
+            (Some(line), Some(column)) => SourceSpan::point(line.saturating_add(1), column),
+            (Some(line), None) => SourceSpan::line(line.saturating_add(1)),
+            (None, _) => SourceSpan::line(1),
+        });
+    if is_anchor_alias_error(raw_message)
+        && let Some(offending) = yaml_line
+            .and_then(|line| line.checked_sub(1))
+            .and_then(|index| lines.get(index))
+        && let Some(suggestion) = quote_globs_suggestion(offending)
+    {
+        metadata = metadata.with_suggestion(suggestion);
+    }
+    report_meta(
+        diag,
+        LintRule::CursorRuleFrontmatterInvalid,
+        path,
+        &format!(
+            "frontmatter is not valid YAML: {}",
+            cursor_rule_yaml_constraint(raw_message)
+        ),
+        metadata,
+    );
+}
+
 fn validate_rule_file(
     diag: &mut DiagnosticCollector,
     path: &str,
@@ -276,7 +416,13 @@ fn validate_rule_file(
     // Cursor still loads a rule body when its frontmatter is absent or
     // malformed, so structural failures must not exempt that live prose.
     prompt_pass.validate(&document, diag);
-    if content.trim().is_empty() {
+    // A UTF-8 BOM is an encoding signature, not content; it must not displace
+    // the first logical line the delimiter check sees. Sibling frontmatter
+    // surfaces (skills, agents, `frontmatter::extract_frontmatter` itself)
+    // intentionally keep their existing byte-exact contract: issue #308 binds
+    // only the Cursor `.mdc` delimiter model.
+    let scanned = content.strip_prefix('\u{feff}').unwrap_or(content);
+    if scanned.trim().is_empty() {
         report(
             diag,
             LintRule::CursorRuleEmpty,
@@ -285,25 +431,34 @@ fn validate_rule_file(
         );
         return;
     }
-    if !content.starts_with("---") {
-        report(
+    // The opening delimiter is the exact first logical line `---`. Prefixes
+    // such as `----` or `---suffix` are missing openers (CU002), not malformed
+    // closed frontmatter (CU003).
+    if scanned.lines().next() != Some("---") {
+        report_meta(
             diag,
             LintRule::CursorRuleFrontmatterMissing,
             path,
             "missing YAML frontmatter",
+            DiagnosticMetadata::at_line(1)
+                .with_suggestion("open the file with a first line containing exactly '---'"),
         );
         return;
     }
-    let Some(lines) = frontmatter::extract_frontmatter(content) else {
-        report(
+    // The opener above is exact, so extraction fails only on a missing close.
+    let Some(lines) = frontmatter::extract_frontmatter(scanned) else {
+        report_meta(
             diag,
             LintRule::CursorRuleFrontmatterInvalid,
             path,
             "frontmatter must have a closing '---' delimiter",
+            DiagnosticMetadata::at_line(1).with_suggestion(
+                "add a line containing exactly '---' after the frontmatter fields",
+            ),
         );
         return;
     };
-    if frontmatter::extract_body(content).trim().is_empty() {
+    if frontmatter::extract_body(scanned).trim().is_empty() {
         report(
             diag,
             LintRule::CursorRuleEmpty,
@@ -311,96 +466,192 @@ fn validate_rule_file(
             "rule file has no instructions after frontmatter",
         );
     }
-    let raw = lines.join("\n");
-    let yaml = match crate::yaml::parse(&raw) {
+    // Reconstruct the document with its trailing newline so a final bare
+    // `key:` line keeps the mapping shape it has in the file.
+    let mut source = lines.join("\n");
+    source.push('\n');
+    let yaml = match crate::yaml::parse(&source) {
         Ok(YamlValue::Mapping(map)) => map,
-        // Empty YAML frontmatter is a valid manual/agent-requested rule shape;
-        // CU009 reports its missing description when no targeting fields exist.
+        // Empty frontmatter has no targeting fields: a valid Manual rule.
         Ok(YamlValue::Null) => Mapping::new(),
         Ok(_) => {
-            report(
+            report_meta(
                 diag,
                 LintRule::CursorRuleFrontmatterInvalid,
                 path,
                 "frontmatter must be a YAML object",
+                DiagnosticMetadata::at_line(1).with_suggestion(
+                    "use `key: value` mappings for description, globs, and alwaysApply",
+                ),
             );
             return;
         }
         Err(error) => {
-            report(
+            report_rule_yaml_error(
                 diag,
-                LintRule::CursorRuleFrontmatterInvalid,
                 path,
-                &format!("frontmatter is not valid YAML: {error}"),
+                &lines,
+                &error.to_string(),
+                crate::yaml::error_line(&error),
+                crate::yaml::error_column(&error),
             );
             return;
         }
     };
+    validate_rule_frontmatter(diag, path, &yaml, &lines);
+}
+
+/// Validate a strictly parsed rule frontmatter mapping and derive its one
+/// activation state. Only effective values drive diagnostics; key presence is
+/// never a signal (issue #308).
+fn validate_rule_frontmatter(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    yaml: &Mapping,
+    lines: &[String],
+) {
     for key in yaml.keys() {
         if !RULE_KEYS.contains(&key.as_str()) {
-            report(
+            report_meta(
                 diag,
                 LintRule::CursorRuleFieldUnknown,
                 path,
                 &format!("unknown frontmatter field '{key}'"),
+                rule_key_metadata(lines, key)
+                    .with_evidence(key)
+                    .with_suggestion(format!(
+                        "remove '{key}' or use one of: description, globs, alwaysApply"
+                    )),
             );
         }
     }
-    let globs = yaml.get("globs");
-    if let Some(globs) = globs {
-        let patterns: Option<Vec<&str>> = match globs {
-            YamlValue::String(pattern) => Some(vec![pattern]),
-            YamlValue::Sequence(items) => items.iter().map(YamlValue::as_str).collect(),
-            _ => None,
-        };
-        match patterns {
-            Some(patterns) => {
-                for pattern in patterns {
-                    if let Err(error) = GlobBuilder::new(pattern).build() {
-                        report(
-                            diag,
-                            LintRule::CursorRuleGlobInvalid,
-                            path,
-                            &format!("invalid glob '{pattern}': {error}"),
-                        );
-                    }
-                }
-            }
-            None => report(
-                diag,
-                LintRule::CursorRuleGlobInvalid,
-                path,
-                "'globs' must be a string or list of strings",
-            ),
-        }
+    // A description is textual routing metadata: null and empty strings are
+    // valid unset values, every other non-string shape is structural.
+    let description = yaml.get("description");
+    if let Some(value) = description
+        && !value.is_null()
+        && value.as_str().is_none()
+    {
+        report_meta(
+            diag,
+            LintRule::CursorRuleFrontmatterInvalid,
+            path,
+            "'description' must be a string",
+            rule_key_metadata(lines, "description")
+                .with_evidence("description")
+                .with_suggestion("set 'description' to a string, or remove the field"),
+        );
     }
+    let globs = analyze_globs(diag, path, yaml, lines);
     let always_apply = yaml.get("alwaysApply");
     if let Some(value) = always_apply
         && !value.is_bool()
     {
-        report(
+        report_meta(
             diag,
             LintRule::CursorAlwaysApplyInvalid,
             path,
             "'alwaysApply' must be a boolean",
+            rule_key_metadata(lines, "alwaysApply")
+                .with_evidence("alwaysApply")
+                .with_suggestion("set 'alwaysApply' to unquoted true or false"),
         );
     }
-    if always_apply.and_then(YamlValue::as_bool) == Some(true) && globs.is_some() {
-        report(
+    let has_description = description
+        .and_then(YamlValue::as_str)
+        .is_some_and(|text| !text.trim().is_empty());
+    // A present non-boolean `alwaysApply` was reported above and recovers as
+    // false for state derivation.
+    let activation = derive_cursor_activation(
+        always_apply.and_then(YamlValue::as_bool) == Some(true),
+        globs.has_effective,
+        has_description,
+    );
+    // CU007 warns only when an Always rule declares a real, structurally valid
+    // pattern that Cursor will ignore. Unset globs and CU004 shape failures
+    // stay silent.
+    if activation == CursorRuleActivation::Always && globs.effective_valid > 0 {
+        report_meta(
             diag,
             LintRule::CursorAlwaysApplyGlobs,
             path,
-            "'globs' is ignored when 'alwaysApply' is true",
+            "effective 'globs' patterns are ignored because 'alwaysApply' is true",
+            rule_key_metadata(lines, "globs")
+                .with_evidence("globs")
+                .with_suggestion("remove 'globs' or set 'alwaysApply: false'"),
         );
     }
-    let description = yaml_string(&yaml, "description").unwrap_or("");
-    if always_apply.is_none() && globs.is_none() && description.trim().is_empty() {
-        report(
+}
+
+/// Apply the CU004 field contract: `globs` accepts null, a string, or a
+/// sequence of strings. Null, blank strings, and sequences holding no
+/// non-empty strings are unset. Any other container/scalar type, or any
+/// non-string sequence member, is one field diagnostic. Effective patterns
+/// then pass through conservative globset validation one by one; a quoted
+/// comma-joined value is one pattern (comma splitting would corrupt brace
+/// groups such as `{a,b}`).
+fn analyze_globs(
+    diag: &mut DiagnosticCollector,
+    path: &str,
+    yaml: &Mapping,
+    lines: &[String],
+) -> GlobsAnalysis {
+    let Some(value) = yaml.get("globs") else {
+        return GlobsAnalysis::default();
+    };
+    let patterns: Option<Vec<&str>> = match value {
+        YamlValue::Null => return GlobsAnalysis::default(),
+        YamlValue::String(pattern) => Some(vec![pattern.as_str()]),
+        YamlValue::Sequence(items) => items.iter().map(YamlValue::as_str).collect(),
+        _ => None,
+    };
+    let Some(patterns) = patterns else {
+        report_meta(
             diag,
-            LintRule::CursorRuleDescriptionMissing,
+            LintRule::CursorRuleGlobInvalid,
             path,
-            "agent-requested rule needs a non-empty 'description'",
+            "'globs' must be a string or list of strings",
+            rule_key_metadata(lines, "globs")
+                .with_evidence("globs")
+                .with_suggestion("set 'globs' to one glob string or a list of glob strings"),
         );
+        return GlobsAnalysis::default();
+    };
+    let effective: Vec<&str> = patterns
+        .into_iter()
+        .filter(|pattern| !pattern.trim().is_empty())
+        .collect();
+    if effective.is_empty() {
+        return GlobsAnalysis::default();
+    }
+    let mut effective_valid = 0;
+    for pattern in effective {
+        match GlobBuilder::new(pattern).build() {
+            Ok(_) => effective_valid += 1,
+            Err(error) => {
+                // The globset error embeds the pattern; a secret-shaped
+                // pattern collapses to the field name (its evidence is
+                // redacted by the same shared heuristic).
+                let message = if contains_sensitive_evidence(pattern) {
+                    "'globs' contains an invalid pattern".to_string()
+                } else {
+                    format!("invalid glob '{pattern}': {error}")
+                };
+                report_meta(
+                    diag,
+                    LintRule::CursorRuleGlobInvalid,
+                    path,
+                    &message,
+                    rule_key_metadata(lines, "globs")
+                        .with_evidence(pattern)
+                        .with_suggestion("write the pattern with valid globset syntax"),
+                );
+            }
+        }
+    }
+    GlobsAnalysis {
+        has_effective: true,
+        effective_valid,
     }
 }
 
@@ -773,6 +1024,39 @@ mod tests {
             .collect()
     }
 
+    fn diagnostics_for(root: &Path) -> Vec<crate::diagnostic::Diagnostic> {
+        let _guard = CwdGuard::new();
+        std::env::set_current_dir(root).unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate(&mut diag, &ExcludeSet::default());
+        diag.diagnostics().to_vec()
+    }
+
+    /// Sorted CU codes produced by one rule file, ignoring prompt-content
+    /// rules so body prose cannot perturb frontmatter assertions.
+    fn rule_cu_codes(content: &str) -> Vec<&'static str> {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor/rules")).unwrap();
+        std::fs::write(tmp.path().join(".cursor/rules/case.mdc"), content).unwrap();
+        let mut codes: Vec<_> = codes_for(tmp.path())
+            .into_iter()
+            .filter(|code| code.starts_with("CU"))
+            .collect();
+        codes.sort_unstable();
+        codes
+    }
+
+    /// CU003/CU004/CU005/CU007/CU008 diagnostics for one rule file.
+    fn rule_cu_diagnostics(content: &str) -> Vec<crate::diagnostic::Diagnostic> {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".cursor/rules")).unwrap();
+        std::fs::write(tmp.path().join(".cursor/rules/case.mdc"), content).unwrap();
+        diagnostics_for(tmp.path())
+            .into_iter()
+            .filter(|item| item.rule.code().starts_with("CU"))
+            .collect()
+    }
+
     fn environment_messages_for(content: &str) -> Vec<String> {
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join(".cursor")).unwrap();
@@ -825,9 +1109,481 @@ mod tests {
         std::fs::write(tmp.path().join(".cursorrules"), "").unwrap();
         let codes = codes_for(tmp.path());
         for expected in [
-            "CU001", "CU002", "CU003", "CU004", "CU005", "CU006", "CU007", "CU008", "CU009",
+            "CU001", "CU002", "CU003", "CU004", "CU005", "CU006", "CU007", "CU008",
         ] {
             assert!(codes.contains(&expected), "missing {expected}: {codes:?}");
+        }
+        // Empty frontmatter is a valid Manual rule; CU009 is removed (#308).
+        assert!(!codes.contains(&"CU009"), "CU009 must be gone: {codes:?}");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn delimiter_table_pins_cu002_cu003_and_empty_rules() {
+        let body = "Use the repository's established conventions.\n";
+        let cases: Vec<(String, Vec<&str>, &str)> = vec![
+            (
+                format!("---\ndescription: Documented behavior\n---\n{body}"),
+                vec![],
+                "exact opener",
+            ),
+            (
+                format!("---\r\ndescription: Documented behavior\r\n---\r\n{body}"),
+                vec![],
+                "CRLF delimiters",
+            ),
+            (
+                format!("\u{feff}---\ndescription: Documented behavior\n---\n{body}"),
+                vec![],
+                "UTF-8 BOM before a valid opener",
+            ),
+            (format!("----\n{body}"), vec!["CU002"], "over-long dashes"),
+            (format!("---suffix\n{body}"), vec!["CU002"], "opener suffix"),
+            (format!(" ---\n{body}"), vec!["CU002"], "leading whitespace"),
+            (body.to_string(), vec!["CU002"], "prose only"),
+            (
+                format!("\u{feff}----\n{body}"),
+                vec!["CU002"],
+                "BOM then near-opener",
+            ),
+            (
+                "---\ndescription: Documented behavior\n".to_string(),
+                vec!["CU003"],
+                "missing closing delimiter",
+            ),
+            (
+                format!("---\n---\n{body}"),
+                vec![],
+                "empty frontmatter is a Manual rule",
+            ),
+            ("---\n---\n".to_string(), vec!["CU001"], "empty body"),
+            (String::new(), vec!["CU001"], "empty file"),
+            ("\u{feff}".to_string(), vec!["CU001"], "BOM-only file"),
+        ];
+        for (content, expected, label) in cases {
+            assert_eq!(rule_cu_codes(&content), expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn derive_cursor_activation_follows_binding_precedence() {
+        use CursorRuleActivation::{AgentRequested, Always, AutoAttached, Manual};
+        let table = [
+            (true, true, true, Always),
+            (true, true, false, Always),
+            (true, false, true, Always),
+            (true, false, false, Always),
+            (false, true, true, AutoAttached),
+            (false, true, false, AutoAttached),
+            (false, false, true, AgentRequested),
+            (false, false, false, Manual),
+        ];
+        for (always, glob, description, expected) in table {
+            assert_eq!(
+                derive_cursor_activation(always, glob, description),
+                expected,
+                "always={always} glob={glob} description={description}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn activation_matrix_pins_state_and_exact_code_set() {
+        use CursorRuleActivation::{AgentRequested, Always, AutoAttached, Manual};
+        let always_variants = [
+            (None, false, false),
+            (Some("alwaysApply: false"), false, false),
+            (Some("alwaysApply: true"), true, false),
+            (Some("alwaysApply: \"yes\""), false, true),
+        ];
+        let glob_variants = [
+            (None, false, false),
+            (Some("globs:"), false, false),
+            (Some("globs: \"\""), false, false),
+            (Some("globs: \"*.rs\""), true, false),
+            (Some("globs: 42"), false, true),
+        ];
+        let description_variants = [
+            (None, false, false),
+            (Some("description:"), false, false),
+            (Some("description: \"\""), false, false),
+            (Some("description: Applies to Rust sources"), true, false),
+            (Some("description: 42"), false, true),
+        ];
+        for (always_line, always_effective, expect_cu008) in always_variants {
+            for (glob_line, glob_effective, expect_cu004) in glob_variants {
+                for (description_line, description_effective, expect_cu003) in description_variants
+                {
+                    let mut frontmatter = String::from("---\n");
+                    for line in [description_line, glob_line, always_line]
+                        .into_iter()
+                        .flatten()
+                    {
+                        frontmatter.push_str(line);
+                        frontmatter.push('\n');
+                    }
+                    frontmatter.push_str("---\nUse the repository's conventions.\n");
+
+                    let mut expected = Vec::new();
+                    if expect_cu003 {
+                        expected.push("CU003");
+                    }
+                    if expect_cu004 {
+                        expected.push("CU004");
+                    }
+                    if always_effective && glob_effective {
+                        expected.push("CU007");
+                    }
+                    if expect_cu008 {
+                        expected.push("CU008");
+                    }
+                    assert_eq!(
+                        rule_cu_codes(&frontmatter),
+                        expected,
+                        "frontmatter:\n{frontmatter}"
+                    );
+
+                    let expected_state = if always_effective {
+                        Always
+                    } else if glob_effective {
+                        AutoAttached
+                    } else if description_effective {
+                        AgentRequested
+                    } else {
+                        Manual
+                    };
+                    assert_eq!(
+                        derive_cursor_activation(
+                            always_effective,
+                            glob_effective,
+                            description_effective
+                        ),
+                        expected_state,
+                        "state for:\n{frontmatter}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn glob_field_contract_pins_unset_shapes_and_patterns() {
+        let cases: Vec<(&str, Vec<&str>, &str)> = vec![
+            ("globs: \"src/**/*.rs\"", vec![], "scalar pattern"),
+            ("globs:", vec![], "null is unset"),
+            ("globs: \"\"", vec![], "empty string is unset"),
+            ("globs: \"   \"", vec![], "whitespace string is unset"),
+            ("globs: []", vec![], "empty list is unset"),
+            (
+                "globs: [\"\", \"   \"]",
+                vec![],
+                "list without a real pattern is unset",
+            ),
+            (
+                "globs: [\"src/**/*.rs\", \"*.{md,txt}\", \"[a-z].rs\"]",
+                vec![],
+                "recursive, brace, and class patterns are valid",
+            ),
+            ("globs: 42", vec!["CU004"], "number is a field error"),
+            ("globs: true", vec!["CU004"], "boolean is a field error"),
+            (
+                "globs: {pattern: \"*.rs\"}",
+                vec!["CU004"],
+                "mapping is a field error",
+            ),
+            (
+                "globs: [\"*.rs\", 42]",
+                vec!["CU004"],
+                "one field error for a non-string member",
+            ),
+            ("globs: \"[unclosed\"", vec!["CU004"], "malformed pattern"),
+            (
+                "globs: [\"[one\", \"[two\"]",
+                vec!["CU004", "CU004"],
+                "one diagnostic per malformed pattern",
+            ),
+            (
+                "globs: \"*.ts,*.tsx\"",
+                vec![],
+                "comma-joined scalar validates as one pattern",
+            ),
+        ];
+        for (line, expected, label) in cases {
+            let content = format!("---\n{line}\nalwaysApply: false\n---\nUse the conventions.\n");
+            assert_eq!(rule_cu_codes(&content), expected, "{label}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cu007_requires_always_state_and_effective_valid_glob() {
+        let cases: Vec<(&str, Vec<&str>, &str)> = vec![
+            (
+                "---\nalwaysApply: true\nglobs: \"*.rs\"\n---\nBody.\n",
+                vec!["CU007"],
+                "always with a real pattern",
+            ),
+            (
+                "---\nalwaysApply: true\nglobs: [\"*.rs\", \"[bad\"]\n---\nBody.\n",
+                vec!["CU004", "CU007"],
+                "an invalid sibling keeps the valid pattern ignored",
+            ),
+            (
+                "---\nalwaysApply: true\nglobs:\n---\nBody.\n",
+                vec![],
+                "null globs are unset",
+            ),
+            (
+                "---\nalwaysApply: true\nglobs: \"\"\n---\nBody.\n",
+                vec![],
+                "empty globs are unset",
+            ),
+            (
+                "---\nalwaysApply: true\nglobs: []\n---\nBody.\n",
+                vec![],
+                "empty list is unset",
+            ),
+            (
+                "---\nalwaysApply: true\nglobs: 42\n---\nBody.\n",
+                vec!["CU004"],
+                "no CU007 alongside a field-shape failure",
+            ),
+            (
+                "---\nalwaysApply: true\nglobs: \"[bad\"\n---\nBody.\n",
+                vec!["CU004"],
+                "no CU007 without a structurally valid pattern",
+            ),
+            (
+                "---\nalwaysApply: false\nglobs: \"*.rs\"\n---\nBody.\n",
+                vec![],
+                "auto-attached rules keep their globs",
+            ),
+            (
+                "---\nalwaysApply: \"true\"\nglobs: \"*.rs\"\n---\nBody.\n",
+                vec!["CU008"],
+                "invalid alwaysApply recovers as false",
+            ),
+        ];
+        for (content, expected, label) in cases {
+            assert_eq!(rule_cu_codes(content), expected, "{label}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn frontmatter_document_and_description_shapes_drive_cu003() {
+        let cases: Vec<(&str, Vec<&str>, &str)> = vec![
+            (
+                "---\n- one\n- two\n---\nBody.\n",
+                vec!["CU003"],
+                "sequence document",
+            ),
+            (
+                "---\njust text\n---\nBody.\n",
+                vec!["CU003"],
+                "scalar document",
+            ),
+            (
+                "---\ndescription: One\ndescription: Two\n---\nBody.\n",
+                vec!["CU003"],
+                "duplicate keys",
+            ),
+            (
+                "---\ndescription: 42\n---\nBody.\n",
+                vec!["CU003"],
+                "numeric description",
+            ),
+            (
+                "---\ndescription: [a, b]\n---\nBody.\n",
+                vec!["CU003"],
+                "sequence description",
+            ),
+            (
+                "---\ndescription: {a: b}\n---\nBody.\n",
+                vec!["CU003"],
+                "mapping description",
+            ),
+            (
+                "---\ndescription: !custom text\n---\nBody.\n",
+                vec!["CU003"],
+                "tagged description",
+            ),
+            (
+                "---\ndescription: true\nalwaysApply: false\n---\nBody.\n",
+                vec!["CU003"],
+                "boolean description",
+            ),
+            (
+                "---\ndescription:\n---\nBody.\n",
+                vec![],
+                "null description",
+            ),
+            (
+                "---\ndescription: \"\"\n---\nBody.\n",
+                vec![],
+                "empty description",
+            ),
+            (
+                "---\ndescription: &d Documented behavior\nglobs: *d\n---\nBody.\n",
+                vec![],
+                "resolved aliases keep their scalar shape",
+            ),
+        ];
+        for (content, expected, label) in cases {
+            assert_eq!(rule_cu_codes(content), expected, "{label}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn unquoted_glob_anchor_errors_carry_the_quote_suggestion() {
+        for (globs, quoted) in [
+            ("*.ts", "globs: \"*.ts\""),
+            ("**/*.gen.ts,src/*.ts", "globs: \"**/*.gen.ts,src/*.ts\""),
+        ] {
+            let content =
+                format!("---\ndescription:\nglobs: {globs}\nalwaysApply: false\n---\nBody.\n");
+            let diagnostics = rule_cu_diagnostics(&content);
+            assert_eq!(diagnostics.len(), 1, "{globs}: {diagnostics:?}");
+            let diagnostic = &diagnostics[0];
+            assert_eq!(diagnostic.rule, LintRule::CursorRuleFrontmatterInvalid);
+            assert!(
+                diagnostic.message.contains("unknown anchor"),
+                "{globs}: {}",
+                diagnostic.message
+            );
+            assert!(
+                !diagnostic.message.contains("at line"),
+                "parser coordinates must move to the structured location: {}",
+                diagnostic.message
+            );
+            let suggestion = diagnostic.suggestion.as_deref().unwrap_or_default();
+            assert!(
+                suggestion.contains(quoted),
+                "{globs}: suggestion must quote the pattern: {suggestion}"
+            );
+            // globs sits on file line 3: opener, description, globs.
+            let location = diagnostic.location.expect("anchor errors carry a location");
+            assert_eq!(location.start().line_number(), 3, "{globs}");
+            assert!(location.start().column_number().is_some(), "{globs}");
+        }
+
+        // A trailing YAML comment stays outside the quoted pattern so the
+        // suggestion never changes what Cursor reads.
+        let content =
+            "---\ndescription:\nglobs: *.ts # attach TS files\nalwaysApply: false\n---\nBody.\n";
+        let diagnostics = rule_cu_diagnostics(content);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        let suggestion = diagnostics[0].suggestion.as_deref().unwrap_or_default();
+        assert!(
+            suggestion.contains("globs: \"*.ts\""),
+            "comment must not enter the quoted pattern: {suggestion}"
+        );
+        assert!(
+            !suggestion.contains('#'),
+            "comment must stay outside the suggestion: {suggestion}"
+        );
+
+        // The same anchor class on a non-globs line keeps the generic message.
+        let content = "---\ndescription: *routing\nalwaysApply: false\n---\nBody.\n";
+        let diagnostics = rule_cu_diagnostics(content);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].rule, LintRule::CursorRuleFrontmatterInvalid);
+        assert!(
+            diagnostics[0].message.contains("unknown anchor"),
+            "{}",
+            diagnostics[0].message
+        );
+        assert_eq!(
+            diagnostics[0].suggestion, None,
+            "non-globs anchor errors keep the parser constraint as the action"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rule_diagnostics_carry_locations_evidence_and_suggestions() {
+        let content = "---\ndescription: 42\nglobs: \"[unclosed\"\nalwaysApply: \"yes\"\nunknown: value\n---\nBody.\n";
+        let diagnostics = rule_cu_diagnostics(content);
+        let find = |rule: LintRule| {
+            diagnostics
+                .iter()
+                .find(|item| item.rule == rule)
+                .unwrap_or_else(|| panic!("missing {rule:?}: {diagnostics:?}"))
+        };
+
+        let description = find(LintRule::CursorRuleFrontmatterInvalid);
+        assert_eq!(description.location.unwrap().start().line_number(), 2);
+        assert_eq!(description.evidence.as_deref(), Some("description"));
+        assert!(description.suggestion.is_some());
+
+        let glob = find(LintRule::CursorRuleGlobInvalid);
+        assert_eq!(glob.location.unwrap().start().line_number(), 3);
+        assert_eq!(glob.evidence.as_deref(), Some("[unclosed"));
+        assert!(glob.suggestion.is_some());
+
+        let always = find(LintRule::CursorAlwaysApplyInvalid);
+        assert_eq!(always.location.unwrap().start().line_number(), 4);
+        assert_eq!(always.evidence.as_deref(), Some("alwaysApply"));
+        assert!(always.suggestion.is_some());
+
+        let unknown = find(LintRule::CursorRuleFieldUnknown);
+        assert_eq!(unknown.location.unwrap().start().line_number(), 5);
+        assert_eq!(unknown.evidence.as_deref(), Some("unknown"));
+        assert!(unknown.suggestion.is_some());
+
+        let ignored = rule_cu_diagnostics("---\nalwaysApply: true\nglobs: \"*.rs\"\n---\nBody.\n");
+        assert_eq!(ignored.len(), 1, "{ignored:?}");
+        assert_eq!(ignored[0].rule, LintRule::CursorAlwaysApplyGlobs);
+        assert_eq!(ignored[0].location.unwrap().start().line_number(), 3);
+        assert_eq!(ignored[0].evidence.as_deref(), Some("globs"));
+        assert!(ignored[0].suggestion.is_some());
+
+        let missing = rule_cu_diagnostics("No frontmatter here.\n");
+        assert_eq!(missing.len(), 1, "{missing:?}");
+        assert_eq!(missing[0].rule, LintRule::CursorRuleFrontmatterMissing);
+        assert_eq!(missing[0].location.unwrap().start().line_number(), 1);
+        assert!(missing[0].suggestion.is_some());
+
+        // Position-less parser failures (duplicate keys) anchor at the
+        // opening delimiter instead of shipping without a location.
+        let duplicate =
+            rule_cu_diagnostics("---\ndescription: One\ndescription: Two\n---\nBody.\n");
+        assert_eq!(duplicate.len(), 1, "{duplicate:?}");
+        assert_eq!(duplicate[0].rule, LintRule::CursorRuleFrontmatterInvalid);
+        assert_eq!(duplicate[0].location.unwrap().start().line_number(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rule_diagnostics_never_echo_secretlike_neighbor_values() {
+        let secret = "ghp_0123456789abcdefghij0123456789abcdef";
+        let with_unknown_key =
+            format!("---\ndescription: Documented behavior\ntoken: {secret}\n---\nBody.\n");
+        let anchored_secret =
+            format!("---\ndescription:\nglobs: *{secret}\nalwaysApply: false\n---\nBody.\n");
+        let malformed_secret_pattern =
+            format!("---\nglobs: \"[{secret}\"\nalwaysApply: false\n---\nBody.\n");
+        for content in [with_unknown_key, anchored_secret, malformed_secret_pattern] {
+            let diagnostics = rule_cu_diagnostics(&content);
+            assert!(!diagnostics.is_empty(), "{content}");
+            for diagnostic in &diagnostics {
+                for text in [
+                    Some(diagnostic.message.as_str()),
+                    diagnostic.evidence.as_deref(),
+                    diagnostic.suggestion.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    assert!(
+                        !text.contains(secret),
+                        "a diagnostic echoed the secret: {text}"
+                    );
+                }
+            }
         }
     }
 

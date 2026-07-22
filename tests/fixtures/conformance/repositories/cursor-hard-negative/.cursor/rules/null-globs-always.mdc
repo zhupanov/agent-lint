@@ -1,0 +1,5 @@
+---
+globs:
+alwaysApply: true
+---
+Use focused validation for every change.

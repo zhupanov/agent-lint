@@ -1,0 +1,7 @@
+---
+description: 42
+globs: 42
+alwaysApply: "yes"
+unknown: value
+---
+Use the repository's established conventions.

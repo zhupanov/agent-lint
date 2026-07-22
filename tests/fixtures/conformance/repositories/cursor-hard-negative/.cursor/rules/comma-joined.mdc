@@ -1,0 +1,6 @@
+---
+description: Documented maintenance behavior
+globs: "*.ts,*.tsx"
+alwaysApply: false
+---
+Use focused validation for every change.

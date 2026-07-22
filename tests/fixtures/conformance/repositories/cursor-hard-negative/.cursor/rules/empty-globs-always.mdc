@@ -1,0 +1,6 @@
+---
+description: Explain repository maintenance steps
+globs: []
+alwaysApply: true
+---
+Use focused validation for every change.
