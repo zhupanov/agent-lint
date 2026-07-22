@@ -2434,6 +2434,277 @@ fn email_rules_are_plugin_only_and_do_not_claim_malformed_json() {
 }
 
 #[test]
+fn m010_m011_usable_enrichment_contract_modes_suppression_and_no_autofix() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest_dir = tmp.path().join(".claude-plugin");
+    std::fs::create_dir(&manifest_dir).unwrap();
+    let plugin_body = r#"{
+  "name": "plugin",
+  "version": "1.0.0",
+  "description": "   ",
+  "author": {"name": "Ada"},
+  "keywords": [null, " ", 42]
+}
+"#;
+    let marketplace_body = r#"{
+  "name": "marketplace",
+  "owner": {"name": "owner"},
+  "plugins": [
+    "scalar-entry",
+    {"name": "tool", "source": "./tool", "category": "   "}
+  ]
+}
+"#;
+    std::fs::write(manifest_dir.join("plugin.json"), plugin_body).unwrap();
+    std::fs::write(manifest_dir.join("marketplace.json"), marketplace_body).unwrap();
+
+    for (strictness, m_severity, expected_exit) in [
+        (vec![], "warning", Some(0)),
+        (vec!["--pedantic"], "error", Some(1)),
+        (vec!["--all"], "error", Some(1)),
+    ] {
+        let mut args = vec!["--format", "json"];
+        args.extend(strictness);
+        args.extend(["--only", "M010,M011", "."]);
+        let output = run_in(tmp.path(), &args);
+        assert_eq!(
+            output.status.code(),
+            expected_exit,
+            "stderr: {}",
+            stderr(&output)
+        );
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 5, "{report:#}");
+
+        assert_eq!(diagnostics[0]["code"], "M010");
+        assert_eq!(diagnostics[0]["severity"], m_severity);
+        assert_eq!(
+            diagnostics[0]["subject_path"],
+            ".claude-plugin/marketplace.json"
+        );
+        assert!(diagnostics[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("owner.email"));
+        assert_eq!(diagnostics[0]["evidence"], "owner.email");
+        assert!(diagnostics[0]["suggestion"].is_string());
+        assert_eq!(diagnostics[0]["location"]["start"]["line"], 3);
+
+        assert_eq!(diagnostics[1]["code"], "M010");
+        assert!(diagnostics[1]["message"]
+            .as_str()
+            .unwrap()
+            .contains("plugins[1].category"));
+        assert_eq!(diagnostics[1]["evidence"], "plugins[1].category");
+        assert_eq!(diagnostics[1]["location"]["start"]["line"], 6);
+
+        assert_eq!(diagnostics[2]["code"], "M011");
+        assert_eq!(
+            diagnostics[2]["subject_path"],
+            ".claude-plugin/plugin.json"
+        );
+        assert!(diagnostics[2]["message"]
+            .as_str()
+            .unwrap()
+            .contains("description"));
+        assert_eq!(diagnostics[2]["evidence"], "description");
+        assert_eq!(diagnostics[2]["location"]["start"]["line"], 4);
+
+        assert_eq!(diagnostics[3]["code"], "M011");
+        assert!(diagnostics[3]["message"]
+            .as_str()
+            .unwrap()
+            .contains("author.email"));
+        assert_eq!(diagnostics[3]["evidence"], "author.email");
+
+        assert_eq!(diagnostics[4]["code"], "M011");
+        assert!(diagnostics[4]["message"]
+            .as_str()
+            .unwrap()
+            .contains("keywords"));
+        assert_eq!(
+            diagnostics[4]["evidence"],
+            "keywords[0],keywords[1],keywords[2]"
+        );
+        assert_eq!(diagnostics[4]["location"]["start"]["line"], 6);
+    }
+
+    let only = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M010,M011", "."],
+    );
+    let first_report = json(&only);
+    let diagnostics = first_report["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 5);
+    // Deterministic order across a second identical run.
+    let again = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M010,M011", "."],
+    );
+    assert_eq!(json(&again)["diagnostics"], first_report["diagnostics"]);
+
+    // Expand the broken plugin keywords into a dedicated assertion via a
+    // keywords-only broken sibling file rewrite.
+    std::fs::write(
+        manifest_dir.join("plugin.json"),
+        r#"{
+  "name": "plugin",
+  "version": "1.0.0",
+  "description": "usable description",
+  "author": {"email": "owner@example.com"},
+  "keywords": [null, " ", 42]
+}
+"#,
+    )
+    .unwrap();
+    let keywords_only = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M010,M011", "."],
+    );
+    let keyword_report = json(&keywords_only);
+    let keyword_diags = keyword_report["diagnostics"].as_array().unwrap();
+    let keyword = keyword_diags
+        .iter()
+        .find(|d| d["message"].as_str().unwrap().contains("keywords"))
+        .expect("keywords diagnostic");
+    assert_eq!(keyword["code"], "M011");
+    assert_eq!(keyword["evidence"], "keywords[0],keywords[1],keywords[2]");
+    assert!(!String::from_utf8_lossy(&keywords_only.stdout).contains("null"));
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+[[lint.overrides]]
+files = [".claude-plugin/marketplace.json"]
+suppress = ["M010"]
+"#,
+    )
+    .unwrap();
+    let per_file = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M010,M011", "."],
+    );
+    let per_file_report = json(&per_file);
+    assert_eq!(per_file_report["counts"]["suppressed"], 2);
+    assert!(
+        per_file_report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|d| d["code"] == "M011")
+    );
+
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        r#"[lint]
+suppress = ["M010", "M011"]
+"#,
+    )
+    .unwrap();
+    let global = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M010,M011", "."],
+    );
+    assert!(global.status.success());
+    assert_eq!(json(&global)["counts"]["suppressed"], 3);
+
+    std::fs::remove_file(tmp.path().join("agent-lint.toml")).unwrap();
+    std::fs::write(manifest_dir.join("plugin.json"), plugin_body).unwrap();
+    let before = std::fs::read(manifest_dir.join("plugin.json")).unwrap();
+    let autofix = run_in(
+        tmp.path(),
+        &["--autofix", "--format", "json", "--only", "M010,M011", "."],
+    );
+    assert_eq!(autofix.status.code(), Some(0));
+    assert_eq!(
+        json(&autofix)["diagnostics"].as_array().unwrap().len(),
+        5
+    );
+    assert_eq!(std::fs::read(manifest_dir.join("plugin.json")).unwrap(), before);
+    assert_eq!(
+        std::fs::read_to_string(manifest_dir.join("marketplace.json")).unwrap(),
+        marketplace_body
+    );
+}
+
+#[test]
+fn m010_m011_do_not_cascade_from_malformed_parents_or_claim_present_emails() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let manifest_dir = tmp.path().join(".claude-plugin");
+    std::fs::create_dir(&manifest_dir).unwrap();
+    std::fs::write(
+        manifest_dir.join("plugin.json"),
+        r#"{
+  "name": "plugin",
+  "version": "1.0.0",
+  "description": "usable",
+  "author": "not-an-object",
+  "keywords": ["lint"]
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        manifest_dir.join("marketplace.json"),
+        r#"{
+  "name": "marketplace",
+  "owner": "not-an-object",
+  "plugins": [
+    "scalar",
+    {"name": "tool", "source": "./tool", "category": "devtools"}
+  ]
+}
+"#,
+    )
+    .unwrap();
+
+    let enrichment = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M010,M011", "."],
+    );
+    assert!(
+        enrichment.status.success(),
+        "stderr: {}",
+        stderr(&enrichment)
+    );
+    assert!(
+        json(&enrichment)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{:#}",
+        json(&enrichment)
+    );
+
+    let ownership = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "M007,M009,M020,E001,E002,M010,M011", "."],
+    );
+    let codes: Vec<_> = json(&ownership)["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["code"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        codes.contains(&"M007".to_string()),
+        "non-object owner should stay with M007: {codes:?}"
+    );
+    assert!(
+        codes.contains(&"M009".to_string()),
+        "scalar plugin entry should stay with M009: {codes:?}"
+    );
+    assert!(
+        codes.contains(&"M020".to_string()),
+        "non-object author should stay with M020: {codes:?}"
+    );
+    assert!(!codes.iter().any(|c| c == "M010" || c == "M011"));
+}
+
+#[test]
 fn manifest_author_and_channel_diagnostics_preserve_strictness_policy() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());

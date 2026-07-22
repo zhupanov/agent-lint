@@ -1,0 +1,8 @@
+{
+  "name": "marketplace",
+  "owner": {"name": "owner"},
+  "plugins": [
+    "scalar-entry",
+    {"name": "tool", "source": "./tool", "category": "\u00a0"}
+  ]
+}

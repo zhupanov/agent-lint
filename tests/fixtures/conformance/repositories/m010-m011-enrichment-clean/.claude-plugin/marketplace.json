@@ -1,0 +1,7 @@
+{
+  "name": "marketplace",
+  "owner": {"name": "owner", "email": "owner@example.com"},
+  "plugins": [
+    {"name": "tool", "source": "./tool", "category": "devtools"}
+  ]
+}

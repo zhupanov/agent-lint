@@ -48,8 +48,8 @@ run only when their platform is auto-detected or force-enabled in
 | M007 | `marketplace-field-missing` | `marketplace.json` missing required field (`name`, `owner.name`, or `plugins`) | Plugin | error |
 | M008 | `marketplace-plugins-empty` | `marketplace.json` `plugins` is empty or has the wrong type. Claude Code treats an empty array as a non-blocking warning. | Plugin | warn |
 | M009 | `marketplace-plugin-invalid` | `marketplace.json` plugin entry has invalid `name`/effective local `source`: missing/empty fields, duplicate names, unknown object source type, missing required per-type subfields, unsafe `metadata.pluginRoot`, or `git-subdir.path` traversal | Plugin | error |
-| M010 | `marketplace-enriched-missing` | `marketplace.json` missing `owner.email` or plugin `category` | Plugin | warn |
-| M011 | `plugin-enriched-missing` | `plugin.json` missing `description`, `author.email`, or `keywords` | Plugin | warn |
+| M010 | `marketplace-enriched-missing` | `marketplace.json` missing usable `owner.email`, or object plugin entry missing/blank/non-string `category` | Plugin | warn |
+| M011 | `plugin-enriched-missing` | `plugin.json` missing usable `description`, missing `author.email`, or unusable `keywords` (non-array, empty, or any blank/non-string item) | Plugin | warn |
 | M012 | `component-path-nested` | A component (`commands`/`agents`/`skills`/`hooks`/`output-styles`/`themes`/`monitors`) lives inside `.claude-plugin/`, or a plugin/marketplace component path points there | Plugin | error |
 | M013 | `component-path-unsafe` | A plugin or marketplace component path (`commands`, `agents`, `skills`, `hooks`, `mcpServers`, `outputStyles`, `lspServers`, `experimental.themes`, or `experimental.monitors`) is absolute (`/…`, `C:\…`), uses `..` traversal, or does not start with exact `./` | Plugin | error |
 | M014 | `author-name-missing` | Plugin or inline marketplace-entry `author` object has a missing or invalid `author.name` | Plugin | error |
@@ -72,6 +72,20 @@ segment take precedence over a missing-prefix report. This supersedes #278's
 former bare-path concession: current Claude validation rejects bare component
 paths as load errors. The extractor is shared with manifest-declared discovery,
 which never probes an unsafe declaration.
+
+M010 and M011 are agent-lint discovery-quality conventions, not Claude Code
+load-error rules. They require usable enrichment values after Unicode trimming:
+a non-empty `owner.email` presence check (M010) or `author.email` presence
+check (M011), a non-empty string `category`/`description`, and a non-empty
+`keywords` array whose every item is a non-empty string. Present email values
+remain exclusively E001/E002-owned (including blank or wrong-type values).
+Structural parents gate enrichment only at the affected subtree: a missing or
+non-object marketplace `owner` is M007-only for email; a scalar marketplace
+plugin entry is M009-only for category; a non-object plugin `author` is
+M020-only for email. Independent usable fields on valid subtrees are still
+checked. Diagnostics carry exact value spans when present, bounded evidence
+(field name, JSON type, or offending `keywords[i]` indexes — never contact or
+keyword text), and a concrete suggestion. Neither rule has an autofix.
 
 ## Hooks Rules (H)
 
