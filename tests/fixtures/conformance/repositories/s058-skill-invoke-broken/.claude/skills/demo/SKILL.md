@@ -1,6 +1,7 @@
 ---
 name: demo
 description: Use when checking explicit Skill tool invocations
-allowed-tools: Skill(child), Bash
+allowed-tools: >-
+  Skill Bash
 ---
-INVOKE `/child` directly.
+Describe the child workflow.
