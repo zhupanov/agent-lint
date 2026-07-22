@@ -346,7 +346,10 @@ spec limit as an error, while S015 owns the larger listing cap as a warning.
 > descriptions in invalid or non-mapping YAML frontmatter, stay owned by
 > existing structural/short/missing rules and are skipped. Claude private and plugin trees that can
 > load together form one runtime-union namespace (`agents/` ∪ `.claude/agents/`,
-> `skills/` ∪ `.claude/skills/` in Plugin mode). Cross-client `.agents/skills/`
+> `skills/` ∪ `.claude/skills/` in Plugin mode). When the Cursor target is
+> active, `.cursor/agents/**/*.md` forms a separate Cursor-only agent namespace
+> that reuses the same scorer; omitted Cursor `description` fields are legal
+> and skip A030. Cross-client `.agents/skills/`
 > stays separate. Agents are never compared with skills. Findings are pathless
 > multi-source diagnostics that name both repository-relative paths in
 > `related_subjects` and the score in the message; global `suppress` works, but per-file overrides
@@ -695,7 +698,7 @@ They run in both Basic and Plugin modes.
 | CU011 | `cursor-event-unknown` | Cursor hook event is not recognized | Always | warn |
 | CU012 | `cursor-command-missing` | Cursor hook entry lacks a non-empty `command` | Always | error |
 | CU013 | `cursor-type-invalid` | Cursor hook `type` is not `command` or `prompt` | Always | error |
-| CU014 | `cursor-agent-invalid` | Cursor subagent frontmatter is invalid | Always | error |
+| CU014 | `cursor-agent-invalid` | Cursor subagent frontmatter is invalid (present fields and filename-derived identifiers) | Always | error |
 | CU015 | `cursor-body-empty` | Cursor subagent body is empty | Always | warn |
 | CU016 | `cursor-environment-invalid` | `.cursor/environment.json` schema is invalid | Always | error |
 | CU017 | `cursor-hook-invalid` | Cursor hook timeout, loop limit, fail-closed, or matcher type is invalid | Always | warn |

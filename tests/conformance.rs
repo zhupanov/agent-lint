@@ -31,6 +31,7 @@ const REQUIRED_CLASS_COVERAGE: &[&str] = &[
     "q006",
     "agent-stop",
     "desc-overlap",
+    "cursor-agents",
     "userconfig",
 ];
 

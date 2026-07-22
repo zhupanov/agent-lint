@@ -2,8 +2,9 @@
 //!
 //! Comparison is namespace-aware. Claude private and plugin surfaces that can be
 //! loaded together in the same lint run share one runtime-union namespace.
-//! Cross-client `.agents/skills/` remains a separate namespace. Agents are never
-//! compared with skills.
+//! Cursor `.cursor/agents/**/*.md` is a separate namespace when the Cursor
+//! target is active. Cross-client `.agents/skills/` remains a separate
+//! namespace. Agents are never compared with skills.
 //!
 //! Findings are pathless multi-source diagnostics with structured
 //! `related_subjects`. Per-file overrides therefore cannot suppress them;
@@ -18,6 +19,8 @@ use crate::validators::skills::collect_skills;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
+
+use super::cursor::discover_cursor_agent_paths;
 
 /// Character floor owned by A009 / S034. Shorter descriptions stay out of the
 /// overlap pool so those rules keep ownership.
@@ -56,10 +59,13 @@ struct DescCandidate {
 ///
 /// In Plugin mode, `agents/` and `.claude/agents/` form one Claude agent
 /// routing namespace. In Basic mode only `.claude/agents/` is compared.
+/// When `include_cursor` is true, `.cursor/agents/**/*.md` is compared in a
+/// separate Cursor-only namespace (missing descriptions skip A030).
 pub fn validate_agent_desc_overlap(
     diag: &mut DiagnosticCollector,
     exclude: &ExcludeSet,
     plugin_mode: bool,
+    include_cursor: bool,
 ) {
     let mut dirs = Vec::new();
     if plugin_mode {
@@ -71,6 +77,13 @@ pub fn validate_agent_desc_overlap(
         collect_agent_candidates(&dirs, exclude),
         LintRule::AgentDescOverlap,
     );
+    if include_cursor {
+        report_overlaps(
+            diag,
+            collect_cursor_agent_candidates(exclude),
+            LintRule::AgentDescOverlap,
+        );
+    }
 }
 
 /// Validate overlapping skill routing descriptions.
@@ -134,6 +147,30 @@ fn collect_agent_candidates(dirs: &[&str], exclude: &ExcludeSet) -> Vec<DescCand
             if let Some(candidate) = candidate_from_description(path, &description) {
                 candidates.push(candidate);
             }
+        }
+    }
+    candidates.sort_by(|left, right| left.path.cmp(&right.path));
+    candidates
+}
+
+fn collect_cursor_agent_candidates(exclude: &ExcludeSet) -> Vec<DescCandidate> {
+    let mut candidates = Vec::new();
+    for path in discover_cursor_agent_paths(exclude) {
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        let Some(fm_lines) = frontmatter_lines(&content) else {
+            continue;
+        };
+        // Missing, blank, non-string, invalid YAML, and non-mapping frontmatter
+        // stay with CU014 and do not enter the A030 pool.
+        let Some(description) = frontmatter::get_strict_string_field(&fm_lines, "description")
+        else {
+            continue;
+        };
+        if let Some(candidate) = candidate_from_description(path, &description) {
+            candidates.push(candidate);
         }
     }
     candidates.sort_by(|left, right| left.path.cmp(&right.path));
@@ -352,7 +389,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
 
         let findings: Vec<_> = diag
             .diagnostics()
@@ -390,7 +427,7 @@ mod tests {
         }
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
         assert_eq!(
             diag.diagnostics()
                 .iter()
@@ -419,7 +456,7 @@ mod tests {
         }
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
         assert!(diag.diagnostics().is_empty());
     }
 
@@ -479,7 +516,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), true);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), true, false);
         assert_eq!(
             diag.diagnostics()
                 .iter()
@@ -540,7 +577,7 @@ mod tests {
         .unwrap();
 
         let mut diag = DiagnosticCollector::new();
-        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false);
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, false);
         assert!(
             diag.diagnostics()
                 .iter()
@@ -617,6 +654,134 @@ mod tests {
             finding
                 .message
                 .starts_with(".claude/skills/a-skill/SKILL.md and .claude/skills/z-skill/SKILL.md")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_nested_duplicates_form_a_separate_namespace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let desc = "Reviews pull requests for security vulnerabilities and injection flaws";
+        std::fs::create_dir_all(".cursor/agents/review").unwrap();
+        std::fs::create_dir_all(".claude/agents").unwrap();
+        std::fs::write(
+            ".cursor/agents/review/one.md",
+            format!("---\nname: one\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/review/two.md",
+            format!("---\nname: two\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/review/three.md",
+            "---\nname: three\ndescription: Creates GitHub issues from triage notes and templates\n---\nBody\n",
+        )
+        .unwrap();
+        // Same description on Claude must not pair with Cursor.
+        std::fs::write(
+            ".claude/agents/claude-twin.md",
+            format!("---\nname: claude-twin\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, true);
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|item| item.rule == LintRule::AgentDescOverlap)
+            .collect();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(
+            findings[0].related_subjects,
+            vec![
+                std::path::PathBuf::from(".cursor/agents/review/one.md"),
+                std::path::PathBuf::from(".cursor/agents/review/two.md"),
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_missing_invalid_and_short_descriptions_skip_a030() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        std::fs::create_dir_all(".cursor/agents").unwrap();
+        let long = "Reviews pull requests for security vulnerabilities and injection flaws";
+        std::fs::write(
+            ".cursor/agents/missing.md",
+            "---\nname: missing\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/blank.md",
+            "---\nname: blank\ndescription: \"\"\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/short.md",
+            "---\nname: short\ndescription: Too short to compare!!\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/typed.md",
+            "---\nname: typed\ndescription: [not, a, string]\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/broken.md",
+            "---\nname: broken\ndescription: [unclosed\n---\nBody\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/ok.md",
+            format!("---\nname: ok\ndescription: {long}\n---\nBody\n"),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &ExcludeSet::default(), false, true);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| item.rule != LintRule::AgentDescOverlap)
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cursor_namespace_honors_exclusions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let desc = "Reviews pull requests for security vulnerabilities and injection flaws";
+        std::fs::create_dir_all(".cursor/agents/review").unwrap();
+        std::fs::write(
+            ".cursor/agents/review/one.md",
+            format!("---\nname: one\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            ".cursor/agents/review/two.md",
+            format!("---\nname: two\ndescription: {desc}\n---\nBody\n"),
+        )
+        .unwrap();
+
+        let exclude = ExcludeSet::new(&[".cursor/agents/review/two.md".into()]).unwrap();
+        let mut diag = DiagnosticCollector::new();
+        validate_agent_desc_overlap(&mut diag, &exclude, false, true);
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|item| item.rule != LintRule::AgentDescOverlap)
         );
     }
 }

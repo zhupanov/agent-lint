@@ -1,0 +1,18 @@
+{
+  "class": "broken",
+  "repository": "cursor-agents-broken",
+  "covers": ["cursor-agents", "basic-mode", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "CU014,CU015", "."] },
+  "expected_exit_code": 1,
+  "expected_status": "errors",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "CU014", "name": "cursor-agent-invalid", "severity": "error", "subject_path": ".cursor/agents/Reviewer.md" },
+    { "code": "CU014", "name": "cursor-agent-invalid", "severity": "error", "subject_path": ".cursor/agents/nested/bad-name.md" },
+    { "code": "CU014", "name": "cursor-agent-invalid", "severity": "error", "subject_path": ".cursor/agents/nested/bad-name.md" },
+    { "code": "CU014", "name": "cursor-agent-invalid", "severity": "error", "subject_path": ".cursor/agents/nested/bad-name.md" },
+    { "code": "CU015", "name": "cursor-body-empty", "severity": "warning", "subject_path": ".cursor/agents/empty-body.md" }
+  ],
+  "allowed_additional_diagnostics": []
+}

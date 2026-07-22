@@ -1,0 +1,14 @@
+{
+  "class": "broken",
+  "repository": "desc-overlap-cursor-broken",
+  "covers": ["desc-overlap", "cursor-agents", "basic-mode", "normal", "json"],
+  "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "A030", "."] },
+  "expected_exit_code": 0,
+  "expected_status": "warnings",
+  "expected_active_platforms": ["claude", "cursor"],
+  "expected_suppressed": 0,
+  "expected_diagnostics": [
+    { "code": "A030", "name": "agent-desc-overlap", "severity": "warning", "subject_path": null, "related_subjects": [".cursor/agents/review/one.md", ".cursor/agents/review/two.md"] }
+  ],
+  "allowed_additional_diagnostics": []
+}
