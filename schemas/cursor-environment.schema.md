@@ -4,7 +4,7 @@
 of Cursor's canonical Cloud Environment schema.
 
 - Upstream URL: <https://www.cursor.com/schemas/environment.schema.json>
-- Retrieved: 2026-07-21
+- Retrieved: 2026-07-22
 - SHA-256: `62b13994164f4186198b1f002ff957605df37ba5eee803e6afe69c981af001d6`
 
 Agent Lint always compiles the checked-in schema, so lint runs remain offline

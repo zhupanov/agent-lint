@@ -906,21 +906,21 @@ They run in both Basic and Plugin modes.
 | CR-SK-001 | `cursor-skill-unsupported` | Cursor skill uses a frontmatter key other than `name`, `description`, `paths`, `disable-model-invocation`, or `metadata`; it checks the active recursive Cursor runtime inventory, including shared `.agents/skills` locations | Always | warn |
 
 Cursor contracts are documented in the following primary sources, retrieved
-2026-07-21: [Cursor Rules](https://cursor.com/docs/context/rules) (CU001–CU009),
+2026-07-22: [Cursor Rules](https://cursor.com/docs/rules.md) (CU001–CU009),
 [Cursor Hooks](https://cursor.com/docs/hooks.md) (CU010–CU013 and CU017–CU019),
 [Cursor Subagents](https://cursor.com/docs/subagents.md) (CU014–CU015),
 [Cloud Agent setup](https://cursor.com/docs/cloud-agent/setup.md) and the
 [environment schema](https://www.cursor.com/schemas/environment.schema.json)
 (CU016), and [Cursor Skills](https://cursor.com/docs/skills.md) (CR-SK-001).
-These Cursor contracts must be reverified against these pages by 2026-10-21,
+These Cursor contracts must be reverified against these pages by 2027-01-21,
 or after the next major Cursor release if earlier.
 
 ### Cursor MDC activation states (CU002-CU008)
 
 Cursor derives one rule type from the **effective values** of `alwaysApply`,
 `globs`, and `description`; key presence is never a signal. Sources, retrieved
-2026-07-21: [Cursor Rules](https://cursor.com/docs/context/rules) (its
-canonical MDC example ships an empty `globs:` line), Cursor staff's
+2026-07-22: [Cursor Rules](https://cursor.com/docs/rules.md) (its
+activation truth table and MDC examples), Cursor staff's
 [four-state activation table](https://forum.cursor.com/t/correct-way-to-specify-rules-globs/71752/23),
 and the staff
 [Manual-rule example](https://forum.cursor.com/t/rules-how-to-only-apply-manually/155072/3).

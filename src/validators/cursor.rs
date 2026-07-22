@@ -2065,7 +2065,7 @@ mod tests {
 
         let provenance = include_str!("../../schemas/cursor-environment.schema.md");
         assert!(provenance.contains("https://www.cursor.com/schemas/environment.schema.json"));
-        assert!(provenance.contains("Retrieved: 2026-07-21"));
+        assert!(provenance.contains("Retrieved: 2026-07-22"));
         assert!(
             provenance.contains("62b13994164f4186198b1f002ff957605df37ba5eee803e6afe69c981af001d6")
         );
