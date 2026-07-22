@@ -7652,8 +7652,8 @@ suppress = ["S055"]
     #[serial_test::serial]
     fn test_s067_scoped_bash_ok() {
         for tool_lines in [
-            "allowed-tools: Bash(git:*), Read",
             "allowed-tools: Bash(git *), Read",
+            "allowed-tools: Bash(git add:*), Read",
         ] {
             let findings = tool_field_diagnostics(tool_lines);
             assert!(

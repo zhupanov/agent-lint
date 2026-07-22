@@ -570,7 +570,7 @@ fn validate_skill_frontmatter_in_dir(
                                     .any(|l| l.trim_start().starts_with("- "))
                             });
                         if has_list_items {
-                            continue; // S045 in frontmatter_extended.rs handles this
+                            continue; // a list-form value is not empty
                         }
                     }
                     diag.report_at_with(

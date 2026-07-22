@@ -7,28 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Changed
-
-- S040 (`tools-unknown`) and S067 (`bash-unscoped`) now honor every documented
-  `allowed-tools` spelling through canonical YAML and one shared tool
-  tokenizer: space- or comma-separated strings and YAML lists all validate,
-  commas and spaces inside `Bash(...)` restrictions are pattern text, and
-  `disallowed-tools` entries are validated by S040 too (message names the
-  field; unknown entries report once per field and name). S067 now fires from
-  every spelling when an `allowed-tools` entry is exactly `Bash` — but not for
-  `disallowed-tools: Bash` — and its message recommends the current
-  `Bash(git *)` scoped form instead of the stale `Bash(git:*)` colon spelling.
-  Agent `tools`/`disallowedTools` scalars (A017/A019/A020) consume the same
-  tokenizer, so `tools: Bash(npm install, npm test), Read` no longer
-  false-positives; A017 overlap stays an exact full-token match reported once
-  per token in first-declaration order
-- Retired S045 (`tools-list-syntax`): a YAML list is a documented accepted
-  `allowed-tools` form, so the rule is now inert in normal, pedantic, all, and
-  focused runs, and its YAML-corrupting autofix (which could swallow trailing
-  comments into the value and produce invalid YAML) is removed. Existing
-  S045 / `tools-list-syntax` config identifiers remain accepted for
-  compatibility but emit no findings
-
 ### Added
 
 - Added U009 (`userconfig-default-secret`, default warning) for `userConfig`
@@ -53,6 +31,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- S040 (`tools-unknown`) and S067 (`bash-unscoped`) now honor every documented
+  `allowed-tools` spelling through canonical YAML and one shared tool
+  tokenizer: space- or comma-separated strings and YAML lists all validate,
+  commas and spaces inside `Bash(...)` restrictions are pattern text, and
+  `disallowed-tools` entries are validated by S040 too (message names the
+  field; unknown entries report once per field and name). S067 now fires from
+  every spelling when an `allowed-tools` entry is exactly `Bash` — but not for
+  `disallowed-tools: Bash` — and its message recommends the current
+  `Bash(git *)` scoped form instead of the stale `Bash(git:*)` colon spelling.
+  Agent `tools`/`disallowedTools` scalars (A017/A019/A020) consume the same
+  tokenizer, so `tools: Bash(npm install, npm test), Read` no longer
+  false-positives; A017 overlap stays an exact full-token match reported once
+  per token in first-declaration order
+- Retired S045 (`tools-list-syntax`): a YAML list is a documented accepted
+  `allowed-tools` form, so the rule is now inert in normal, pedantic, all, and
+  focused runs, and its YAML-corrupting autofix (which could swallow trailing
+  comments into the value and produce invalid YAML) is removed. Existing
+  S045 / `tools-list-syntax` config identifiers remain accepted for
+  compatibility but emit no findings
 - Made D001 (`docs-ref-missing`) and D002 (`claudemd-too-large`) Always-mode
   checks with structured Markdown Canonical-sources parsing, exact `docs/`
   left-boundary matching, shared repository-safe path probing, and file-level

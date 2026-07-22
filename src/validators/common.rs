@@ -331,8 +331,9 @@ pub(crate) fn is_valid_model_value(value: &str) -> bool {
         .is_some_and(|rest| rest.contains('-') && !rest.ends_with('-'))
 }
 
-/// Built-in Claude Code tool names (PascalCase). Shared by S040
-/// (skill `allowed-tools`) and A019/A020 (agent `tools`/`disallowedTools`).
+/// Built-in Claude Code tool names (PascalCase). Shared by S040/S067
+/// (skill `allowed-tools`/`disallowed-tools`), S058 (Skill gating), and
+/// A017/A019/A020 (agent `tools`/`disallowedTools`).
 pub(crate) const KNOWN_TOOLS: &[&str] = &[
     "AskUserQuestion",
     "Bash",
@@ -407,8 +408,8 @@ pub(crate) fn tokenize_tool_scalar(value: &str) -> Vec<String> {
 /// `disallowed-tools`). A string scalar is split by [`tokenize_tool_scalar`];
 /// a sequence contributes each string item as one entry (comments and quoting
 /// are already resolved by the YAML parser). Non-string sequence items and
-/// every other value shape yield no entries: invalid YAML stays owned by X001
-/// and canonical shape rules, never by the tool rules.
+/// every other value shape yield no entries — the tool rules never own
+/// value-shape diagnostics (invalid YAML stays with X001).
 pub(crate) fn tokenize_tool_field(value: &crate::yaml::Value) -> Vec<String> {
     if let Some(scalar) = value.as_str() {
         return tokenize_tool_scalar(scalar);
