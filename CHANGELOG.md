@@ -42,6 +42,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- G002 (`script-ref-missing`), G003 (`script-not-executable`), and G004
+  (`dead-script`) now share one typed candidate contract with `--list-scripts`
+  and no longer misclassify script references, direct execution, or
+  non-script files. Command references are extracted from executable
+  positions only (shell fence bodies, `Run`/`Execute` instructions, workflow
+  `run` values, new SKILL.md frontmatter `hooks:` commands, Makefiles, and
+  supported script files); inline code and prose classify as mentions, data
+  files and `fixtures/` trees are never command surfaces, and non-shell
+  fences (for example `json` examples) are illustrative. Bare `scripts/...`
+  paths in skill files resolve against the owning skill directory before the
+  repository root, whole-quoted command values with arguments resolve to
+  their existing leading command word, Markdown `#anchor` suffixes address
+  the file before them, and references containing unresolved variables,
+  `<placeholder>` markers, or un-invoked `$PWD/...` paths are non-actionable.
+  An interpreter word immediately before a path (including wrapper
+  `... -- bash x.sh` forms) classifies it interpreter-launched. G003 requires
+  the execute bit only for directly invoked supported script kinds, and
+  G004's reachability walk applies the canonical script-kind predicate, so
+  documentation and data inventory under `scripts/` is never a dead-script
+  candidate. True missing-reference, non-executable, and dead-script
+  diagnostics keep their exact rule ownership and source metadata.
 - S032 (`hardcoded-secret`) no longer treats ordinary prose mentions of
   `token` (for example `First token = alias name`) or shell identifiers such as
   `TOKEN_SPEND=$(...)` as hardcoded secrets: assignment findings now require
