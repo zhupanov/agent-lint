@@ -6,6 +6,7 @@ use crate::script_paths;
 use crate::traversal;
 use crate::validators::shared_md_refs::{contains_shared_md_ref, find_shared_md_refs};
 use crate::validators::skills::SkillInfo;
+use globset::Glob;
 use regex::Regex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -17,6 +18,22 @@ use std::sync::LazyLock;
 /// digits, single letters (case-insensitive), and pure numeric names — all with .md extension.
 static RE_GENERIC_REF_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i:^(?:(?:doc|file|ref|data|info|tmp|test)\d*|[a-z]|\d+)\.md$)").unwrap()
+});
+
+/// Bounded Python test forms that can enumerate a fixture directory. The
+/// directory itself must be assembled from literal path components, so this
+/// deliberately does not attempt to evaluate Python expressions.
+static PYTHON_GLOB_CALL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)\b(?P<directory>[A-Za-z_][A-Za-z0-9_]*)\.glob\(\s*[\"'](?P<pattern>[^\"']+)[\"']\s*\)"#)
+        .unwrap()
+});
+static PYTHON_PATH_CHILD: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\b(?P<directory>[A-Za-z_][A-Za-z0-9_]*)\s*/\s*[\"'](?P<child>[^\"']+)[\"']"#)
+        .unwrap()
+});
+static PYTHON_STEM_SUFFIX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"\.stem\.removesuffix\(\s*[\"'](?P<from>[^\"']+)[\"']\s*\)\s*\+\s*[\"'](?P<to>[^\"']+)[\"']"#)
+        .unwrap()
 });
 
 const REF_NO_TOC_THRESHOLD: usize = 100;
@@ -75,7 +92,8 @@ pub(super) fn validate_nested_references(
 /// S030: Detect orphaned files in skill scripts/ subdirectories.
 ///
 /// Ownership is Markdown-first, then transitive through supported skill-local
-/// harness scripts. Repository-ignored paths and conventional cache artifacts
+/// harness scripts, plus bounded references from repository Python tests to
+/// fixture assets. Repository-ignored paths and conventional cache artifacts
 /// are excluded from discovery so local build noise cannot affect output.
 pub(super) fn validate_orphaned_skill_files(
     base_dir: &str,
@@ -88,6 +106,7 @@ pub(super) fn validate_orphaned_skill_files(
     }
 
     let noise = traversal::SkillScriptNoiseFilter::discover();
+    let python_test_sources = repository_python_test_sources(exclude);
 
     for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
         let path = entry.path;
@@ -145,7 +164,11 @@ pub(super) fn validate_orphaned_skill_files(
                 counts
             });
 
-        let live = reachable_script_assets(&candidates, &basename_counts, &docs);
+        let mut live = reachable_script_assets(&candidates, &basename_counts, &docs);
+        live.extend(python_test_owned_fixture_assets(
+            &candidates,
+            &python_test_sources,
+        ));
 
         for (index, script) in candidates.iter().enumerate() {
             if live.contains(&index) {
@@ -220,6 +243,250 @@ fn reachable_script_assets(
     }
 
     live
+}
+
+/// Return fixture assets owned by literal paths or deterministic `Path.glob`
+/// enumeration in repository Python tests. This accepts only candidates below
+/// `scripts/fixtures/`; an arbitrary test string can therefore never keep a
+/// runtime harness alive.
+fn python_test_owned_fixture_assets(
+    candidates: &[ScriptAsset],
+    test_sources: &[String],
+) -> HashSet<usize> {
+    let mut live = HashSet::new();
+
+    for source in test_sources {
+        let literals = python_string_literals(source);
+        let directories = python_fixture_directories(source);
+        let paired_suffixes: Vec<_> = PYTHON_STEM_SUFFIX
+            .captures_iter(source)
+            .map(|capture| (capture["from"].to_string(), capture["to"].to_string()))
+            .collect();
+
+        for (index, candidate) in candidates.iter().enumerate() {
+            if !is_fixture_asset(candidate) {
+                continue;
+            }
+            if literals.iter().any(|literal| literal == &candidate.display)
+                || python_child_reference_matches(source, &directories, &candidate.display)
+                || python_glob_reference_matches(
+                    source,
+                    &directories,
+                    &paired_suffixes,
+                    &candidate.display,
+                    candidates,
+                )
+            {
+                live.insert(index);
+            }
+        }
+    }
+
+    live
+}
+
+fn repository_python_test_sources(exclude: &ExcludeSet) -> Vec<String> {
+    traversal::recursive_files(Path::new("."), Path::new("."), Some(exclude))
+        .entries
+        .into_iter()
+        .filter(|entry| is_repository_python_test(&entry.path))
+        .filter_map(|entry| fs::read_to_string(entry.path).ok())
+        .map(|source| python_source_without_comments(&source))
+        .collect()
+}
+
+fn is_repository_python_test(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("py")
+        && path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+        && !path
+            .components()
+            .any(|component| matches!(component.as_os_str().to_str(), Some("skills" | ".claude")))
+}
+
+fn is_fixture_asset(candidate: &ScriptAsset) -> bool {
+    candidate.relative.starts_with("scripts/fixtures/")
+}
+
+/// Extract `NAME = root / "literal" / ...` fixture directory declarations.
+/// We retain only repository-relative skill fixture paths; dynamic prefixes
+/// such as `Path(__file__).parents[...]` are intentionally ignored.
+fn python_fixture_directories(source: &str) -> HashMap<String, String> {
+    let mut directories = HashMap::new();
+    for line in source.lines() {
+        let Some((name, expression)) = line.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if !is_python_identifier(name) || !expression.contains('/') {
+            continue;
+        }
+        let segments = python_string_literals(expression);
+        for start in 0..segments.len() {
+            let path = normalize_python_path(&segments[start..].join("/"));
+            if is_skill_fixture_path(&path) {
+                directories.insert(name.to_string(), path);
+                break;
+            }
+        }
+    }
+    directories
+}
+
+fn python_child_reference_matches(
+    source: &str,
+    directories: &HashMap<String, String>,
+    candidate: &str,
+) -> bool {
+    PYTHON_PATH_CHILD.captures_iter(source).any(|capture| {
+        directories
+            .get(&capture["directory"])
+            .is_some_and(|directory| {
+                normalize_python_path(&format!("{directory}/{}", &capture["child"])) == candidate
+            })
+    })
+}
+
+fn python_glob_reference_matches(
+    source: &str,
+    directories: &HashMap<String, String>,
+    paired_suffixes: &[(String, String)],
+    candidate: &str,
+    candidates: &[ScriptAsset],
+) -> bool {
+    PYTHON_GLOB_CALL.captures_iter(source).any(|capture| {
+        let Some(directory) = directories.get(&capture["directory"]) else {
+            return false;
+        };
+        let Some(relative) = candidate.strip_prefix(&format!("{directory}/")) else {
+            return false;
+        };
+        let Ok(glob) = Glob::new(&capture["pattern"]) else {
+            return false;
+        };
+        let matcher = glob.compile_matcher();
+        if matcher.is_match(relative) {
+            return true;
+        }
+        paired_suffixes.iter().any(|(from, to)| {
+            candidates
+                .iter()
+                .filter(|source| is_fixture_asset(source))
+                .any(|source| {
+                    let Some(source_relative) =
+                        source.display.strip_prefix(&format!("{directory}/"))
+                    else {
+                        return false;
+                    };
+                    matcher.is_match(source_relative)
+                        && paired_fixture_path(directory, source_relative, from, to).as_deref()
+                            == Some(candidate)
+                })
+        })
+    })
+}
+
+fn paired_fixture_path(directory: &str, relative: &str, from: &str, to: &str) -> Option<String> {
+    let path = Path::new(relative);
+    let stem = path.file_stem()?.to_str()?;
+    let paired_stem = stem.strip_suffix(from)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    Some(match parent {
+        Some(parent) => format!("{directory}/{}/{paired_stem}{to}", parent.display()),
+        None => format!("{directory}/{paired_stem}{to}"),
+    })
+}
+
+fn is_python_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
+        && chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+}
+
+fn is_skill_fixture_path(path: &str) -> bool {
+    let components: Vec<_> = Path::new(path)
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    components
+        .windows(2)
+        .any(|window| window == ["scripts", "fixtures"])
+        && (components.starts_with(&["skills"]) || components.starts_with(&[".claude", "skills"]))
+}
+
+fn normalize_python_path(value: &str) -> String {
+    value
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_matches('/')
+        .to_string()
+}
+
+/// A small lexical extractor sufficient for the supported literal forms. It
+/// skips comments and never evaluates interpolation, imports, or calls.
+fn python_string_literals(source: &str) -> Vec<String> {
+    let mut literals = Vec::new();
+    let mut characters = source.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '#' {
+            while characters.next().is_some_and(|next| next != '\n') {}
+        } else if matches!(character, '\'' | '\"') {
+            let quote = character;
+            let mut literal = String::new();
+            let mut escaped = false;
+            for next in characters.by_ref() {
+                if escaped {
+                    literal.push(next);
+                    escaped = false;
+                } else if next == '\\' {
+                    escaped = true;
+                } else if next == quote {
+                    break;
+                } else {
+                    literal.push(next);
+                }
+            }
+            literals.push(normalize_python_path(&literal));
+        }
+    }
+    literals
+}
+
+fn python_source_without_comments(source: &str) -> String {
+    let mut result = String::new();
+    let mut quote: Option<char> = None;
+    let mut comment = false;
+    let mut escaped = false;
+    for character in source.chars() {
+        if comment {
+            if character == '\n' {
+                result.push(character);
+                comment = false;
+            }
+        } else if let Some(active) = quote {
+            result.push(character);
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+        } else if matches!(character, '\'' | '\"') {
+            result.push(character);
+            quote = Some(character);
+        } else if character == '#' {
+            comment = true;
+        } else {
+            result.push(character);
+        }
+    }
+    result
 }
 
 /// Read every `*.md` under a skill directory in deterministic sorted order.
