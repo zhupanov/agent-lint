@@ -9291,3 +9291,203 @@ fn diagnostic_safety_assertions_reject_injected_leaks() {
         "missing expected diagnostic must fail before secrecy assertions"
     );
 }
+
+fn write_metamorphic_repository(root: &Path, reverse: bool) {
+    init_git(root);
+    let mut files = vec![
+        (
+            ".claude-plugin/plugin.json",
+            "{\"name\":\"Bad_Name\",\"description\":\"Metamorphic fixture\",\"skills\":\"./skills\"}\n",
+        ),
+        (
+            "skills/public-skill/SKILL.md",
+            "---\nname: public-skill\ndescription: Use when you need focused projection testing\n---\nRun the projection check.\n",
+        ),
+        (
+            ".claude/skills/private-skill/SKILL.md",
+            "---\nname: wrong-private-name\ndescription: Use when testing private skill projection\n---\nRun the private check.\n",
+        ),
+        (".cursor/rules/empty.mdc", ""),
+        (".codex/config.toml", "not = [valid\n"),
+        (
+            "CLAUDE.md",
+            "TODO: replace the metamorphic fixture marker.\n",
+        ),
+    ];
+    if reverse {
+        files.reverse();
+    }
+    for (relative, contents) in files {
+        let path = root.join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, contents).unwrap();
+    }
+}
+
+fn filtered_diagnostics(report: &Value, code: &str) -> Vec<Value> {
+    report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == code)
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn focused_selection_is_a_projection_of_the_full_report() {
+    let tmp = tempfile::tempdir().unwrap();
+    write_metamorphic_repository(tmp.path(), false);
+    let selected = ["M023", "S016", "S006", "CU001", "CX001"];
+
+    for strictness in [None, Some("--pedantic"), Some("--all")] {
+        let mut full_args = vec!["--format", "json"];
+        if let Some(flag) = strictness {
+            full_args.push(flag);
+        }
+        full_args.push(".");
+        let full_output = run_in(tmp.path(), &full_args);
+        let full = json(&full_output);
+        assert_eq!(full["mode"], "plugin");
+        assert_eq!(
+            full["strictness"],
+            strictness.map_or("normal", |flag| &flag[2..])
+        );
+        for platform in ["claude", "cursor", "codex"] {
+            assert!(
+                full["active_platforms"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&Value::String(platform.to_owned())),
+                "{platform}: {full}"
+            );
+        }
+
+        for code in selected {
+            let mut focused_args = vec!["--format", "json"];
+            if let Some(flag) = strictness {
+                focused_args.push(flag);
+            }
+            focused_args.extend(["--only", code, "."]);
+            let focused_output = run_in(tmp.path(), &focused_args);
+            let focused = json(&focused_output);
+            let expected = filtered_diagnostics(&full, code);
+            assert!(!expected.is_empty(), "fixture emitted no {code}: {full}");
+            assert_eq!(focused["mode"], full["mode"], "{code}");
+            assert_eq!(focused["strictness"], full["strictness"], "{code}");
+            assert_eq!(
+                focused["active_platforms"], full["active_platforms"],
+                "{code}"
+            );
+            assert_eq!(
+                focused["diagnostics"],
+                Value::Array(expected.clone()),
+                "{code}"
+            );
+            let errors = expected
+                .iter()
+                .filter(|diagnostic| diagnostic["severity"] == "error")
+                .count() as u64;
+            let warnings = expected.len() as u64 - errors;
+            assert_eq!(focused["counts"]["errors"], errors, "{code}");
+            assert_eq!(focused["counts"]["warnings"], warnings, "{code}");
+            assert_eq!(focused["counts"]["suppressed"], 0, "{code}");
+            assert_eq!(
+                focused["counts"]["notices"],
+                focused["notices"].as_array().unwrap().len() as u64,
+                "{code}"
+            );
+            assert_eq!(
+                focused_output.status.code(),
+                Some(if errors > 0 { 1 } else { 0 }),
+                "{code}: {focused}"
+            );
+        }
+    }
+
+    let reordered = run_in(
+        tmp.path(),
+        &[
+            "--format",
+            "json",
+            "--only",
+            "codex-toml-invalid,M023,S006,plugin-name-format,CU001,S006,CX001",
+            ".",
+        ],
+    );
+    let reordered = json(&reordered);
+    let selected_rules: Vec<_> = reordered["selected_rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|rule| rule["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(selected_rules, ["M023", "S006", "CX001", "CU001"]);
+    let diagnostic_codes: Vec<_> = reordered["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+        .collect();
+    assert!(
+        diagnostic_codes.windows(2).all(|pair| selected_rules
+            .iter()
+            .position(|code| code == &pair[0])
+            <= selected_rules.iter().position(|code| code == &pair[1])),
+        "{diagnostic_codes:?}"
+    );
+}
+
+#[test]
+fn equivalent_repository_creation_orders_have_identical_reports() {
+    let forward = tempfile::tempdir().unwrap();
+    let reverse = tempfile::tempdir().unwrap();
+    write_metamorphic_repository(forward.path(), false);
+    write_metamorphic_repository(reverse.path(), true);
+    let arguments = [
+        "--format",
+        "json",
+        "--only",
+        "M023,S006,CU001,CX001,D003",
+        ".",
+    ];
+
+    let mut forward_runs = Vec::new();
+    let mut reverse_runs = Vec::new();
+    for _ in 0..5 {
+        forward_runs.push(run_in(forward.path(), &arguments));
+        reverse_runs.push(run_in(reverse.path(), &arguments));
+    }
+    for runs in [&forward_runs, &reverse_runs] {
+        for output in &runs[1..] {
+            assert_eq!(output.stdout, runs[0].stdout);
+            assert_eq!(output.stderr, runs[0].stderr);
+            assert_eq!(output.status.code(), runs[0].status.code());
+        }
+    }
+    assert_eq!(forward_runs[0].status.code(), reverse_runs[0].status.code());
+    assert_eq!(forward_runs[0].stderr, reverse_runs[0].stderr);
+    assert_eq!(json(&forward_runs[0]), json(&reverse_runs[0]));
+
+    let report = json(&forward_runs[0]);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    assert!(diagnostics.len() >= 5, "fixture is vacuous: {report}");
+    let prefixes: std::collections::BTreeSet<_> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            diagnostic["code"]
+                .as_str()
+                .unwrap()
+                .split(|character: char| character.is_ascii_digit() || character == '-')
+                .next()
+                .unwrap()
+        })
+        .collect();
+    assert!(prefixes.len() >= 3, "{prefixes:?}: {report}");
+    let subjects: std::collections::BTreeSet<_> = diagnostics
+        .iter()
+        .filter_map(|diagnostic| diagnostic["subject_path"].as_str())
+        .map(|path| path.split('/').next().unwrap())
+        .collect();
+    assert!(subjects.len() >= 2, "{subjects:?}: {report}");
+}

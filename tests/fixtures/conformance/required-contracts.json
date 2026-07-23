@@ -3,97 +3,1212 @@
     {
       "rule": "H026",
       "surface": "hook-schema",
-      "classes": ["clean", "broken", "hard-negative"],
-      "axes": ["json-output", "focused-selection", "normal-policy", "claude-active", "no-autofix"]
+      "classes": [
+        "clean",
+        "broken",
+        "hard-negative"
+      ],
+      "axes": [
+        "json-output",
+        "focused-selection",
+        "normal-policy",
+        "claude-active",
+        "no-autofix"
+      ]
     },
     {
       "rule": "H026",
       "surface": "hook-schema",
-      "classes": ["broken"],
-      "axes": ["basic-mode", "diagnostic", "subject", "location", "suggestion"]
+      "classes": [
+        "broken"
+      ],
+      "axes": [
+        "basic-mode",
+        "diagnostic",
+        "subject",
+        "location",
+        "suggestion"
+      ]
     },
     {
       "rule": "H026",
       "surface": "hook-schema",
-      "classes": ["clean"],
-      "axes": ["plugin-mode"]
+      "classes": [
+        "clean"
+      ],
+      "axes": [
+        "plugin-mode"
+      ]
     },
     {
       "rule": "H026",
       "surface": "hook-schema",
-      "classes": ["hard-negative"],
-      "axes": ["basic-mode", "plugin-mode", "global-suppression", "per-file-suppression"]
+      "classes": [
+        "hard-negative"
+      ],
+      "axes": [
+        "basic-mode",
+        "plugin-mode",
+        "global-suppression",
+        "per-file-suppression"
+      ]
     },
     {
       "rule": "CR-SK-001",
       "surface": "cursor-skill",
-      "classes": ["clean", "broken", "hard-negative"],
-      "axes": ["json-output", "focused-selection"]
+      "classes": [
+        "clean",
+        "broken",
+        "hard-negative"
+      ],
+      "axes": [
+        "json-output",
+        "focused-selection"
+      ]
     },
     {
       "rule": "CR-SK-001",
       "surface": "cursor-skill",
-      "classes": ["broken"],
-      "axes": ["diagnostic", "subject"]
+      "classes": [
+        "broken"
+      ],
+      "axes": [
+        "diagnostic",
+        "subject"
+      ]
     },
     {
       "rule": "CX059",
       "surface": "codex-plugin",
-      "classes": ["clean", "broken", "hard-negative"],
-      "axes": ["json-output", "focused-selection", "normal-policy", "codex-active", "no-autofix"]
+      "classes": [
+        "clean",
+        "broken",
+        "hard-negative"
+      ],
+      "axes": [
+        "json-output",
+        "focused-selection",
+        "normal-policy",
+        "codex-active",
+        "no-autofix"
+      ]
     },
     {
       "rule": "CX059",
       "surface": "codex-plugin",
-      "classes": ["broken"],
-      "axes": ["basic-mode", "plugin-mode", "diagnostic", "subject", "location", "suggestion"]
+      "classes": [
+        "broken"
+      ],
+      "axes": [
+        "basic-mode",
+        "plugin-mode",
+        "diagnostic",
+        "subject",
+        "location",
+        "suggestion"
+      ]
     },
     {
       "rule": "CX059",
       "surface": "codex-plugin",
-      "classes": ["hard-negative"],
-      "axes": ["global-suppression", "per-file-suppression", "exclusion"]
+      "classes": [
+        "hard-negative"
+      ],
+      "axes": [
+        "global-suppression",
+        "per-file-suppression",
+        "exclusion"
+      ]
     },
     {
       "rule": "S014",
-      "surface": "shared-skill-discovery",
-      "classes": ["clean", "broken", "hard-negative"],
-      "axes": ["json-output", "focused-selection"]
+      "surface": "agent-skill",
+      "classes": [
+        "clean",
+        "broken",
+        "hard-negative"
+      ],
+      "axes": [
+        "json-output",
+        "focused-selection"
+      ]
     },
     {
       "rule": "S014",
-      "surface": "shared-skill-discovery",
-      "classes": ["broken"],
-      "axes": ["basic-mode", "normal-policy", "claude-active", "diagnostic", "subject", "no-autofix"]
+      "surface": "agent-skill",
+      "classes": [
+        "broken"
+      ],
+      "axes": [
+        "basic-mode",
+        "normal-policy",
+        "claude-active",
+        "diagnostic",
+        "subject",
+        "no-autofix"
+      ]
     },
     {
       "rule": "S014",
-      "surface": "shared-skill-discovery",
-      "classes": ["hard-negative"],
-      "axes": ["platform-disabled", "exclusion"]
+      "surface": "agent-skill",
+      "classes": [
+        "hard-negative"
+      ],
+      "axes": [
+        "platform-disabled",
+        "exclusion"
+      ]
     }
   ],
   "baseline": [
-    {"rule":"H026","surface":"hook-schema","class":"broken","axis":"location","reason":"Hook-schema conformance diagnostics do not yet pin source locations."},
-    {"rule":"H026","surface":"hook-schema","class":"broken","axis":"suggestion","reason":"Malformed hook-schema findings do not currently expose repair suggestions."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"clean","axis":"json-output","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"clean","axis":"focused-selection","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"json-output","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"focused-selection","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"diagnostic","reason":"Cursor skill diagnostics are not represented by a checked-in conformance case."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"broken","axis":"subject","reason":"Cursor skill diagnostic subjects are not represented by a checked-in conformance case."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"hard-negative","axis":"json-output","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
-    {"rule":"CR-SK-001","surface":"cursor-skill","class":"hard-negative","axis":"focused-selection","reason":"Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."},
-    {"rule":"CX059","surface":"codex-plugin","class":"broken","axis":"location","reason":"Codex plugin conformance diagnostics do not yet pin source locations."},
-    {"rule":"CX059","surface":"codex-plugin","class":"broken","axis":"suggestion","reason":"The missing-description diagnostic does not currently expose a repair suggestion."},
-    {"rule":"CX059","surface":"codex-plugin","class":"hard-negative","axis":"global-suppression","reason":"Codex plugin fixtures do not yet include global suppression for CX059."},
-    {"rule":"CX059","surface":"codex-plugin","class":"hard-negative","axis":"per-file-suppression","reason":"Codex plugin fixtures do not yet include per-file suppression for CX059."},
-    {"rule":"CX059","surface":"codex-plugin","class":"hard-negative","axis":"exclusion","reason":"Codex plugin fixtures do not yet pin fixed-path exclusion behavior for CX059."},
-    {"rule":"S014","surface":"shared-skill-discovery","class":"clean","axis":"json-output","reason":"Shared skill discovery has a broken case but no clean conformance case."},
-    {"rule":"S014","surface":"shared-skill-discovery","class":"clean","axis":"focused-selection","reason":"Shared skill discovery has a broken case but no clean conformance case."},
-    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"json-output","reason":"Shared skill discovery has a broken case but no hard-negative conformance case."},
-    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"focused-selection","reason":"Shared skill discovery has a broken case but no hard-negative conformance case."},
-    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"platform-disabled","reason":"Shared skill discovery does not yet have a platform-disabled conformance case."},
-    {"rule":"S014","surface":"shared-skill-discovery","class":"hard-negative","axis":"exclusion","reason":"Shared skill discovery does not yet have an exclusion conformance case."}
+    {
+      "rule": "H026",
+      "surface": "hook-schema",
+      "class": "broken",
+      "axis": "location",
+      "reason": "Hook-schema conformance diagnostics do not yet pin source locations."
+    },
+    {
+      "rule": "H026",
+      "surface": "hook-schema",
+      "class": "broken",
+      "axis": "suggestion",
+      "reason": "Malformed hook-schema findings do not currently expose repair suggestions."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "clean",
+      "axis": "json-output",
+      "reason": "Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "clean",
+      "axis": "focused-selection",
+      "reason": "Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "broken",
+      "axis": "json-output",
+      "reason": "Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "broken",
+      "axis": "focused-selection",
+      "reason": "Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "broken",
+      "axis": "diagnostic",
+      "reason": "Cursor skill diagnostics are not represented by a checked-in conformance case."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "broken",
+      "axis": "subject",
+      "reason": "Cursor skill diagnostic subjects are not represented by a checked-in conformance case."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "hard-negative",
+      "axis": "json-output",
+      "reason": "Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."
+    },
+    {
+      "rule": "CR-SK-001",
+      "surface": "cursor-skill",
+      "class": "hard-negative",
+      "axis": "focused-selection",
+      "reason": "Cursor skill coverage exists in CLI tests but has not yet moved into the conformance corpus."
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "class": "broken",
+      "axis": "location",
+      "reason": "Codex plugin conformance diagnostics do not yet pin source locations."
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "class": "broken",
+      "axis": "suggestion",
+      "reason": "The missing-description diagnostic does not currently expose a repair suggestion."
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "class": "hard-negative",
+      "axis": "global-suppression",
+      "reason": "Codex plugin fixtures do not yet include global suppression for CX059."
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "class": "hard-negative",
+      "axis": "per-file-suppression",
+      "reason": "Codex plugin fixtures do not yet include per-file suppression for CX059."
+    },
+    {
+      "rule": "CX059",
+      "surface": "codex-plugin",
+      "class": "hard-negative",
+      "axis": "exclusion",
+      "reason": "Codex plugin fixtures do not yet pin fixed-path exclusion behavior for CX059."
+    },
+    {
+      "rule": "S014",
+      "surface": "agent-skill",
+      "class": "clean",
+      "axis": "json-output",
+      "reason": "Shared skill discovery has a broken case but no clean conformance case."
+    },
+    {
+      "rule": "S014",
+      "surface": "agent-skill",
+      "class": "clean",
+      "axis": "focused-selection",
+      "reason": "Shared skill discovery has a broken case but no clean conformance case."
+    },
+    {
+      "rule": "S014",
+      "surface": "agent-skill",
+      "class": "hard-negative",
+      "axis": "json-output",
+      "reason": "Shared skill discovery has a broken case but no hard-negative conformance case."
+    },
+    {
+      "rule": "S014",
+      "surface": "agent-skill",
+      "class": "hard-negative",
+      "axis": "focused-selection",
+      "reason": "Shared skill discovery has a broken case but no hard-negative conformance case."
+    },
+    {
+      "rule": "S014",
+      "surface": "agent-skill",
+      "class": "hard-negative",
+      "axis": "platform-disabled",
+      "reason": "Shared skill discovery does not yet have a platform-disabled conformance case."
+    },
+    {
+      "rule": "S014",
+      "surface": "agent-skill",
+      "class": "hard-negative",
+      "axis": "exclusion",
+      "reason": "Shared skill discovery does not yet have an exclusion conformance case."
+    }
+  ],
+  "admission_baseline": [
+    {
+      "rule": "H004",
+      "reason": "H004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H005",
+      "reason": "H005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H006",
+      "reason": "H006 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H008",
+      "reason": "H008 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H009",
+      "reason": "H009 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H010",
+      "reason": "H010 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H011",
+      "reason": "H011 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H012",
+      "reason": "H012 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H013",
+      "reason": "H013 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H014",
+      "reason": "H014 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H015",
+      "reason": "H015 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H016",
+      "reason": "H016 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H017",
+      "reason": "H017 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H018",
+      "reason": "H018 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H019",
+      "reason": "H019 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H020",
+      "reason": "H020 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H021",
+      "reason": "H021 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H022",
+      "reason": "H022 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H023",
+      "reason": "H023 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H024",
+      "reason": "H024 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H025",
+      "reason": "H025 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "H026",
+      "reason": "H026 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "X001",
+      "reason": "X001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "X002",
+      "reason": "X002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "X003",
+      "reason": "X003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "X004",
+      "reason": "X004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "X005",
+      "reason": "X005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S004",
+      "reason": "S004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S005",
+      "reason": "S005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S006",
+      "reason": "S006 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S007",
+      "reason": "S007 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S009",
+      "reason": "S009 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S010",
+      "reason": "S010 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S011",
+      "reason": "S011 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S014",
+      "reason": "S014 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S015",
+      "reason": "S015 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S018",
+      "reason": "S018 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S019",
+      "reason": "S019 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S020",
+      "reason": "S020 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S021",
+      "reason": "S021 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S022",
+      "reason": "S022 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S023",
+      "reason": "S023 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S024",
+      "reason": "S024 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S025",
+      "reason": "S025 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S026",
+      "reason": "S026 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S027",
+      "reason": "S027 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S028",
+      "reason": "S028 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S030",
+      "reason": "S030 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S031",
+      "reason": "S031 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S032",
+      "reason": "S032 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S034",
+      "reason": "S034 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S035",
+      "reason": "S035 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S039",
+      "reason": "S039 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S040",
+      "reason": "S040 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S041",
+      "reason": "S041 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S043",
+      "reason": "S043 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S044",
+      "reason": "S044 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S048",
+      "reason": "S048 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S058",
+      "reason": "S058 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S059",
+      "reason": "S059 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S060",
+      "reason": "S060 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S061",
+      "reason": "S061 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S062",
+      "reason": "S062 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S063",
+      "reason": "S063 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S064",
+      "reason": "S064 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S065",
+      "reason": "S065 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S066",
+      "reason": "S066 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S067",
+      "reason": "S067 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S068",
+      "reason": "S068 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S069",
+      "reason": "S069 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S070",
+      "reason": "S070 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S071",
+      "reason": "S071 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S072",
+      "reason": "S072 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S073",
+      "reason": "S073 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "S074",
+      "reason": "S074 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A002",
+      "reason": "A002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A003",
+      "reason": "A003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A008",
+      "reason": "A008 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A009",
+      "reason": "A009 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A010",
+      "reason": "A010 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A011",
+      "reason": "A011 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A012",
+      "reason": "A012 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A013",
+      "reason": "A013 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A014",
+      "reason": "A014 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A015",
+      "reason": "A015 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A016",
+      "reason": "A016 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A017",
+      "reason": "A017 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A018",
+      "reason": "A018 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A019",
+      "reason": "A019 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A020",
+      "reason": "A020 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A021",
+      "reason": "A021 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A022",
+      "reason": "A022 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A023",
+      "reason": "A023 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A024",
+      "reason": "A024 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A025",
+      "reason": "A025 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A026",
+      "reason": "A026 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A027",
+      "reason": "A027 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A029",
+      "reason": "A029 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A030",
+      "reason": "A030 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "A031",
+      "reason": "A031 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "Q001",
+      "reason": "Q001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "Q002",
+      "reason": "Q002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "Q003",
+      "reason": "Q003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "Q004",
+      "reason": "Q004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "Q005",
+      "reason": "Q005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "Q006",
+      "reason": "Q006 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "R001",
+      "reason": "R001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "R002",
+      "reason": "R002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "R003",
+      "reason": "R003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "O001",
+      "reason": "O001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "O002",
+      "reason": "O002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "O003",
+      "reason": "O003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "O004",
+      "reason": "O004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "O006",
+      "reason": "O006 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "T001",
+      "reason": "T001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "T002",
+      "reason": "T002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "I001",
+      "reason": "I001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "I002",
+      "reason": "I002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "I003",
+      "reason": "I003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "I004",
+      "reason": "I004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX001",
+      "reason": "CX001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX002",
+      "reason": "CX002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX003",
+      "reason": "CX003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX004",
+      "reason": "CX004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX005",
+      "reason": "CX005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX006",
+      "reason": "CX006 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX007",
+      "reason": "CX007 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX008",
+      "reason": "CX008 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX009",
+      "reason": "CX009 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX011",
+      "reason": "CX011 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX012",
+      "reason": "CX012 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX013",
+      "reason": "CX013 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX014",
+      "reason": "CX014 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX015",
+      "reason": "CX015 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX016",
+      "reason": "CX016 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX017",
+      "reason": "CX017 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX018",
+      "reason": "CX018 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX019",
+      "reason": "CX019 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX020",
+      "reason": "CX020 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX021",
+      "reason": "CX021 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX022",
+      "reason": "CX022 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX023",
+      "reason": "CX023 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX024",
+      "reason": "CX024 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX025",
+      "reason": "CX025 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX026",
+      "reason": "CX026 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX027",
+      "reason": "CX027 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX028",
+      "reason": "CX028 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX029",
+      "reason": "CX029 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX030",
+      "reason": "CX030 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX031",
+      "reason": "CX031 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX032",
+      "reason": "CX032 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX033",
+      "reason": "CX033 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX034",
+      "reason": "CX034 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX035",
+      "reason": "CX035 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX036",
+      "reason": "CX036 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX040",
+      "reason": "CX040 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX045",
+      "reason": "CX045 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX047",
+      "reason": "CX047 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX048",
+      "reason": "CX048 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX049",
+      "reason": "CX049 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX050",
+      "reason": "CX050 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX051",
+      "reason": "CX051 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX052",
+      "reason": "CX052 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX053",
+      "reason": "CX053 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX054",
+      "reason": "CX054 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX055",
+      "reason": "CX055 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX056",
+      "reason": "CX056 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX057",
+      "reason": "CX057 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX059",
+      "reason": "CX059 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX060",
+      "reason": "CX060 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX061",
+      "reason": "CX061 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX062",
+      "reason": "CX062 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CX063",
+      "reason": "CX063 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU001",
+      "reason": "CU001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU002",
+      "reason": "CU002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU003",
+      "reason": "CU003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU004",
+      "reason": "CU004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU005",
+      "reason": "CU005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU006",
+      "reason": "CU006 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU007",
+      "reason": "CU007 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU008",
+      "reason": "CU008 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU010",
+      "reason": "CU010 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU011",
+      "reason": "CU011 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU012",
+      "reason": "CU012 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU013",
+      "reason": "CU013 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU014",
+      "reason": "CU014 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU015",
+      "reason": "CU015 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU016",
+      "reason": "CU016 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU017",
+      "reason": "CU017 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU018",
+      "reason": "CU018 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU019",
+      "reason": "CU019 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CU020",
+      "reason": "CU020 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "CR-SK-001",
+      "reason": "CR-SK-001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "G001",
+      "reason": "G001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "G002",
+      "reason": "G002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "G003",
+      "reason": "G003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "G008",
+      "reason": "G008 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "G009",
+      "reason": "G009 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "G010",
+      "reason": "G010 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "G011",
+      "reason": "G011 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "D001",
+      "reason": "D001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "D002",
+      "reason": "D002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "D003",
+      "reason": "D003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "D004",
+      "reason": "D004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "D005",
+      "reason": "D005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P001",
+      "reason": "P001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P009",
+      "reason": "P009 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P010",
+      "reason": "P010 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P011",
+      "reason": "P011 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P012",
+      "reason": "P012 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P017",
+      "reason": "P017 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P018",
+      "reason": "P018 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P019",
+      "reason": "P019 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P022",
+      "reason": "P022 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P023",
+      "reason": "P023 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P024",
+      "reason": "P024 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P025",
+      "reason": "P025 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P026",
+      "reason": "P026 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "P027",
+      "reason": "P027 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "L001",
+      "reason": "L001 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "L002",
+      "reason": "L002 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "L003",
+      "reason": "L003 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "L004",
+      "reason": "L004 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "L005",
+      "reason": "L005 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    },
+    {
+      "rule": "L006",
+      "reason": "L006 is a pre-admission high-risk rule; axis migration is tracked by this shrink-only baseline."
+    }
   ]
 }

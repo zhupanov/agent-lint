@@ -1,7 +1,7 @@
 {
   "class": "broken",
   "repository": "agent-skills-description-broken",
-  "covers": ["basic-mode", "normal", "json", "agent-skills-description"],
+  "covers": ["basic-mode", "normal", "json", "agent-skills-description", "agent-skill"],
   "invocation": { "mode": "basic", "arguments": ["--format", "json", "--only", "S014", "."] },
   "expected_exit_code": 1,
   "expected_status": "errors",

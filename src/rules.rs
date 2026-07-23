@@ -32,6 +32,200 @@ pub enum RuleApplicability {
     AllSkillSurfaces,
 }
 
+/// Execution mode in which a rule surface is reachable.
+#[allow(dead_code)] // Canonical metadata is also consumed by repository consistency tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleMode {
+    Basic,
+    Plugin,
+}
+
+/// Platform which owns a rule's activation policy.
+#[allow(dead_code)] // Canonical metadata is also consumed by repository consistency tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RulePlatform {
+    Claude,
+    Cursor,
+    Codex,
+    Shared,
+}
+
+/// One concrete validation surface and the modes in which it is reachable.
+#[allow(dead_code)] // Canonical metadata is also consumed by repository consistency tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuleSurfaceSpec {
+    pub id: &'static str,
+    pub modes: &'static [RuleMode],
+}
+
+/// Canonical live contract metadata for a rule.
+#[allow(dead_code)] // Canonical metadata is also consumed by repository consistency tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuleSpec {
+    pub rule: LintRule,
+    pub surfaces: &'static [RuleSurfaceSpec],
+    pub platform: RulePlatform,
+    pub autofix: bool,
+    pub default_severity: DefaultSeverity,
+    pub pedantic_exempt: bool,
+}
+
+const BASIC_PLUGIN: &[RuleMode] = &[RuleMode::Basic, RuleMode::Plugin];
+const PLUGIN_ONLY: &[RuleMode] = &[RuleMode::Plugin];
+
+const CLAUDE_PLUGIN: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "claude-plugin",
+    modes: PLUGIN_ONLY,
+}];
+const CLAUDE_HOOKS: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "claude-hooks",
+    modes: BASIC_PLUGIN,
+}];
+const HOOK_SCHEMA: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "hook-schema",
+    modes: BASIC_PLUGIN,
+}];
+const CLAUDE_CONFIG: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "claude-config",
+    modes: BASIC_PLUGIN,
+}];
+const CLAUDE_INSTRUCTIONS: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "claude-instructions",
+    modes: BASIC_PLUGIN,
+}];
+const CLAUDE_PUBLIC_SKILL: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "claude-public-skill",
+    modes: PLUGIN_ONLY,
+}];
+const CLAUDE_SKILLS: &[RuleSurfaceSpec] = &[
+    RuleSurfaceSpec {
+        id: "claude-private-skill",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "claude-public-skill",
+        modes: PLUGIN_ONLY,
+    },
+];
+const AGENT_CLAUDE_SKILLS: &[RuleSurfaceSpec] = &[
+    RuleSurfaceSpec {
+        id: "agent-skill",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "claude-private-skill",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "claude-public-skill",
+        modes: PLUGIN_ONLY,
+    },
+];
+const SHARED_SKILLS: &[RuleSurfaceSpec] = &[
+    RuleSurfaceSpec {
+        id: "agent-skill",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "claude-private-skill",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "claude-public-skill",
+        modes: PLUGIN_ONLY,
+    },
+    RuleSurfaceSpec {
+        id: "cursor-skill",
+        modes: BASIC_PLUGIN,
+    },
+];
+const CLAUDE_PUBLIC_AGENT: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "claude-public-agent",
+    modes: PLUGIN_ONLY,
+}];
+const CLAUDE_AGENTS: &[RuleSurfaceSpec] = &[
+    RuleSurfaceSpec {
+        id: "claude-private-agent",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "claude-public-agent",
+        modes: PLUGIN_ONLY,
+    },
+];
+const SHARED_AGENTS: &[RuleSurfaceSpec] = &[
+    RuleSurfaceSpec {
+        id: "claude-private-agent",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "claude-public-agent",
+        modes: PLUGIN_ONLY,
+    },
+    RuleSurfaceSpec {
+        id: "cursor-agent",
+        modes: BASIC_PLUGIN,
+    },
+];
+const SHARED_INSTRUCTIONS: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "instruction-file",
+    modes: BASIC_PLUGIN,
+}];
+const SHARED_PROMPTS: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "live-instruction",
+    modes: BASIC_PLUGIN,
+}];
+const SHARED_MCP: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "mcp-config",
+    modes: BASIC_PLUGIN,
+}];
+const SHARED_MARKDOWN: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "markdown-document",
+    modes: BASIC_PLUGIN,
+}];
+const SHARED_SCRIPT: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "repository-script",
+    modes: BASIC_PLUGIN,
+}];
+const CODEX_CONFIG: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "codex-config",
+    modes: BASIC_PLUGIN,
+}];
+const CODEX_PLUGIN: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "codex-plugin",
+    modes: BASIC_PLUGIN,
+}];
+const CODEX_SKILLS: &[RuleSurfaceSpec] = &[
+    RuleSurfaceSpec {
+        id: "agent-skill",
+        modes: BASIC_PLUGIN,
+    },
+    RuleSurfaceSpec {
+        id: "codex-plugin-skill",
+        modes: BASIC_PLUGIN,
+    },
+];
+const CURSOR_CONFIG: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "cursor-config",
+    modes: BASIC_PLUGIN,
+}];
+const CURSOR_RULE: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "cursor-rule",
+    modes: BASIC_PLUGIN,
+}];
+const CURSOR_HOOKS: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "cursor-hooks",
+    modes: BASIC_PLUGIN,
+}];
+const CURSOR_AGENT: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "cursor-agent",
+    modes: BASIC_PLUGIN,
+}];
+const CURSOR_SKILL: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
+    id: "cursor-skill",
+    modes: BASIC_PLUGIN,
+}];
+
 #[allow(dead_code)] // Canonical metadata is consumed by repository consistency tests.
 impl RuleApplicability {
     pub const fn documentation_label(self) -> &'static str {
@@ -1077,6 +1271,127 @@ impl LintRule {
         }
     }
 
+    /// Contract surfaces, modes, platform, and mutation capability for this
+    /// live rule. This is the source for the checked-in conformance catalog;
+    /// the integration harness must not reconstruct ownership from docs or
+    /// validator source.
+    #[allow(dead_code)]
+    pub fn spec(self) -> RuleSpec {
+        let code = self.code();
+        let (platform, surfaces) = match self.applicability() {
+            RuleApplicability::Plugin => {
+                let surfaces = if code.starts_with('S') {
+                    CLAUDE_PUBLIC_SKILL
+                } else if code.starts_with('A') {
+                    CLAUDE_PUBLIC_AGENT
+                } else {
+                    CLAUDE_PLUGIN
+                };
+                (RulePlatform::Claude, surfaces)
+            }
+            RuleApplicability::AllSkillSurfaces => (RulePlatform::Shared, SHARED_SKILLS),
+            RuleApplicability::Always if code.starts_with("CX") => {
+                let surfaces = if self == Self::CodexSkillUnsupportedFrontmatter {
+                    CODEX_SKILLS
+                } else if matches!(
+                    self,
+                    Self::CodexPluginManifestInvalid
+                        | Self::CodexPluginNameMissing
+                        | Self::CodexPluginNameInvalid
+                        | Self::CodexPluginPathPrefix
+                        | Self::CodexPluginPathTraversal
+                        | Self::CodexPluginPathBare
+                        | Self::CodexPluginDefaultPromptCount
+                        | Self::CodexPluginDefaultPromptLength
+                        | Self::CodexPluginDefaultPromptEmpty
+                        | Self::CodexPluginInterfaceUrl
+                        | Self::CodexPluginInterfaceAssetPath
+                        | Self::CodexPluginDescriptionMissing
+                        | Self::CodexPluginPromptField
+                ) {
+                    CODEX_PLUGIN
+                } else {
+                    CODEX_CONFIG
+                };
+                (RulePlatform::Codex, surfaces)
+            }
+            RuleApplicability::Always if code == "CR-SK-001" => {
+                (RulePlatform::Cursor, CURSOR_SKILL)
+            }
+            RuleApplicability::Always if code.starts_with("CR-") => {
+                (RulePlatform::Cursor, CURSOR_CONFIG)
+            }
+            RuleApplicability::Always if code.starts_with("CU") => {
+                let surfaces = match self {
+                    Self::CursorHooksSchemaInvalid
+                    | Self::CursorHookEventUnknown
+                    | Self::CursorHookCommandMissing
+                    | Self::CursorHookTypeInvalid
+                    | Self::CursorHookFieldTypeInvalid
+                    | Self::CursorPromptHookPromptMissing
+                    | Self::CursorPromptHookModelInvalid => CURSOR_HOOKS,
+                    Self::CursorAgentFrontmatterInvalid | Self::CursorAgentBodyEmpty => {
+                        CURSOR_AGENT
+                    }
+                    Self::CursorEnvironmentInvalid => CURSOR_CONFIG,
+                    _ => CURSOR_RULE,
+                };
+                (RulePlatform::Cursor, surfaces)
+            }
+            RuleApplicability::Always
+                if matches!(
+                    self,
+                    Self::FrontmatterMalformed
+                        | Self::FrontmatterFieldMissing
+                        | Self::FrontmatterNameMismatch
+                        | Self::FrontmatterFieldEmpty
+                ) =>
+            {
+                (RulePlatform::Shared, AGENT_CLAUDE_SKILLS)
+            }
+            RuleApplicability::Always if code.starts_with('S') => {
+                (RulePlatform::Claude, CLAUDE_SKILLS)
+            }
+            RuleApplicability::Always if self == Self::AgentDescOverlap => {
+                (RulePlatform::Shared, SHARED_AGENTS)
+            }
+            RuleApplicability::Always if code.starts_with('A') => {
+                (RulePlatform::Claude, CLAUDE_AGENTS)
+            }
+            RuleApplicability::Always if code.starts_with('Q') => {
+                (RulePlatform::Shared, SHARED_PROMPTS)
+            }
+            RuleApplicability::Always if code.starts_with('I') => {
+                (RulePlatform::Shared, SHARED_INSTRUCTIONS)
+            }
+            RuleApplicability::Always if code.starts_with('P') => {
+                (RulePlatform::Shared, SHARED_MCP)
+            }
+            RuleApplicability::Always if code.starts_with('X') || code.starts_with('L') => {
+                (RulePlatform::Shared, SHARED_MARKDOWN)
+            }
+            RuleApplicability::Always if code.starts_with('G') => {
+                (RulePlatform::Shared, SHARED_SCRIPT)
+            }
+            RuleApplicability::Always if code == "H026" => (RulePlatform::Claude, HOOK_SCHEMA),
+            RuleApplicability::Always if code.starts_with('H') => {
+                (RulePlatform::Claude, CLAUDE_HOOKS)
+            }
+            RuleApplicability::Always if code.starts_with('D') => {
+                (RulePlatform::Claude, CLAUDE_INSTRUCTIONS)
+            }
+            RuleApplicability::Always => (RulePlatform::Claude, CLAUDE_CONFIG),
+        };
+        RuleSpec {
+            rule: self,
+            surfaces,
+            platform,
+            autofix: self.is_autofixable(),
+            default_severity: self.default_severity(),
+            pedantic_exempt: self.is_too_long(),
+        }
+    }
+
     /// Whether this rule is a "too-long" length-cap rule, excluded from
     /// pedantic error promotion.
     pub fn is_too_long(self) -> bool {
@@ -1240,12 +1555,103 @@ impl LintRule {
 
 /// The sole registry of current rules with reachable production validators.
 pub const ALL_RULES: &[LintRule] = LintRule::VARIANTS;
+
+/// Iterate the sole live registry as canonical contract specifications.
+#[allow(dead_code)]
+pub fn all_rule_specs() -> impl ExactSizeIterator<Item = RuleSpec> + Clone {
+    ALL_RULES.iter().copied().map(LintRule::spec)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use regex::Regex;
+    use serde::{Deserialize, Serialize};
     use std::collections::{HashMap, HashSet};
     use strum::IntoEnumIterator;
+
+    #[derive(Debug, Deserialize, PartialEq, Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct LiveContractCatalog {
+        rules: Vec<LiveContractRule>,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct LiveContractRule {
+        code: String,
+        surfaces: Vec<LiveContractSurface>,
+        platform: String,
+        autofix: bool,
+        default_severity: String,
+        pedantic_exempt: bool,
+    }
+
+    #[derive(Debug, Deserialize, PartialEq, Serialize)]
+    #[serde(deny_unknown_fields)]
+    struct LiveContractSurface {
+        id: String,
+        modes: Vec<String>,
+    }
+
+    fn live_contract_catalog() -> LiveContractCatalog {
+        LiveContractCatalog {
+            rules: all_rule_specs()
+                .map(|spec| LiveContractRule {
+                    code: spec.rule.code().to_owned(),
+                    surfaces: spec
+                        .surfaces
+                        .iter()
+                        .map(|surface| LiveContractSurface {
+                            id: surface.id.to_owned(),
+                            modes: surface
+                                .modes
+                                .iter()
+                                .map(|mode| match mode {
+                                    RuleMode::Basic => "basic".to_owned(),
+                                    RuleMode::Plugin => "plugin".to_owned(),
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                    platform: match spec.platform {
+                        RulePlatform::Claude => "claude",
+                        RulePlatform::Cursor => "cursor",
+                        RulePlatform::Codex => "codex",
+                        RulePlatform::Shared => "shared",
+                    }
+                    .to_owned(),
+                    autofix: spec.autofix,
+                    default_severity: match spec.default_severity {
+                        DefaultSeverity::Error => "error",
+                        DefaultSeverity::Warning => "warning",
+                        DefaultSeverity::Suppressed => "suppressed",
+                    }
+                    .to_owned(),
+                    pedantic_exempt: spec.pedantic_exempt,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn checked_in_live_contract_catalog_matches_registry_metadata() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/conformance/live-rule-contracts.json");
+        let checked_in: LiveContractCatalog = serde_json::from_slice(
+            &std::fs::read(&path)
+                .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display())),
+        )
+        .unwrap_or_else(|error| {
+            panic!("invalid live contract catalog {}: {error}", path.display())
+        });
+        let expected = live_contract_catalog();
+        if checked_in != expected {
+            panic!(
+                "live contract catalog drifted; replace it with:\n{}",
+                serde_json::to_string_pretty(&expected).expect("catalog serializes")
+            );
+        }
+    }
 
     #[derive(Debug)]
     struct DocumentedRule {

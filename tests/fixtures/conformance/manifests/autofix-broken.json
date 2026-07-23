@@ -1,7 +1,7 @@
 {
   "class": "broken",
   "repository": "autofix-broken",
-  "covers": ["autofix", "basic-mode", "normal", "json"],
+  "covers": ["autofix", "autofix-idempotent", "autofix-scoped", "basic-mode", "normal", "json"],
   "invocation": { "mode": "basic", "arguments": ["--format", "json", "--autofix", "--only", "S031", "."] },
   "expected_exit_code": 0,
   "expected_status": "clean",
@@ -11,5 +11,6 @@
   "allowed_additional_diagnostics": [],
   "post_fix": [
     { "path": ".claude/skills/url-check/SKILL.md", "contents": "---\nname: url-check\ndescription: Use when checking secure transport in integration documentation\n---\n# Secure transport\n\nVisit https://service.corp for integration details.\n" }
-  ]
+  ],
+  "unchanged_after_fix": ["README.md"]
 }
