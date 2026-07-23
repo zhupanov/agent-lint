@@ -1115,14 +1115,21 @@ mod tests {
             "extensionless",
             "readme.txt",
         ] {
-            std::fs::write(format!("scripts/{path}"), "content\n").unwrap();
+            let content = if path == "extensionless" {
+                "#!/bin/sh\n"
+            } else {
+                "content\n"
+            };
+            std::fs::write(format!("scripts/{path}"), content).unwrap();
         }
+        std::fs::write("scripts/.gitkeep", "\n").unwrap();
         let paths = collect_script_paths(LintMode::Plugin, &crate::config::ExcludeSet::default());
         assert_eq!(paths.len(), 8);
         assert!(paths.iter().any(|path| path.ends_with("shell.bash")));
         assert!(paths.iter().any(|path| path.ends_with("library.inc.bash")));
         assert!(paths.iter().any(|path| path.ends_with("rules.awk")));
         assert!(!paths.iter().any(|path| path.ends_with("readme.txt")));
+        assert!(!paths.iter().any(|path| path.ends_with(".gitkeep")));
     }
 
     // expand_script_dirs tests
@@ -1589,6 +1596,7 @@ mod tests {
         std::fs::write("scripts/table.tsv", "a\tb\n").unwrap();
         std::fs::write("scripts/events.jsonl", "{}\n").unwrap();
         std::fs::write("scripts/plain.txt", "text\n").unwrap();
+        std::fs::write("scripts/.gitkeep", "\n").unwrap();
         std::fs::write(
             "skills/demo/SKILL.md",
             "---\nname: demo\ndescription: d\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/live.sh\n",

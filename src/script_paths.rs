@@ -9,6 +9,8 @@
 //! with the reference; consumers never re-derive it from a normalized path.
 
 use regex::Regex;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -21,6 +23,14 @@ static ASSIGNMENT_WORD: LazyLock<Regex> =
 /// way as a leading interpreter.
 const INTERPRETER_WORDS: &[&str] = &[
     "bash", "sh", "zsh", "fish", "python", "python3", "node", "ruby", "perl",
+];
+
+/// Positive grammar for extensionless script shebangs. This includes the
+/// interpreter families represented by the supported filename suffixes plus
+/// their common command names.
+const SHEBANG_INTERPRETER_WORDS: &[&str] = &[
+    "awk", "bash", "dash", "fish", "gawk", "ksh", "node", "perl", "python", "python2", "python3",
+    "ruby", "sh", "zsh",
 ];
 
 /// The file kinds shared by script discovery and the hygiene and portability
@@ -42,12 +52,80 @@ pub(crate) fn script_kind(path: &Path) -> Option<ScriptKind> {
     } else if value.ends_with(".py")
         || value.ends_with(".js")
         || value.ends_with(".mjs")
-        || path.extension().is_none()
+        || (path.extension().is_none() && extensionless_script_evidence(path))
     {
         Some(ScriptKind::Other)
     } else {
         None
     }
+}
+
+fn extensionless_script_evidence(path: &Path) -> bool {
+    let Ok(metadata) = path.symlink_metadata() else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if metadata.permissions().mode() & 0o111 != 0 {
+            return true;
+        }
+    }
+
+    let Ok(mut file) = File::open(path) else {
+        return false;
+    };
+    // Interpreter names and shebang options are short. Bound the read because
+    // repositories are untrusted and an extensionless data file may have no
+    // newline.
+    let mut prefix = [0_u8; 256];
+    let Ok(length) = file.read(&mut prefix) else {
+        return false;
+    };
+    recognized_shebang(&prefix[..length])
+}
+
+fn recognized_shebang(prefix: &[u8]) -> bool {
+    let first_line = prefix
+        .split(|byte| *byte == b'\n' || *byte == b'\r')
+        .next()
+        .and_then(|line| std::str::from_utf8(line).ok());
+    let Some(rest) = first_line.and_then(|line| line.strip_prefix("#!")) else {
+        return false;
+    };
+    let mut words = rest.split_whitespace();
+    let Some(command) = words.next() else {
+        return false;
+    };
+    let Some(mut interpreter) = Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    if interpreter == "env" {
+        let Some(next) = words.next() else {
+            return false;
+        };
+        interpreter = if next == "-S" {
+            let Some(split_command) = words.next() else {
+                return false;
+            };
+            split_command
+        } else {
+            next
+        };
+        interpreter = Path::new(interpreter)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(interpreter);
+    }
+    SHEBANG_INTERPRETER_WORDS.contains(&interpreter)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -780,8 +858,50 @@ mod tests {
             script_kind(Path::new("scripts/a.awk")),
             Some(ScriptKind::Awk)
         );
-        assert_eq!(script_kind(Path::new("scripts/a")), Some(ScriptKind::Other));
+        assert_eq!(script_kind(Path::new("scripts/a")), None);
         assert_eq!(script_kind(Path::new("scripts/a.txt")), None);
+    }
+
+    #[test]
+    fn extensionless_scripts_require_positive_file_evidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("script");
+        let sentinel = tmp.path().join(".gitkeep");
+        let unknown = tmp.path().join("unknown");
+        std::fs::write(&script, "#!/usr/bin/env -S python3 -I\nprint('ok')\n").unwrap();
+        std::fs::write(&sentinel, "\n").unwrap();
+        std::fs::write(&unknown, "#!/usr/bin/env unknown\n").unwrap();
+
+        assert_eq!(script_kind(&script), Some(ScriptKind::Other));
+        assert_eq!(script_kind(&sentinel), None);
+        assert_eq!(script_kind(&unknown), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn executable_bit_is_positive_extensionless_script_evidence() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("compiled-tool");
+        std::fs::write(&script, "not a shebang\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(script_kind(&script), Some(ScriptKind::Other));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extensionless_script_evidence_does_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("target");
+        let link = tmp.path().join("link");
+        std::fs::write(&target, "#!/bin/sh\n").unwrap();
+        symlink(&target, &link).unwrap();
+
+        assert_eq!(script_kind(&link), None);
     }
 
     #[test]

@@ -78,7 +78,7 @@ static RE_SCRIPT_FILE_REF: LazyLock<Regex> =
 
 // S051: Dependency keywords (case-insensitive)
 static RE_DEPS_KEYWORDS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:pip3?\s+install|npm\s+install|brew\s+install|apt\s+install|cargo\s+install|\brequires\b|\bdependencies\b|\bprerequisite\b|\binstall\b|requirements\.txt|package\.json|Cargo\.toml|(?m)^#{2,3}\s+(?:Dependencies|Requirements|Prerequisites|Setup)\b)").unwrap()
+    Regex::new(r"(?i)(?:pip3?\s+install|npm\s+install|brew\s+install|apt\s+install|cargo\s+install|\brequires\b|\bdependencies\b|\bprerequisites?\b|\binstall\b|requirements\.txt|package\.json|Cargo\.toml|(?m)^#{2,3}\s+(?:Dependencies|Requirements|Prerequisites|Setup)\b)").unwrap()
 });
 
 // S052: Verification keywords (case-insensitive)
@@ -434,9 +434,11 @@ fn check_terminology_consistency(info: &SkillInfo, diag: &mut DiagnosticCollecto
 
 fn check_body_no_default(info: &SkillInfo, diag: &mut DiagnosticCollector) {
     let mut paragraph = Vec::new();
+    let mut paragraph_last_line = None;
     let mut previous_line = None;
     let source_lines: Vec<_> = info.document.content().lines().collect();
-    for line in info.document.body_prose() {
+    let prose_lines = info.document.body_prose();
+    for line in prose_lines {
         let source_is_blank = source_lines
             .get(line.line - 1)
             .is_some_and(|source| source.trim().is_empty());
@@ -445,7 +447,13 @@ fn check_body_no_default(info: &SkillInfo, diag: &mut DiagnosticCollector) {
             || RE_MARKDOWN_LIST_ITEM.is_match(&line.text)
             || previous_line.is_some_and(|previous| line.line != previous + 1);
         if starts_group && !paragraph.is_empty() {
-            if paragraph_has_unframed_choice(&paragraph) {
+            if paragraph_has_unframed_choice(&paragraph)
+                && !adjacent_list_frames_choice(
+                    paragraph_last_line.unwrap_or_default(),
+                    prose_lines,
+                    &source_lines,
+                )
+            {
                 report_body_no_default(info, diag);
                 return;
             }
@@ -453,12 +461,61 @@ fn check_body_no_default(info: &SkillInfo, diag: &mut DiagnosticCollector) {
         }
         if !line.text.trim().is_empty() {
             paragraph.push(line.text.as_str());
+            paragraph_last_line = Some(line.line);
         }
         previous_line = Some(line.line);
     }
     if paragraph_has_unframed_choice(&paragraph) {
         report_body_no_default(info, diag);
     }
+}
+
+/// Whether the next authored block is a Markdown list that supplies the
+/// framing omitted by the preceding choice paragraph. Blank lines are allowed
+/// between a paragraph and its list because that is standard Markdown layout;
+/// any other intervening content ends adjacency.
+fn adjacent_list_frames_choice(
+    after_line: usize,
+    prose_lines: &[crate::markdown::MarkdownProseLine],
+    source_lines: &[&str],
+) -> bool {
+    let Some(first_index) = prose_lines
+        .iter()
+        .position(|line| line.line > after_line && !line.text.trim().is_empty())
+    else {
+        return false;
+    };
+    let first = &prose_lines[first_index];
+    let intervening = &source_lines[after_line..first.line.saturating_sub(1)];
+    if intervening.len() > 1
+        || intervening.iter().any(|line| !line.trim().is_empty())
+        || !RE_MARKDOWN_LIST_ITEM.is_match(&first.text)
+    {
+        return false;
+    }
+
+    let mut blank_lines = 0;
+    for line in &prose_lines[first_index..] {
+        if line.text.trim().is_empty() {
+            blank_lines += 1;
+            if blank_lines > 1 {
+                break;
+            }
+            continue;
+        }
+        blank_lines = 0;
+        let item = if RE_MARKDOWN_LIST_ITEM.is_match(&line.text) {
+            RE_MARKDOWN_LIST_ITEM.replace(&line.text, "")
+        } else if line.text.starts_with([' ', '\t']) {
+            std::borrow::Cow::Borrowed(line.text.trim_start())
+        } else {
+            break;
+        };
+        if RE_ALTERNATIVES_SUPPRESS.is_match(&item) {
+            return true;
+        }
+    }
+    false
 }
 
 fn paragraph_has_unframed_choice(paragraph: &[&str]) -> bool {

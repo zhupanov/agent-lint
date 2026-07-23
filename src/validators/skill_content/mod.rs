@@ -4389,6 +4389,34 @@ suppress = ["S033"]
 
     #[test]
     #[serial_test::serial]
+    fn test_s051_plural_prerequisites_in_prose_documents_dependencies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write("skills/my-skill/scripts/run.sh", "#!/bin/bash\n").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            concat!(
+                "---\nname: my-skill\ndescription: A valid skill description here\n---\n",
+                "Use the installed `sre` executable, as documented in the plugin ",
+                "installation prerequisites.\n\nVerify the output after running scripts/run.sh.\n",
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::ScriptDepsMissing),
+            "S051 should recognize plural prerequisites in ordinary prose"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s051_script_without_deps() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
@@ -7075,7 +7103,6 @@ suppress = ["S055"]
             "Read [documentation](https://example.test/use/tool/a/or/b/or/c).\n",
             "Choose parser A, parser B, or parser C.\nUse parser A by default.\n",
             "Choose parser A, parser B, or parser C.\n\nUse parser A by default.\n",
-            "- Choose parser A, parser B, or parser C.\n- Use parser A by default.\n",
         ] {
             std::fs::write(
                 path,
@@ -7090,15 +7117,124 @@ suppress = ["S055"]
                 .diagnostics()
                 .iter()
                 .any(|d| d.rule == LintRule::BodyNoDefault);
-            if body.contains("\n\n") || body.starts_with("- ") {
-                assert!(
-                    fires,
-                    "S056 should retain paragraph and list boundaries: {body}"
-                );
+            if body.contains("\n\n") {
+                assert!(fires, "S056 should retain paragraph boundaries: {body}");
             } else {
                 assert!(!fires, "S056 should ignore or suppress: {body}");
             }
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s056_adjacent_list_supplies_conditional_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            concat!(
+                "---\nname: my-skill\ndescription: A valid skill description here\n---\n",
+                "Ask the operator to choose Confirm, Change bump, or Cancel.\n\n",
+                "- Skip this question only when `--skip-approve` or `-s` is set and `PR_COUNT`\n",
+                "  is greater than zero.\n",
+                "- When `PR_COUNT=0`, default to Cancel and require explicit confirmation.\n",
+                "- If the operator changes the bump, rerun prepare and confirm again.\n",
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::BodyNoDefault),
+            "S056 should use the explicit default in an immediately adjacent list"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s056_adjacent_list_supplies_conditional_outcomes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            concat!(
+                "---\nname: my-skill\ndescription: A valid skill description here\n---\n",
+                "Choose parser A, parser B, or parser C.\n\n",
+                "- When the input is JSON, choose parser A.\n",
+                "- When the input is YAML, choose parser B.\n",
+                "- If neither format applies, choose parser C.\n",
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            !diag
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::BodyNoDefault),
+            "S056 should accept explicit conditional outcomes in an adjacent list"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s056_adjacent_unframed_list_still_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            concat!(
+                "---\nname: my-skill\ndescription: A valid skill description here\n---\n",
+                "Ask the operator to choose Confirm, Change bump, or Cancel.\n\n",
+                "- Record the answer in the release log.\n",
+                "- Continue with the selected action.\n",
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::BodyNoDefault),
+            "S056 should retain genuinely unframed alternatives"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn test_s056_nonadjacent_list_default_still_fires() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill").unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            concat!(
+                "---\nname: my-skill\ndescription: A valid skill description here\n---\n",
+                "Choose parser A, parser B, or parser C.\n\n\n",
+                "- Use parser A by default.\n",
+            ),
+        )
+        .unwrap();
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.rule == LintRule::BodyNoDefault),
+            "S056 should not use a list beyond the immediately adjacent block"
+        );
     }
 
     // ── S057: magic-number-undoc ───────────────────────────────────

@@ -737,18 +737,18 @@ fn load_script_inventory(root: &Path, inventory: &str) -> Result<Vec<String>, St
         }
         validate_relative_paths(&[value.to_string()], "script-inventory", false)
             .map_err(|message| format!("{message} on line {}", index + 1))?;
-        if !is_supported_script_path(value) {
-            return Err(format!(
-                "script-inventory entry '{value}' on line {} must be a supported script kind",
-                index + 1
-            ));
-        }
         let script_path = canonical_root.join(value);
         validate_inventory_file(
             &canonical_root,
             &script_path,
             &format!("script-inventory entry '{value}' on line {}", index + 1),
         )?;
+        if crate::script_paths::script_kind(&script_path).is_none() {
+            return Err(format!(
+                "script-inventory entry '{value}' on line {} must be a supported script kind",
+                index + 1
+            ));
+        }
         paths.push(normalize_path(value));
     }
     paths.sort();
@@ -971,10 +971,6 @@ fn validate_inventory_file(root: &Path, path: &Path, label: &str) -> Result<(), 
         return Err(format!("{label} resolves outside the repository root"));
     }
     Ok(())
-}
-
-fn is_supported_script_path(path: &str) -> bool {
-    crate::script_paths::script_kind(Path::new(path)).is_some()
 }
 
 fn validate_relative_paths(
@@ -1619,7 +1615,12 @@ suppress = ["S033"]
             "scripts/extensionless",
         ];
         for path in paths {
-            std::fs::write(tmp.path().join(path), "# fixture\n").unwrap();
+            let content = if path == "scripts/extensionless" {
+                "#!/bin/sh\n"
+            } else {
+                "# fixture\n"
+            };
+            std::fs::write(tmp.path().join(path), content).unwrap();
         }
         std::fs::write(tmp.path().join("inventory.txt"), paths.join("\n")).unwrap();
         std::fs::write(
