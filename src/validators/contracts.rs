@@ -425,9 +425,10 @@ fn script_accepts_flag(script: &Path, source: &str, arguments: &[String], flag: 
 /// not import repository Python, but a dispatcher often owns only global flags
 /// while literal local imports register its subcommands. The model follows
 /// only repository-contained `.py` files and recognizes literal `add_parser`,
-/// `add_argument`, and registry-dispatched handlers. An unresolved literal
-/// registry disables unsupported-flag claims for that script rather than
+/// `add_argument`, and registry-dispatched handlers in each visited module.
+/// An unresolved literal registry disables unsupported-flag claims for that script rather than
 /// falling back to its incomplete root-script signature.
+/// The analysis remains lexical and never imports repository Python.
 #[derive(Default)]
 struct PythonCliSignature {
     global_flags: BTreeMap<String, bool>,
@@ -494,6 +495,7 @@ fn python_cli_signature(script: &Path, source: &str) -> Option<PythonCliSignatur
     let mut signature = PythonCliSignature::default();
     let mut pending = VecDeque::from([(script.clone(), source.to_string())]);
     let mut visited = BTreeSet::new();
+    let mut registry_entries = Vec::new();
     let mut is_root = true;
     while let Some((module, module_source)) = pending.pop_front() {
         if !visited.insert(module.clone()) || visited.len() > MAX_PYTHON_CLI_MODULES {
@@ -524,44 +526,45 @@ fn python_cli_signature(script: &Path, source: &str) -> Option<PythonCliSignatur
                 ));
             }
         }
-    }
-
-    match python_literal_registry(source) {
-        None => {}
-        Some(Err(())) => signature.unknown_registry_dispatch = true,
-        Some(Ok(entries)) => {
-            if entries.len() > MAX_PYTHON_CLI_MODULES {
-                signature.unknown_registry_dispatch = true;
-                return Some(signature);
-            }
-            for entry in entries {
-                let Some(handler_path) = resolve_python_import(&root, &script, &entry.module)
-                else {
+        match python_literal_registry(&module_source) {
+            None => {}
+            Some(Err(())) => signature.unknown_registry_dispatch = true,
+            Some(Ok(entries)) => {
+                if registry_entries.len() + entries.len() > MAX_PYTHON_CLI_MODULES {
                     signature.unknown_registry_dispatch = true;
-                    break;
-                };
-                let Ok(handler_source) = fs::read_to_string(handler_path) else {
-                    signature.unknown_registry_dispatch = true;
-                    break;
-                };
-                if handler_source.len() > MAX_PYTHON_CLI_SOURCE_BYTES {
-                    signature.unknown_registry_dispatch = true;
-                    break;
+                } else {
+                    registry_entries
+                        .extend(entries.into_iter().map(|entry| (module.clone(), entry)));
                 }
-                let Some(flags) = python_registry_handler_flags(
-                    &executable_script_source(Path::new("handler.py"), &handler_source),
-                    entry.function.as_deref(),
-                ) else {
-                    signature.unknown_registry_dispatch = true;
-                    break;
-                };
-                signature
-                    .subcommand_flags
-                    .entry(entry.path)
-                    .or_default()
-                    .extend(flags);
             }
         }
+    }
+
+    for (dispatcher, entry) in registry_entries {
+        let Some(handler_path) = resolve_python_import(&root, &dispatcher, &entry.module) else {
+            signature.unknown_registry_dispatch = true;
+            break;
+        };
+        let Ok(handler_source) = fs::read_to_string(handler_path) else {
+            signature.unknown_registry_dispatch = true;
+            break;
+        };
+        if handler_source.len() > MAX_PYTHON_CLI_SOURCE_BYTES {
+            signature.unknown_registry_dispatch = true;
+            break;
+        }
+        let Some(flags) = python_registry_handler_flags(
+            &executable_script_source(Path::new("handler.py"), &handler_source),
+            entry.function.as_deref(),
+        ) else {
+            signature.unknown_registry_dispatch = true;
+            break;
+        };
+        signature
+            .subcommand_flags
+            .entry(entry.path)
+            .or_default()
+            .extend(flags);
     }
     (!signature.subcommand_flags.is_empty() || signature.unknown_registry_dispatch)
         .then_some(signature)
@@ -3951,6 +3954,60 @@ mod tests {
                 .filter(|item| item.rule == LintRule::SkillFlagMismatch)
                 .count(),
             2
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_supports_literal_python_registry_in_imported_dispatcher() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts/larch/commands").unwrap();
+        fs::write(
+            "skills/demo/scripts/cli.py",
+            "import larch.cli as _cli\n\nif __name__ == \"__main__\":\n    raise SystemExit(_cli.main())\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/larch/cli.py",
+            "import importlib\n\n_REGISTRY = {\n    (\"alpha\", \"run\"): (\"larch.commands.alpha\", \"run\"),\n    (\"beta\", \"run\"): (\"larch.commands.beta\", \"run\"),\n}\n\ndef main(argv):\n    module_name, function_name = _REGISTRY[(argv[0], argv[1])]\n    return getattr(importlib.import_module(module_name), function_name)(argv[2:])\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/larch/commands/alpha.py",
+            "def run(argv):\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--alpha-flag\")\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/larch/commands/beta.py",
+            "def run(argv):\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--beta-flag\")\n",
+        )
+        .unwrap();
+
+        let mut clean = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "scripts/cli.py alpha run --alpha-flag value",
+            "scripts/cli.py beta run --beta-flag value",
+        ] {
+            validate_flag_signature(Path::new("skills/demo/SKILL.md"), 1, command, &mut clean);
+        }
+        assert!(clean.diagnostics().is_empty());
+
+        let mut invalid = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            1,
+            "scripts/cli.py beta run --missing value",
+            &mut invalid,
+        );
+        assert_eq!(
+            invalid
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+                .count(),
+            1
         );
     }
 
