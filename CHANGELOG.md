@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- S030 (`orphaned-skill-files`) recognizes exact skill paths and unique
+  basenames followed by a sentence period as Markdown ownership references,
+  while still rejecting filename and child-path continuations such as
+  `helper.sh.bak` and `helper.sh/child`.
 - G002 (`script-ref-missing`), G003 (`script-not-executable`), and G004
   (`dead-script`) now share one typed candidate contract with `--list-scripts`
   and no longer misclassify script references, direct execution, or

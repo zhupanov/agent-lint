@@ -2242,6 +2242,43 @@ suppress = ["S014"]
 
     #[test]
     #[serial_test::serial]
+    fn test_s030_markdown_sentence_boundaries_own_unique_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
+        std::fs::write("skills/my-skill/scripts/helper.sh", "#!/bin/bash\n").unwrap();
+
+        for reference in [
+            "`skills/my-skill/scripts/helper.sh`",
+            "`docs/helper.sh`",
+            "helper.sh.",
+            "helper.sh,",
+            "(helper.sh)",
+            "helper.sh:",
+        ] {
+            std::fs::write(
+                "skills/my-skill/SKILL.md",
+                format!(
+                    "---\nname: my-skill\ndescription: Use when testing Markdown script boundaries\n---\nRun {reference}\n"
+                ),
+            )
+            .unwrap();
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+            assert!(
+                !diag
+                    .diagnostics()
+                    .iter()
+                    .any(|finding| finding.rule == LintRule::OrphanedSkillFiles),
+                "{reference} must reference the unique script: {:?}",
+                diag.errors()
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s030_duplicate_basenames_require_relative_paths() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
