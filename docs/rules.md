@@ -700,6 +700,8 @@ plugin-shipped styles (no O003), whereas under `.claude/output-styles/` it
 reports O003 as ignored placement. Basic mode never scans these plugin
 surfaces.
 
+| Code | Name | Description | Mode | Default |
+|------|------|-------------|------|---------|
 | T001 | `pr-template-invalid` | `prUrlTemplate` must be a trimmed non-empty string, use a documented placeholder only, and render to an absolute HTTP(S) URL with a host | Always | warn |
 | T002 | `channels-enabled-unsupported` | Repository `channelsEnabled` is ignored; configure this managed-policy-only field through organization policy instead | Always | warn |
 

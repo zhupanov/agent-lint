@@ -212,7 +212,7 @@ validation path again.
 - Guidance: new parsing, discovery, and validation APIs accept an explicit repository root or an explicit repository-relative input. Restrict `set_current_dir` to CLI startup and controlled test infrastructure, and prefer root-carrying types when a path will cross module boundaries.
 - Deviate when: an external library requires ambient current-directory semantics; isolate that call behind a narrow adapter and restore process state with a guard in tests.
 
-### G-I/O-1: Preserve discovery errors when a rule owns them
+### G-IO-1: Preserve discovery errors when a rule owns them
 
 - Why: silently treating unreadable or malformed owned input as absent can hide the only diagnostic that explains why dependent checks did not run.
 - Guidance: best-effort optional discovery may skip an unreadable candidate only when no rule promises to diagnose that state. When a surface has an invalid-file, unsafe-path, or unreadable-input rule, retain the error or typed rejected state through discovery and report it before skipping dependent semantic checks. Continue with independent siblings.

@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod architecture_consistency;
 mod autofix;
 mod config;
 #[cfg(test)]
