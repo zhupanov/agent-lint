@@ -68,6 +68,9 @@ static PYTHON_FROM_IMPORT: LazyLock<Regex> = LazyLock::new(|| {
 });
 static PYTHON_IMPORT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^\s*import\s+([A-Za-z_][A-Za-z0-9_\.]*)").unwrap());
+static PYTHON_DICT_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?::[^=\n]+)?=\s*\{").unwrap()
+});
 static PYTHON_LONG_FLAG: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"["'](--[A-Za-z0-9][A-Za-z0-9_-]*)["']"#).unwrap());
 static PYTHON_ACTION_NO_VALUE: LazyLock<Regex> = LazyLock::new(|| {
@@ -418,20 +421,25 @@ fn script_accepts_flag(script: &Path, source: &str, arguments: &[String], flag: 
     }
 }
 
-/// A deliberately small, lexical model of an argparse dispatcher.  S059 must
+/// A deliberately small, lexical model of an argparse dispatcher. S059 must
 /// not import repository Python, but a dispatcher often owns only global flags
-/// while literal local imports register its subcommands.  The model follows
-/// only repository-contained `.py` files and recognizes only literal
-/// `add_parser` and `add_argument` calls.  Anything dynamic remains unknown
-/// and therefore cannot cause a flag to be accepted.
+/// while literal local imports register its subcommands. The model follows
+/// only repository-contained `.py` files and recognizes literal `add_parser`,
+/// `add_argument`, and registry-dispatched handlers. An unresolved literal
+/// registry disables unsupported-flag claims for that script rather than
+/// falling back to its incomplete root-script signature.
 #[derive(Default)]
 struct PythonCliSignature {
     global_flags: BTreeMap<String, bool>,
     subcommand_flags: BTreeMap<Vec<String>, BTreeMap<String, bool>>,
+    unknown_registry_dispatch: bool,
 }
 
 impl PythonCliSignature {
     fn accepts_invocation(&self, arguments: &[String], flag: &str) -> bool {
+        if self.unknown_registry_dispatch {
+            return true;
+        }
         let Some(subcommand) = self.selected_subcommand(arguments) else {
             return self.global_flags.contains_key(flag);
         };
@@ -484,7 +492,7 @@ fn python_cli_signature(script: &Path, source: &str) -> Option<PythonCliSignatur
     }
 
     let mut signature = PythonCliSignature::default();
-    let mut pending = VecDeque::from([(script, source.to_string())]);
+    let mut pending = VecDeque::from([(script.clone(), source.to_string())]);
     let mut visited = BTreeSet::new();
     let mut is_root = true;
     while let Some((module, module_source)) = pending.pop_front() {
@@ -517,7 +525,255 @@ fn python_cli_signature(script: &Path, source: &str) -> Option<PythonCliSignatur
             }
         }
     }
-    (!signature.subcommand_flags.is_empty()).then_some(signature)
+
+    match python_literal_registry(source) {
+        None => {}
+        Some(Err(())) => signature.unknown_registry_dispatch = true,
+        Some(Ok(entries)) => {
+            if entries.len() > MAX_PYTHON_CLI_MODULES {
+                signature.unknown_registry_dispatch = true;
+                return Some(signature);
+            }
+            for entry in entries {
+                let Some(handler_path) = resolve_python_import(&root, &script, &entry.module)
+                else {
+                    signature.unknown_registry_dispatch = true;
+                    break;
+                };
+                let Ok(handler_source) = fs::read_to_string(handler_path) else {
+                    signature.unknown_registry_dispatch = true;
+                    break;
+                };
+                if handler_source.len() > MAX_PYTHON_CLI_SOURCE_BYTES {
+                    signature.unknown_registry_dispatch = true;
+                    break;
+                }
+                let Some(flags) = python_registry_handler_flags(
+                    &executable_script_source(Path::new("handler.py"), &handler_source),
+                    entry.function.as_deref(),
+                ) else {
+                    signature.unknown_registry_dispatch = true;
+                    break;
+                };
+                signature
+                    .subcommand_flags
+                    .entry(entry.path)
+                    .or_default()
+                    .extend(flags);
+            }
+        }
+    }
+    (!signature.subcommand_flags.is_empty() || signature.unknown_registry_dispatch)
+        .then_some(signature)
+}
+
+/// A literal importlib registry is a useful, bounded extension of the
+/// argparse model: each literal command path identifies one local handler
+/// module, without evaluating the dispatcher or handler.  If a dispatcher
+/// looks like this form but an entry cannot be resolved, S059 cannot safely
+/// reject a flag based on the root script alone.
+struct PythonRegistryEntry {
+    path: Vec<String>,
+    module: String,
+    function: Option<String>,
+}
+
+fn python_literal_registry(source: &str) -> Option<Result<Vec<PythonRegistryEntry>, ()>> {
+    if !source.contains("importlib.import_module") {
+        return None;
+    }
+    let mut entries = Vec::new();
+    let mut found_registry = false;
+    for assignment in PYTHON_DICT_ASSIGNMENT.captures_iter(source) {
+        let name = &assignment[1];
+        if !name.to_ascii_uppercase().contains("REGISTRY")
+            || (!source.contains(&format!("{name}[")) && !source.contains(&format!("{name}.get(")))
+        {
+            continue;
+        }
+        found_registry = true;
+        let Some(body) = python_braced_content(source, assignment.get(0).expect("match").end())
+        else {
+            return Some(Err(()));
+        };
+        let Some(mapping_entries) = python_mapping_entries(body) else {
+            return Some(Err(()));
+        };
+        for (key, value) in mapping_entries {
+            let Some(path) = python_literal_strings(key) else {
+                return Some(Err(()));
+            };
+            let Some(target) = python_literal_strings(value) else {
+                return Some(Err(()));
+            };
+            let ([module] | [module, _]) = target.as_slice() else {
+                return Some(Err(()));
+            };
+            entries.push(PythonRegistryEntry {
+                path,
+                module: module.clone(),
+                function: target.get(1).cloned(),
+            });
+        }
+    }
+    found_registry.then_some(Ok(entries))
+}
+
+fn python_registry_handler_flags(
+    source: &str,
+    function: Option<&str>,
+) -> Option<BTreeMap<String, bool>> {
+    let source = match function {
+        Some(function) => python_function_body(source, function)?,
+        None => source,
+    };
+    Some(python_module_signature(source).global_flags)
+}
+
+fn python_function_body<'a>(source: &'a str, function: &str) -> Option<&'a str> {
+    if !is_python_identifier(function) {
+        return None;
+    }
+    let pattern = Regex::new(&format!(
+        r"(?m)^([ \t]*)(?:async\s+)?def\s+{}\s*\(",
+        regex::escape(function)
+    ))
+    .ok()?;
+    let declaration = pattern.captures(source)?;
+    let indentation = declaration.get(1)?.as_str().len();
+    let declaration_start = declaration.get(0)?.start();
+    let header_end = python_top_level_delimiter(source, declaration_start, ':')?;
+    let body_start = source[header_end..]
+        .find('\n')
+        .map(|offset| header_end + offset + 1)?;
+    let mut end = source.len();
+    let mut offset = body_start;
+    for line in source[body_start..].split_inclusive('\n') {
+        let trimmed = line.trim();
+        if !trimmed.is_empty()
+            && !trimmed.starts_with('#')
+            && line.len() - line.trim_start_matches([' ', '\t']).len() <= indentation
+        {
+            end = offset;
+            break;
+        }
+        offset += line.len();
+    }
+    Some(&source[body_start..end])
+}
+
+fn python_braced_content(source: &str, start: usize) -> Option<&str> {
+    let mut depth = 1usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (offset, character) in source[start..].char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+        } else if matches!(character, '\'' | '\"') {
+            quote = Some(character);
+        } else if character == '{' {
+            depth += 1;
+        } else if character == '}' {
+            depth -= 1;
+            if depth == 0 {
+                return Some(&source[start..start + offset]);
+            }
+        }
+    }
+    None
+}
+
+fn python_mapping_entries(source: &str) -> Option<Vec<(&str, &str)>> {
+    let mut entries = Vec::new();
+    let mut start = 0;
+    while start < source.len() {
+        while let Some(character) = source[start..].chars().next() {
+            if !character.is_whitespace() && character != ',' {
+                break;
+            }
+            start += character.len_utf8();
+            if start == source.len() {
+                break;
+            }
+        }
+        if start == source.len() {
+            break;
+        }
+        let colon = python_top_level_delimiter(source, start, ':')?;
+        let end = python_top_level_delimiter(source, colon + 1, ',').unwrap_or(source.len());
+        entries.push((source[start..colon].trim(), source[colon + 1..end].trim()));
+        start = end + usize::from(end < source.len());
+    }
+    Some(entries)
+}
+
+fn python_top_level_delimiter(source: &str, start: usize, delimiter: char) -> Option<usize> {
+    let mut depths = [0usize; 3];
+    let mut quote = None;
+    let mut escaped = false;
+    for (offset, character) in source[start..].char_indices() {
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
+                quote = None;
+            }
+            continue;
+        }
+        match character {
+            '\'' | '\"' => quote = Some(character),
+            '(' => depths[0] += 1,
+            '[' => depths[1] += 1,
+            '{' => depths[2] += 1,
+            ')' => depths[0] = depths[0].checked_sub(1)?,
+            ']' => depths[1] = depths[1].checked_sub(1)?,
+            '}' => depths[2] = depths[2].checked_sub(1)?,
+            _ if character == delimiter && depths == [0, 0, 0] => return Some(start + offset),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn python_literal_strings(source: &str) -> Option<Vec<String>> {
+    let mut values = Vec::new();
+    let mut characters = source.trim().chars().peekable();
+    let mut parentheses = 0usize;
+    while let Some(character) = characters.next() {
+        match character {
+            '(' => parentheses += 1,
+            ')' => parentheses = parentheses.checked_sub(1)?,
+            ',' | ' ' | '\t' | '\r' | '\n' => {}
+            quote @ ('\'' | '\"') => {
+                let mut value = String::new();
+                let mut escaped = false;
+                loop {
+                    let character = characters.next()?;
+                    if escaped {
+                        value.push(character);
+                        escaped = false;
+                    } else if character == '\\' {
+                        escaped = true;
+                    } else if character == quote {
+                        break;
+                    } else {
+                        value.push(character);
+                    }
+                }
+                values.push(value);
+            }
+            _ => return None,
+        }
+    }
+    (parentheses == 0 && !values.is_empty()).then_some(values)
 }
 
 #[derive(Default)]
@@ -3647,6 +3903,78 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_supports_literal_python_registry_dispatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts/handlers").unwrap();
+        fs::write(
+            "skills/demo/scripts/cli.py",
+            "import importlib\n\n_REGISTRY: dict[tuple[str, str], tuple[str, str]] = {\n    (\"alpha\", \"run\"): (\"handlers.alpha\", \"run\"),\n    (\"beta\", \"run\"): (\"handlers.beta\", \"run\"),\n}\n\ndef dispatch(argv):\n    domain, verb, *rest = argv\n    module_name, function_name = _REGISTRY[(domain, verb)]\n    handler = getattr(importlib.import_module(module_name), function_name)\n    return handler(rest)\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/handlers/alpha.py",
+            "def run(\n    argv,\n):\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--alpha-flag\")\n",
+        )
+        .unwrap();
+        fs::write(
+            "skills/demo/scripts/handlers/beta.py",
+            "def run(argv):\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\"--beta-flag\")\n",
+        )
+        .unwrap();
+
+        let mut clean = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "scripts/cli.py alpha run --alpha-flag value",
+            "scripts/cli.py beta run --beta-flag value",
+        ] {
+            validate_flag_signature(Path::new("skills/demo/SKILL.md"), 1, command, &mut clean);
+        }
+        assert!(clean.diagnostics().is_empty());
+
+        let mut invalid = DiagnosticCollector::new_all_enabled();
+        for command in [
+            "scripts/cli.py alpha run --beta-flag value",
+            "scripts/cli.py beta run --missing value",
+        ] {
+            validate_flag_signature(Path::new("skills/demo/SKILL.md"), 1, command, &mut invalid);
+        }
+        assert_eq!(
+            invalid
+                .diagnostics()
+                .iter()
+                .filter(|item| item.rule == LintRule::SkillFlagMismatch)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flag_parity_skips_unresolved_literal_python_registry_dispatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo/scripts").unwrap();
+        fs::write(
+            "skills/demo/scripts/cli.py",
+            "import importlib\n\n_REGISTRY = {\n    (\"alpha\", \"run\"): dynamic_handler,\n}\n\ndef dispatch(argv):\n    module_name, function_name = _REGISTRY[(argv[0], argv[1])]\n    return getattr(importlib.import_module(module_name), function_name)(argv[2:])\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_flag_signature(
+            Path::new("skills/demo/SKILL.md"),
+            1,
+            "scripts/cli.py alpha run --handler-flag",
+            &mut diag,
+        );
+        assert!(diag.diagnostics().is_empty());
     }
 
     #[test]
