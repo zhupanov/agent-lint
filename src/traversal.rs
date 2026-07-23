@@ -231,6 +231,14 @@ pub fn should_descend(entry: DirectoryEntry<'_>) -> bool {
     !IGNORED_DIRECTORY_NAMES.contains(&entry.file_name().to_string_lossy().as_ref())
 }
 
+/// Apply the normal repository pruning policy and omit conventional
+/// interpreter/tool caches. Command-source discovery uses this because local
+/// cache content is not authored executable configuration.
+pub fn should_descend_without_cache(entry: DirectoryEntry<'_>) -> bool {
+    should_descend(entry)
+        && !CACHE_DIRECTORY_NAMES.contains(&entry.file_name().to_string_lossy().as_ref())
+}
+
 /// Skip only Git metadata. Specialized recursive validators use this when
 /// files in packaged directories are part of their ownership contract.
 pub fn should_descend_except_git(entry: DirectoryEntry<'_>) -> bool {
