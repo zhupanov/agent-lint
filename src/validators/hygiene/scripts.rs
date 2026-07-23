@@ -280,10 +280,10 @@ fn python_composed_subprocess_references_with_code(
 ) -> Vec<ScriptReference> {
     // `Path` is only accepted as the standard library type, not an arbitrary
     // project class with an overloaded `/` operator.
-    if !RE_PYTHON_PATH_IMPORT.is_match(&code) {
+    if !RE_PYTHON_PATH_IMPORT.is_match(code) {
         return Vec::new();
     }
-    let line_scopes = python_line_scopes(&code);
+    let line_scopes = python_line_scopes(code);
     let mut assignments = HashMap::new();
     for (line_index, (line, masked_line)) in content.lines().zip(code.lines()).enumerate() {
         // The masked line must itself contain the assignment syntax. This
@@ -320,7 +320,7 @@ fn python_composed_subprocess_references_with_code(
     // Calls may span lines. Mask strings and comments first so illustrative
     // source text cannot manufacture an executable invocation.
     RE_PYTHON_SUBPROCESS_RUN
-        .captures_iter(&code)
+        .captures_iter(code)
         .filter_map(|captures| {
             let variable = captures.get(1).or_else(|| captures.get(2))?.as_str();
             let line = content[..captures.get(0)?.start()]
