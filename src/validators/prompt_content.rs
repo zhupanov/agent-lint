@@ -378,6 +378,7 @@ const Q002_IMPERATIVE_VERBS: &[&str] = &[
     "describe",
     "document",
     "edit",
+    "end",
     "ensure",
     "explain",
     "fix",
@@ -399,6 +400,7 @@ const Q002_IMPERATIVE_VERBS: &[&str] = &[
     "review",
     "run",
     "save",
+    "schedule",
     "serialize",
     "set",
     "state",
@@ -4130,6 +4132,16 @@ Markdown.
         ] {
             assert_eq!(q002_diagnostics(reported).len(), 1, "reported: {reported}");
         }
+    }
+
+    #[test]
+    fn q002_accepts_end_and_schedule_alternatives_in_one_list_item() {
+        let instruction = "- NEVER improvise ScheduleWakeup outside skill-script direction. End every one-shot skill after its terminal result. Schedule another turn only when that skill's script explicitly directs it.";
+
+        assert!(
+            q002_diagnostics(instruction).is_empty(),
+            "the positive End and Schedule imperatives repair the negative in the same list item"
+        );
     }
 
     #[test]
