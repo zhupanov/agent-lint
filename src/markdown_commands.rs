@@ -82,17 +82,8 @@ pub fn command_fragments(document: &MarkdownDocument) -> Vec<CommandFragment> {
         if code.start_line < document.body_start_line() {
             continue;
         }
-        let Some(span) = span_byte_range(
-            content,
-            &line_starts,
-            code.start_line,
-            code.start_column,
-            code.end_line,
-            code.end_column,
-        ) else {
-            continue;
-        };
-        let Some(text_range) = locate_subslice(content, span, &code.literal) else {
+        let Some(text_range) = locate_subslice(content, code.byte_range.clone(), &code.literal)
+        else {
             continue;
         };
         fragments.push(CommandFragment {
@@ -155,26 +146,35 @@ pub fn command_fragments(document: &MarkdownDocument) -> Vec<CommandFragment> {
         let Some(line_start) = line_starts.get(line.line.saturating_sub(1)).copied() else {
             continue;
         };
+        let Some(original_line) = content
+            .get(line_start..)
+            .and_then(|rest| rest.lines().next())
+        else {
+            continue;
+        };
         for npm_char in prose_npm_char_indices(&line.text) {
             let column = npm_char + 1;
             if inside_link(document, line.line, column) {
                 continue;
             }
-            let byte_in_line: usize = line
+            let masked_byte_in_line: usize = line
                 .text
                 .chars()
                 .take(npm_char)
                 .map(|ch| ch.len_utf8())
                 .sum();
-            if prose_command_negated(&line.text, byte_in_line) {
+            if prose_command_negated(&line.text, masked_byte_in_line) {
                 continue;
             }
-            let rest = &line.text[byte_in_line..];
-            let byte_start = line_start + byte_in_line;
+            let Some((text, source_offsets)) =
+                mapped_line_suffix(&line.text, original_line, npm_char, line_start)
+            else {
+                continue;
+            };
             fragments.push(CommandFragment {
                 surface: CommandSurface::Prose,
-                text: rest.to_string(),
-                source_offsets: (byte_start..byte_start + rest.len()).collect(),
+                text,
+                source_offsets,
             });
         }
     }
@@ -431,6 +431,39 @@ fn line_start_offsets(content: &str) -> Vec<usize> {
     starts
 }
 
+/// Preserve the scalar layout of masked prose while mapping every emitted byte
+/// back to its corresponding byte in the original source line.
+fn mapped_line_suffix(
+    masked_line: &str,
+    original_line: &str,
+    start_char: usize,
+    line_start: usize,
+) -> Option<(String, Vec<usize>)> {
+    let masked_chars: Vec<char> = masked_line.chars().collect();
+    let original_chars: Vec<(usize, char)> = original_line.char_indices().collect();
+    if masked_chars.len() != original_chars.len() || start_char > masked_chars.len() {
+        return None;
+    }
+
+    let mut text = String::new();
+    let mut source_offsets = Vec::new();
+    for (&masked, &(source_index, original)) in masked_chars[start_char..]
+        .iter()
+        .zip(&original_chars[start_char..])
+    {
+        text.push(masked);
+        if masked == original {
+            source_offsets
+                .extend(line_start + source_index..line_start + source_index + original.len_utf8());
+        } else {
+            let source_end = line_start + source_index + original.len_utf8() - 1;
+            source_offsets.extend(std::iter::repeat_n(source_end, masked.len_utf8()));
+        }
+    }
+    Some((text, source_offsets))
+}
+
+#[cfg(test)]
 fn span_byte_range(
     content: &str,
     line_starts: &[usize],
@@ -455,6 +488,7 @@ fn span_byte_range(
 /// An end position references the final byte of the node's last scalar, so an
 /// offset landing inside a multibyte scalar snaps back to that scalar's first
 /// byte; `span_byte_range` then widens by the scalar's full width.
+#[cfg(test)]
 fn offset_at(content: &str, line_starts: &[usize], line: usize, column: usize) -> Option<usize> {
     if column == 0 || line == 0 {
         return None;
@@ -605,5 +639,53 @@ npm run example-only
             .expect("inline fragment");
         assert_eq!(inline.text, "npm run build");
         assert_eq!(&doc.content()[inline.source_range()], "npm run build");
+    }
+
+    #[test]
+    fn prose_link_classification_is_identical_after_multibyte_prefixes() {
+        for prefix in ["", "\u{e9}\u{2194}\u{1f680} "] {
+            let source =
+                format!("{prefix}[npm run linked](docs/a.md) then npm run prose-only now.\n");
+            let doc = MarkdownDocument::parse(source);
+            let prose: Vec<_> = command_fragments(&doc)
+                .into_iter()
+                .filter(|fragment| matches!(fragment.surface, CommandSurface::Prose))
+                .collect();
+            assert_eq!(prose.len(), 1, "{prefix:?}");
+            assert!(prose[0].text.starts_with("npm run prose-only"));
+        }
+    }
+
+    #[test]
+    fn prose_tokens_map_to_original_source_after_masked_multibyte_text() {
+        let source = "Use “\u{e9}\u{2194}\u{1f680}” style then npm run missing now.\n";
+        let doc = MarkdownDocument::parse(source);
+        let fragment = command_fragments(&doc)
+            .into_iter()
+            .find(|fragment| matches!(fragment.surface, CommandSurface::Prose))
+            .expect("prose fragment");
+        assert_eq!(
+            &doc.content()[fragment.source_range()],
+            "npm run missing now."
+        );
+
+        let commands = tokenize_shell_commands(doc.content(), &fragment).unwrap();
+        let source_slices: Vec<_> = commands[0]
+            .iter()
+            .map(|token| &doc.content()[token.source_range.clone()])
+            .collect();
+        assert_eq!(source_slices, ["npm", "run", "missing", "now."]);
+    }
+
+    #[test]
+    fn comrak_offset_adapter_remains_byte_based() {
+        let source = "\u{e9}\u{2194}\u{1f680} `code`\n";
+        let starts = line_start_offsets(source);
+        // The backtick is scalar column 5 but UTF-8 byte column 11.
+        assert_eq!(offset_at(source, &starts, 1, 11), Some(10));
+        assert_eq!(
+            &source[span_byte_range(source, &starts, 1, 11, 1, 16).unwrap()],
+            "`code`"
+        );
     }
 }

@@ -30,11 +30,11 @@ pub struct MarkdownLink {
     /// UTF-8 byte range of the authored destination only.
     pub destination_byte_range: std::ops::Range<usize>,
     pub line: usize,
-    /// Inclusive one-based start column of the full link node.
+    /// Inclusive one-based Unicode-scalar start column of the full link node.
     pub start_column: usize,
     /// Inclusive one-based end line of the full link node.
     pub end_line: usize,
-    /// Inclusive one-based end column of the full link node.
+    /// Inclusive one-based Unicode-scalar end column of the full link node.
     pub end_column: usize,
     /// UTF-8 byte range of the full link node.
     pub byte_range: std::ops::Range<usize>,
@@ -46,9 +46,13 @@ pub struct MarkdownImage {
     pub destination: String,
     pub raw_destination: String,
     pub destination_byte_range: std::ops::Range<usize>,
+    /// Inclusive one-based start line of the full image node.
     pub line: usize,
+    /// Inclusive one-based Unicode-scalar start column of the full image node.
     pub start_column: usize,
+    /// Inclusive one-based end line of the full image node.
     pub end_line: usize,
+    /// Inclusive one-based Unicode-scalar end column of the full image node.
     pub end_column: usize,
     pub byte_range: std::ops::Range<usize>,
 }
@@ -64,11 +68,11 @@ pub struct MarkdownInlineCode {
     pub literal_byte_range: std::ops::Range<usize>,
     /// Inclusive one-based start line of the full code span (including backticks).
     pub start_line: usize,
-    /// Inclusive one-based start column of the full code span.
+    /// Inclusive one-based Unicode-scalar start column of the full code span.
     pub start_column: usize,
     /// Inclusive one-based end line of the full code span.
     pub end_line: usize,
-    /// Inclusive one-based end column of the full code span.
+    /// Inclusive one-based Unicode-scalar end column of the full code span.
     pub end_column: usize,
     /// UTF-8 byte range of the full code span including backticks.
     pub byte_range: std::ops::Range<usize>,
@@ -81,9 +85,9 @@ pub struct MarkdownInlineCode {
 pub struct MarkdownProseLine {
     pub line: usize,
     pub text: String,
-    /// Original one-based character columns whose contents were masked because
-    /// they belong to inline code. Consumers that normalize prose can retain a
-    /// stable mask boundary without recovering the code contents.
+    /// Original one-based Unicode-scalar columns whose contents were masked
+    /// because they belong to inline code. Consumers that normalize prose can
+    /// retain a stable mask boundary without recovering the code contents.
     pub masked_inline_code_columns: Vec<RangeInclusive<usize>>,
 }
 
@@ -197,6 +201,11 @@ impl MarkdownDocument {
                     });
                 }
                 NodeValue::Link(link) => {
+                    let Some((start_column, end_column)) =
+                        scalar_columns_for_sourcepos(&content, data.sourcepos)
+                    else {
+                        continue;
+                    };
                     let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
                     let (raw_destination, destination_byte_range) =
                         destination_from_link_span(&content, byte_range.clone(), &link.url);
@@ -205,25 +214,30 @@ impl MarkdownDocument {
                         raw_destination,
                         destination_byte_range,
                         line: data.sourcepos.start.line,
-                        start_column: data.sourcepos.start.column,
+                        start_column,
                         end_line: data.sourcepos.end.line,
-                        end_column: data.sourcepos.end.column,
+                        end_column,
                         byte_range,
                     });
                     link_exclusions.push((
                         data.sourcepos.start.line,
-                        data.sourcepos.start.column,
+                        start_column,
                         data.sourcepos.end.line,
-                        data.sourcepos.end.column,
+                        end_column,
                     ));
                     link_ranges.push((
                         data.sourcepos.start.line,
-                        data.sourcepos.start.column,
+                        start_column,
                         data.sourcepos.end.line,
-                        data.sourcepos.end.column,
+                        end_column,
                     ));
                 }
                 NodeValue::Image(image) => {
+                    let Some((start_column, end_column)) =
+                        scalar_columns_for_sourcepos(&content, data.sourcepos)
+                    else {
+                        continue;
+                    };
                     let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
                     let (raw_destination, destination_byte_range) =
                         destination_from_link_span(&content, byte_range.clone(), &image.url);
@@ -232,16 +246,16 @@ impl MarkdownDocument {
                         raw_destination,
                         destination_byte_range,
                         line: data.sourcepos.start.line,
-                        start_column: data.sourcepos.start.column,
+                        start_column,
                         end_line: data.sourcepos.end.line,
-                        end_column: data.sourcepos.end.column,
+                        end_column,
                         byte_range,
                     });
                     link_exclusions.push((
                         data.sourcepos.start.line,
-                        data.sourcepos.start.column,
+                        start_column,
                         data.sourcepos.end.line,
-                        data.sourcepos.end.column,
+                        end_column,
                     ));
                 }
                 NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) | NodeValue::Alert(_) => {
@@ -253,11 +267,16 @@ impl MarkdownDocument {
                     code_block_lines.extend(lines);
                 }
                 NodeValue::Code(code) => {
+                    let Some((start_column, end_column)) =
+                        scalar_columns_for_sourcepos(&content, data.sourcepos)
+                    else {
+                        continue;
+                    };
                     inline_exclusions.push((
                         data.sourcepos.start.line,
-                        data.sourcepos.start.column,
+                        start_column,
                         data.sourcepos.end.line,
-                        data.sourcepos.end.column,
+                        end_column,
                     ));
                     let byte_range = byte_range_for_sourcepos(&content, data.sourcepos);
                     let (raw_literal, literal_byte_range) = inline_code_literal_from_span(
@@ -270,9 +289,9 @@ impl MarkdownDocument {
                         raw_literal,
                         literal_byte_range,
                         start_line: data.sourcepos.start.line,
-                        start_column: data.sourcepos.start.column,
+                        start_column,
                         end_line: data.sourcepos.end.line,
-                        end_column: data.sourcepos.end.column,
+                        end_column,
                         byte_range,
                         num_backticks: code.num_backticks,
                     });
@@ -850,6 +869,24 @@ fn offset_for_line_column(content: &str, line: usize, column: usize) -> Option<u
     Some(offset)
 }
 
+/// Convert Comrak UTF-8 byte columns to the public one-based Unicode-scalar
+/// columns used by every `MarkdownDocument` consumer.
+fn scalar_columns_for_sourcepos(
+    content: &str,
+    sourcepos: comrak::nodes::Sourcepos,
+) -> Option<(usize, usize)> {
+    Some((
+        scalar_column_for_sourcepos(content, sourcepos.start.line, sourcepos.start.column)?,
+        scalar_column_for_sourcepos(content, sourcepos.end.line, sourcepos.end.column)?,
+    ))
+}
+
+fn scalar_column_for_sourcepos(content: &str, line: usize, column: usize) -> Option<usize> {
+    let offset = offset_for_line_column(content, line, column)?;
+    let line_start = content[..offset].rfind('\n').map_or(0, |index| index + 1);
+    Some(content[line_start..offset].chars().count() + 1)
+}
+
 fn inline_code_literal_from_span(
     content: &str,
     byte_range: std::ops::Range<usize>,
@@ -1092,13 +1129,39 @@ mod tests {
         let content = "\u{e9}\u{2194}\u{1f680} `docs/a.md` then [b](docs/b.md) end\n";
         let doc = MarkdownDocument::parse(content);
         let code = &doc.inline_code()[0];
+        assert_eq!((code.start_column, code.end_column), (5, 15));
         assert_eq!(code.raw_literal, "docs/a.md");
         assert_eq!(&content[code.literal_byte_range.clone()], "docs/a.md");
         assert_eq!(&content[code.byte_range.clone()], "`docs/a.md`");
         let link = &doc.links()[0];
+        assert_eq!((link.start_column, link.end_column), (22, 35));
         assert_eq!(link.raw_destination, "docs/b.md");
         assert_eq!(&content[link.destination_byte_range.clone()], "docs/b.md");
         assert_eq!(&content[link.byte_range.clone()], "[b](docs/b.md)");
+    }
+
+    #[test]
+    fn multibyte_prefixes_do_not_shift_prose_masks_or_mask_metadata() {
+        let source = "\u{e9}\u{2194}\u{1f680} prose `code` and [label](dest) tail\n";
+        let doc = MarkdownDocument::parse_body(source);
+        let prose = &doc.body_prose()[0];
+
+        assert_eq!(
+            prose.text,
+            format!(
+                "\u{e9}\u{2194}\u{1f680} prose {} and [label]({}) tail",
+                " ".repeat(6),
+                " ".repeat(4)
+            )
+        );
+        assert_eq!(prose.masked_inline_code_columns, [11..=16]);
+        assert_eq!(
+            doc.structural_prose()[0].text,
+            format!(
+                "\u{e9}\u{2194}\u{1f680} prose {} and [label](dest) tail",
+                " ".repeat(6)
+            )
+        );
     }
 
     #[test]

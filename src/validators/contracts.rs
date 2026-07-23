@@ -5286,6 +5286,29 @@ See @docs/guide.md for details.
     // ── L004: duplicate-import ──────────────────────────────────────
 
     #[test]
+    fn import_link_exclusions_are_scalar_stable_for_graph_consumers() {
+        let mut start_columns = Vec::new();
+        for prefix in ["", "\u{e9}\u{2194}\u{1f680} "] {
+            let content =
+                format!("{prefix}See [@linked.md](https://example.test), then @docs/live.md.\n");
+            let directives = extract_import_directives(Path::new("CLAUDE.md"), &content);
+            assert_eq!(directives.len(), 1, "{prefix:?}");
+            assert_eq!(
+                directives[0].target.as_deref(),
+                Some(Path::new("docs/live.md"))
+            );
+            start_columns.push(
+                directives[0]
+                    .span
+                    .start()
+                    .column_number()
+                    .expect("import column"),
+            );
+        }
+        assert_eq!(start_columns[1], start_columns[0] + 4);
+    }
+
+    #[test]
     #[serial_test::serial]
     fn l004_flags_duplicate_import_with_dot_slash_normalization() {
         let tmp = tempfile::tempdir().unwrap();
