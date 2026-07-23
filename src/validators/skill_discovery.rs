@@ -63,6 +63,10 @@ impl SkillDiscovery {
             PathBuf::from("skills"),
             PathBuf::from("agents"),
             PathBuf::from("scripts"),
+            // Repository Python packages commonly own subprocess wrappers
+            // without being a Claude component themselves. They are still a
+            // command-bearing source for the shared script-hygiene rules.
+            PathBuf::from("python"),
             PathBuf::from(".github/workflows"),
         ]);
         for path in skill_files_in_dir(Path::new("skills"), true, exclude) {

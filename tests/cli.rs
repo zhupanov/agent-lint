@@ -497,6 +497,45 @@ fn manifest_declared_skill_sources_feed_g002_g003_and_g004_once() {
 }
 
 #[test]
+fn g004_discovers_repository_python_subprocess_callers_with_separate_local_scopes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"python-references","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("scripts")).unwrap();
+    std::fs::write(tmp.path().join("scripts/resolve.sh"), "#!/bin/sh\n").unwrap();
+    std::fs::write(tmp.path().join("scripts/report.sh"), "#!/bin/sh\n").unwrap();
+    let caller = tmp.path().join("python/state/_report.py");
+    std::fs::create_dir_all(caller.parent().unwrap()).unwrap();
+    std::fs::write(
+        caller,
+        concat!(
+            "from pathlib import Path\n",
+            "import subprocess\n\n",
+            "_REPO_ROOT = Path(__file__).resolve().parents[2]\n\n",
+            "def resolve() -> None:\n",
+            "    helper = _REPO_ROOT / \"scripts\" / \"resolve.sh\"\n",
+            "    subprocess.run([str(helper)], check=True)\n\n",
+            "def report() -> None:\n",
+            "    helper = _REPO_ROOT / \"scripts\" / \"report.sh\"\n",
+            "    subprocess.run([str(helper), \"--summary\"], check=True)\n",
+        ),
+    )
+    .unwrap();
+
+    let output = run_in(tmp.path(), &["--format", "json", "--only", "G004", "."]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    assert!(
+        json(&output)["diagnostics"].as_array().unwrap().is_empty(),
+        "both repository Python subprocess references must keep their scripts live"
+    );
+}
+
+#[test]
 fn s006_s007_autofix_cover_manifest_and_root_fallback_skills() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
