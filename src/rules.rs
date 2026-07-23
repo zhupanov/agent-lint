@@ -226,6 +226,21 @@ const CURSOR_SKILL: &[RuleSurfaceSpec] = &[RuleSurfaceSpec {
     modes: BASIC_PLUGIN,
 }];
 
+/// The single canonical ownership record for a mechanical autofix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixKind {
+    HookExecutable,
+    ScriptExecutable,
+    FrontmatterName,
+    EmptyFrontmatterField,
+    DescriptionXml,
+    ConsecutiveBash,
+    BodyBackslashPath,
+    NonHttpsUrl,
+    FrontmatterBackslashPath,
+    PwdAssetPrefix,
+}
+
 #[allow(dead_code)] // Canonical metadata is consumed by repository consistency tests.
 impl RuleApplicability {
     pub const fn documentation_label(self) -> &'static str {
@@ -1413,22 +1428,27 @@ impl LintRule {
             .copied()
     }
 
+    /// Canonical mechanical autofix, if this rule has one.
+    pub const fn fix_kind(self) -> Option<FixKind> {
+        match self {
+            Self::HookNotExecutable => Some(FixKind::HookExecutable),
+            Self::ScriptNotExecutable => Some(FixKind::ScriptExecutable),
+            Self::FrontmatterNameMismatch => Some(FixKind::FrontmatterName),
+            Self::FrontmatterFieldEmpty => Some(FixKind::EmptyFrontmatterField),
+            Self::DescHasXml => Some(FixKind::DescriptionXml),
+            Self::ConsecutiveBash => Some(FixKind::ConsecutiveBash),
+            Self::BackslashPath => Some(FixKind::BodyBackslashPath),
+            Self::NonHttpsUrl => Some(FixKind::NonHttpsUrl),
+            Self::FrontmatterBackslash => Some(FixKind::FrontmatterBackslashPath),
+            Self::PwdInSkill => Some(FixKind::PwdAssetPrefix),
+            _ => None,
+        }
+    }
+
     /// Whether this rule's violations can be automatically fixed by `--autofix`.
     /// Only purely mechanical, unambiguous fixes are classified as auto-fixable.
-    pub fn is_autofixable(self) -> bool {
-        matches!(
-            self,
-            Self::HookNotExecutable
-                | Self::ScriptNotExecutable
-                | Self::FrontmatterNameMismatch
-                | Self::FrontmatterFieldEmpty
-                | Self::DescHasXml
-                | Self::ConsecutiveBash
-                | Self::BackslashPath
-                | Self::NonHttpsUrl
-                | Self::FrontmatterBackslash
-                | Self::PwdInSkill
-        )
+    pub const fn is_autofixable(self) -> bool {
+        self.fix_kind().is_some()
     }
 
     /// Compiled-in default severity. Rules not mentioned in the user's config

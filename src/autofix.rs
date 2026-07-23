@@ -6,7 +6,7 @@ use crate::frontmatter;
 use crate::hook_commands::extract_hook_command_paths;
 use crate::platforms::ValidationTargets;
 use crate::pwd_hygiene::replace_bundled_asset_prefixes;
-use crate::rules::LintRule;
+use crate::rules::{FixKind, LintRule};
 use crate::script_paths::Invocation;
 use crate::traversal;
 use crate::validators::skill_content::security::flagged_http_offsets;
@@ -40,20 +40,20 @@ pub fn apply_fix(
     exclude: &ExcludeSet,
     config: &LintConfig,
 ) -> bool {
-    match rule {
-        LintRule::HookNotExecutable => fix_executability_hooks(mode, config),
-        LintRule::ScriptNotExecutable => fix_executability_scripts(mode, exclude, config),
-        LintRule::FrontmatterNameMismatch => {
-            fix_frontmatter_name_mismatch(mode, targets, exclude, config)
-        }
-        LintRule::FrontmatterFieldEmpty => fix_frontmatter_field_empty(mode, exclude, config),
-        LintRule::DescHasXml => fix_desc_has_xml(mode, exclude, config),
-        LintRule::ConsecutiveBash => fix_consecutive_bash(mode, exclude, config),
-        LintRule::BackslashPath => fix_backslash_path(mode, exclude, config),
-        LintRule::NonHttpsUrl => fix_non_https_url(mode, exclude, config),
-        LintRule::FrontmatterBackslash => fix_frontmatter_backslash(mode, exclude, config),
-        LintRule::PwdInSkill => fix_pwd_in_skill(exclude, config),
-        _ => false,
+    let Some(kind) = rule.fix_kind() else {
+        return false;
+    };
+    match kind {
+        FixKind::HookExecutable => fix_executability_hooks(mode, config),
+        FixKind::ScriptExecutable => fix_executability_scripts(mode, exclude, config),
+        FixKind::FrontmatterName => fix_frontmatter_name_mismatch(mode, targets, exclude, config),
+        FixKind::EmptyFrontmatterField => fix_frontmatter_field_empty(mode, exclude, config),
+        FixKind::DescriptionXml => fix_desc_has_xml(mode, exclude, config),
+        FixKind::ConsecutiveBash => fix_consecutive_bash(mode, exclude, config),
+        FixKind::BodyBackslashPath => fix_backslash_path(mode, exclude, config),
+        FixKind::NonHttpsUrl => fix_non_https_url(mode, exclude, config),
+        FixKind::FrontmatterBackslashPath => fix_frontmatter_backslash(mode, exclude, config),
+        FixKind::PwdAssetPrefix => fix_pwd_in_skill(exclude, config),
     }
 }
 

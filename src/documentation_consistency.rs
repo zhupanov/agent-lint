@@ -1,7 +1,7 @@
-use crate::rules::ALL_RULES;
 use crate::rules::RETIRED_IDENTIFIERS;
+use crate::rules::{ALL_RULES, LintRule};
 use regex::Regex;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 const PACKAGE_MANIFEST: &str = include_str!("../package.json");
@@ -148,9 +148,14 @@ fn validate_rule_summaries(readme: &str, rules_documentation: &str) -> Result<()
 fn validate_autofix_documentation(rules_documentation: &str) -> Result<(), String> {
     let summary = Regex::new(r"Auto-fixable rules \(([0-9]+) of ([0-9]+)\)")
         .expect("autofix summary regex is valid");
-    let captures = summary
-        .captures(rules_documentation)
-        .ok_or_else(|| "docs/rules.md is missing the autofix summary".to_owned())?;
+    let summaries: Vec<_> = summary.captures_iter(rules_documentation).collect();
+    if summaries.len() != 1 {
+        return Err(format!(
+            "docs/rules.md must contain exactly one autofix summary, found {}",
+            summaries.len()
+        ));
+    }
+    let captures = &summaries[0];
     let documented_fixable: usize = captures[1]
         .parse()
         .map_err(|_| "docs/rules.md has an invalid autofix count".to_owned())?;
@@ -159,7 +164,7 @@ fn validate_autofix_documentation(rules_documentation: &str) -> Result<(), Strin
         .map_err(|_| "docs/rules.md has an invalid autofix denominator".to_owned())?;
     let live_fixable: BTreeSet<_> = ALL_RULES
         .iter()
-        .filter(|rule| rule.is_autofixable())
+        .filter(|rule| rule.fix_kind().is_some())
         .map(|rule| rule.code())
         .collect();
     if documented_fixable != live_fixable.len() || documented_total != ALL_RULES.len() {
@@ -170,8 +175,26 @@ fn validate_autofix_documentation(rules_documentation: &str) -> Result<(), Strin
         ));
     }
 
+    if rules_documentation
+        .lines()
+        .filter(|line| *line == "## Auto-Fixable Rules")
+        .count()
+        != 1
+    {
+        return Err("docs/rules.md must contain exactly one Auto-Fixable Rules section".to_owned());
+    }
+    if rules_documentation
+        .lines()
+        .filter(|line| *line == "| Rule | Code | Fix |")
+        .count()
+        != 1
+    {
+        return Err("docs/rules.md must contain exactly one autofix table".to_owned());
+    }
+
     let mut in_table = false;
     let mut documented_codes = BTreeSet::new();
+    let mut documented_names = BTreeSet::new();
     for line in rules_documentation.lines() {
         if line == "| Rule | Code | Fix |" {
             in_table = true;
@@ -187,14 +210,222 @@ fn validate_autofix_documentation(rules_documentation: &str) -> Result<(), Strin
         if cells.len() != 3 {
             return Err(format!("invalid autofix documentation row: {line}"));
         }
+        if cells.iter().any(|cell| cell.is_empty()) {
+            return Err(format!("autofix documentation has an empty cell: {line}"));
+        }
         if !documented_codes.insert(cells[1]) {
             return Err(format!("duplicate autofix documentation for {}", cells[1]));
+        }
+        if !documented_names.insert(cells[0]) {
+            return Err(format!("duplicate autofix documentation for {}", cells[0]));
+        }
+        let rule = LintRule::from_code_or_name(cells[1]).ok_or_else(|| {
+            format!(
+                "autofix documentation names non-live rule code {}",
+                cells[1]
+            )
+        })?;
+        if rule.name() != cells[0] {
+            return Err(format!(
+                "autofix documentation pairs {} with {}, but the canonical name is {}",
+                cells[1],
+                cells[0],
+                rule.name()
+            ));
+        }
+        if rule.fix_kind().is_none() {
+            return Err(format!(
+                "autofix documentation lists non-fixable rule {} ({})",
+                rule.code(),
+                rule.name()
+            ));
         }
     }
     if documented_codes != live_fixable {
         return Err(format!(
             "documented autofix codes {documented_codes:?} differ from registry codes {live_fixable:?}"
         ));
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct DocumentedRule {
+    line_number: usize,
+    name: String,
+    description: String,
+    mode: String,
+    default: String,
+}
+
+fn rule_code_parts(code: &str) -> Option<(&str, u16)> {
+    let digit_start = code
+        .char_indices()
+        .rev()
+        .take_while(|(_, character)| character.is_ascii_digit())
+        .last()
+        .map(|(index, _)| index)?;
+    let (prefix, suffix) = code.split_at(digit_start);
+    if prefix.is_empty()
+        || !prefix
+            .chars()
+            .all(|character| character.is_ascii_uppercase() || character == '-')
+        || suffix.len() != 3
+    {
+        return None;
+    }
+    suffix.parse().ok().map(|number| (prefix, number))
+}
+
+fn documented_rule_rows(documentation: &str) -> Result<HashMap<String, DocumentedRule>, String> {
+    let mut rows = HashMap::new();
+    let mut in_table = false;
+    for (index, line) in documentation.lines().enumerate() {
+        if line == "| Code | Name | Description | Mode | Default |" {
+            in_table = true;
+            continue;
+        }
+        if !in_table || line.starts_with("|---") {
+            continue;
+        }
+        if !line.starts_with('|') {
+            in_table = false;
+            continue;
+        }
+        let cells: Vec<_> = line.trim_matches('|').split('|').map(str::trim).collect();
+        if cells.len() != 5 || cells.iter().any(|cell| cell.is_empty()) {
+            return Err(format!(
+                "docs/rules.md:{}: malformed rule row: {line}",
+                index + 1
+            ));
+        }
+        let (first, last) = cells[0]
+            .split_once('–')
+            .or_else(|| cells[0].split_once("--"))
+            .map_or((cells[0], None), |(first, last)| (first, Some(last)));
+        let (prefix, first_number) = rule_code_parts(first).ok_or_else(|| {
+            format!(
+                "docs/rules.md:{}: invalid rule code {}",
+                index + 1,
+                cells[0]
+            )
+        })?;
+        let last_number = match last {
+            Some(last) => {
+                let (last_prefix, last_number) = rule_code_parts(last).ok_or_else(|| {
+                    format!(
+                        "docs/rules.md:{}: invalid rule code range {}",
+                        index + 1,
+                        cells[0]
+                    )
+                })?;
+                if prefix != last_prefix || first_number > last_number {
+                    return Err(format!(
+                        "docs/rules.md:{}: invalid rule code range {}",
+                        index + 1,
+                        cells[0]
+                    ));
+                }
+                last_number
+            }
+            None => first_number,
+        };
+        let name = cells[1]
+            .strip_prefix('`')
+            .and_then(|name| name.strip_suffix('`'))
+            .unwrap_or(cells[1]);
+        if first_number == last_number && !cells[1].starts_with('`') {
+            return Err(format!(
+                "docs/rules.md:{}: rule name must be backticked",
+                index + 1
+            ));
+        }
+        if first_number != last_number && name != "—" {
+            return Err(format!(
+                "docs/rules.md:{}: range row must use an em dash name",
+                index + 1
+            ));
+        }
+        for number in first_number..=last_number {
+            let code = format!("{prefix}{number:03}");
+            if rows
+                .insert(
+                    code.clone(),
+                    DocumentedRule {
+                        line_number: index + 1,
+                        name: name.into(),
+                        description: cells[2].into(),
+                        mode: cells[3].into(),
+                        default: cells[4].into(),
+                    },
+                )
+                .is_some()
+            {
+                return Err(format!(
+                    "docs/rules.md:{}: duplicate rule code {code}",
+                    index + 1
+                ));
+            }
+        }
+    }
+    Ok(rows)
+}
+
+fn validate_rule_documentation_rows(documentation: &str) -> Result<(), String> {
+    let rows = documented_rule_rows(documentation)?;
+    for rule in ALL_RULES {
+        let row = rows
+            .get(rule.code())
+            .ok_or_else(|| format!("docs/rules.md is missing {}", rule.code()))?;
+        if row.name != "—" && row.name != rule.name() {
+            return Err(format!(
+                "docs/rules.md:{}: {} has name {}, expected {}",
+                row.line_number,
+                rule.code(),
+                row.name,
+                rule.name()
+            ));
+        }
+        if row.description.is_empty() {
+            return Err(format!(
+                "docs/rules.md:{}: {} has an empty description",
+                row.line_number,
+                rule.code()
+            ));
+        }
+        if row.mode != rule.applicability().documentation_label() {
+            return Err(format!(
+                "docs/rules.md:{}: {} has mode {}, expected {}",
+                row.line_number,
+                rule.code(),
+                row.mode,
+                rule.applicability().documentation_label()
+            ));
+        }
+        let expected = match rule.default_severity() {
+            crate::rules::DefaultSeverity::Error => "error",
+            crate::rules::DefaultSeverity::Warning => "warn",
+            crate::rules::DefaultSeverity::Suppressed => "suppressed",
+        };
+        if !matches!(row.default.as_str(), "error" | "warn" | "suppressed")
+            || row.default != expected
+        {
+            return Err(format!(
+                "docs/rules.md:{}: {} has default {}, expected {}",
+                row.line_number,
+                rule.code(),
+                row.default,
+                expected
+            ));
+        }
+    }
+    for (code, row) in rows {
+        if LintRule::from_code_or_name(&code).is_none() {
+            return Err(format!(
+                "docs/rules.md:{}: non-live rule code {code}",
+                row.line_number
+            ));
+        }
     }
     Ok(())
 }
@@ -343,10 +574,70 @@ fn package_version_mismatch_fixture_is_rejected() {
 fn documented_rule_summaries_match_registry() {
     validate_rule_summaries(README, RULES_DOCUMENTATION)
         .expect("public rule summaries must be derived from the registry");
+    validate_rule_documentation_rows(RULES_DOCUMENTATION)
+        .expect("rule table must match the live registry");
     validate_autofix_documentation(RULES_DOCUMENTATION)
         .expect("autofix documentation must match live rule metadata");
     validate_no_retired_rule_references(&current_documentation_files())
         .expect("current rule documentation must not reference retired identities");
+}
+
+#[test]
+fn rule_documentation_rejects_default_and_mode_drift() {
+    let default_drift = RULES_DOCUMENTATION.replacen("| Plugin | error |", "| Plugin | warn |", 1);
+    let mode_drift = RULES_DOCUMENTATION.replacen("| Plugin | error |", "| Always | error |", 1);
+    let default_error = validate_rule_documentation_rows(&default_drift).unwrap_err();
+    let mode_error = validate_rule_documentation_rows(&mode_drift).unwrap_err();
+    assert!(default_error.contains("M001") && default_error.contains("default"));
+    assert!(mode_error.contains("M001") && mode_error.contains("mode"));
+}
+
+#[test]
+fn autofix_documentation_rejects_independent_table_drift() {
+    let cases = [
+        (
+            "code",
+            RULES_DOCUMENTATION.replace(
+                "| hook-not-executable | H005 |",
+                "| hook-not-executable | H006 |",
+            ),
+        ),
+        (
+            "missing row",
+            RULES_DOCUMENTATION.replace(
+                "| hook-not-executable | H005 | `chmod +x` on a directly invoked script |\n",
+                "",
+            ),
+        ),
+        (
+            "extra non-fixable row",
+            RULES_DOCUMENTATION.replace(
+                "| hook-not-executable | H005 | `chmod +x` on a directly invoked script |",
+                "| hook-not-executable | H005 | `chmod +x` on a directly invoked script |\n| plugin-json-missing | M001 | invalid |",
+            ),
+        ),
+        (
+            "duplicate row",
+            RULES_DOCUMENTATION.replace(
+                "| hook-not-executable | H005 | `chmod +x` on a directly invoked script |",
+                "| hook-not-executable | H005 | `chmod +x` on a directly invoked script |\n| hook-not-executable | H005 | duplicate |",
+            ),
+        ),
+        (
+            "numerator",
+            RULES_DOCUMENTATION.replace("(10 of 294)", "(9 of 294)"),
+        ),
+        (
+            "denominator",
+            RULES_DOCUMENTATION.replace("(10 of 294)", "(10 of 293)"),
+        ),
+    ];
+    for (name, documentation) in cases {
+        assert!(
+            validate_autofix_documentation(&documentation).is_err(),
+            "mutation {name} must be rejected"
+        );
+    }
 }
 
 #[test]
