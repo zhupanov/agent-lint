@@ -822,44 +822,32 @@ fn byte_range_for_sourcepos(
     }
 }
 
+/// Byte offset of a Comrak 1-based line and column position.
+///
+/// Comrak sourcepos columns count UTF-8 bytes, not characters (issue #600).
+/// An end position references the final byte of the node's last scalar, so an
+/// offset landing inside a multibyte scalar snaps back to that scalar's first
+/// byte; the caller then widens by the scalar's full width.
 fn offset_for_line_column(content: &str, line: usize, column: usize) -> Option<usize> {
     if line == 0 || column == 0 {
         return None;
     }
-    let mut current_line = 1usize;
     let mut line_start = 0usize;
-    for (offset, ch) in content.char_indices() {
-        if current_line == line {
-            let mut columns = 1usize;
-            for (rel, line_ch) in content[line_start..].char_indices() {
-                if columns == column {
-                    return Some(line_start + rel);
-                }
-                if line_ch == '\n' {
-                    break;
-                }
-                columns += 1;
-            }
-            return None;
-        }
-        if ch == '\n' {
-            current_line += 1;
-            line_start = offset + ch.len_utf8();
-        }
+    for _ in 1..line {
+        line_start += content[line_start..].find('\n')? + 1;
     }
-    if current_line == line {
-        let mut columns = 1usize;
-        for (rel, line_ch) in content[line_start..].char_indices() {
-            if columns == column {
-                return Some(line_start + rel);
-            }
-            if line_ch == '\n' {
-                break;
-            }
-            columns += 1;
-        }
+    let line_end = content[line_start..]
+        .find('\n')
+        .map_or(content.len(), |index| line_start + index);
+    let offset = line_start + (column - 1);
+    if offset > line_end || offset >= content.len() {
+        return None;
     }
-    None
+    let mut offset = offset;
+    while !content.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    Some(offset)
 }
 
 fn inline_code_literal_from_span(
@@ -1095,5 +1083,40 @@ mod tests {
         assert!(lines[1].starts_with("Read "));
         assert!(lines[2].starts_with("The guide says"));
         assert!(!lines[2].contains("FIXME"));
+    }
+
+    #[test]
+    fn sourcepos_byte_ranges_follow_byte_columns_after_multibyte_scalars() {
+        // Comrak sourcepos columns count bytes. Scalars of width 2, 3, and 4
+        // before a node must not shift its extracted range (issue #600).
+        let content = "\u{e9}\u{2194}\u{1f680} `docs/a.md` then [b](docs/b.md) end\n";
+        let doc = MarkdownDocument::parse(content);
+        let code = &doc.inline_code()[0];
+        assert_eq!(code.raw_literal, "docs/a.md");
+        assert_eq!(&content[code.literal_byte_range.clone()], "docs/a.md");
+        assert_eq!(&content[code.byte_range.clone()], "`docs/a.md`");
+        let link = &doc.links()[0];
+        assert_eq!(link.raw_destination, "docs/b.md");
+        assert_eq!(&content[link.destination_byte_range.clone()], "docs/b.md");
+        assert_eq!(&content[link.byte_range.clone()], "[b](docs/b.md)");
+    }
+
+    #[test]
+    fn offset_for_line_column_uses_byte_columns_and_snaps_to_scalar_starts() {
+        let content = "a\u{2194}b\nx\n";
+        // `↔` occupies bytes 1..4; column 2 addresses its first byte.
+        assert_eq!(offset_for_line_column(content, 1, 2), Some(1));
+        // Columns inside the scalar snap back to its first byte, matching
+        // Comrak end positions that reference a scalar's final byte.
+        assert_eq!(offset_for_line_column(content, 1, 3), Some(1));
+        assert_eq!(offset_for_line_column(content, 1, 4), Some(1));
+        assert_eq!(offset_for_line_column(content, 1, 5), Some(4));
+        // The line terminator is addressable; one past it is not.
+        assert_eq!(offset_for_line_column(content, 1, 6), Some(5));
+        assert_eq!(offset_for_line_column(content, 1, 7), None);
+        assert_eq!(offset_for_line_column(content, 2, 1), Some(6));
+        assert_eq!(offset_for_line_column(content, 3, 1), None);
+        assert_eq!(offset_for_line_column(content, 1, 0), None);
+        assert_eq!(offset_for_line_column(content, 0, 1), None);
     }
 }

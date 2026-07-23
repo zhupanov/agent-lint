@@ -292,6 +292,69 @@ fn q002_cli_rejects_descriptive_history_but_accepts_documented_imperatives() {
 }
 
 #[test]
+fn utf8_multibyte_prose_completes_text_and_json_runs_without_panic() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    // Line 1 is the exact reproducer from issue #600; line 3 places the
+    // multibyte scalar before the reference so shifted byte columns would
+    // corrupt the extracted token.
+    std::fs::write(
+        tmp.path().join("AGENTS.md"),
+        "- `docs/issue-anchored-plan.md`: **LIVE** /design \u{2194} /implement wire format, clarification round-trip, and pause pointer\n\nDo it \u{2194} then read `docs/b.md` completely first.\n",
+    )
+    .unwrap();
+
+    let text = run_in(tmp.path(), &["--pedantic", "."]);
+    assert_eq!(text.status.code(), Some(1), "stderr: {}", stderr(&text));
+    assert!(!stderr(&text).contains("panicked"), "{}", stderr(&text));
+    assert!(stderr(&text).contains("`docs/b.md`"), "{}", stderr(&text));
+
+    let machine = run_in(tmp.path(), &["--format", "json", "--pedantic", "."]);
+    assert_eq!(
+        machine.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr(&machine)
+    );
+    let report = json(&machine);
+    let diagnostics = report["diagnostics"].as_array().unwrap();
+    let tokens: Vec<_> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["code"].as_str().unwrap().to_string(),
+                diagnostic["message"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    for code in ["I003", "D005"] {
+        for token in ["docs/issue-anchored-plan.md", "docs/b.md"] {
+            assert!(
+                tokens
+                    .iter()
+                    .any(|(item, message)| item == code && message.contains(token)),
+                "missing {code} for {token}: {tokens:?}"
+            );
+        }
+    }
+
+    // With the referenced files present the same content lints clean in
+    // both output formats.
+    std::fs::create_dir_all(tmp.path().join("docs")).unwrap();
+    std::fs::write(tmp.path().join("docs/issue-anchored-plan.md"), "plan\n").unwrap();
+    std::fs::write(tmp.path().join("docs/b.md"), "b\n").unwrap();
+    let clean = run_in(tmp.path(), &["--pedantic", "."]);
+    assert!(clean.status.success(), "stderr: {}", stderr(&clean));
+    let clean_json = run_in(tmp.path(), &["--format", "json", "--pedantic", "."]);
+    assert!(
+        clean_json.status.success(),
+        "stderr: {}",
+        stderr(&clean_json)
+    );
+    assert_eq!(json(&clean_json)["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
 fn i004_cli_requires_a_real_phrase_separator_and_preserves_mode_and_autofix_behavior() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
