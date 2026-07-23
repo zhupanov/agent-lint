@@ -2,7 +2,7 @@
 name: release-agent-lint
 description: Create and publish an agent-lint release through a version pull request and a manually dispatched release workflow.
 argument-hint: "[--dry-run] [--bump major|minor|patch]"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(date:*), Bash(sleep:*), Bash(head:*), Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Bash(.claude/skills/upgrade-agent-lint/scripts/upgrade-agent-lint.sh:*), Read
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(date:*), Bash(sleep:*), Bash(head:*), Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Read
 disable-model-invocation: true
 ---
 
@@ -103,7 +103,7 @@ MERGE_COMMIT=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
 git merge-base --is-ancestor "$MERGE_COMMIT" origin/main
 ```
 
-## 4. Publish, upgrade, and clean up
+## 4. Publish and clean up
 
 Explicitly dispatch the release workflow from `main`; it creates the immutable
 version tag, GitHub Release, and artifacts. Capture the `origin/main` commit
@@ -147,20 +147,18 @@ REMOTE_MAJOR_OID=$(git rev-parse "v${MAJOR}^{commit}")
 test "$REMOTE_MAJOR_OID" = "$VERSION_OID"
 ```
 
-After the workflow and floating-major promotion succeed, install the published
-release locally through the working-tree helper. Publication is already
-complete at this point, so warn and continue to cleanup if the local install
-fails.
+After the workflow and floating-major promotion succeed, print the following
+exact command for the operator to run in a terminal after the release is
+complete. The operator provides the interactive `sudo` authorization required
+for the local installation:
 
 ```bash
-if ! "$PWD/.claude/skills/upgrade-agent-lint/scripts/upgrade-agent-lint.sh"; then
-  echo "Warning: release succeeded, but the local agent-lint upgrade failed." >&2
-fi
+sudo .claude/skills/upgrade-agent-lint/scripts/upgrade-agent-lint.sh
 ```
 
 Then return to `main`, fast-forward from `origin/main`, and delete the local
-release branch. Report the released version, PR URL, workflow URL, and local
-upgrade result to the operator.
+release branch. Report the released version, PR URL, workflow URL, and the
+manual local-install command to the operator.
 
 ```bash
 git switch main

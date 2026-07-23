@@ -153,5 +153,10 @@ Triggered only by `workflow_dispatch`, normally by the repository-local
 3. **floating-major promotion** -- after the workflow succeeds, moves the
    floating `v4` tag forward so `@v4` action references resolve to the newest
    4.x release
-4. **local upgrade** -- downloads, verifies, and installs the published binary
-   through the repository-private `/upgrade-agent-lint` helper
+4. **local installation or upgrade** -- after publication, the release skill
+   tells the operator to run this command in a terminal, where interactive
+   `sudo` authorization is available:
+
+   ```bash
+   sudo .claude/skills/upgrade-agent-lint/scripts/upgrade-agent-lint.sh
+   ```
