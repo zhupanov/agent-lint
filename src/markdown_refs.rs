@@ -561,6 +561,18 @@ mod tests {
     }
 
     #[test]
+    fn issue_621_arrow_and_cjk_prose_keep_the_owning_clause() {
+        // Bare UTF-8 scalars outside reference nodes must advance the scanner
+        // by a whole scalar. Otherwise the next `line[index..]` panics.
+        let content = "Follow `skills/design/SKILL.md` through 1c\u{2192}1d\u{2192}1e with \u{6f22}\u{5b57} notes.\n";
+        let refs = markdown_references(content);
+        assert_eq!(refs.len(), 1);
+        let clause = refs[0].clause.as_deref().expect("live prose clause");
+        assert!(clause.contains("1c\u{2192}1d\u{2192}1e"), "{clause}");
+        assert!(clause.contains("\u{6f22}\u{5b57}"), "{clause}");
+    }
+
+    #[test]
     fn multibyte_scalars_keep_clause_ranges_on_char_boundaries() {
         // One scalar per UTF-8 width: 1, 2, 3, and 4 bytes.
         for scalar in ["x", "\u{e9}", "\u{2194}", "\u{1f680}"] {
