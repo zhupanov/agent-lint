@@ -153,3 +153,5 @@ Triggered only by `workflow_dispatch`, normally by the repository-local
 3. **floating-major promotion** -- after the workflow succeeds, moves the
    floating `v4` tag forward so `@v4` action references resolve to the newest
    4.x release
+4. **local upgrade** -- downloads, verifies, and installs the published binary
+   through the repository-private `/upgrade-agent-lint` helper
