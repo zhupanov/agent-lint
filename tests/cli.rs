@@ -2394,8 +2394,14 @@ fn list_scripts_uses_the_shared_script_kind_matrix() {
         "extensionless",
         "readme.txt",
     ] {
-        std::fs::write(tmp.path().join("scripts").join(path), "fixture\n").unwrap();
+        let content = if path == "extensionless" {
+            "#!/bin/sh\n"
+        } else {
+            "fixture\n"
+        };
+        std::fs::write(tmp.path().join("scripts").join(path), content).unwrap();
     }
+    std::fs::write(tmp.path().join("scripts/.gitkeep"), "\n").unwrap();
 
     let output = run_in(tmp.path(), &["--list-scripts", "."]);
     assert!(output.status.success(), "stderr: {}", stderr(&output));
