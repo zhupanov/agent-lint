@@ -8236,6 +8236,39 @@ fn l006_cli_flags_fenced_npm_run_with_metadata_and_modes() {
 }
 
 #[test]
+fn l006_multibyte_masking_preserves_text_identity_and_json_scalar_columns() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::write(
+        tmp.path().join("package.json"),
+        r#"{"name":"demo","scripts":{"test":"echo hi"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("CLAUDE.md"),
+        "é↔🚀 Use “é↔🚀” style then npm run missing now.\n",
+    )
+    .unwrap();
+
+    let text = run_in(tmp.path(), &["--only", "L006", "."]);
+    assert!(text.status.success(), "stderr: {}", stderr(&text));
+    assert!(
+        stderr(&text).contains("npm run missing is not defined"),
+        "stderr: {}",
+        stderr(&text)
+    );
+
+    let machine = run_in(tmp.path(), &["--format", "json", "--only", "L006", "."]);
+    assert!(machine.status.success(), "stderr: {}", stderr(&machine));
+    let report = json(&machine);
+    let diagnostic = &report["diagnostics"][0];
+    assert_eq!(diagnostic["location"]["start"]["line"], 1);
+    assert_eq!(diagnostic["location"]["start"]["column"], 34);
+    assert_eq!(diagnostic["location"]["end"]["line"], 1);
+    assert_eq!(diagnostic["location"]["end"]["column"], 41);
+}
+
+#[test]
 fn l006_cli_runs_in_basic_and_plugin_modes() {
     let basic = tempfile::tempdir().unwrap();
     init_git(basic.path());

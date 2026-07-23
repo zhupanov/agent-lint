@@ -516,6 +516,28 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn raw_at_link_exclusions_are_scalar_stable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        fs::create_dir_all("skills/demo").unwrap();
+        fs::write("skills/demo/live.md", "live\n").unwrap();
+        let source_path = Path::new("skills/demo/SKILL.md");
+
+        for prefix in ["", "\u{e9}\u{2194}\u{1f680} "] {
+            let content =
+                format!("{prefix}See [@linked.md](https://example.test), then load @live.md.\n");
+            let refs = markdown_references(source_path, &content);
+            assert_eq!(
+                refs,
+                vec![PathBuf::from("skills/demo/live.md")],
+                "{prefix:?}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn raw_at_hard_negatives_stay_out_of_closure() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
