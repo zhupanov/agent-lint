@@ -168,6 +168,12 @@ validation path again.
   say so explicitly in the rule's documentation instead of implying a
   platform requirement.
 
+### G-Spec-1: Record provenance for external contracts
+
+- Why: platform event names, field vocabularies, schemas, limits, and accepted shapes change independently of Agent Lint, and an unversioned copied table can silently become a false-positive source.
+- Guidance: keep each external vocabulary in one canonical owner and record its authoritative URL or artifact, verification date or version, and a reproducible refresh procedure nearby. Vendored schemas and hand-maintained constant tables follow the same provenance rule. Reverify sibling adapters and fixtures when refreshing a contract.
+- Deviate when: the contract is defined entirely by this repository; identify it as an Agent Lint convention instead of attaching external provenance.
+
 ## Input and filesystem handling
 
 ### G-Parse-1: Preserve missing, invalid, and valid as distinct states
@@ -199,6 +205,30 @@ validation path again.
   and do not echo likely secret values in diagnostics.
 - Deviate when: none for executing linted content. A test fixture may invoke a
   controlled helper that is part of the test itself.
+
+### G-Root-2: Do not expand ambient working-directory dependence
+
+- Why: process working directory is mutable global state, obscures which repository a helper reads, and forces otherwise independent tests to serialize.
+- Guidance: new parsing, discovery, and validation APIs accept an explicit repository root or an explicit repository-relative input. Restrict `set_current_dir` to CLI startup and controlled test infrastructure, and prefer root-carrying types when a path will cross module boundaries.
+- Deviate when: an external library requires ambient current-directory semantics; isolate that call behind a narrow adapter and restore process state with a guard in tests.
+
+### G-I/O-1: Preserve discovery errors when a rule owns them
+
+- Why: silently treating unreadable or malformed owned input as absent can hide the only diagnostic that explains why dependent checks did not run.
+- Guidance: best-effort optional discovery may skip an unreadable candidate only when no rule promises to diagnose that state. When a surface has an invalid-file, unsafe-path, or unreadable-input rule, retain the error or typed rejected state through discovery and report it before skipping dependent semantic checks. Continue with independent siblings.
+- Deviate when: the external contract explicitly treats the input as optional and indistinguishable from absence, and no Agent Lint rule claims that failure state.
+
+### G-Inventory-1: Discover once, then pass inventories
+
+- Why: repeated filesystem discovery lets detection, validation, prompt analysis, overlap analysis, and autofix disagree about which files belong to one runtime surface.
+- Guidance: expose a typed inventory from the owning discovery module and pass or reuse it across consumers. Define normalization, exclusion, symlink, pruning, deduplication, and ordering policy at that boundary. A consumer may derive a documented subset from the inventory but should not repeat the repository walk.
+- Deviate when: the consumer intentionally owns a different external scope, such as upload-size accounting that includes generated directories; name the differing policy and test the boundary.
+
+### G-Order-1: Normalize before deduplication and sorting
+
+- Why: equivalent authored paths and overlapping roots can otherwise produce duplicate findings or platform-dependent order.
+- Guidance: define the semantic identity of each collected item, normalize to that identity before deduplication, and sort before returning a collection across a module boundary. Preserve source order only when source order is itself part of the diagnostic contract, such as duplicate keys or token spans.
+- Deviate when: the collection is internal, single-pass, and never affects externally observable output; keep that locality evident.
 
 ### G-Classify-1: Classify prose by positive grammar, not substring or denylist
 
@@ -279,6 +309,12 @@ validation path again.
   only when ordering matters.
 - Deviate when: the contract is genuinely first-match-only; cite that
   contract in the test.
+
+### G-Test-4: Test contracts by class and axis
+
+- Why: one positive fixture does not protect mode, platform, suppression, exclusion, structured metadata, hard-negative precision, or autofix behavior.
+- Guidance: for a new or materially changed rule family, identify applicable clean, broken, and hard-negative cases and the relevant contract axes: Basic or Plugin mode, strictness, focused selection, platform activation, suppression, exclusion, diagnostic subject and metadata, and autofix or no-autofix. Add the tuples to the checked-in contract matrix when the rule crosses surfaces or policy boundaries.
+- Deviate when: an axis provably cannot affect the rule; leave it out rather than adding a ceremonial fixture, and record the boundary in the test or review notes when it is not obvious.
 
 ## Documentation and enforcement
 
