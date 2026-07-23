@@ -535,6 +535,74 @@ fn g004_discovers_repository_python_subprocess_callers_with_separate_local_scope
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn python_hygiene_only_uses_proven_subprocess_command_edges() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"python-hygiene","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("scripts")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("python/.pytest_cache/v/cache")).unwrap();
+    for path in ["live.sh", "direct.sh", "dead.sh"] {
+        std::fs::write(tmp.path().join("scripts").join(path), "#!/bin/sh\n").unwrap();
+    }
+    std::fs::set_permissions(
+        tmp.path().join("scripts/live.sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("python/cli.py"), "print('cli')\n").unwrap();
+    std::fs::write(
+        tmp.path().join("python/runner.py"),
+        concat!(
+            "from pathlib import Path\n",
+            "import subprocess\n\n",
+            "_REPO_ROOT = Path(__file__).resolve().parents[1]\n",
+            "helper = _REPO_ROOT / \"scripts\" / \"live.sh\"\n",
+            "subprocess.run([str(helper)], check=True)\n",
+            "subprocess.run([\"scripts/direct.sh\"])\n",
+            "subprocess.run([\"scripts/missing.sh\"])\n",
+            "subprocess.run([\"python3\", \"python/cli.py\"])\n\n",
+            "PATTERN = r\"scripts/test-.*\\\\.sh\"\n",
+            "expected_invalid = \"scripts/bad.sh\"\n",
+            "items = [\n    \"scripts/collection.sh\",\n]\n",
+            "record(\"scripts/function-call.sh\")\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("python/.pytest_cache/v/cache/nodeids"),
+        "subprocess.run([\"scripts/cache-only.sh\"])\n",
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "G002,G003,G004", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 3, "diagnostics: {diagnostics:#?}");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "G002"
+            && diagnostic["subject_path"] == "python/runner.py"
+            && diagnostic["evidence"] == "scripts/missing.sh"
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "G003" && diagnostic["subject_path"] == "scripts/direct.sh"
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "G004" && diagnostic["subject_path"] == "scripts/dead.sh"
+    }));
+}
+
 #[test]
 fn s006_s007_autofix_cover_manifest_and_root_fallback_skills() {
     let tmp = tempfile::tempdir().unwrap();

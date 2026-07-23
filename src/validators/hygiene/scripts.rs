@@ -41,6 +41,12 @@ static RE_PYTHON_SUBPROCESS_RUN: LazyLock<Regex> = LazyLock::new(|| {
     )
     .unwrap()
 });
+static RE_PYTHON_SUBPROCESS_LITERAL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)\bsubprocess[[:space:]]*\.[[:space:]]*(?:run|call|check_call|check_output|Popen)[[:space:]]*\([[:space:]]*(?:args[[:space:]]*=[[:space:]]*)?\[",
+    )
+    .unwrap()
+});
 
 pub(super) fn strip_yaml_comments(content: &str) -> String {
     content
@@ -156,16 +162,16 @@ pub(crate) fn collect_references(
                     .map(|reference| (source.clone(), reference)),
             );
         }
-        let fragments = if is_markdown {
+        let fragments = if is_python {
+            // Python has structured execution syntax. Feeding arbitrary
+            // source lines to the shell extractor turns strings, regular
+            // expressions, and fixture data into fictitious commands.
+            Vec::new()
+        } else if is_markdown {
             markdown_command_fragments(&content)
         } else if is_yaml {
             with_context(
                 yaml_command_line_fragments(&strip_yaml_comments(&content)),
-                FragmentContext::Command,
-            )
-        } else if is_python {
-            with_context(
-                python_command_line_fragments(&content),
                 FragmentContext::Command,
             )
         } else {
@@ -192,7 +198,7 @@ pub(crate) fn collect_references(
         // executable candidate rather than giving G004 a private exception.
         if is_python {
             references.extend(
-                python_composed_subprocess_references(&content)
+                python_execution_references(&content)
                     .into_iter()
                     .map(|reference| (source.clone(), reference)),
             );
@@ -216,20 +222,50 @@ pub(crate) fn collect_references(
     references
 }
 
-/// Python files are command-bearing sources, but source text inside comments,
-/// documentation strings, and ordinary assignments is not an invocation.
-/// Preserve actual call expressions for the shared lexical extractor while
-/// reserving assignments for the bounded subprocess recognizer below.
-fn python_command_line_fragments(content: &str) -> Vec<(usize, String)> {
-    let masked = mask_python_non_code(content);
-    content
-        .lines()
-        .zip(masked.lines())
-        .enumerate()
-        .filter(|(_, (_, code))| {
-            !code.trim().is_empty() && RE_PYTHON_ASSIGNMENT.captures(code).is_none()
+/// Extract script references from Python only where bounded execution syntax
+/// proves that the value is an argv element zero. Python source text is not a
+/// shell command surface: strings in tests, regular expressions, assertions,
+/// and ordinary function calls must not reach G002/G003/G004.
+fn python_execution_references(content: &str) -> Vec<ScriptReference> {
+    let code = mask_python_non_code(content);
+    let mut references = python_literal_subprocess_references(content, &code);
+    references.extend(python_composed_subprocess_references_with_code(
+        content, &code,
+    ));
+    references
+}
+
+/// Accept a literal repository script only as the first element of a list
+/// supplied to a supported subprocess API. The code-only view proves the
+/// call shape; the original source supplies the literal value at the same
+/// byte offset after strings and comments have been ruled out.
+fn python_literal_subprocess_references(content: &str, code: &str) -> Vec<ScriptReference> {
+    RE_PYTHON_SUBPROCESS_LITERAL
+        .find_iter(code)
+        .filter_map(|matched| {
+            let start = matched.end();
+            let (literal, _) = parse_python_string_literal(content[start..].trim_start())?;
+            // A bare command name such as `python3` names PATH state, not a
+            // repository file. A filename suffix or a path separator proves
+            // this is a repository-local script candidate.
+            if !literal.contains('/') && Path::new(&literal).extension().is_none() {
+                return None;
+            }
+            let path = crate::script_paths::normalize_repository_path(&literal)?;
+            script_kind(&path)?;
+            let line = content[..matched.start()]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1;
+            Some(ScriptReference {
+                reference: literal,
+                path,
+                base: ScriptReferenceBase::RepositoryRoot,
+                invocation: Invocation::Direct,
+                line,
+            })
         })
-        .map(|(index, (line, _))| (index + 1, line.to_string()))
         .collect()
 }
 
@@ -238,8 +274,10 @@ fn python_command_line_fragments(content: &str) -> Vec<(usize, String)> {
 /// general dataflow: each literal composition is a one-line assignment rooted
 /// at an explicitly root-named anchor, and no assignment-to-assignment flow,
 /// dynamic segment, or alternate argv position is accepted.
-fn python_composed_subprocess_references(content: &str) -> Vec<ScriptReference> {
-    let code = mask_python_non_code(content);
+fn python_composed_subprocess_references_with_code(
+    content: &str,
+    code: &str,
+) -> Vec<ScriptReference> {
     // `Path` is only accepted as the standard library type, not an arbitrary
     // project class with an overloaded `/` operator.
     if !RE_PYTHON_PATH_IMPORT.is_match(&code) {

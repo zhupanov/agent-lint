@@ -170,7 +170,14 @@ fn collect_hygiene_source_files(
         if !safe_existing_dir(root) {
             continue;
         }
-        for entry in traversal::recursive_files(root, Path::new("."), Some(exclude)).entries {
+        for entry in traversal::recursive_files_with_pruning(
+            root,
+            Path::new("."),
+            Some(exclude),
+            traversal::should_descend_without_cache,
+        )
+        .entries
+        {
             if !exclude.is_excluded(&entry.display) {
                 files.insert(entry.path);
             }
