@@ -2543,7 +2543,7 @@ suppress = ["S014"]
 
     #[test]
     #[serial_test::serial]
-    fn test_s030_repository_python_tests_own_only_literal_fixture_assets() {
+    fn test_s030_repository_python_tests_own_only_structured_fixture_assets() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
@@ -2555,6 +2555,12 @@ suppress = ["S014"]
             "skills/my-skill/scripts/fixtures/parse/basic.tsv",
             "skills/my-skill/scripts/fixtures/validate/direct.sh",
             "skills/my-skill/scripts/fixtures/validate/literal.sh",
+            "skills/my-skill/scripts/fixtures/validate/registry-row.sh",
+            "skills/my-skill/scripts/fixtures/validate/plan-command.sh",
+            "skills/my-skill/scripts/fixtures/validate/registry-value.sh",
+            "skills/my-skill/scripts/fixtures/validate/command-argument.sh",
+            "skills/my-skill/scripts/fixtures/validate/prose-only.sh",
+            "skills/my-skill/scripts/fixtures/validate/comment-only.sh",
             "skills/my-skill/scripts/fixtures/unused.json",
             "skills/my-skill/scripts/runtime.sh",
         ] {
@@ -2573,6 +2579,16 @@ FIXTURE_PAIRS = [
 VALIDATE_DIR = REPO_ROOT / "skills" / "my-skill" / "scripts" / "fixtures" / "validate"
 DIRECT_CHILD_FIXTURE = VALIDATE_DIR / "direct.sh"
 DIRECT_LITERAL_FIXTURE = "skills/my-skill/scripts/fixtures/validate/literal.sh"
+REGISTRY_ROWS = [
+    "skills/my-skill/scripts/fixtures/validate/registry-row.sh\tLARCH_DRY_RUN=1\t\n",
+    "LARCH_DRY_RUN=1\tskills/my-skill/scripts/fixtures/validate/registry-value.sh\t\n",
+]
+PLAN = """
+skills/my-skill/scripts/fixtures/validate/plan-command.sh --dry-flag x
+"""
+COMMAND_ARGUMENT = "python3 skills/my-skill/scripts/fixtures/validate/command-argument.sh --dry-flag x"
+# skills/my-skill/scripts/fixtures/validate/comment-only.sh\tLARCH_DRY_RUN=1\t
+PROSE = "The plan invokes skills/my-skill/scripts/fixtures/validate/prose-only.sh --dry-flag x."
 # "skills/my-skill/scripts/fixtures/unused.json" is only an incidental comment.
 INCIDENTAL_RUNTIME_MENTION = "runtime.sh"
 "#,
@@ -2597,6 +2613,10 @@ INCIDENTAL_RUNTIME_MENTION = "runtime.sh"
             subjects,
             [
                 "skills/my-skill/scripts/fixtures/unused.json",
+                "skills/my-skill/scripts/fixtures/validate/command-argument.sh",
+                "skills/my-skill/scripts/fixtures/validate/comment-only.sh",
+                "skills/my-skill/scripts/fixtures/validate/prose-only.sh",
+                "skills/my-skill/scripts/fixtures/validate/registry-value.sh",
                 "skills/my-skill/scripts/runtime.sh",
             ]
         );
