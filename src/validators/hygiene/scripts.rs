@@ -245,8 +245,9 @@ fn python_composed_subprocess_references(content: &str) -> Vec<ScriptReference> 
     if !RE_PYTHON_PATH_IMPORT.is_match(&code) {
         return Vec::new();
     }
+    let line_scopes = python_line_scopes(&code);
     let mut assignments = HashMap::new();
-    for (line, masked_line) in content.lines().zip(code.lines()) {
+    for (line_index, (line, masked_line)) in content.lines().zip(code.lines()).enumerate() {
         // The masked line must itself contain the assignment syntax. This
         // excludes comments and triple-quoted documentation while the
         // original line retains the literal segments for path parsing.
@@ -260,16 +261,19 @@ fn python_composed_subprocess_references(content: &str) -> Vec<ScriptReference> 
             .captures(line)
             .and_then(|captures| captures.get(2))
             .and_then(|expression| parse_python_path_composition(expression.as_str()));
+        let key = (line_scopes[line_index], name.to_string());
         // This recognizer intentionally has no assignment dataflow. A second
-        // assignment can change the value before the call, so it makes the
-        // candidate unprovable rather than selecting either assignment.
-        if assignments.insert(name.to_string(), path).is_some() {
-            assignments.insert(name.to_string(), None);
+        // assignment in the same Python scope can change the value before the
+        // call, so it makes the candidate unprovable rather than selecting
+        // either assignment. Local names in distinct functions are separate
+        // bindings and therefore must not invalidate each other.
+        if assignments.insert(key.clone(), path).is_some() {
+            assignments.insert(key, None);
         }
     }
     let candidates: HashMap<_, _> = assignments
         .into_iter()
-        .filter_map(|(name, path)| path.map(|path| (name, path)))
+        .filter_map(|(key, path)| path.map(|path| (key, path)))
         .collect();
     if candidates.is_empty() {
         return Vec::new();
@@ -281,12 +285,14 @@ fn python_composed_subprocess_references(content: &str) -> Vec<ScriptReference> 
         .captures_iter(&code)
         .filter_map(|captures| {
             let variable = captures.get(1).or_else(|| captures.get(2))?.as_str();
-            let path = candidates.get(variable)?.clone();
             let line = content[..captures.get(0)?.start()]
                 .bytes()
                 .filter(|byte| *byte == b'\n')
                 .count()
                 + 1;
+            let path = candidates
+                .get(&(line_scopes[line - 1], variable.to_string()))?
+                .clone();
             Some(ScriptReference {
                 reference: format!("{variable} (Python Path composition)"),
                 path,
@@ -296,6 +302,41 @@ fn python_composed_subprocess_references(content: &str) -> Vec<ScriptReference> 
             })
         })
         .collect()
+}
+
+/// Return the lexical function/class scope for each source line. Python uses
+/// indentation to delimit these scopes, while ordinary blocks (`if`, `for`,
+/// `with`, and `try`) leave local bindings in the enclosing function scope.
+/// This deliberately small recognizer only supplies the bound needed by the
+/// subprocess analysis; it does not attempt to parse Python expressions.
+fn python_line_scopes(code: &str) -> Vec<usize> {
+    let mut scopes = vec![(0, 0)];
+    let mut next_scope = 1;
+    let mut line_scopes = Vec::new();
+    for line in code.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            line_scopes.push(scopes.last().expect("module scope exists").1);
+            continue;
+        }
+        let indent = line.len() - trimmed.len();
+        while scopes.len() > 1 && indent <= scopes.last().expect("module scope exists").0 {
+            scopes.pop();
+        }
+        line_scopes.push(scopes.last().expect("module scope exists").1);
+        if is_python_scope_declaration(trimmed) {
+            scopes.push((indent, next_scope));
+            next_scope += 1;
+        }
+    }
+    line_scopes
+}
+
+fn is_python_scope_declaration(line: &str) -> bool {
+    line.contains(':')
+        && (line.starts_with("def ")
+            || line.starts_with("async def ")
+            || line.starts_with("class "))
 }
 
 fn parse_python_path_composition(expression: &str) -> Option<PathBuf> {
