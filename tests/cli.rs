@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use regex::Regex;
 use serde_json::Value;
 
 include!(concat!(
@@ -238,6 +239,19 @@ fn text_has_literal_terminal_control(bytes: &[u8]) -> bool {
     bytes
         .iter()
         .any(|byte| byte.is_ascii_control() && *byte != b'\n')
+}
+
+fn terminal_sanitized_message(message: &str) -> String {
+    message
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                character.escape_unicode().to_string()
+            } else {
+                character.to_string()
+            }
+        })
+        .collect()
 }
 
 fn json_has_literal_control_in_string(bytes: &[u8]) -> bool {
@@ -4212,6 +4226,97 @@ root-max-lines = 1
             }
         }
     }
+}
+
+#[test]
+fn text_and_json_render_the_same_classified_diagnostics() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    write_skill(
+        tmp.path(),
+        "invalid_name",
+        "http://current.corp/\u{1b}control",
+    );
+    std::fs::write(
+        tmp.path().join("agent-lint.toml"),
+        "[lint]\nwarn = [\"S031\"]\n",
+    )
+    .unwrap();
+
+    let arguments = ["--only", "S010,S031", "."];
+    let text = run_in(tmp.path(), &arguments);
+    let machine = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "S010,S031", "."],
+    );
+
+    assert_eq!(text.status.code(), Some(1), "stderr: {}", stderr(&text));
+    assert_eq!(machine.status.code(), text.status.code());
+    assert!(text.stdout.is_empty(), "text diagnostics must use stderr");
+
+    let diagnostic_pattern = Regex::new(r"^(error|warning)\[([^/]+)/([^]]+)\]: (.*)$").unwrap();
+    let text_diagnostics: Vec<_> = stderr(&text)
+        .lines()
+        .filter_map(|line| {
+            let diagnostic_prefixed = line.starts_with("error[") || line.starts_with("warning[");
+            let captures = diagnostic_pattern.captures(line);
+            assert!(
+                !diagnostic_prefixed || captures.is_some(),
+                "malformed text diagnostic line: {line}"
+            );
+            captures.map(|captures| {
+                (
+                    captures[1].to_owned(),
+                    captures[2].to_owned(),
+                    captures[3].to_owned(),
+                    captures[4].to_owned(),
+                )
+            })
+        })
+        .collect();
+
+    let report = json(&machine);
+    assert_eq!(report["mode"], "basic");
+    assert_eq!(report["strictness"], "normal");
+    assert_eq!(report["active_platforms"], serde_json::json!(["claude"]));
+    let text_error_count = text_diagnostics
+        .iter()
+        .filter(|(severity, _, _, _)| severity == "error")
+        .count();
+    let text_warning_count = text_diagnostics
+        .iter()
+        .filter(|(severity, _, _, _)| severity == "warning")
+        .count();
+    assert_eq!(text_error_count, 1);
+    assert_eq!(text_warning_count, 1);
+    assert_eq!(
+        report["counts"]["errors"].as_u64(),
+        Some(text_error_count as u64)
+    );
+    assert_eq!(
+        report["counts"]["warnings"].as_u64(),
+        Some(text_warning_count as u64)
+    );
+
+    let json_diagnostics: Vec<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["severity"].as_str().unwrap().to_owned(),
+                diagnostic["code"].as_str().unwrap().to_owned(),
+                diagnostic["name"].as_str().unwrap().to_owned(),
+                terminal_sanitized_message(diagnostic["message"].as_str().unwrap()),
+            )
+        })
+        .collect();
+    assert_eq!(text_diagnostics, json_diagnostics);
+    assert!(
+        text_diagnostics[1].3.contains(r"\u{1b}"),
+        "text renderer must terminal-sanitize control characters: {}",
+        stderr(&text)
+    );
 }
 
 #[test]
