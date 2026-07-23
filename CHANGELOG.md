@@ -49,8 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   positions only (shell fence bodies, `Run`/`Execute` instructions, workflow
   `run` values, new SKILL.md frontmatter `hooks:` commands, Makefiles, and
   supported script files); inline code and prose classify as mentions, data
-  files and `fixtures/` trees are never command surfaces, and non-shell
-  fences (for example `json` examples) are illustrative. Bare `scripts/...`
+  files are never command surfaces, `scripts/fixtures/` trees are excluded
+  symmetrically (never reference sources and never G004 candidates), and
+  non-shell fences (for example `json` examples) are illustrative. Bare `scripts/...`
   paths in skill files resolve against the owning skill directory before the
   repository root, whole-quoted command values with arguments resolve to
   their existing leading command word, Markdown `#anchor` suffixes address

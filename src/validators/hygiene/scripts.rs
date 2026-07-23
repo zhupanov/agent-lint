@@ -107,13 +107,14 @@ pub(crate) fn collect_references(
         .hygiene_source_files;
     let mut references = Vec::new();
     for path in sources {
-        // Fixture trees ship deliberately incomplete example content;
+        // Script fixture trees ship deliberately incomplete example content;
         // references inside them are test data, never production invocations.
-        if is_fixture_source(&path) {
+        if is_script_fixture_path(&path) {
             continue;
         }
         let source = path.to_string_lossy().replace('\\', "/");
-        let is_markdown = source.ends_with(".md");
+        let is_markdown =
+            source.ends_with(".md") || source.ends_with(".markdown") || source.ends_with(".mdx");
         let is_yaml = source.ends_with(".yml") || source.ends_with(".yaml");
         // Only command-bearing kinds are scanned line-wise: supported script
         // files and make include files. Data files (TSV, JSONL, JSON, plain
@@ -292,11 +293,19 @@ fn owning_skill_dir(source: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// Fixture directories hold negative test data whose paths may deliberately
-/// not exist.
-fn is_fixture_source(path: &Path) -> bool {
-    path.components()
-        .any(|component| component.as_os_str() == "fixtures")
+/// A `fixtures` directory directly under a `scripts` directory holds negative
+/// test data whose paths may deliberately not exist (`scripts/fixtures/`,
+/// `skills/x/scripts/fixtures/`). Only that documented script-bundle layout
+/// is excluded — as a reference source and as a G004 candidate — so a skill
+/// or directory merely named `fixtures` keeps normal validation.
+pub(super) fn is_script_fixture_path(path: &Path) -> bool {
+    let components: Vec<_> = path
+        .components()
+        .map(|component| component.as_os_str())
+        .collect();
+    components
+        .windows(2)
+        .any(|pair| pair[0] == "scripts" && pair[1] == "fixtures")
 }
 
 fn with_context(
@@ -394,7 +403,7 @@ fn fence_is_command_surface(info: &str) -> bool {
         .to_ascii_lowercase();
     matches!(
         language.as_str(),
-        "" | "bash" | "sh" | "shell" | "zsh" | "console" | "terminal" | "shellsession"
+        "" | "bash" | "sh" | "shell" | "zsh" | "fish" | "console" | "terminal" | "shellsession"
     )
 }
 

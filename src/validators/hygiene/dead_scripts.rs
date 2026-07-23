@@ -71,8 +71,11 @@ pub fn validate_dead_scripts(
         let display = path.display().to_string();
         // Only the canonical supported script kinds shared with script
         // discovery are reachability candidates; documentation and data files
-        // under scripts/ are inventory, not invocable scripts.
+        // under scripts/ are inventory, not invocable scripts. Script fixture
+        // trees are excluded symmetrically with reference collection: their
+        // content is test data on both sides of the contract.
         if script_kind(&path).is_none()
+            || super::scripts::is_script_fixture_path(&path)
             || exclude.is_excluded(&display)
             || !path.is_file()
             || references.contains(&path)

@@ -1722,4 +1722,160 @@ mod tests {
             Some("scripts/gone-everywhere.sh")
         );
     }
+
+    /// The fixture exclusion is the documented `scripts/fixtures/` layout,
+    /// not a name denylist: a skill legitimately named `fixtures` keeps full
+    /// G002 validation and its invocations keep scripts reachable.
+    #[test]
+    #[serial_test::serial]
+    fn skills_named_fixtures_keep_reference_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/fixtures").unwrap();
+        std::fs::write("scripts/deploy.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/fixtures/SKILL.md",
+            "---\nname: fixtures\ndescription: d\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/deploy.sh\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/absent.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1, "errors: {:?}", diag.errors());
+        assert_eq!(
+            diag.diagnostics()[0].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/absent.sh")
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "an invocation from skills/fixtures/ keeps scripts/deploy.sh live: {:?}",
+            dead.errors()
+        );
+    }
+
+    /// Script fixture trees are excluded symmetrically: never reference
+    /// sources (a missing path inside one is not a G002) and never
+    /// dead-script candidates (fixture helpers referenced only from fixture
+    /// content are not G004).
+    #[test]
+    #[serial_test::serial]
+    fn script_fixture_trees_are_neither_sources_nor_dead_candidates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts/fixtures").unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write(
+            "scripts/fixtures/runner.sh",
+            "#!/bin/sh\nbash scripts/fixtures/helper.sh\nbash scripts/fixtures/gone.sh\n",
+        )
+        .unwrap();
+        std::fs::write("scripts/fixtures/helper.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: d\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/fixtures/runner.sh\n",
+        )
+        .unwrap();
+
+        let mut references = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut references, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            references.error_count(),
+            0,
+            "fixture-internal references are test data, not G002 sources: {:?}",
+            references.errors()
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "fixture helpers are not dead-script candidates: {:?}",
+            dead.errors()
+        );
+    }
+
+    /// Fence-language grammar matches the interpreter vocabulary: a `fish`
+    /// fence is a command surface, while a near-miss data language stays
+    /// illustrative.
+    #[test]
+    #[serial_test::serial]
+    fn fish_fences_are_command_surfaces_and_json_fences_are_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write("scripts/fishy.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            concat!(
+                "---\nname: demo\ndescription: d\n---\n",
+                "```fish\n",
+                "scripts/fishy.sh --run\n",
+                "${CLAUDE_PLUGIN_ROOT}/scripts/fish-missing.sh\n",
+                "```\n",
+                "```json\n",
+                "{\"path\": \"${CLAUDE_PLUGIN_ROOT}/scripts/json-missing.sh\"}\n",
+                "```\n",
+            ),
+        )
+        .unwrap();
+
+        let mut references = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut references, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            references.error_count(),
+            1,
+            "errors: {:?}",
+            references.errors()
+        );
+        assert_eq!(
+            references.diagnostics()[0].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/fish-missing.sh")
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "a fish-fence invocation keeps scripts/fishy.sh live: {:?}",
+            dead.errors()
+        );
+    }
+
+    /// Markdown extension variants are Markdown command surfaces, not
+    /// line-scanned shell content.
+    #[test]
+    #[serial_test::serial]
+    fn markdown_variant_sources_are_markdown_surfaces() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write(
+            "skills/demo/notes.markdown",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/variant-missing.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1, "errors: {:?}", diag.errors());
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new("skills/demo/notes.markdown"))
+        );
+    }
 }
