@@ -2,6 +2,11 @@
 //!
 //! This is deliberately lexical: a reference may not escape the repository,
 //! but symlink targets are left to the filesystem operation that consumes it.
+//!
+//! [`ScriptReference`] and [`script_kind`] are the typed candidate contract
+//! shared by the script rules (G002/G003/G004), `--list-scripts`, and the
+//! hook command rules. The [`Invocation`] classified at parse time travels
+//! with the reference; consumers never re-derive it from a normalized path.
 
 use regex::Regex;
 use std::path::{Component, Path, PathBuf};
@@ -9,6 +14,14 @@ use std::sync::LazyLock;
 
 static ASSIGNMENT_WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*=").unwrap());
+
+/// Interpreter command words that launch their script operand. Shared by the
+/// leading-command classification and the adjacency rule so wrapper commands
+/// (`timeout 5 bash x.sh`, `cli.py timing -- bash x.sh`) classify the same
+/// way as a leading interpreter.
+const INTERPRETER_WORDS: &[&str] = &[
+    "bash", "sh", "zsh", "fish", "python", "python3", "node", "ruby", "perl",
+];
 
 /// The file kinds shared by script discovery and the hygiene and portability
 /// rules.  Match full filename suffixes because `Path::extension` cannot
@@ -81,13 +94,30 @@ impl ScriptReference {
             Some("sh") | Some("py")
         )
     }
+
+    /// True when the resolved path still contains an unexpanded shell
+    /// variable (`$ROOT/scripts/x.sh`, `scans-$SKILL.tsv`) or an angle-bracket
+    /// `<placeholder>`. No exact repository file can be proven for such a
+    /// reference, so path-existence rules treat it as non-actionable.
+    pub(crate) fn has_unresolved_placeholder(&self) -> bool {
+        let path = self.path.to_string_lossy();
+        path.contains('$') || path.contains('<') || path.contains('>')
+    }
+
+    /// True when the reference is anchored to the runtime working directory
+    /// (`$PWD/...`) rather than a documented plugin or project root
+    /// placeholder. A `$PWD` path names runtime state; only an actual
+    /// invocation proves it must exist inside the linted repository.
+    pub(crate) fn is_pwd_rooted(&self) -> bool {
+        self.reference.starts_with("$PWD/") || self.reference.starts_with("\"$PWD/")
+    }
 }
 
 /// Extract root-qualified script paths from a command-like fragment.  The
 /// caller decides which repository surfaces are command-like; this function
 /// never scans arbitrary prose on its own.
 pub(crate) fn extract_command_references(command: &str, line: usize) -> Vec<ScriptReference> {
-    extract_references(command, line, false)
+    extract_references(command, line, false, Invocation::Direct)
 }
 
 /// As [`extract_command_references`], retaining the byte span of each
@@ -119,26 +149,40 @@ pub(crate) fn extract_instruction_command_references(
     command: &str,
     line: usize,
 ) -> Vec<ScriptReference> {
-    extract_references(command, line, true)
+    extract_references(command, line, true, Invocation::Direct)
+}
+
+/// As [`extract_instruction_command_references`], for illustrative prose
+/// positions such as Markdown inline code. A reference there is a mention
+/// unless explicit invocation grammar (a marker, interpreter, `source`, or
+/// `env`) precedes it; a bare path illustrates a file without executing it.
+pub(crate) fn extract_prose_command_references(command: &str, line: usize) -> Vec<ScriptReference> {
+    extract_references(command, line, true, Invocation::Mention)
 }
 
 fn extract_references(
     command: &str,
     line: usize,
     supports_instruction_markers: bool,
+    bare_invocation: Invocation,
 ) -> Vec<ScriptReference> {
     let mut references = Vec::new();
     let mut offset = 0;
     while let Some((reference, path, start, end)) = next_reference(command, offset) {
         offset = end;
-        let Some(path) = normalize_repository_path(&path) else {
+        let Some(path) = normalize_repository_path(strip_markdown_anchor(&path)) else {
             // Keep an escaping root-qualified reference so G002 can explain
             // that it is unresolvable, without ever probing outside the root.
             references.push(ScriptReference {
                 reference,
                 path: PathBuf::new(),
                 base: ScriptReferenceBase::RepositoryRoot,
-                invocation: invocation_for(command, start, supports_instruction_markers),
+                invocation: invocation_for(
+                    command,
+                    start,
+                    supports_instruction_markers,
+                    bare_invocation,
+                ),
                 line,
             });
             continue;
@@ -147,7 +191,12 @@ fn extract_references(
             reference,
             path,
             base: ScriptReferenceBase::RepositoryRoot,
-            invocation: invocation_for(command, start, supports_instruction_markers),
+            invocation: invocation_for(
+                command,
+                start,
+                supports_instruction_markers,
+                bare_invocation,
+            ),
             line,
         });
     }
@@ -158,6 +207,23 @@ fn extract_references(
 /// shell-to-shell calls. This is kept beside root extraction so every script
 /// rule gets the same lexical safety boundary.
 pub(crate) fn extract_bare_script_references(command: &str, line: usize) -> Vec<ScriptReference> {
+    extract_bare_references(command, line, Invocation::Direct)
+}
+
+/// As [`extract_bare_script_references`], for illustrative prose positions.
+/// See [`extract_prose_command_references`] for the mention semantics.
+pub(crate) fn extract_prose_bare_script_references(
+    command: &str,
+    line: usize,
+) -> Vec<ScriptReference> {
+    extract_bare_references(command, line, Invocation::Mention)
+}
+
+fn extract_bare_references(
+    command: &str,
+    line: usize,
+    bare_invocation: Invocation,
+) -> Vec<ScriptReference> {
     let mut references = Vec::new();
     let mut start = 0;
     while start < command.len() {
@@ -172,13 +238,13 @@ pub(crate) fn extract_bare_script_references(command: &str, line: usize) -> Vec<
         let relative = reference.strip_prefix("./").unwrap_or(reference);
         if next_reference(reference, 0).is_none()
             && (relative.starts_with("scripts/") || relative.contains("/scripts/"))
-            && let Some(path) = normalize_repository_path(relative)
+            && let Some(path) = normalize_repository_path(strip_markdown_anchor(relative))
         {
             references.push(ScriptReference {
                 reference: reference.to_string(),
                 path,
                 base: ScriptReferenceBase::Relative,
-                invocation: invocation_for(command, start, false),
+                invocation: invocation_for(command, start, false, bare_invocation),
                 line,
             });
         }
@@ -187,6 +253,16 @@ pub(crate) fn extract_bare_script_references(command: &str, line: usize) -> Vec<
         });
     }
     references
+}
+
+/// Truncate a Markdown anchor suffix (`docs/guide.md#section`) to the file it
+/// addresses. The fragment is a documentation addressing form, never part of
+/// the on-disk path; the authored reference text is preserved for evidence.
+fn strip_markdown_anchor(raw: &str) -> &str {
+    match raw.find(".md#") {
+        Some(index) => &raw[..index + ".md".len()],
+        None => raw,
+    }
 }
 
 /// Extract the normalized shipped-script reference represented by one shell
@@ -312,6 +388,7 @@ fn invocation_for(
     command: &str,
     reference_start: usize,
     supports_instruction_markers: bool,
+    bare_invocation: Invocation,
 ) -> Invocation {
     let segment_start = command[..reference_start]
         .rfind([';', '|', '&', '\n'])
@@ -349,10 +426,12 @@ fn invocation_for(
     // Markdown command instructions and GitHub Actions `run:` values are
     // command surfaces for G002/G003. Their lexical marker is not a shell
     // executable, so discard it before classifying the actual command word.
+    let mut explicit_marker = false;
     if supports_instruction_markers
         && (matches!(words.first(), Some(&"Run" | &"Execute" | &"run:"))
             || matches!(words.as_slice(), ["-", "run:", ..]))
     {
+        explicit_marker = true;
         words.remove(0);
         if words.first() == Some(&"run:") {
             words.remove(0);
@@ -365,8 +444,28 @@ fn invocation_for(
         }
     }
     let Some(command_word) = words.first().copied() else {
-        return Invocation::Direct;
+        // A reference in bare command position is a direct execution only
+        // where the surface itself is executable (fences, workflows, shell);
+        // an explicit `Run`/`run:` marker proves it on any surface.
+        return if explicit_marker {
+            Invocation::Direct
+        } else {
+            bare_invocation
+        };
     };
+
+    // An interpreter word immediately before the reference launches it even
+    // when a wrapper command precedes (`timeout 5 bash x.sh`,
+    // `cli.py timing harness-mark -- bash x.sh`). The leading-word branch
+    // below still owns flag and `-c`/`-m` operand handling for the plain
+    // `interpreter [flags] script` shape.
+    if words.len() > 1
+        && words
+            .last()
+            .is_some_and(|word| INTERPRETER_WORDS.contains(word))
+    {
+        return Invocation::Interpreter;
+    }
 
     if command_word == "env" {
         words.remove(0);
@@ -398,10 +497,7 @@ fn invocation_for(
         };
     }
 
-    if matches!(
-        command_word,
-        "bash" | "sh" | "zsh" | "fish" | "python" | "python3" | "node" | "ruby" | "perl"
-    ) {
+    if INTERPRETER_WORDS.contains(&command_word) {
         // These interpreter options consume their following token as source
         // text or a module name, never as a script filename. Treat a
         // root-qualified value there as data rather than guessing.
@@ -560,6 +656,87 @@ mod tests {
             )[0]
             .invocation,
             Invocation::Direct
+        );
+    }
+
+    #[test]
+    fn prose_positions_classify_bare_paths_as_mentions() {
+        // A path alone in prose (inline code) illustrates a file.
+        assert_eq!(
+            extract_prose_command_references("${CLAUDE_PLUGIN_ROOT}/docs/guide.md", 1)[0]
+                .invocation,
+            Invocation::Mention
+        );
+        // Trailing words do not prove an invocation either.
+        assert_eq!(
+            extract_prose_command_references("${CLAUDE_PLUGIN_ROOT}/python/cli.py redact", 1)[0]
+                .invocation,
+            Invocation::Mention
+        );
+        assert_eq!(
+            extract_prose_bare_script_references("scripts/check.sh", 1)[0].invocation,
+            Invocation::Mention
+        );
+        // Explicit grammar still upgrades a prose reference.
+        assert_eq!(
+            extract_prose_command_references("Run ${CLAUDE_PLUGIN_ROOT}/scripts/doc.sh", 1)[0]
+                .invocation,
+            Invocation::Direct
+        );
+        assert_eq!(
+            extract_prose_command_references("python3 ${CLAUDE_PLUGIN_ROOT}/scripts/x.py", 1)[0]
+                .invocation,
+            Invocation::Interpreter
+        );
+        assert_eq!(
+            extract_prose_bare_script_references("bash scripts/check.sh", 1)[0].invocation,
+            Invocation::Interpreter
+        );
+        // Command positions keep classifying the same shapes as executions.
+        assert_eq!(
+            extract_instruction_command_references("${CLAUDE_PLUGIN_ROOT}/scripts/x.sh", 1)[0]
+                .invocation,
+            Invocation::Direct
+        );
+        assert_eq!(
+            extract_bare_script_references("scripts/check.sh --flag", 1)[0].invocation,
+            Invocation::Direct
+        );
+    }
+
+    #[test]
+    fn markdown_anchor_suffixes_resolve_to_the_addressed_file() {
+        let refs = extract_prose_command_references(
+            "${CLAUDE_PLUGIN_ROOT}/skills/shared/guide.md#anti-halt",
+            3,
+        );
+        assert_eq!(refs[0].path, PathBuf::from("skills/shared/guide.md"));
+        assert_eq!(
+            refs[0].reference,
+            "${CLAUDE_PLUGIN_ROOT}/skills/shared/guide.md#anti-halt"
+        );
+        let bare = extract_bare_script_references("scripts/notes.md#usage", 3);
+        assert_eq!(bare[0].path, PathBuf::from("scripts/notes.md"));
+    }
+
+    #[test]
+    fn placeholder_and_pwd_classifications_are_reference_owned() {
+        let variable = &extract_bare_script_references("$ROOT/scripts/check.sh", 1)[0];
+        assert!(variable.has_unresolved_placeholder());
+        let placeholder =
+            &extract_command_references("\"${CLAUDE_PLUGIN_ROOT}/skills/<name>\"", 1)[0];
+        assert!(placeholder.has_unresolved_placeholder());
+        let plain = &extract_command_references("${CLAUDE_PLUGIN_ROOT}/scripts/plain.sh", 1)[0];
+        assert!(!plain.has_unresolved_placeholder());
+
+        assert!(extract_command_references("$PWD/scripts/x.sh", 1)[0].is_pwd_rooted());
+        assert!(extract_command_references("\"$PWD/scripts/x.sh\"", 1)[0].is_pwd_rooted());
+        assert!(!plain.is_pwd_rooted());
+        // The placeholder-default prefix embeds $PWD but stays root-anchored.
+        assert!(
+            !extract_command_references("${CLAUDE_PLUGIN_ROOT_PLACEHOLDER:-$PWD}/scripts/x.sh", 1)
+                [0]
+            .is_pwd_rooted()
         );
     }
 

@@ -235,6 +235,21 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_adjacent_interpreters_classify_hook_operands() {
+        // The interpreter word immediately before the operand launches it even
+        // behind a wrapper (`timeout`, `env`); H004 checks such operands exist
+        // while H005 still requires no execute bit for them.
+        let value = json!({"hooks": [{"command": "timeout 5 bash ${CLAUDE_PLUGIN_ROOT}/hooks/guard.sh; env bash ${CLAUDE_PLUGIN_ROOT}/hooks/second.sh"}]});
+        assert_eq!(
+            extract_hook_command_paths(&value, None)
+                .into_iter()
+                .map(|path| path.invocation)
+                .collect::<Vec<_>>(),
+            vec![Invocation::Interpreter, Invocation::Interpreter]
+        );
+    }
+
+    #[test]
     fn retains_invocation_state_for_hook_consumers() {
         let value = json!({"hooks": [{"command": "${CLAUDE_PLUGIN_ROOT}/scripts/direct; python3 ${CLAUDE_PLUGIN_ROOT}/scripts/interpreted.py; source ${CLAUDE_PLUGIN_ROOT}/scripts/library.sh; echo ${CLAUDE_PLUGIN_ROOT}/output.json"}]});
         assert_eq!(

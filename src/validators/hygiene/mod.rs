@@ -1431,4 +1431,451 @@ mod tests {
             Some(crate::unfinished_work::UNFINISHED_WORK_SUGGESTION)
         );
     }
+
+    /// The G002 false-positive class table (#601): every non-actionable class
+    /// stays clean while true stale pointers keep exact rule ownership and
+    /// source metadata. The second true control is a prose mention, matching
+    /// the stale-pointer shape the rule must keep detecting.
+    #[test]
+    #[serial_test::serial]
+    fn g002_non_actionable_classes_stay_clean_and_stale_pointers_remain() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/demo/scripts/fixtures").unwrap();
+        std::fs::write("scripts/real.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write("scripts/args.py", "print('ok')\n").unwrap();
+        std::fs::write("skills/demo/guide.md", "# Guide\n").unwrap();
+        std::fs::write("skills/demo/scripts/local-note.md", "# Local\n").unwrap();
+        // A fixture source and a data source each carry a reference that would
+        // be a missing-path error if they were treated as command surfaces.
+        std::fs::write(
+            "skills/demo/scripts/fixtures/case.md",
+            "```bash\nscripts/fixture-missing.sh --flag\n```\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/demo/scripts/table.tsv",
+            "row_type\tscript_path\nnew_script\tscripts/tsv-missing.sh\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            concat!(
+                "---\n",                                                         // 1
+                "name: demo\n",                                                  // 2
+                "description: Exercises script reference classes\n",             // 3
+                "---\n",                                                         // 4
+                "`scripts/local-note.md` documents the local layout.\n",         // 5
+                "```bash\n",                                                     // 6
+                "HOOK=\"$REPO_ROOT/scripts/real.sh\"\n",                         // 7
+                "test -d \"${CLAUDE_PLUGIN_ROOT}/skills/<name>\"\n",             // 8
+                "RUNNER=\"${CLAUDE_PLUGIN_ROOT}/scripts/args.py build fast\"\n", // 9
+                "OUT=\"$PWD/target/release/tool\"\n",                            // 10
+                "```\n",                                                         // 11
+                "See `${CLAUDE_PLUGIN_ROOT}/skills/demo/guide.md#usage` too.\n", // 12
+                "```json\n",                                                     // 13
+                "{\"tests\": [\"scripts/example-only.sh\"]}\n",                  // 14
+                "```\n",                                                         // 15
+                "Run ${CLAUDE_PLUGIN_ROOT}/scripts/real.sh\n",                   // 16
+                "Mention `${CLAUDE_PLUGIN_ROOT}/python/retired.py` here.\n",     // 17
+                "Run ${CLAUDE_PLUGIN_ROOT}/scripts/phantom.sh\n",                // 18
+            ),
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        let findings = diag.diagnostics();
+        assert_eq!(findings.len(), 2, "diagnostics: {findings:#?}");
+        for finding in findings {
+            assert_eq!(finding.rule, crate::rules::LintRule::ScriptRefMissing);
+            assert_eq!(
+                finding.subject_path.as_deref(),
+                Some(std::path::Path::new("skills/demo/SKILL.md"))
+            );
+        }
+        assert_eq!(
+            findings[0].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/python/retired.py")
+        );
+        assert_eq!(
+            findings[0].location,
+            Some(crate::diagnostic::SourceSpan::line(17))
+        );
+        assert_eq!(
+            findings[1].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/phantom.sh")
+        );
+        assert_eq!(
+            findings[1].location,
+            Some(crate::diagnostic::SourceSpan::line(18))
+        );
+    }
+
+    /// The G003 contract table (#601): only a direct invocation of a
+    /// supported script kind requires the execute bit. Prose mentions,
+    /// interpreter operands (including wrapper `-- bash` adjacency), sourced
+    /// libraries, and data or documentation targets stay clean.
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn g003_requires_direct_supported_scripts_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write("scripts/notes.md", "# Notes\n").unwrap();
+        std::fs::write("scripts/table.tsv", "a\tb\n").unwrap();
+        for path in [
+            "scripts/direct.sh",
+            "scripts/interp.py",
+            "scripts/lib.sh",
+            "scripts/wrapped.sh",
+            "scripts/prose.py",
+        ] {
+            std::fs::write(path, "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            concat!(
+                "---\nname: demo\ndescription: G003 contract table\n---\n",
+                "```bash\n",
+                "${CLAUDE_PLUGIN_ROOT}/scripts/direct.sh\n",
+                "${CLAUDE_PLUGIN_ROOT}/scripts/notes.md\n",
+                "${CLAUDE_PLUGIN_ROOT}/scripts/table.tsv\n",
+                "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/interp.py\n",
+                "source ${CLAUDE_PLUGIN_ROOT}/scripts/lib.sh\n",
+                "python3 python/cli.py timing harness -- bash scripts/wrapped.sh\n",
+                "```\n",
+                "The `${CLAUDE_PLUGIN_ROOT}/scripts/prose.py` helper is documented.\n",
+            ),
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_executability(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1, "errors: {:?}", diag.errors());
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new("scripts/direct.sh"))
+        );
+        assert_eq!(
+            diag.diagnostics()[0].rule,
+            crate::rules::LintRule::ScriptNotExecutable
+        );
+    }
+
+    /// The G004 candidate table (#601): the reachability walk shares the
+    /// canonical script-kind predicate with script discovery, so
+    /// documentation and data inventory under scripts/ is never a dead-script
+    /// candidate while an unreferenced supported script still is.
+    #[test]
+    #[serial_test::serial]
+    fn g004_candidates_are_limited_to_supported_script_kinds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write("scripts/dead.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write("scripts/live.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write("scripts/wrapper-live.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write("scripts/notes.md", "# Inventory notes\n").unwrap();
+        std::fs::write("scripts/table.tsv", "a\tb\n").unwrap();
+        std::fs::write("scripts/events.jsonl", "{}\n").unwrap();
+        std::fs::write("scripts/plain.txt", "text\n").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: d\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/live.sh\n",
+        )
+        .unwrap();
+        // Wrapper CLIs hand the harness to an adjacent interpreter word; that
+        // stays a live invocation even though the wrapper leads the command.
+        std::fs::write(
+            "Makefile",
+            "lint:\n\tpython3 python/cli.py timing harness -- bash scripts/wrapper-live.sh\n",
+        )
+        .unwrap();
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1, "errors: {:?}", diag.errors());
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new("scripts/dead.sh"))
+        );
+        assert_eq!(
+            diag.diagnostics()[0].rule,
+            crate::rules::LintRule::DeadScript
+        );
+    }
+
+    /// Skill frontmatter `hooks:` commands are a documented runtime surface:
+    /// the referenced script stays reachable for G004, and a missing command
+    /// (declared second, after a valid one) is a G002 stale pointer located
+    /// at the declaring frontmatter line.
+    #[test]
+    #[serial_test::serial]
+    fn skill_frontmatter_hooks_are_invocation_references() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/guard").unwrap();
+        std::fs::write("scripts/deny.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/guard/SKILL.md",
+            concat!(
+                "---\n",
+                "name: guard\n",
+                "description: Frontmatter hook coverage\n",
+                "hooks:\n",
+                "  PreToolUse:\n",
+                "    - matcher: \"Edit|Write\"\n",
+                "      hooks:\n",
+                "        - type: command\n",
+                "          command: \"${CLAUDE_PLUGIN_ROOT}/scripts/deny.sh guard\"\n",
+                "        - type: command\n",
+                "          command: \"${CLAUDE_PLUGIN_ROOT}/scripts/gone.sh guard\"\n",
+                "---\n",
+                "Body prose.\n",
+            ),
+        )
+        .unwrap();
+
+        let mut references = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut references, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            references.error_count(),
+            1,
+            "errors: {:?}",
+            references.errors()
+        );
+        let finding = &references.diagnostics()[0];
+        assert_eq!(finding.rule, crate::rules::LintRule::ScriptRefMissing);
+        assert_eq!(
+            finding.subject_path.as_deref(),
+            Some(std::path::Path::new("skills/guard/SKILL.md"))
+        );
+        assert_eq!(
+            finding.evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/gone.sh")
+        );
+        assert_eq!(
+            finding.location,
+            Some(crate::diagnostic::SourceSpan::line(4)),
+            "the finding anchors on the declaring hooks: line"
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "frontmatter hook invocation keeps scripts/deny.sh live: {:?}",
+            dead.errors()
+        );
+    }
+
+    /// Skill files address bundled resources relative to the skill directory;
+    /// the same spelling still resolves at the repository root elsewhere, and
+    /// a path missing at both bases stays a G002.
+    #[test]
+    #[serial_test::serial]
+    fn skill_relative_script_paths_resolve_against_the_owning_skill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all(".claude/skills/private/scripts").unwrap();
+        std::fs::create_dir_all("skills/demo/scripts").unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::write("scripts/root-tool.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write("skills/demo/scripts/local.py", "print('ok')\n").unwrap();
+        std::fs::write(
+            ".claude/skills/private/scripts/rebalance.md",
+            "# Contract\n",
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: d\n---\nUse `scripts/local.py` and `scripts/root-tool.sh` and `scripts/gone-everywhere.sh`.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ".claude/skills/private/SKILL.md",
+            "---\nname: private\ndescription: d\n---\nKeep `scripts/rebalance.md` aligned.\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1, "errors: {:?}", diag.errors());
+        assert_eq!(
+            diag.diagnostics()[0].evidence.as_deref(),
+            Some("scripts/gone-everywhere.sh")
+        );
+    }
+
+    /// The fixture exclusion is the documented `scripts/fixtures/` layout,
+    /// not a name denylist: a skill legitimately named `fixtures` keeps full
+    /// G002 validation and its invocations keep scripts reachable.
+    #[test]
+    #[serial_test::serial]
+    fn skills_named_fixtures_keep_reference_validation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/fixtures").unwrap();
+        std::fs::write("scripts/deploy.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/fixtures/SKILL.md",
+            "---\nname: fixtures\ndescription: d\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/deploy.sh\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/absent.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1, "errors: {:?}", diag.errors());
+        assert_eq!(
+            diag.diagnostics()[0].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/absent.sh")
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "an invocation from skills/fixtures/ keeps scripts/deploy.sh live: {:?}",
+            dead.errors()
+        );
+    }
+
+    /// Script fixture trees are excluded symmetrically: never reference
+    /// sources (a missing path inside one is not a G002) and never
+    /// dead-script candidates (fixture helpers referenced only from fixture
+    /// content are not G004).
+    #[test]
+    #[serial_test::serial]
+    fn script_fixture_trees_are_neither_sources_nor_dead_candidates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts/fixtures").unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write(
+            "scripts/fixtures/runner.sh",
+            "#!/bin/sh\nbash scripts/fixtures/helper.sh\nbash scripts/fixtures/gone.sh\n",
+        )
+        .unwrap();
+        std::fs::write("scripts/fixtures/helper.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: d\n---\nRun ${CLAUDE_PLUGIN_ROOT}/scripts/fixtures/runner.sh\n",
+        )
+        .unwrap();
+
+        let mut references = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut references, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            references.error_count(),
+            0,
+            "fixture-internal references are test data, not G002 sources: {:?}",
+            references.errors()
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "fixture helpers are not dead-script candidates: {:?}",
+            dead.errors()
+        );
+    }
+
+    /// Fence-language grammar matches the interpreter vocabulary: a `fish`
+    /// fence is a command surface, while a near-miss data language stays
+    /// illustrative.
+    #[test]
+    #[serial_test::serial]
+    fn fish_fences_are_command_surfaces_and_json_fences_are_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write("scripts/fishy.sh", "#!/bin/sh\n").unwrap();
+        std::fs::write(
+            "skills/demo/SKILL.md",
+            concat!(
+                "---\nname: demo\ndescription: d\n---\n",
+                "```fish\n",
+                "scripts/fishy.sh --run\n",
+                "${CLAUDE_PLUGIN_ROOT}/scripts/fish-missing.sh\n",
+                "```\n",
+                "```json\n",
+                "{\"path\": \"${CLAUDE_PLUGIN_ROOT}/scripts/json-missing.sh\"}\n",
+                "```\n",
+            ),
+        )
+        .unwrap();
+
+        let mut references = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut references, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            references.error_count(),
+            1,
+            "errors: {:?}",
+            references.errors()
+        );
+        assert_eq!(
+            references.diagnostics()[0].evidence.as_deref(),
+            Some("${CLAUDE_PLUGIN_ROOT}/scripts/fish-missing.sh")
+        );
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut dead = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut dead, &crate::config::ExcludeSet::default());
+        assert_eq!(
+            dead.error_count(),
+            0,
+            "a fish-fence invocation keeps scripts/fishy.sh live: {:?}",
+            dead.errors()
+        );
+    }
+
+    /// Markdown extension variants are Markdown command surfaces, not
+    /// line-scanned shell content.
+    #[test]
+    #[serial_test::serial]
+    fn markdown_variant_sources_are_markdown_surfaces() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/demo").unwrap();
+        std::fs::write(
+            "skills/demo/notes.markdown",
+            "Run ${CLAUDE_PLUGIN_ROOT}/scripts/variant-missing.sh\n",
+        )
+        .unwrap();
+
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_script_references(&mut diag, &crate::config::ExcludeSet::default());
+        assert_eq!(diag.error_count(), 1, "errors: {:?}", diag.errors());
+        assert_eq!(
+            diag.diagnostics()[0].subject_path.as_deref(),
+            Some(std::path::Path::new("skills/demo/notes.markdown"))
+        );
+    }
 }

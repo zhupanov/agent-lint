@@ -1033,7 +1033,32 @@ replacement alias.
 | G011 | `awk-regex-nonascii` | Awk regex operand contains non-ASCII text with locale-dependent behavior | Always | warn |
 | G012 | `hardcoded-machine-path` | `SKILL.md` uses a machine-specific or ambiguous runtime path | Plugin | warn |
 
-G002 resolves `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD` forms lexically within the repository. Escaping `..` paths are unresolvable; existing directories are valid references, while `*` globs expand safely within the repository and `?`/`[` patterns are ignored. Workflow YAML scans `run` values and block-scalar continuation lines, not descriptive keyed values. G003 is Unix-only and applies only when a regular file is invoked directly; interpreter-launched and sourced files do not require an execute bit. G004 treats supported command surfaces and allowed Claude permission rules as reachability, but not comments, prose, self-references, directories, or denied permissions. G004 is a warning because static reachability is incomplete; use the existing reason-bearing per-file suppression for intentional inventory entries.
+G002 resolves `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PROJECT_DIR}`, `$CLAUDE_PLUGIN_ROOT`, `$CLAUDE_PROJECT_DIR`, and `$PWD` forms lexically within the repository. Escaping `..` paths are unresolvable; existing directories are valid references, while `*` globs expand safely within the repository and `?`/`[` patterns are ignored. Workflow YAML scans `run` values and block-scalar continuation lines, not descriptive keyed values. G003 is Unix-only and applies only when a regular file of a supported script kind (the `--list-scripts` matrix) is invoked directly; interpreter-launched and sourced files do not require an execute bit. G004 treats supported command surfaces and allowed Claude permission rules as reachability, but not comments, prose, self-references, directories, or denied permissions, and only files of a supported script kind under `scripts/` are dead-script candidates. G004 is a warning because static reachability is incomplete; use the existing reason-bearing per-file suppression for intentional inventory entries.
+
+The script rules share one candidate contract. Command references are read
+from executable positions only: shell fence bodies (`bash`, `sh`, `zsh`,
+`fish`, and console variants), prose `Run`/`Execute` instructions, workflow
+`run` values, SKILL.md frontmatter `hooks:` commands, Makefiles, and lines of
+supported script files. Inline code and other prose mention a path without
+invoking it, data files (TSV, JSONL, JSON, plain text) are never command
+surfaces, `scripts/fixtures/` trees are excluded symmetrically (never
+reference sources and never G004 candidates; a skill merely named `fixtures`
+keeps normal validation), and non-shell fences (for example `json` examples)
+illustrate content. The invocation classified at
+parse time travels with each reference: an interpreter word immediately
+before the path (`bash x.sh`, `timeout 5 bash x.sh`, `wrapper -- bash x.sh`)
+launches it, `source` includes it, and everything else in argument,
+assignment, or prose position is a mention. Mentions still satisfy G002
+existence checking but never make a file directly executed for G003 or
+reachable for G004. Resolution proves an exact path before reporting: a bare
+`scripts/...` path in a skill file resolves against the owning skill
+directory first, then the repository root; a whole-quoted value with
+arguments (`"${CLAUDE_PLUGIN_ROOT}/python/cli.py redact secrets"`) resolves
+to the exact quoted file or, failing that, to its existing leading command
+word; a Markdown anchor (`guide.md#section`) addresses the file before it;
+and references containing unresolved variables (`$ROOT/...`, `x-$NAME.tsv`),
+`<placeholder>` markers, or un-invoked `$PWD/...` paths are non-actionable
+because no exact repository path can be proven.
 
 G005 accepts an exact-case, regular, non-symlink `SECURITY.md` in the
 repository root, `.github/`, or `docs/`, following GitHub's supported

@@ -3,8 +3,9 @@ use crate::context::{LintContext, LintMode};
 use crate::diagnostic::{DiagnosticCollector, DiagnosticMetadata, SourceSpan};
 use crate::rules::LintRule;
 use crate::script_paths::{
-    Invocation, ScriptReference, extract_bare_script_references,
-    extract_instruction_command_references, script_kind,
+    Invocation, ScriptReference, ScriptReferenceBase, extract_bare_script_references,
+    extract_instruction_command_references, extract_prose_bare_script_references,
+    extract_prose_command_references, script_kind,
 };
 use crate::traversal;
 use regex::Regex;
@@ -81,8 +82,23 @@ pub(super) fn collect_makefile_contents(exclude: &ExcludeSet) -> Vec<(String, St
         .collect()
 }
 
+/// The lexical position a command fragment was found in. Fence bodies,
+/// workflow `run` values, and script/Makefile lines are executable command
+/// positions; inline code in prose illustrates a command without invoking it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FragmentContext {
+    Command,
+    Prose,
+}
+
 /// A source-owned reference. The source path remains the G002 diagnostic
 /// subject, while the normalized target is consumed by G003/G004.
+///
+/// This is the shared candidate pipeline for the script rules: sources are
+/// limited to command-bearing file kinds, fragments keep their
+/// [`FragmentContext`], and every reference is resolved once here (skill-local
+/// base, quoted command arguments, placeholder actionability) with its parsed
+/// [`Invocation`] preserved.
 pub(crate) fn collect_references(
     ctx: &LintContext,
     exclude: &ExcludeSet,
@@ -91,29 +107,74 @@ pub(crate) fn collect_references(
         .hygiene_source_files;
     let mut references = Vec::new();
     for path in sources {
+        // Script fixture trees ship deliberately incomplete example content;
+        // references inside them are test data, never production invocations.
+        if is_script_fixture_path(&path) {
+            continue;
+        }
         let source = path.to_string_lossy().replace('\\', "/");
-        let Ok(content) = fs::read_to_string(path) else {
+        let is_markdown =
+            source.ends_with(".md") || source.ends_with(".markdown") || source.ends_with(".mdx");
+        let is_yaml = source.ends_with(".yml") || source.ends_with(".yaml");
+        // Only command-bearing kinds are scanned line-wise: supported script
+        // files and make include files. Data files (TSV, JSONL, JSON, plain
+        // text) are not command surfaces.
+        let is_line_command_source = script_kind(&path).is_some()
+            || path
+                .file_name()
+                .is_some_and(|name| name == "Makefile" || name.to_string_lossy().ends_with(".mk"));
+        if !is_markdown && !is_yaml && !is_line_command_source {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
-        let fragments = if source.ends_with(".md") {
+        let skill_dir = owning_skill_dir(&path);
+        if path.file_name().is_some_and(|name| name == "SKILL.md") {
+            references.extend(
+                frontmatter_hook_references(&content)
+                    .into_iter()
+                    .filter_map(|reference| resolve_reference(skill_dir.as_deref(), reference))
+                    .map(|reference| (source.clone(), reference)),
+            );
+        }
+        let fragments = if is_markdown {
             markdown_command_fragments(&content)
-        } else if source.ends_with(".yml") || source.ends_with(".yaml") {
-            yaml_command_line_fragments(&strip_yaml_comments(&content))
+        } else if is_yaml {
+            with_context(
+                yaml_command_line_fragments(&strip_yaml_comments(&content)),
+                FragmentContext::Command,
+            )
         } else {
-            command_line_fragments(&strip_yaml_comments(&content))
+            with_context(
+                command_line_fragments(&strip_yaml_comments(&content)),
+                FragmentContext::Command,
+            )
         };
-        for (line, fragment) in fragments {
+        for (line, fragment, context) in fragments {
             if !is_executable_fragment(&fragment) {
                 continue;
             }
-            references.extend(extract_fragment_references(&source, &fragment, line));
+            references.extend(extract_fragment_references(
+                &source,
+                skill_dir.as_deref(),
+                &fragment,
+                line,
+                context,
+            ));
         }
     }
     if ctx.mode == LintMode::Plugin {
         for (source, content) in collect_makefile_contents(exclude) {
             for (line, fragment) in command_line_fragments(&content) {
                 if is_executable_fragment(&fragment) {
-                    references.extend(extract_fragment_references(&source, &fragment, line));
+                    references.extend(extract_fragment_references(
+                        &source,
+                        None,
+                        &fragment,
+                        line,
+                        FragmentContext::Command,
+                    ));
                 }
             }
         }
@@ -123,16 +184,137 @@ pub(crate) fn collect_references(
 
 fn extract_fragment_references(
     source: &str,
+    skill_dir: Option<&Path>,
     fragment: &str,
     line: usize,
+    context: FragmentContext,
 ) -> Vec<(String, ScriptReference)> {
-    let mut references = extract_instruction_command_references(fragment, line);
-    references.extend(extract_bare_script_references(fragment, line));
+    let mut references = match context {
+        FragmentContext::Command => extract_instruction_command_references(fragment, line),
+        FragmentContext::Prose => extract_prose_command_references(fragment, line),
+    };
+    references.extend(match context {
+        FragmentContext::Command => extract_bare_script_references(fragment, line),
+        FragmentContext::Prose => extract_prose_bare_script_references(fragment, line),
+    });
     references
         .into_iter()
         .filter(|reference| !contains_unsupported_glob(reference))
         .flat_map(expand_glob_reference)
+        .filter_map(|reference| resolve_reference(skill_dir, reference))
         .map(|reference| (source.to_string(), reference))
+        .collect()
+}
+
+/// Resolve one extracted reference into the shared candidate contract. The
+/// invocation classified at parse time is never modified here; only the path
+/// candidate is refined, and unprovable references are dropped.
+fn resolve_reference(
+    skill_dir: Option<&Path>,
+    mut reference: ScriptReference,
+) -> Option<ScriptReference> {
+    // A skill file addresses its bundled resources relative to the skill
+    // directory; prefer that documented base when it resolves on disk.
+    if reference.base == ScriptReferenceBase::Relative
+        && !reference.path.as_os_str().is_empty()
+        && let Some(skill_dir) = skill_dir
+    {
+        let local = skill_dir.join(&reference.path);
+        if local.exists() {
+            reference.path = local;
+        }
+    }
+    // A whole-quoted value may document arguments after the script path
+    // (`"${CLAUDE_PLUGIN_ROOT}/python/cli.py redact secrets"`). The exact
+    // quoted path wins when it exists (spaces are legal in filenames);
+    // otherwise a provable leading command word resolves the reference.
+    if !reference.path.as_os_str().is_empty() && !reference.path.exists() {
+        let text = reference.path.to_string_lossy().into_owned();
+        if let Some((head, _)) = text.split_once(char::is_whitespace)
+            && !head.is_empty()
+            && Path::new(head).is_file()
+        {
+            reference.path = PathBuf::from(head);
+        }
+    }
+    // Unresolved variables and placeholders prove no exact repository path,
+    // and an un-invoked $PWD path names runtime state, not a shipped file.
+    if reference.has_unresolved_placeholder() {
+        return None;
+    }
+    if reference.is_pwd_rooted() && reference.invocation == Invocation::Mention {
+        return None;
+    }
+    Some(reference)
+}
+
+/// Skill-scoped hooks declared in SKILL.md frontmatter are a documented
+/// runtime invocation surface: their command values reference scripts exactly
+/// like hooks.json commands do, so they feed G002 existence, G003
+/// executability, and G004 reachability through the shared hook extractor.
+fn frontmatter_hook_references(content: &str) -> Vec<ScriptReference> {
+    let Some(lines) = crate::frontmatter::extract_frontmatter(content) else {
+        return Vec::new();
+    };
+    let Ok(value) = crate::frontmatter::parse_yaml_strict(&lines) else {
+        return Vec::new();
+    };
+    let Some(hooks) = value
+        .get("hooks")
+        .and_then(crate::frontmatter::yaml_to_json)
+    else {
+        return Vec::new();
+    };
+    let wrapper =
+        serde_json::Value::Object(serde_json::Map::from_iter([("hooks".to_string(), hooks)]));
+    // Frontmatter starts at line 2 (after the opening delimiter); locate the
+    // hooks mapping key so diagnostics land on the declaring line.
+    let line = crate::frontmatter::simple_top_level_key_line(&lines, "hooks").unwrap_or(1);
+    crate::hook_commands::extract_hook_command_paths(&wrapper, None)
+        .into_iter()
+        .map(|command| ScriptReference {
+            reference: command.reference,
+            path: command.path,
+            base: ScriptReferenceBase::RepositoryRoot,
+            invocation: command.invocation,
+            line,
+        })
+        .collect()
+}
+
+/// The skill directory owning `source`, when the source is bundled skill
+/// content: the nearest ancestor directory that holds a SKILL.md.
+fn owning_skill_dir(source: &Path) -> Option<PathBuf> {
+    source
+        .ancestors()
+        .skip(1)
+        .filter(|ancestor| !ancestor.as_os_str().is_empty())
+        .find(|ancestor| ancestor.join("SKILL.md").is_file())
+        .map(Path::to_path_buf)
+}
+
+/// A `fixtures` directory directly under a `scripts` directory holds negative
+/// test data whose paths may deliberately not exist (`scripts/fixtures/`,
+/// `skills/x/scripts/fixtures/`). Only that documented script-bundle layout
+/// is excluded — as a reference source and as a G004 candidate — so a skill
+/// or directory merely named `fixtures` keeps normal validation.
+pub(super) fn is_script_fixture_path(path: &Path) -> bool {
+    let components: Vec<_> = path
+        .components()
+        .map(|component| component.as_os_str())
+        .collect();
+    components
+        .windows(2)
+        .any(|pair| pair[0] == "scripts" && pair[1] == "fixtures")
+}
+
+fn with_context(
+    fragments: Vec<(usize, String)>,
+    context: FragmentContext,
+) -> Vec<(usize, String, FragmentContext)> {
+    fragments
+        .into_iter()
+        .map(|(line, fragment)| (line, fragment, context))
         .collect()
 }
 
@@ -168,16 +350,34 @@ fn yaml_command_line_fragments(content: &str) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// Markdown prose is not executable.  Inline code and balanced code fences
-/// are explicit command positions and retain their source line for diagnostics.
-fn markdown_command_fragments(content: &str) -> Vec<(usize, String)> {
+/// Markdown fragments keep their lexical role: bodies of shell fences are
+/// executable command positions, while inline code and prose `Run`/`Execute`
+/// instructions outside fences are extracted with prose semantics (an
+/// explicit marker still proves an invocation). Fences in data or non-shell
+/// languages illustrate content and are not command surfaces.
+fn markdown_command_fragments(content: &str) -> Vec<(usize, String, FragmentContext)> {
     let mut fragments = Vec::new();
+    let mut fence_lines = HashSet::new();
     for fence in crate::fence::markdown_fences(content) {
-        fragments.extend(fence.body);
+        for line in fence.start_line..=fence.end_line {
+            fence_lines.insert(line);
+        }
+        if fence_is_command_surface(&fence.info) {
+            for (line, text) in fence.body {
+                fragments.push((line, text, FragmentContext::Command));
+            }
+        }
     }
     for (index, line) in content.lines().enumerate() {
+        if fence_lines.contains(&(index + 1)) {
+            continue;
+        }
         if line.trim_start().starts_with("Run ") || line.trim_start().starts_with("Execute ") {
-            fragments.push((index + 1, line.trim_start().to_string()));
+            fragments.push((
+                index + 1,
+                line.trim_start().to_string(),
+                FragmentContext::Prose,
+            ));
         }
         let mut rest = line;
         while let Some(start) = rest.find('`') {
@@ -185,11 +385,26 @@ fn markdown_command_fragments(content: &str) -> Vec<(usize, String)> {
             let Some(end) = after.find('`') else {
                 break;
             };
-            fragments.push((index + 1, after[..end].to_string()));
+            fragments.push((index + 1, after[..end].to_string(), FragmentContext::Prose));
             rest = &after[end + 1..];
         }
     }
     fragments
+}
+
+/// Positive grammar for fence info strings whose bodies are executable shell
+/// command lines. Everything else (json, yaml, python, text, output, ...)
+/// illustrates data or foreign-language content instead of invoking it.
+fn fence_is_command_surface(info: &str) -> bool {
+    let language = info
+        .split([' ', '\t', ','])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        language.as_str(),
+        "" | "bash" | "sh" | "shell" | "zsh" | "fish" | "console" | "terminal" | "shellsession"
+    )
 }
 
 fn is_executable_fragment(fragment: &str) -> bool {
@@ -352,13 +567,16 @@ pub fn validate_private_script_references(diag: &mut DiagnosticCollector, exclud
     validate_script_references_for_context(&ctx, diag, exclude);
 }
 
-/// Direct invocation, not a conventional filename or directory, determines
-/// G003 scope. Interpreter-launched and sourced files need no execute bit.
+/// Direct invocation of a supported script kind determines G003 scope.
+/// Interpreter-launched and sourced files need no execute bit, and
+/// non-script files (documentation, data) are outside the rule's contract
+/// even when a command line names them.
 pub(crate) fn direct_script_paths(ctx: &LintContext, exclude: &ExcludeSet) -> Vec<PathBuf> {
     let mut paths = BTreeSet::new();
     for (_, reference) in collect_references(ctx, exclude) {
         if reference.invocation == Invocation::Direct
             && !reference.path.as_os_str().is_empty()
+            && script_kind(&reference.path).is_some()
             && reference.path.is_file()
         {
             paths.insert(reference.path);
