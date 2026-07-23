@@ -425,8 +425,8 @@ fn script_accepts_flag(script: &Path, source: &str, arguments: &[String], flag: 
 /// not import repository Python, but a dispatcher often owns only global flags
 /// while literal local imports register its subcommands. The model follows
 /// only repository-contained `.py` files and recognizes literal `add_parser`,
-/// `add_argument`, and registry-dispatched handlers. An unresolved literal
-/// registry disables unsupported-flag claims for that script rather than
+/// `add_argument`, and registry-dispatched handlers in each visited module.
+/// An unresolved literal registry disables unsupported-flag claims for that script rather than
 /// falling back to its incomplete root-script signature.
 #[derive(Default)]
 struct PythonCliSignature {
