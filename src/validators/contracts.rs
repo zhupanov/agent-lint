@@ -428,6 +428,7 @@ fn script_accepts_flag(script: &Path, source: &str, arguments: &[String], flag: 
 /// `add_argument`, and registry-dispatched handlers in each visited module.
 /// An unresolved literal registry disables unsupported-flag claims for that script rather than
 /// falling back to its incomplete root-script signature.
+/// The analysis remains lexical and never imports repository Python.
 #[derive(Default)]
 struct PythonCliSignature {
     global_flags: BTreeMap<String, bool>,
