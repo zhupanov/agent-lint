@@ -30,7 +30,7 @@ The recommended ways to use agent-lint are via
 ```yaml
 - uses: zhupanov/agent-lint@v4
   with:
-    version: "4.0.2"
+    version: "4.0.3"
     path: "."
 ```
 
@@ -44,12 +44,12 @@ Add to your `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/zhupanov/agent-lint
-    rev: v4.0.2  # pin to exact version
+    rev: v4.0.3  # pin to exact version
     hooks:
       - id: agent-lint
 ```
 
-> **Pin to an exact version** (e.g., `rev: v4.0.2`) to protect your
+> **Pin to an exact version** (e.g., `rev: v4.0.3`) to protect your
 > workflow from breaking changes. agent-lint is under active development
 > and minor/patch releases may change lint behavior. Run
 > `pre-commit autoupdate` when you are ready to upgrade.
