@@ -9,7 +9,7 @@ use crate::script_paths::{
 };
 use crate::traversal;
 use regex::Regex;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -24,6 +24,23 @@ static RE_FULL_HASH_COMMENT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[[:space:]]*#").unwrap());
 static RE_YAML_KEY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[[:space:]]*(?:-[[:space:]]+)?([A-Za-z_-]+):").unwrap());
+static RE_PYTHON_ASSIGNMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.+)$").unwrap()
+});
+static RE_PYTHON_PATH_BASE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^(?:Path[[:space:]]*\([[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)|([A-Za-z_][A-Za-z0-9_]*))[[:space:]]*")
+        .unwrap()
+});
+static RE_PYTHON_PATH_IMPORT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^[[:space:]]*from[[:space:]]+pathlib[[:space:]]+import[^\n#]*\bPath\b")
+        .unwrap()
+});
+static RE_PYTHON_SUBPROCESS_RUN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)\bsubprocess[[:space:]]*\.[[:space:]]*run[[:space:]]*\([[:space:]]*\[[[:space:]]*(?:str[[:space:]]*\([[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)|([A-Za-z_][A-Za-z0-9_]*))[[:space:]]*(?:,|\])",
+    )
+    .unwrap()
+});
 
 pub(super) fn strip_yaml_comments(content: &str) -> String {
     content
@@ -116,6 +133,7 @@ pub(crate) fn collect_references(
         let is_markdown =
             source.ends_with(".md") || source.ends_with(".markdown") || source.ends_with(".mdx");
         let is_yaml = source.ends_with(".yml") || source.ends_with(".yaml");
+        let is_python = path.extension().is_some_and(|extension| extension == "py");
         // Only command-bearing kinds are scanned line-wise: supported script
         // files and make include files. Data files (TSV, JSONL, JSON, plain
         // text) are not command surfaces.
@@ -145,6 +163,11 @@ pub(crate) fn collect_references(
                 yaml_command_line_fragments(&strip_yaml_comments(&content)),
                 FragmentContext::Command,
             )
+        } else if is_python {
+            with_context(
+                python_command_line_fragments(&content),
+                FragmentContext::Command,
+            )
         } else {
             with_context(
                 command_line_fragments(&strip_yaml_comments(&content)),
@@ -163,6 +186,17 @@ pub(crate) fn collect_references(
                 context,
             ));
         }
+        // Python's `Path` composition has no contiguous path token for the
+        // lexical extractor above.  Its bounded recognizer still emits the
+        // same shared reference type, so G002/G003/G004 agree on the exact
+        // executable candidate rather than giving G004 a private exception.
+        if is_python {
+            references.extend(
+                python_composed_subprocess_references(&content)
+                    .into_iter()
+                    .map(|reference| (source.clone(), reference)),
+            );
+        }
     }
     if ctx.mode == LintMode::Plugin {
         for (source, content) in collect_makefile_contents(exclude) {
@@ -180,6 +214,217 @@ pub(crate) fn collect_references(
         }
     }
     references
+}
+
+/// Python files are command-bearing sources, but source text inside comments,
+/// documentation strings, and ordinary assignments is not an invocation.
+/// Preserve actual call expressions for the shared lexical extractor while
+/// reserving assignments for the bounded subprocess recognizer below.
+fn python_command_line_fragments(content: &str) -> Vec<(usize, String)> {
+    let masked = mask_python_non_code(content);
+    content
+        .lines()
+        .zip(masked.lines())
+        .enumerate()
+        .filter(|(_, (_, code))| {
+            !code.trim().is_empty() && RE_PYTHON_ASSIGNMENT.captures(code).is_none()
+        })
+        .map(|(index, (line, _))| (index + 1, line.to_string()))
+        .collect()
+}
+
+/// Extract a repository-local Python `Path` composition only when a variable
+/// holding it is passed as argv element zero to `subprocess.run`. This is not
+/// general dataflow: each literal composition is a one-line assignment rooted
+/// at an explicitly root-named anchor, and no assignment-to-assignment flow,
+/// dynamic segment, or alternate argv position is accepted.
+fn python_composed_subprocess_references(content: &str) -> Vec<ScriptReference> {
+    let code = mask_python_non_code(content);
+    // `Path` is only accepted as the standard library type, not an arbitrary
+    // project class with an overloaded `/` operator.
+    if !RE_PYTHON_PATH_IMPORT.is_match(&code) {
+        return Vec::new();
+    }
+    let mut assignments = HashMap::new();
+    for (line, masked_line) in content.lines().zip(code.lines()) {
+        // The masked line must itself contain the assignment syntax. This
+        // excludes comments and triple-quoted documentation while the
+        // original line retains the literal segments for path parsing.
+        let Some(captures) = RE_PYTHON_ASSIGNMENT.captures(masked_line) else {
+            continue;
+        };
+        let Some(name) = captures.get(1).map(|capture| capture.as_str()) else {
+            continue;
+        };
+        let path = RE_PYTHON_ASSIGNMENT
+            .captures(line)
+            .and_then(|captures| captures.get(2))
+            .and_then(|expression| parse_python_path_composition(expression.as_str()));
+        // This recognizer intentionally has no assignment dataflow. A second
+        // assignment can change the value before the call, so it makes the
+        // candidate unprovable rather than selecting either assignment.
+        if assignments.insert(name.to_string(), path).is_some() {
+            assignments.insert(name.to_string(), None);
+        }
+    }
+    let candidates: HashMap<_, _> = assignments
+        .into_iter()
+        .filter_map(|(name, path)| path.map(|path| (name, path)))
+        .collect();
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+
+    // Calls may span lines. Mask strings and comments first so illustrative
+    // source text cannot manufacture an executable invocation.
+    RE_PYTHON_SUBPROCESS_RUN
+        .captures_iter(&code)
+        .filter_map(|captures| {
+            let variable = captures.get(1).or_else(|| captures.get(2))?.as_str();
+            let path = candidates.get(variable)?.clone();
+            let line = content[..captures.get(0)?.start()]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1;
+            Some(ScriptReference {
+                reference: format!("{variable} (Python Path composition)"),
+                path,
+                base: ScriptReferenceBase::RepositoryRoot,
+                invocation: Invocation::Direct,
+                line,
+            })
+        })
+        .collect()
+}
+
+fn parse_python_path_composition(expression: &str) -> Option<PathBuf> {
+    let captures = RE_PYTHON_PATH_BASE.captures(expression)?;
+    let root = captures.get(1).or_else(|| captures.get(2))?.as_str();
+    if !is_python_root_anchor(root) {
+        return None;
+    }
+    let mut rest = expression[captures.get(0)?.end()..].trim_start();
+    let mut segments = Vec::new();
+    while let Some(after_slash) = rest.strip_prefix('/') {
+        let (segment, after_segment) = parse_python_string_literal(after_slash.trim_start())?;
+        segments.push(segment);
+        rest = after_segment.trim_start();
+    }
+    if segments.len() < 2 || (!rest.is_empty() && !rest.starts_with('#')) {
+        return None;
+    }
+    // The shared script contract is intentionally only about repository
+    // scripts. Requiring this canonical first segment also prevents a
+    // root-looking variable from proving arbitrary files reachable.
+    (segments.first().is_some_and(|segment| segment == "scripts"))
+        .then(|| crate::script_paths::normalize_repository_path(&segments.join("/")))?
+}
+
+fn is_python_root_anchor(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value == "root" || value.ends_with("_root") || value.ends_with("_root_dir")
+}
+
+/// Parse one unescaped, single- or double-quoted Python literal. Escapes are
+/// deliberately rejected: accepting them would require Python's full string
+/// semantics before we could prove the resulting repository path.
+fn parse_python_string_literal(value: &str) -> Option<(String, &str)> {
+    let quote = value.chars().next()?;
+    if !matches!(quote, '\'' | '"') {
+        return None;
+    }
+    let body = &value[quote.len_utf8()..];
+    let end = body.find(quote)?;
+    let segment = &body[..end];
+    (!segment.is_empty() && !segment.contains(['\\', '$', '<', '>']))
+        .then(|| (segment.to_string(), &body[end + quote.len_utf8()..]))
+}
+
+/// Replace Python strings and comments with spaces while retaining newlines
+/// and byte positions. The subprocess grammar runs on this code-only view,
+/// which keeps comments and documentation strings from counting as commands.
+fn mask_python_non_code(content: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum Quote {
+        Single,
+        Double,
+        TripleSingle,
+        TripleDouble,
+    }
+
+    let bytes = content.as_bytes();
+    let mut masked = bytes.to_vec();
+    let mut index = 0;
+    let mut quote = None;
+    while index < bytes.len() {
+        match quote {
+            Some(Quote::Single) | Some(Quote::Double) => {
+                let delimiter = match quote {
+                    Some(Quote::Single) => b'\'',
+                    Some(Quote::Double) => b'"',
+                    _ => unreachable!(),
+                };
+                masked[index] = if bytes[index] == b'\n' { b'\n' } else { b' ' };
+                if bytes[index] == delimiter && (index == 0 || bytes[index - 1] != b'\\') {
+                    quote = None;
+                }
+                index += 1;
+            }
+            Some(Quote::TripleSingle) | Some(Quote::TripleDouble) => {
+                let delimiter = match quote {
+                    Some(Quote::TripleSingle) => b'\'',
+                    Some(Quote::TripleDouble) => b'"',
+                    _ => unreachable!(),
+                };
+                let closes = index + 2 < bytes.len()
+                    && bytes[index] == delimiter
+                    && bytes[index + 1] == delimiter
+                    && bytes[index + 2] == delimiter;
+                masked[index] = if bytes[index] == b'\n' { b'\n' } else { b' ' };
+                if closes {
+                    masked[index + 1] = b' ';
+                    masked[index + 2] = b' ';
+                    quote = None;
+                    index += 3;
+                } else {
+                    index += 1;
+                }
+            }
+            None if bytes[index] == b'#' => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    masked[index] = b' ';
+                    index += 1;
+                }
+            }
+            None if bytes[index] == b'\'' || bytes[index] == b'"' => {
+                let delimiter = bytes[index];
+                let triple = index + 2 < bytes.len()
+                    && bytes[index + 1] == delimiter
+                    && bytes[index + 2] == delimiter;
+                masked[index] = b' ';
+                if triple {
+                    masked[index + 1] = b' ';
+                    masked[index + 2] = b' ';
+                    quote = Some(if delimiter == b'\'' {
+                        Quote::TripleSingle
+                    } else {
+                        Quote::TripleDouble
+                    });
+                    index += 3;
+                } else {
+                    quote = Some(if delimiter == b'\'' {
+                        Quote::Single
+                    } else {
+                        Quote::Double
+                    });
+                    index += 1;
+                }
+            }
+            None => index += 1,
+        }
+    }
+    String::from_utf8(masked).expect("masking preserves UTF-8 bytes")
 }
 
 fn extract_fragment_references(
