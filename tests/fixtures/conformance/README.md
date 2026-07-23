@@ -31,3 +31,8 @@ repository fixture.
 JSON output is schema-validated today. SARIF is not currently a supported CLI
 format; when it lands, add its payload validation to this same corpus rather
 than creating a separate network-dependent harness.
+
+`required-contracts.json` contains two shrink-only adoption baselines. Remove
+rows as coverage lands. Baseline growth after the adoption commit is prohibited
+by policy; the harness enforces missing and stale rows, while review enforces
+that no new rows are added.

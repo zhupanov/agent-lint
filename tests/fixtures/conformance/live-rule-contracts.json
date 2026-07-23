@@ -1,0 +1,5216 @@
+{
+  "rules": [
+    {
+      "code": "M001",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M002",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M003",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M004",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M005",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M006",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M007",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M008",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M009",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M010",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M011",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M012",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M013",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M014",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M015",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M016",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M017",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M018",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M019",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M020",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M021",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M022",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M023",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "M024",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H001",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H002",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H003",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H004",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H005",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H006",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H007",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H008",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H009",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H010",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H011",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H012",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H013",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H014",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H015",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H016",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H017",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H018",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H019",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H020",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H021",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H022",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H023",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H024",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H025",
+      "surfaces": [
+        {
+          "id": "claude-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "H026",
+      "surfaces": [
+        {
+          "id": "hook-schema",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "X001",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "X002",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "X003",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "X004",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "X005",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S002",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S003",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S004",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S005",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S006",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S007",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S008",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S009",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": true
+    },
+    {
+      "code": "S010",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S011",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S014",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": true
+    },
+    {
+      "code": "S015",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S016",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S017",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S018",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S019",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "suppressed",
+      "pedantic_exempt": true
+    },
+    {
+      "code": "S020",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S021",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": true,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S022",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S023",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S024",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S025",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S026",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S027",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S028",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S029",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S030",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S031",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S032",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S033",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S034",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S035",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": true
+    },
+    {
+      "code": "S036",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S037",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S038",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S039",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S040",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S041",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S043",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S044",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S046",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S047",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "suppressed",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S048",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S050",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S051",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S052",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S053",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S054",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S055",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S056",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S057",
+      "surfaces": [
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S058",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S059",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S060",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S061",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S062",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S063",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S064",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S065",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S066",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S067",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S068",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S069",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S070",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S071",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S072",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S073",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "S074",
+      "surfaces": [
+        {
+          "id": "claude-private-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-skill",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A001",
+      "surfaces": [
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A002",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A003",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A004",
+      "surfaces": [
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A005",
+      "surfaces": [
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A006",
+      "surfaces": [
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A007",
+      "surfaces": [
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A008",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A009",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A010",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A011",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A012",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A013",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A014",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A015",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A016",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A017",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A018",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A019",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A020",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A021",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A022",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A023",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A024",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A025",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A026",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A027",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A028",
+      "surfaces": [
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A029",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A030",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        },
+        {
+          "id": "cursor-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "A031",
+      "surfaces": [
+        {
+          "id": "claude-private-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "claude-public-agent",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "Q001",
+      "surfaces": [
+        {
+          "id": "live-instruction",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "Q002",
+      "surfaces": [
+        {
+          "id": "live-instruction",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "Q003",
+      "surfaces": [
+        {
+          "id": "live-instruction",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "Q004",
+      "surfaces": [
+        {
+          "id": "live-instruction",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "Q005",
+      "surfaces": [
+        {
+          "id": "live-instruction",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "Q006",
+      "surfaces": [
+        {
+          "id": "live-instruction",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "R001",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "R002",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "R003",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "O001",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "O002",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "O003",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "O004",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "O006",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "T001",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "T002",
+      "surfaces": [
+        {
+          "id": "claude-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "I001",
+      "surfaces": [
+        {
+          "id": "instruction-file",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "I002",
+      "surfaces": [
+        {
+          "id": "instruction-file",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "I003",
+      "surfaces": [
+        {
+          "id": "instruction-file",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "I004",
+      "surfaces": [
+        {
+          "id": "instruction-file",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX001",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX002",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX003",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX004",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX005",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX006",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX007",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX008",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX009",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX011",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX012",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX013",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX014",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX015",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX016",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX017",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX018",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX019",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX020",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX021",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX022",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX023",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX024",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX025",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX026",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX027",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX028",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX029",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX030",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX031",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX032",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX033",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX034",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX035",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX036",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX040",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX045",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX047",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX048",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX049",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX050",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX051",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX052",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX053",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX054",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX055",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX056",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX057",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX059",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX060",
+      "surfaces": [
+        {
+          "id": "agent-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        },
+        {
+          "id": "codex-plugin-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX061",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX062",
+      "surfaces": [
+        {
+          "id": "codex-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CX063",
+      "surfaces": [
+        {
+          "id": "codex-plugin",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "codex",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU001",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU002",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU003",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU004",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU005",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU006",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU007",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU008",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU010",
+      "surfaces": [
+        {
+          "id": "cursor-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU011",
+      "surfaces": [
+        {
+          "id": "cursor-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU012",
+      "surfaces": [
+        {
+          "id": "cursor-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU013",
+      "surfaces": [
+        {
+          "id": "cursor-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU014",
+      "surfaces": [
+        {
+          "id": "cursor-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU015",
+      "surfaces": [
+        {
+          "id": "cursor-agent",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU016",
+      "surfaces": [
+        {
+          "id": "cursor-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU017",
+      "surfaces": [
+        {
+          "id": "cursor-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU018",
+      "surfaces": [
+        {
+          "id": "cursor-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU019",
+      "surfaces": [
+        {
+          "id": "cursor-hooks",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CU020",
+      "surfaces": [
+        {
+          "id": "cursor-rule",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "CR-SK-001",
+      "surfaces": [
+        {
+          "id": "cursor-skill",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "cursor",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G001",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G002",
+      "surfaces": [
+        {
+          "id": "repository-script",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G003",
+      "surfaces": [
+        {
+          "id": "repository-script",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": true,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G004",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G005",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G006",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G007",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G008",
+      "surfaces": [
+        {
+          "id": "repository-script",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G009",
+      "surfaces": [
+        {
+          "id": "repository-script",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G010",
+      "surfaces": [
+        {
+          "id": "repository-script",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G011",
+      "surfaces": [
+        {
+          "id": "repository-script",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "G012",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "E001",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "E002",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U001",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U002",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U004",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U005",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U006",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U007",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U008",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "U009",
+      "surfaces": [
+        {
+          "id": "claude-plugin",
+          "modes": [
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "D001",
+      "surfaces": [
+        {
+          "id": "claude-instructions",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "D002",
+      "surfaces": [
+        {
+          "id": "claude-instructions",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "D003",
+      "surfaces": [
+        {
+          "id": "claude-instructions",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "D004",
+      "surfaces": [
+        {
+          "id": "claude-instructions",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "D005",
+      "surfaces": [
+        {
+          "id": "claude-instructions",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "claude",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P001",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P009",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P010",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P011",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P012",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P017",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P018",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P019",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P022",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P023",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P024",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P025",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P026",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "P027",
+      "surfaces": [
+        {
+          "id": "mcp-config",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "L001",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "L002",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "L003",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "error",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "L004",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "L005",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    },
+    {
+      "code": "L006",
+      "surfaces": [
+        {
+          "id": "markdown-document",
+          "modes": [
+            "basic",
+            "plugin"
+          ]
+        }
+      ],
+      "platform": "shared",
+      "autofix": false,
+      "default_severity": "warning",
+      "pedantic_exempt": false
+    }
+  ]
+}
