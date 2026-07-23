@@ -20,6 +20,12 @@ invent ad hoc diagnostic identifiers.
 Mechanical backing: exhaustive mappings and registry, production-owner,
 positive-contract, canonical-lookup, and documentation tests.
 
+### I-Rule-2: Rule lifecycle is explicit
+
+Every `LintRule` is a current, reachable rule in the single live registry. Runtime lookup accepts exactly its canonical code and canonical name. When a rule is renamed or removed, obsolete identifiers do not remain as runtime aliases or compatibility-only variants; their history remains in `CHANGELOG.md`, and their codes and names are never reused for different semantics. Current documentation, configuration examples, dispatch, severity policy, and autofix metadata contain no retired identity.
+
+Mechanical backing: the live-registry and positive-conformance coverage checks, exact lookup-cardinality tests, current-documentation identity checks, and the rule-accounting work in #589.
+
 ### I-Diag-1: Validators report; the collector decides disposition
 
 Domain validators report a `LintRule` and message through
@@ -55,6 +61,12 @@ diagnostic identifies the key or location, not the value.
 
 Mechanical backing: token-shaped and control-character regression fixtures;
 conformance manifests assert redacted evidence for secret-scanning rules.
+
+### I-Diag-4: Untrusted diagnostic data is bounded and safe
+
+Diagnostics do not disclose secrets, uncontrolled terminal bytes, or canonical paths outside the analysis root. Evidence derived from repository content is bounded and passes through the shared sensitive-value policy before storage. Human-readable rendering escapes control characters at the output choke point. Validators do not interpolate credential-bearing values into messages or suggestions, and rejected outside-repository paths retain only safe authored or repository-relative identity.
+
+Mechanical backing: `DiagnosticMetadata` evidence bounds and redaction, terminal-sanitization tests, repository-path containment types, and cross-surface secret and control-character regression matrices.
 
 ### I-Severity-1: Severity precedence is deterministic
 
@@ -102,6 +114,12 @@ independently override its platform's activation.
 Mechanical backing: `DetectedSurfaces::discover`,
 `DetectedSurfaces::resolve`, and `run_all_with_targets`.
 
+### I-Discovery-1: One surface has one effective inventory
+
+Each supported surface has one effective candidate inventory for a run. Platform detection and every validator, prompt analyzer, overlap analyzer, and autofix consumer for that surface use the same repository-relative, normalized, sorted, deduplicated, exclusion-aware set. A consumer does not independently rediscover a broader or narrower set. A disabled platform contributes no platform-only candidates, and an excluded candidate cannot activate a platform or reappear in a downstream consumer.
+
+Mechanical backing: typed discovery inventories in `platforms.rs` and domain discovery modules, central dispatch, and surface-matrix tests that compare every consumer and autofix scope.
+
 ## Validation pipeline
 
 ### I-Dispatch-1: Mode and platform scope are owned by central dispatch
@@ -112,6 +130,18 @@ is selected from `ValidationTargets`. Domain validators do not call peer domains
 to bypass those decisions.
 
 Mechanical backing: the dispatch integration tests in `validators/mod.rs`.
+
+### I-Selection-1: Focused selection is a projection
+
+A focused rule selection is a projection of the normal lint run. Given the same resolved root, repository content, configuration, platform overrides, exclusions, and strictness, the diagnostics retained for a selected rule are identical in rule identity, severity, subject, related subjects, location, evidence, suggestion, and relative order to that rule's diagnostics in an unfocused run. `--only` does not alter discovery, platform activation, parsing, exclusions, or validator semantics; it only limits diagnostic disposition and autofix to the effective selected rules. Reordering or repeating requested identifiers does not affect validation or output order.
+
+Mechanical backing: `RunPolicy` and `DiagnosticCollector` unit tests, focused-selection conformance axes, and CLI projection tests that compare focused output with the same rule filtered from an unfocused report.
+
+### I-Determinism-1: Repository order cannot affect output
+
+The same repository bytes and resolved policy produce the same ordered diagnostics and process outcome. Filesystem enumeration order, file creation order, hash iteration order, duplicate or reordered `--only` identifiers, and overlapping discovery roots do not change diagnostic identity, multiplicity, ordering, counts, or exit status. Collections crossing an architectural boundary have an explicit stable identity and ordering rule.
+
+Mechanical backing: sorted traversal and registry-order policy, deduplicated typed inventories, and metamorphic CLI tests that build equivalent repositories in different orders and compare complete JSON reports.
 
 ### I-Parse-1: A loaded JSON manifest retains its parse state
 
@@ -173,6 +203,12 @@ and the configuration tests.
 
 ## Mutation and process behavior
 
+### I-Output-1: Renderers project one classified result
+
+Text and JSON rendering consume the same post-policy diagnostic collection. Selecting an output format does not rerun validators or alter rule identity, severity, suppression, subjects, locations, evidence, suggestions, counts, active targets, or exit status. JSON mode emits one schema-valid report to stdout without incidental human-readable prose; text rendering escapes terminal control characters without changing the stored structured diagnostic.
+
+Mechanical backing: the single collection-before-rendering pipeline, diagnostic JSON schema validation, and paired CLI tests that compare the semantic result and exit status of text and JSON runs.
+
 ### I-Fix-1: Autofix is gated by rule metadata and ends in validation
 
 The autofix loop may dispatch a mutation only for a diagnostic whose
@@ -184,6 +220,12 @@ the same rule/subject suppression policy as the collector; a violation in one
 file never authorizes mutation of a file where that rule is suppressed.
 
 Mechanical backing: `run_autofix`, `autofix::apply_fix`, and autofix tests.
+
+### I-Fix-2: Autofix metadata and dispatch are equivalent
+
+A rule is marked autofixable if and only if it has exactly one reachable autofix handler. Every mutation is attributable to the triggering rule and an in-scope diagnostic subject, and a handler does not modify an unrelated file. The handler uses the same surface inventory, recognition contract, exclusions, and per-file suppression policy as validation. Autofix metadata, dispatch, documentation, and tests cannot describe different rule sets.
+
+Mechanical backing: one canonical fix descriptor or an exact-set parity test across rule metadata, handler dispatch, and the documented autofix table, plus per-rule idempotency, scope, and suppression tests.
 
 ### I-Exit-1: Exit status reflects the final classified outcome
 
