@@ -73,6 +73,12 @@ impl<'a> LiveInstructionDocument<'a> {
         self.markdown.body_prose()
     }
 
+    /// Live prose for control contracts that intentionally treat inline
+    /// machine-result tokens as semantic content rather than examples.
+    pub(crate) fn control_prose_lines(&self) -> &[MarkdownProseLine] {
+        self.markdown.body_control_prose()
+    }
+
     /// Source-positioned headings used to determine Markdown sections.
     pub fn headings(&self) -> &[MarkdownHeading] {
         self.markdown.headings()

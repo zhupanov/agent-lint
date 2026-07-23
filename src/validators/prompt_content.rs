@@ -33,7 +33,6 @@ const GENERIC_FILLER_PHRASES: &[&str] = &[
 ];
 
 const NEGATIVE_INSTRUCTIONS: &[&str] = &["don't", "do not", "never", "avoid"];
-const POSITIVE_ALTERNATIVES: &[&str] = &["instead", "rather", "prefer"];
 const LEADING_ALTERNATIVE_ADVERBS: &[&str] = &["instead", "rather"];
 const NEGATIVE_WINDOW: usize = 3;
 const README_OVERLAP_THRESHOLD: f64 = 0.4;
@@ -392,6 +391,7 @@ const Q002_IMPERATIVE_VERBS: &[&str] = &[
     "prefer",
     "preserve",
     "provide",
+    "put",
     "record",
     "report",
     "respond",
@@ -403,25 +403,28 @@ const Q002_IMPERATIVE_VERBS: &[&str] = &[
     "set",
     "state",
     "summarize",
+    "surface",
     "tell",
+    "treat",
     "update",
     "use",
     "verify",
+    "wait",
     "write",
 ];
 
-/// Whether `line` carries an operative positive alternative: a sentence that is
-/// itself an operative directive (a known imperative opener, an agent subject
-/// plus modal, or a setup clause followed by either) and contains
-/// `instead`, `rather`, or `prefer` at a word boundary. The keyword may trail
-/// the verb (`Give the answer directly instead.`), so operativity is judged
-/// from the sentence opening, not the keyword position.
+/// Whether `line` carries an operative positive alternative: a sentence or
+/// semicolon-delimited clause that is itself a positive directive (a known
+/// imperative opener, an agent subject plus modal, or a setup clause followed
+/// by either). Cue words such as `instead` remain accepted but are not required.
 fn line_has_operative_alternative(line: &str) -> bool {
     let lowered = line.to_ascii_lowercase();
     sentence_ranges(&lowered).into_iter().any(|range| {
         let sentence = &lowered[range];
-        !phrase_ranges(sentence, POSITIVE_ALTERNATIVES).is_empty()
-            && alternative_sentence_is_operative(sentence)
+        sentence.split(';').any(|clause| {
+            alternative_sentence_is_operative(clause)
+                && first_unaddressed_negative(clause).is_none()
+        })
     })
 }
 
@@ -801,7 +804,7 @@ fn check_negative_only(
             diag.report_with(
                 LintRule::PromptNegativeOnly,
                 &format!(
-                    "{path}: operative negative instruction lacks a positive alternative in the same instruction scope (add instead, rather, or prefer within {NEGATIVE_WINDOW} source lines)"
+                    "{path}: operative negative instruction lacks a positive imperative in the same instruction scope (add one within {NEGATIVE_WINDOW} source lines)"
                 ),
                 DiagnosticMetadata::default()
                     .with_location(SourceSpan::range(
@@ -812,7 +815,7 @@ fn check_negative_only(
                     ))
                     .with_evidence(line.text.trim())
                     .with_suggestion(
-                        "State the preferred behavior with instead, rather, or prefer in the same paragraph or list item, or convert the prohibition into a concrete requirement.",
+                        "State the preferred behavior as a positive imperative in the same paragraph or list item, or convert the prohibition into a concrete requirement.",
                     ),
             );
         }
@@ -4106,6 +4109,30 @@ Markdown.
     }
 
     #[test]
+    fn q002_accepts_same_item_positive_imperatives_without_cue_words() {
+        for repaired in [
+            "Do not add shared Bash libraries. Put new logic in `python/`.",
+            "Never watch background-job daemons directly. Wait only with the bounded waiter.",
+            "Do not overwrite operator changes. Treat the checkout as read-only; use guarded worktree operations.",
+            "Don't overstate completion. Report what you did.",
+            "Don't paper over failures. Surface failed commands and their diagnostics.",
+        ] {
+            assert!(
+                q002_diagnostics(repaired).is_empty(),
+                "repaired: {repaired}"
+            );
+        }
+
+        for reported in [
+            "Never apologize. The old runner reported what it did.",
+            "Never apologize. What did the runner report?",
+            "Never apologize. `Report what you did.`",
+        ] {
+            assert_eq!(q002_diagnostics(reported).len(), 1, "reported: {reported}");
+        }
+    }
+
+    #[test]
     fn q002_conjunction_operativity_requires_a_prior_negative() {
         // A coordinating conjunction inside a descriptive list is not an
         // operative negative when no prior negative established the context.
@@ -4152,7 +4179,7 @@ Markdown.
                 .suggestion
                 .as_deref()
                 .unwrap()
-                .contains("instead")
+                .contains("positive imperative")
         );
     }
 
