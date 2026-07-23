@@ -2543,6 +2543,67 @@ suppress = ["S014"]
 
     #[test]
     #[serial_test::serial]
+    fn test_s030_repository_python_tests_own_only_literal_fixture_assets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/fixtures/parse").unwrap();
+        std::fs::create_dir_all("skills/my-skill/scripts/fixtures/validate").unwrap();
+        std::fs::create_dir_all("python/tests").unwrap();
+        for path in [
+            "skills/my-skill/scripts/fixtures/parse/basic-plan.md",
+            "skills/my-skill/scripts/fixtures/parse/basic.tsv",
+            "skills/my-skill/scripts/fixtures/validate/direct.sh",
+            "skills/my-skill/scripts/fixtures/validate/literal.sh",
+            "skills/my-skill/scripts/fixtures/unused.json",
+            "skills/my-skill/scripts/runtime.sh",
+        ] {
+            std::fs::write(path, "fixture\n").unwrap();
+        }
+        std::fs::write(
+            "python/tests/test_fixture_ownership.py",
+            r#"
+from pathlib import Path
+
+FIXTURES_DIR = Path(__file__).resolve().parents[3] / "skills" / "my-skill" / "scripts" / "fixtures" / "parse"
+FIXTURE_PAIRS = [
+    (plan, plan.with_name(plan.stem.removesuffix("-plan") + ".tsv"))
+    for plan in FIXTURES_DIR.glob("*-plan.md")
+]
+VALIDATE_DIR = REPO_ROOT / "skills" / "my-skill" / "scripts" / "fixtures" / "validate"
+DIRECT_CHILD_FIXTURE = VALIDATE_DIR / "direct.sh"
+DIRECT_LITERAL_FIXTURE = "skills/my-skill/scripts/fixtures/validate/literal.sh"
+# "skills/my-skill/scripts/fixtures/unused.json" is only an incidental comment.
+INCIDENTAL_RUNTIME_MENTION = "runtime.sh"
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            "skills/my-skill/SKILL.md",
+            "---\nname: my-skill\ndescription: Use when testing repository fixture ownership\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .filter(|finding| finding.rule == LintRule::OrphanedSkillFiles)
+            .filter_map(|finding| finding.subject_path.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            subjects,
+            [
+                "skills/my-skill/scripts/fixtures/unused.json",
+                "skills/my-skill/scripts/runtime.sh",
+            ]
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn test_s030_sibling_contract_named_by_owner_is_clean() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
