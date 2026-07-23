@@ -267,7 +267,9 @@ fn python_test_owned_fixture_assets(
             if !is_fixture_asset(candidate) {
                 continue;
             }
-            if literals.iter().any(|literal| literal == &candidate.display)
+            if literals
+                .iter()
+                .any(|literal| python_literal_owns_fixture_asset(literal, &candidate.display))
                 || python_child_reference_matches(source, &directories, &candidate.display)
                 || python_glob_reference_matches(
                     source,
@@ -427,31 +429,72 @@ fn normalize_python_path(value: &str) -> String {
         .to_string()
 }
 
+/// Recognize the bounded Python-test literal shapes that carry a fixture path:
+/// an exact path, a TSV registry row whose first field is the path, or a plan
+/// command line whose first token is the path and whose next token is a flag.
+/// This positive grammar intentionally rejects prose mentions and paths in a
+/// later TSV field or command argument position.
+fn python_literal_owns_fixture_asset(literal: &str, candidate: &str) -> bool {
+    normalize_python_path(literal) == candidate
+        || literal.lines().any(|line| {
+            let line = line.trim_start_matches([' ', '\t']);
+            let Some(suffix) = line.strip_prefix(candidate) else {
+                return false;
+            };
+            suffix.starts_with('\t')
+                || (suffix.starts_with([' ', '\t'])
+                    && suffix.trim_start_matches([' ', '\t']).starts_with('-'))
+        })
+}
+
 /// A small lexical extractor sufficient for the supported literal forms. It
-/// skips comments and never evaluates interpolation, imports, or calls.
+/// skips comments, decodes simple escapes, and never evaluates interpolation,
+/// imports, or calls. Triple-quoted values are retained as one literal so a
+/// plan's command rows can be recognized structurally.
 fn python_string_literals(source: &str) -> Vec<String> {
     let mut literals = Vec::new();
-    let mut characters = source.chars().peekable();
-    while let Some(character) = characters.next() {
+    let characters: Vec<_> = source.chars().collect();
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
         if character == '#' {
-            while characters.next().is_some_and(|next| next != '\n') {}
+            while index < characters.len() && characters[index] != '\n' {
+                index += 1;
+            }
         } else if matches!(character, '\'' | '\"') {
             let quote = character;
+            let triple = characters.get(index + 1) == Some(&quote)
+                && characters.get(index + 2) == Some(&quote);
+            index += if triple { 3 } else { 1 };
             let mut literal = String::new();
-            let mut escaped = false;
-            for next in characters.by_ref() {
-                if escaped {
-                    literal.push(next);
-                    escaped = false;
-                } else if next == '\\' {
-                    escaped = true;
-                } else if next == quote {
+            while index < characters.len() {
+                if characters[index] == '\\' {
+                    index += 1;
+                    let Some(escaped) = characters.get(index) else {
+                        break;
+                    };
+                    literal.push(match escaped {
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        other => *other,
+                    });
+                    index += 1;
+                } else if characters[index] == quote
+                    && (!triple
+                        || (characters.get(index + 1) == Some(&quote)
+                            && characters.get(index + 2) == Some(&quote)))
+                {
+                    index += if triple { 3 } else { 1 };
                     break;
                 } else {
-                    literal.push(next);
+                    literal.push(characters[index]);
+                    index += 1;
                 }
             }
-            literals.push(normalize_python_path(&literal));
+            literals.push(literal);
+        } else {
+            index += 1;
         }
     }
     literals
