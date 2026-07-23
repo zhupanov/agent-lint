@@ -1616,6 +1616,101 @@ mod tests {
         );
     }
 
+    /// A literal repository-root `Path` composition is executable reachability
+    /// only when its assigned value occupies subprocess argv element zero.
+    /// Comments, documentation strings, plain constants, and later argv
+    /// positions must not make an otherwise unreferenced script live (#628).
+    #[test]
+    #[serial_test::serial]
+    fn g004_python_composed_subprocess_paths_require_command_position() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+        std::fs::create_dir_all("scripts").unwrap();
+        std::fs::create_dir_all("python").unwrap();
+        std::fs::create_dir_all(".claude-plugin").unwrap();
+        std::fs::write(
+            ".claude-plugin/plugin.json",
+            r#"{"name":"python-references","skills":"./python"}"#,
+        )
+        .unwrap();
+        for path in [
+            "scripts/live.sh",
+            "scripts/root-live.sh",
+            "scripts/prose.sh",
+            "scripts/constant.sh",
+            "scripts/argument.sh",
+            "scripts/not-pathlib.sh",
+            "scripts/reassigned.sh",
+        ] {
+            std::fs::write(path, "#!/bin/sh\n").unwrap();
+        }
+        std::fs::write(
+            "python/runner.py",
+            concat!(
+                "from pathlib import Path\n",
+                "import subprocess\n",
+                "root = Path(__file__).resolve().parent\n",
+                "helper = Path(root) / \"scripts\" / \"live.sh\"\n",
+                "subprocess.run(\n",
+                "    [str(helper), \"--check\"],\n",
+                "    check=True,\n",
+                ")\n",
+                "_REPO_ROOT = Path(__file__).resolve().parents[1]\n",
+                "root_helper = _REPO_ROOT / \"scripts\" / \"root-live.sh\"\n",
+                "subprocess.run([str(root_helper)])\n",
+                "documentation = \"\"\"\n",
+                "prose = Path(root) / \"scripts\" / \"prose.sh\"\n",
+                "subprocess.run([str(prose)])\n",
+                "\"\"\"\n",
+                "constant = \"scripts/constant.sh\"\n",
+                "argument = Path(root) / \"scripts\" / \"argument.sh\"\n",
+                "subprocess.run([\"python3\", str(argument)])\n",
+                "changed = Path(root) / \"scripts\" / \"reassigned.sh\"\n",
+                "changed = build_command()\n",
+                "subprocess.run([str(changed)])\n",
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            "python/not_pathlib.py",
+            concat!(
+                "class Path:\n",
+                "    pass\n",
+                "root = object()\n",
+                "helper = Path(root) / \"scripts\" / \"not-pathlib.sh\"\n",
+                "subprocess.run([str(helper)])\n",
+            ),
+        )
+        .unwrap();
+
+        let ctx = crate::context::LintContext::new(tmp.path(), LintMode::Plugin);
+        let mut diag = crate::diagnostic::DiagnosticCollector::new_all_enabled();
+        validate_dead_scripts(&ctx, &mut diag, &crate::config::ExcludeSet::default());
+        let subjects: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .map(|finding| finding.subject_path.as_ref().unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            subjects,
+            vec![
+                std::path::PathBuf::from("scripts/argument.sh"),
+                std::path::PathBuf::from("scripts/constant.sh"),
+                std::path::PathBuf::from("scripts/not-pathlib.sh"),
+                std::path::PathBuf::from("scripts/prose.sh"),
+                std::path::PathBuf::from("scripts/reassigned.sh"),
+            ],
+            "only the literal Path value used as argv[0] is live: {:?}",
+            diag.errors()
+        );
+        assert!(
+            diag.diagnostics()
+                .iter()
+                .all(|finding| finding.rule == crate::rules::LintRule::DeadScript)
+        );
+    }
+
     /// Skill frontmatter `hooks:` commands are a documented runtime surface:
     /// the referenced script stays reachable for G004, and a missing command
     /// (declared second, after a valid one) is a G002 stale pointer located
