@@ -449,24 +449,26 @@ fn span_byte_range(
     Some(start..end)
 }
 
+/// Byte offset of a Comrak 1-based line and column position.
+///
+/// Comrak sourcepos columns count UTF-8 bytes, not characters (issue #600).
+/// An end position references the final byte of the node's last scalar, so an
+/// offset landing inside a multibyte scalar snaps back to that scalar's first
+/// byte; `span_byte_range` then widens by the scalar's full width.
 fn offset_at(content: &str, line_starts: &[usize], line: usize, column: usize) -> Option<usize> {
     if column == 0 || line == 0 {
         return None;
     }
     let line_start = *line_starts.get(line.saturating_sub(1))?;
     let line_text = content.get(line_start..)?.split('\n').next()?;
-    let mut cols = 1usize;
-    for (byte_offset, _ch) in line_text.char_indices() {
-        if cols == column {
-            return Some(line_start + byte_offset);
-        }
-        cols += 1;
+    if column > line_text.len() + 1 {
+        return None;
     }
-    if cols == column {
-        Some(line_start + line_text.len())
-    } else {
-        None
+    let mut offset = line_start + (column - 1);
+    while !content.is_char_boundary(offset) {
+        offset -= 1;
     }
+    Some(offset)
 }
 
 fn append_mapped(text: &mut String, offsets: &mut Vec<usize>, source_start: usize, chunk: &str) {
@@ -589,5 +591,19 @@ npm run example-only
         let commands = tokenize_shell_commands(doc.content(), fragment).unwrap();
         assert_eq!(commands[0][2].text, "café");
         assert_eq!(&doc.content()[commands[0][2].source_range.clone()], "café");
+    }
+
+    #[test]
+    fn inline_code_fragments_survive_multibyte_prefixes() {
+        // Comrak byte columns after a multibyte scalar used to be read as
+        // character columns, corrupting the inline span (issue #600).
+        let doc = MarkdownDocument::parse("\u{2194} run `npm run build` now\n");
+        let fragments = command_fragments(&doc);
+        let inline = fragments
+            .iter()
+            .find(|fragment| matches!(fragment.surface, CommandSurface::InlineCode))
+            .expect("inline fragment");
+        assert_eq!(inline.text, "npm run build");
+        assert_eq!(&doc.content()[inline.source_range()], "npm run build");
     }
 }

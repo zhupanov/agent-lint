@@ -161,10 +161,12 @@ pub(crate) fn extract_bare_script_references(command: &str, line: usize) -> Vec<
     let mut references = Vec::new();
     let mut start = 0;
     while start < command.len() {
-        let end = command[start..]
-            .find(is_shell_path_delimiter)
-            .map(|index| start + index)
-            .unwrap_or(command.len());
+        // `is_shell_path_delimiter` matches multibyte Unicode whitespace, so
+        // advance past the delimiter by its full width (issue #600).
+        let delimiter = command[start..]
+            .char_indices()
+            .find(|&(_, character)| is_shell_path_delimiter(character));
+        let end = delimiter.map_or(command.len(), |(index, _)| start + index);
         let reference =
             command[start..end].trim_matches(|character| matches!(character, '\'' | '"'));
         let relative = reference.strip_prefix("./").unwrap_or(reference);
@@ -180,7 +182,9 @@ pub(crate) fn extract_bare_script_references(command: &str, line: usize) -> Vec<
                 line,
             });
         }
-        start = end.saturating_add(1);
+        start = delimiter.map_or(command.len(), |(index, character)| {
+            start + index + character.len_utf8()
+        });
     }
     references
 }
@@ -313,9 +317,13 @@ fn invocation_for(
         .rfind([';', '|', '&', '\n'])
         .map_or(0, |index| index + 1);
     let segment = &command[segment_start..reference_start];
+    // The trailing whitespace scalar can be multibyte, so step past it by its
+    // full width rather than one byte (issue #600).
     let word_start = segment
-        .rfind(|character: char| character.is_whitespace())
-        .map_or(0, |index| index + 1);
+        .char_indices()
+        .rev()
+        .find(|&(_, character)| character.is_whitespace())
+        .map_or(0, |(index, character)| index + character.len_utf8());
     let word_prefix = &segment[word_start..];
 
     // A root placeholder embedded in an assignment, argument, comparison, or
@@ -571,5 +579,34 @@ mod tests {
         );
         assert_eq!(script_kind(Path::new("scripts/a")), Some(ScriptKind::Other));
         assert_eq!(script_kind(Path::new("scripts/a.txt")), None);
+    }
+
+    #[test]
+    fn bare_references_tolerate_multibyte_shell_whitespace() {
+        // U+00A0 (2 bytes) and U+3000 (3 bytes) match `is_whitespace`, so the
+        // scan must step past them by their full width (issue #600).
+        let refs = extract_bare_script_references("./tool x\u{a0}y scripts/check.sh", 3);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, PathBuf::from("scripts/check.sh"));
+        assert_eq!(refs[0].line, 3);
+        let refs = extract_bare_script_references("run\u{3000}scripts/wide.sh", 1);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, PathBuf::from("scripts/wide.sh"));
+    }
+
+    #[test]
+    fn invocations_tolerate_multibyte_whitespace_before_the_reference() {
+        // The scalar before the reference is multibyte whitespace; stepping
+        // one byte past it used to split the scalar and panic (issue #600).
+        let instruction = extract_instruction_command_references(
+            "Run\u{a0}${CLAUDE_PLUGIN_ROOT}/scripts/x.sh",
+            1,
+        );
+        assert_eq!(instruction.len(), 1);
+        assert_eq!(instruction[0].path, PathBuf::from("scripts/x.sh"));
+        assert_eq!(instruction[0].invocation, Invocation::Direct);
+        let command = extract_command_references("ok;\u{a0}${CLAUDE_PLUGIN_ROOT}/scripts/a.sh", 1);
+        assert_eq!(command.len(), 1);
+        assert_eq!(command[0].invocation, Invocation::Direct);
     }
 }

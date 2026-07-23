@@ -367,6 +367,13 @@ fn split_clauses(line: &str) -> Vec<(Range<usize>, String)> {
                 }
                 index += 1;
             }
+            // An unclosed multi-backtick run stops the byte scan up to
+            // `ticks - 1` bytes before the end of the line, which can be
+            // inside a multibyte scalar; snap forward so the `line[index..]`
+            // slice below stays on a char boundary.
+            while index < bytes.len() && !line.is_char_boundary(index) {
+                index += 1;
+            }
             continue;
         }
         if bytes[index] == b'[' {
@@ -391,7 +398,9 @@ fn split_clauses(line: &str) -> Vec<(Range<usize>, String)> {
             start = index;
             continue;
         }
-        index += 1;
+        // Advance by the full scalar so the `line[index..]` slice above never
+        // lands inside a multibyte character (issue #600).
+        index += rest.chars().next().map_or(1, |ch| ch.len_utf8());
     }
     push_clause(&mut clauses, line, start, line.len());
     clauses
@@ -411,10 +420,14 @@ fn push_clause(clauses: &mut Vec<(Range<usize>, String)>, line: &str, start: usi
     clauses.push((range, text.to_string()));
 }
 
+/// Byte offset of the ASCII delimiter closing the destination: the unnested
+/// `)` for a bare destination, or the `>` of an angle-bracketed one. The
+/// caller resumes one byte past it, so returning one past `>` here would land
+/// mid-scalar when a multibyte character immediately follows.
 fn find_link_destination_end(after: &str) -> Option<usize> {
     let bytes = after.as_bytes();
     if bytes.first() == Some(&b'<') {
-        return after.find('>').map(|index| index + 1);
+        return after.find('>');
     }
     let mut depth = 0usize;
     let mut index = 0usize;
@@ -531,6 +544,115 @@ mod tests {
         assert_eq!(
             prompt_resolution_base(MarkdownRefKind::InlineCode, ".claude/skills/a.md"),
             ResolutionBase::RepositoryRoot
+        );
+    }
+
+    #[test]
+    fn issue_600_utf8_arrow_reproducer_selects_owning_clause() {
+        // Exact reproducer from issue #600: the 3-byte `↔` scalar used to
+        // leave the clause scanner mid-character and panic.
+        let content = "- `docs/issue-anchored-plan.md`: **LIVE** /design \u{2194} /implement wire format, clarification round-trip, and pause pointer\n";
+        let refs = markdown_references(content);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].raw, "docs/issue-anchored-plan.md");
+        let clause = refs[0].clause.as_deref().expect("live prose clause");
+        assert!(clause.contains('\u{2194}'), "{clause}");
+        assert!(clause.contains("`docs/issue-anchored-plan.md`"), "{clause}");
+    }
+
+    #[test]
+    fn multibyte_scalars_keep_clause_ranges_on_char_boundaries() {
+        // One scalar per UTF-8 width: 1, 2, 3, and 4 bytes.
+        for scalar in ["x", "\u{e9}", "\u{2194}", "\u{1f680}"] {
+            let lines = [
+                // before the clause holding the reference
+                format!("{scalar} read `docs/a.md` completely first; then stop."),
+                // inside the reference clause
+                format!("Always read `docs/a.md` {scalar} first."),
+                // inside the inline code itself
+                format!("Read `docs/{scalar}.md` completely first."),
+                // before and inside a link clause
+                format!("{scalar} see [a]({scalar}.md) now. Then read `docs/a.md` first always."),
+                // touching em and en dash clause boundaries
+                format!("Read `docs/a.md` first{scalar}\u{2014}{scalar}always."),
+                format!("Read `docs/a.md` first{scalar}\u{2013}{scalar}always."),
+                // trailing an unclosed multi-backtick run
+                format!("Read `docs/a.md` completely first. ``ab{scalar}"),
+                // immediately after an angle-bracket link destination
+                format!("Do [a](<docs/a.md>{scalar} x) and read `docs/b.md` completely first."),
+            ];
+            for line in lines {
+                for (range, text) in split_clauses(&line) {
+                    assert!(line.is_char_boundary(range.start), "{line:?} {range:?}");
+                    assert!(line.is_char_boundary(range.end), "{line:?} {range:?}");
+                    assert_eq!(&line[range.clone()], text, "{line:?}");
+                }
+                for reference in markdown_references(&format!("{line}\n")) {
+                    assert!(reference.clause.is_some(), "{line:?} {reference:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multibyte_prefix_still_selects_the_owning_reference_clause() {
+        // Scalars before a reference shift byte offsets; the reference must
+        // resolve inside its own clause, not a neighbor (issue #600).
+        let content =
+            "\u{1f680}\u{2194} intro; never read `docs/a.md`; always read `docs/b.md` first.\n";
+        let refs = markdown_references(content);
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].raw, "docs/a.md");
+        assert_eq!(refs[1].raw, "docs/b.md");
+        assert!(!clause_is_mandatory_load(
+            refs[0].clause.as_deref().unwrap()
+        ));
+        assert!(clause_is_mandatory_load(refs[1].clause.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn unclosed_multi_backtick_tail_keeps_the_owning_clause() {
+        let content = "Read `docs/a.md` completely first. ``ab\u{2194}\n";
+        let refs = markdown_references(content);
+        assert_eq!(refs[0].raw, "docs/a.md");
+        assert_eq!(
+            refs[0].clause.as_deref(),
+            Some("Read `docs/a.md` completely first.")
+        );
+    }
+
+    #[test]
+    fn angle_destination_followed_by_multibyte_scalar_keeps_the_owning_clause() {
+        let content = "Do [a](<docs/a.md>\u{2194} x) and read `docs/b.md` completely first.\n";
+        let refs = markdown_references(content);
+        let code = refs
+            .iter()
+            .find(|reference| reference.kind == MarkdownRefKind::InlineCode)
+            .expect("inline code reference");
+        assert_eq!(code.raw, "docs/b.md");
+        assert!(
+            code.clause
+                .as_deref()
+                .unwrap()
+                .contains("read `docs/b.md` completely first"),
+            "{:?}",
+            code.clause
+        );
+    }
+
+    #[test]
+    fn angle_destination_scan_resumes_immediately_after_the_close() {
+        // The scan deliberately resumes one byte after `>` (it previously
+        // skipped two), so a clause delimiter hard against a malformed angle
+        // destination now splits. Well-formed links place `)`, space, or tab
+        // there, none of which are clause delimiters.
+        let clauses = split_clauses("[a](<x>.md) then");
+        assert_eq!(
+            clauses
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>(),
+            ["[a](<x>.", "md) then"]
         );
     }
 }
