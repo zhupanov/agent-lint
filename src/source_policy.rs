@@ -5,7 +5,7 @@
 //! deliberately excludes every item that is positively gated on `test`.
 
 use proc_macro2::Span;
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use syn::spanned::Spanned;
@@ -163,6 +163,15 @@ struct SourceModule {
     path: String,
     module: Vec<String>,
     syntax: syn::File,
+}
+
+/// A source file together with whether rustc only compiles it for tests.
+///
+/// Unlike the production-policy loader above, the CWD policy deliberately
+/// follows `#[cfg(test)]` modules: those are the code it is meant to audit.
+struct TestSourceModule {
+    source: SourceModule,
+    test_side: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1014,6 +1023,837 @@ fn inspect_tree(root: &Path) -> Result<BTreeSet<Finding>, String> {
         findings.extend(inspect_module(&source));
     }
     Ok(findings)
+}
+
+const UNREACHABLE_CWD_HELPERS: &[(&str, &str)] = &[];
+
+#[derive(Clone, Debug)]
+struct CwdFunction {
+    identity: String,
+    path: String,
+    module: Vec<String>,
+    name: String,
+    line: usize,
+    is_test: bool,
+    serial_key: Option<Option<String>>,
+    calls: Vec<Vec<String>>,
+    mutations: Vec<CwdEvent>,
+    guards: Vec<CwdEvent>,
+    drops: Vec<CwdEvent>,
+    unsafe_guard: bool,
+    env_mutations: Vec<CwdEvent>,
+}
+
+#[derive(Clone, Debug)]
+struct CwdEvent {
+    line: usize,
+    order: usize,
+    scope: Vec<usize>,
+    name: Option<String>,
+}
+
+fn is_prefix(prefix: &[usize], value: &[usize]) -> bool {
+    value.starts_with(prefix)
+}
+
+fn test_identity(path: &str, module: &[String], name: &str) -> String {
+    std::iter::once(path)
+        .chain(module.iter().map(String::as_str))
+        .chain(std::iter::once(name))
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn source_path(root: &Path, file: &Path) -> String {
+    file.strip_prefix(root)
+        .unwrap_or(file)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn load_test_modules(root: &Path) -> Result<Vec<TestSourceModule>, String> {
+    let mut modules = Vec::new();
+    let mut visited = HashSet::new();
+    load_test_module_file(
+        root,
+        &root.join("src/main.rs"),
+        Vec::new(),
+        root.join("src"),
+        false,
+        &mut visited,
+        &mut modules,
+    )?;
+    let tests = root.join("tests");
+    if tests.is_dir() {
+        for entry in
+            fs::read_dir(&tests).map_err(|error| format!("{}: {error}", tests.display()))?
+        {
+            let file = entry
+                .map_err(|error| format!("{}: {error}", tests.display()))?
+                .path();
+            if file.extension().is_some_and(|extension| extension == "rs") {
+                let stem = file
+                    .file_stem()
+                    .expect("Rust file has stem")
+                    .to_string_lossy();
+                load_test_module_file(
+                    root,
+                    &file,
+                    Vec::new(),
+                    tests.join(stem.as_ref()),
+                    true,
+                    &mut visited,
+                    &mut modules,
+                )?;
+            }
+        }
+    }
+    modules.sort_by(|left, right| left.source.path.cmp(&right.source.path));
+    Ok(modules)
+}
+
+fn load_test_module_file(
+    root: &Path,
+    file: &Path,
+    module: Vec<String>,
+    child_dir: PathBuf,
+    test_side: bool,
+    visited: &mut HashSet<PathBuf>,
+    modules: &mut Vec<TestSourceModule>,
+) -> Result<(), String> {
+    if !visited.insert(file.to_path_buf()) {
+        return Ok(());
+    }
+    let source =
+        fs::read_to_string(file).map_err(|error| format!("{}: {error}", file.display()))?;
+    let syntax =
+        syn::parse_file(&source).map_err(|error| format!("{}: {error}", file.display()))?;
+    discover_test_modules(
+        root,
+        &syntax.items,
+        &module,
+        &child_dir,
+        test_side,
+        visited,
+        modules,
+    )?;
+    modules.push(TestSourceModule {
+        source: SourceModule {
+            path: source_path(root, file),
+            module,
+            syntax,
+        },
+        test_side,
+    });
+    Ok(())
+}
+
+fn discover_test_modules(
+    root: &Path,
+    items: &[Item],
+    module: &[String],
+    child_dir: &Path,
+    inherited_test_side: bool,
+    visited: &mut HashSet<PathBuf>,
+    modules: &mut Vec<TestSourceModule>,
+) -> Result<(), String> {
+    for item in items {
+        let Item::Mod(item_mod) = item else { continue };
+        let mut nested_module = module.to_vec();
+        nested_module.push(item_mod.ident.to_string());
+        let child_test_side = inherited_test_side || is_test_only(&item_mod.attrs);
+        let Some((_, nested_items)) = &item_mod.content else {
+            let stem = item_mod.ident.to_string();
+            let flat = child_dir.join(format!("{stem}.rs"));
+            let nested = child_dir.join(&stem).join("mod.rs");
+            let (file, next_child_dir) = if flat.is_file() {
+                (flat, child_dir.join(stem))
+            } else if nested.is_file() {
+                (nested, child_dir.join(stem))
+            } else {
+                return Err(format!(
+                    "cannot resolve external module {} declared below {}",
+                    item_mod.ident,
+                    child_dir.display()
+                ));
+            };
+            load_test_module_file(
+                root,
+                &file,
+                nested_module,
+                next_child_dir,
+                child_test_side,
+                visited,
+                modules,
+            )?;
+            continue;
+        };
+        discover_test_modules(
+            root,
+            nested_items,
+            &nested_module,
+            &child_dir.join(item_mod.ident.to_string()),
+            child_test_side,
+            visited,
+            modules,
+        )?;
+    }
+    Ok(())
+}
+
+fn module_imports(items: &[Item], module: &[String], out: &mut BTreeMap<Vec<String>, Vec<Import>>) {
+    let imports = out.entry(module.to_vec()).or_default();
+    for item in items {
+        if let Item::Use(item_use) = item {
+            flatten_use_tree(&item_use.tree, Vec::new(), module, imports);
+        }
+    }
+    for item in items {
+        if let Item::Mod(item_mod) = item
+            && let Some((_, nested)) = &item_mod.content
+        {
+            let mut child = module.to_vec();
+            child.push(item_mod.ident.to_string());
+            module_imports(nested, &child, out);
+        }
+    }
+}
+
+fn has_test_attr(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|attr| attr.path().is_ident("test"))
+}
+
+fn serial_attribute(
+    attrs: &[Attribute],
+    aliases: &HashMap<String, Alias>,
+) -> Option<Option<String>> {
+    for attr in attrs {
+        let raw = path_segments(attr.path());
+        let recognized = raw == ["serial_test", "serial"]
+            || (raw == ["serial"]
+                && aliases.get("serial").is_some_and(|alias| {
+                    resolve_path(&alias.raw, &alias.module, aliases) == ["serial_test", "serial"]
+                }));
+        if recognized {
+            if matches!(&attr.meta, Meta::Path(_)) {
+                return Some(None);
+            } else {
+                return Some(
+                    attr.parse_args::<syn::Ident>()
+                        .ok()
+                        .map(|key| key.to_string()),
+                );
+            }
+        }
+    }
+    None
+}
+
+struct CwdBodyVisitor<'a> {
+    module: &'a [String],
+    aliases: &'a HashMap<String, Alias>,
+    calls: Vec<Vec<String>>,
+    mutations: Vec<CwdEvent>,
+    guards: Vec<CwdEvent>,
+    drops: Vec<CwdEvent>,
+    env_mutations: Vec<CwdEvent>,
+    unsafe_guard: bool,
+    scopes: Vec<usize>,
+    next_scope: usize,
+    next_order: usize,
+}
+
+impl CwdBodyVisitor<'_> {
+    fn event(&mut self, span: Span, name: Option<String>) -> CwdEvent {
+        self.next_order += 1;
+        CwdEvent {
+            line: location(span),
+            order: self.next_order,
+            scope: self.scopes.clone(),
+            name,
+        }
+    }
+
+    fn resolved(&self, path: &syn::Path) -> Vec<String> {
+        resolve_path(&path_segments(path), self.module, self.aliases)
+    }
+
+    fn is_guard_new(&self, expression: &syn::Expr) -> bool {
+        let syn::Expr::Call(call) = expression else {
+            return false;
+        };
+        let syn::Expr::Path(path) = &*call.func else {
+            return false;
+        };
+        has_suffix(&self.resolved(&path.path), "CwdGuard::new")
+    }
+
+    fn local_name(local: &syn::Local) -> Option<String> {
+        let syn::Pat::Ident(ident) = &local.pat else {
+            return None;
+        };
+        Some(ident.ident.to_string())
+    }
+}
+
+impl<'ast> Visit<'ast> for CwdBodyVisitor<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.next_scope += 1;
+        self.scopes.push(self.next_scope);
+        visit::visit_block(self, block);
+        self.scopes.pop();
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if let (Some(name), Some(init)) = (Self::local_name(local), &local.init)
+            && (name.starts_with("guard") || name.starts_with("_guard"))
+            && self.is_guard_new(&init.expr)
+        {
+            let event = self.event(local.span(), Some(name));
+            self.guards.push(event);
+        }
+        visit::visit_local(self, local);
+    }
+
+    fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*expression.func {
+            let resolved = self.resolved(&path.path);
+            if resolved == ["std", "env", "set_current_dir"] {
+                let event = self.event(path.span(), None);
+                self.mutations.push(event);
+            } else if resolved == ["std", "env", "set_var"]
+                || resolved == ["std", "env", "remove_var"]
+            {
+                let event = self.event(path.span(), None);
+                self.env_mutations.push(event);
+            } else if resolved.last().is_some_and(|name| name == "drop")
+                || has_suffix(&resolved, "mem::forget")
+            {
+                let name = expression.args.first().and_then(|argument| match argument {
+                    syn::Expr::Path(path) => path.path.get_ident().map(ToString::to_string),
+                    _ => None,
+                });
+                if has_suffix(&resolved, "mem::forget") {
+                    self.unsafe_guard = true;
+                }
+                let event = self.event(path.span(), name);
+                self.drops.push(event);
+            } else {
+                self.calls.push(resolved);
+            }
+        }
+        visit::visit_expr_call(self, expression);
+    }
+
+    fn visit_macro(&mut self, item: &'ast syn::Macro) {
+        // `syn` keeps macro input opaque. Assertion and collection macros often
+        // contain the only call to a test helper, so recover ordinary
+        // comma-separated expressions when their token stream permits it.
+        if let Ok(expressions) = item.parse_body_with(
+            syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated,
+        ) {
+            for expression in expressions {
+                self.visit_expr(&expression);
+            }
+        }
+    }
+
+    fn visit_type_path(&mut self, ty: &'ast syn::TypePath) {
+        if has_suffix(&self.resolved(&ty.path), "ManuallyDrop") {
+            self.unsafe_guard = true;
+        }
+        visit::visit_type_path(self, ty);
+    }
+}
+
+fn collect_cwd_functions(
+    source: &TestSourceModule,
+    imports: &BTreeMap<Vec<String>, Vec<Import>>,
+    items: &[Item],
+    module: &[String],
+    inherited_test_side: bool,
+    impl_name: Option<&str>,
+    out: &mut Vec<CwdFunction>,
+) {
+    for item in items {
+        match item {
+            Item::Fn(function) => {
+                let aliases = aliases_for(imports.get(module).map(Vec::as_slice).unwrap_or(&[]));
+                let test_side = inherited_test_side
+                    || has_test_attr(&function.attrs)
+                    || is_test_only(&function.attrs);
+                if !test_side {
+                    continue;
+                }
+                let name = impl_name
+                    .map(|owner| format!("{owner}::{}", function.sig.ident))
+                    .unwrap_or_else(|| function.sig.ident.to_string());
+                let mut visitor = CwdBodyVisitor {
+                    module,
+                    aliases: &aliases,
+                    calls: Vec::new(),
+                    mutations: Vec::new(),
+                    guards: Vec::new(),
+                    drops: Vec::new(),
+                    env_mutations: Vec::new(),
+                    unsafe_guard: false,
+                    scopes: Vec::new(),
+                    next_scope: 0,
+                    next_order: 0,
+                };
+                visitor.visit_block(&function.block);
+                out.push(CwdFunction {
+                    identity: test_identity(&source.source.path, module, &name),
+                    path: source.source.path.clone(),
+                    module: module.to_vec(),
+                    name,
+                    line: location(function.sig.ident.span()),
+                    is_test: has_test_attr(&function.attrs),
+                    serial_key: serial_attribute(&function.attrs, &aliases),
+                    calls: visitor.calls,
+                    mutations: visitor.mutations,
+                    guards: visitor.guards,
+                    drops: visitor.drops,
+                    unsafe_guard: visitor.unsafe_guard,
+                    env_mutations: visitor.env_mutations,
+                });
+            }
+            Item::Mod(item_mod) => {
+                if let Some((_, nested)) = &item_mod.content {
+                    let mut child = module.to_vec();
+                    child.push(item_mod.ident.to_string());
+                    collect_cwd_functions(
+                        source,
+                        imports,
+                        nested,
+                        &child,
+                        inherited_test_side || is_test_only(&item_mod.attrs),
+                        None,
+                        out,
+                    );
+                }
+            }
+            Item::Impl(item_impl) => {
+                let owner = match &*item_impl.self_ty {
+                    syn::Type::Path(path) => path
+                        .path
+                        .segments
+                        .last()
+                        .map(|segment| segment.ident.to_string()),
+                    _ => None,
+                };
+                for impl_item in &item_impl.items {
+                    if let syn::ImplItem::Fn(function) = impl_item {
+                        let aliases =
+                            aliases_for(imports.get(module).map(Vec::as_slice).unwrap_or(&[]));
+                        let test_side = inherited_test_side
+                            || has_test_attr(&function.attrs)
+                            || is_test_only(&function.attrs);
+                        if !test_side {
+                            continue;
+                        }
+                        let Some(owner) = &owner else { continue };
+                        let name = format!("{owner}::{}", function.sig.ident);
+                        let mut visitor = CwdBodyVisitor {
+                            module,
+                            aliases: &aliases,
+                            calls: Vec::new(),
+                            mutations: Vec::new(),
+                            guards: Vec::new(),
+                            drops: Vec::new(),
+                            env_mutations: Vec::new(),
+                            unsafe_guard: false,
+                            scopes: Vec::new(),
+                            next_scope: 0,
+                            next_order: 0,
+                        };
+                        visitor.visit_block(&function.block);
+                        out.push(CwdFunction {
+                            identity: test_identity(&source.source.path, module, &name),
+                            path: source.source.path.clone(),
+                            module: module.to_vec(),
+                            name,
+                            line: location(function.sig.ident.span()),
+                            is_test: has_test_attr(&function.attrs),
+                            serial_key: serial_attribute(&function.attrs, &aliases),
+                            calls: visitor.calls,
+                            mutations: visitor.mutations,
+                            guards: visitor.guards,
+                            drops: visitor.drops,
+                            unsafe_guard: visitor.unsafe_guard,
+                            env_mutations: visitor.env_mutations,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn cwd_inventory(root: &Path) -> Result<Vec<CwdFunction>, String> {
+    let mut functions = Vec::new();
+    for source in load_test_modules(root)? {
+        let mut imports = BTreeMap::new();
+        module_imports(
+            &source.source.syntax.items,
+            &source.source.module,
+            &mut imports,
+        );
+        collect_cwd_functions(
+            &source,
+            &imports,
+            &source.source.syntax.items,
+            &source.source.module,
+            source.test_side,
+            None,
+            &mut functions,
+        );
+    }
+    functions.sort_by(|left, right| left.identity.cmp(&right.identity));
+    Ok(functions)
+}
+
+fn function_symbol(function: &CwdFunction) -> Vec<String> {
+    let mut symbol = function.module.clone();
+    symbol.extend(function.name.split("::").map(ToString::to_string));
+    symbol
+}
+
+fn resolve_function_call(
+    function: &CwdFunction,
+    call: &[String],
+    symbols: &HashMap<Vec<String>, usize>,
+) -> Option<usize> {
+    let mut candidate = function.module.clone();
+    candidate.extend_from_slice(call);
+    symbols
+        .get(&candidate)
+        .copied()
+        .or_else(|| symbols.get(call).copied())
+}
+
+fn guard_is_live(function: &CwdFunction, mutation: &CwdEvent) -> bool {
+    function.guards.iter().any(|guard| {
+        guard.order < mutation.order
+            && is_prefix(&guard.scope, &mutation.scope)
+            && !function.drops.iter().any(|drop| {
+                drop.order > guard.order && drop.order < mutation.order && drop.name == guard.name
+            })
+    })
+}
+
+fn cwd_findings(functions: &[CwdFunction]) -> Vec<String> {
+    let symbols = functions
+        .iter()
+        .enumerate()
+        .map(|(index, function)| (function_symbol(function), index))
+        .collect::<HashMap<_, _>>();
+    let mut callers = vec![Vec::new(); functions.len()];
+    for (caller, function) in functions.iter().enumerate() {
+        for call in &function.calls {
+            if let Some(callee) = resolve_function_call(function, call, &symbols) {
+                callers[callee].push(caller);
+            }
+        }
+    }
+    let exception = "src/test_helpers.rs::test_helpers::CwdGuard::drop";
+    let mut failures = Vec::new();
+    let mut direct_mutators = Vec::new();
+    for (index, function) in functions.iter().enumerate() {
+        if function.identity == exception {
+            if function.mutations.len() != 1 {
+                failures.push(format!("{}:{}: cwd-test-policy: CwdGuard::drop must contain exactly one restoration set_current_dir call", function.path, function.line));
+            }
+            continue;
+        }
+        if !function.mutations.is_empty() {
+            direct_mutators.push(index);
+            for mutation in &function.mutations {
+                if function.unsafe_guard || !guard_is_live(function, mutation) {
+                    failures.push(format!(
+                        "{}:{}: cwd-test-policy: set_current_dir occurs before a live CwdGuard binding in helper {}",
+                        function.path, mutation.line, function.name
+                    ));
+                }
+            }
+        }
+        for env in &function.env_mutations {
+            failures.push(format!(
+                "{}:{}: cwd-test-policy: test-side process environment mutation is forbidden in helper {}",
+                function.path, env.line, function.name
+            ));
+        }
+    }
+    if functions
+        .iter()
+        .any(|function| function.path == "src/test_helpers.rs")
+        && !functions
+            .iter()
+            .any(|function| function.identity == exception)
+    {
+        failures.push("src/test_helpers.rs: cwd-test-policy: required CwdGuard::drop restoration function is missing".to_string());
+    }
+
+    let allowed = UNREACHABLE_CWD_HELPERS
+        .iter()
+        .map(|(identity, _)| *identity)
+        .collect::<HashSet<_>>();
+    for (identity, reason) in UNREACHABLE_CWD_HELPERS {
+        let count = UNREACHABLE_CWD_HELPERS
+            .iter()
+            .filter(|(other, _)| other == identity)
+            .count();
+        if count > 1 || reason.trim().is_empty() {
+            failures.push(format!(
+                "cwd-test-policy: invalid unreachable CWD helper allowlist entry {identity}"
+            ));
+        }
+    }
+    let mut required = vec![false; functions.len()];
+    let mut queue = VecDeque::new();
+    for &mutator in &direct_mutators {
+        required[mutator] = true;
+        queue.push_back(mutator);
+    }
+    while let Some(callee) = queue.pop_front() {
+        for &caller in &callers[callee] {
+            if !required[caller] {
+                required[caller] = true;
+                queue.push_back(caller);
+            }
+        }
+    }
+    let serial_keys = functions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, function)| {
+            (required[index] && function.is_test).then_some(function.serial_key.clone())
+        })
+        .collect::<Vec<_>>();
+    let distinct_keys = serial_keys
+        .iter()
+        .filter_map(|key| {
+            key.as_ref()
+                .map(|key| key.as_deref().unwrap_or("<default>"))
+        })
+        .collect::<BTreeSet<_>>();
+    if serial_keys.iter().any(Option::is_none) || distinct_keys.len() > 1 {
+        failures.push(
+            "cwd-test-policy: CWD-mutating tests use mixed or missing serial_test lock keys"
+                .to_string(),
+        );
+    }
+    for (index, function) in functions.iter().enumerate() {
+        if required[index] && function.is_test && function.serial_key.is_none() {
+            let mut chain = VecDeque::from([(index, vec![index])]);
+            let mut seen = HashSet::from([index]);
+            let mut found = vec![index];
+            while let Some((node, path)) = chain.pop_front() {
+                if direct_mutators.contains(&node) {
+                    found = path;
+                    break;
+                }
+                for call in &functions[node].calls {
+                    if let Some(next) = resolve_function_call(&functions[node], call, &symbols)
+                        && seen.insert(next)
+                    {
+                        let mut next_path = path.clone();
+                        next_path.push(next);
+                        chain.push_back((next, next_path));
+                    }
+                }
+            }
+            failures.push(format!(
+                "{}:{}: cwd-test-policy: test {} reaches CWD-mutating helper {} but lacks #[serial_test::serial] ({})",
+                function.path, function.line, function.name,
+                functions[*found.last().unwrap()].name,
+                found.iter().map(|&node| functions[node].name.as_str()).collect::<Vec<_>>().join(" -> ")
+            ));
+        }
+    }
+    for &mutator in &direct_mutators {
+        let mut queue = VecDeque::from([mutator]);
+        let mut seen = HashSet::from([mutator]);
+        let mut reachable = functions[mutator].is_test;
+        while let Some(callee) = queue.pop_front() {
+            for &caller in &callers[callee] {
+                if functions[caller].is_test {
+                    reachable = true;
+                }
+                if seen.insert(caller) {
+                    queue.push_back(caller);
+                }
+            }
+        }
+        let allowlisted = allowed.contains(functions[mutator].identity.as_str());
+        if !reachable && !allowlisted {
+            failures.push(format!(
+                    "{}:{}: cwd-test-policy: unreachable CWD-mutating helper {}; delete it or add a reason-bearing baseline",
+                    functions[mutator].path, functions[mutator].line, functions[mutator].name
+                ));
+        } else if reachable && allowlisted {
+            failures.push(format!(
+                "cwd-test-policy: stale unreachable CWD helper allowlist entry {}",
+                functions[mutator].identity
+            ));
+        }
+    }
+    for (identity, _) in UNREACHABLE_CWD_HELPERS {
+        if !direct_mutators
+            .iter()
+            .any(|&mutator| functions[mutator].identity == *identity)
+        {
+            failures.push(format!(
+                "cwd-test-policy: stale unreachable CWD helper allowlist entry {identity}"
+            ));
+        }
+    }
+    failures.sort();
+    failures
+}
+
+fn cwd_fixture(source: &str) -> Vec<CwdFunction> {
+    let source = TestSourceModule {
+        source: SourceModule {
+            path: "src/example.rs".to_string(),
+            module: vec!["tests".to_string()],
+            syntax: syn::parse_file(source).unwrap(),
+        },
+        test_side: true,
+    };
+    let mut imports = BTreeMap::new();
+    module_imports(
+        &source.source.syntax.items,
+        &source.source.module,
+        &mut imports,
+    );
+    let mut functions = Vec::new();
+    collect_cwd_functions(
+        &source,
+        &imports,
+        &source.source.syntax.items,
+        &source.source.module,
+        true,
+        None,
+        &mut functions,
+    );
+    functions
+}
+
+#[test]
+fn process_global_test_state_is_guarded_and_serialized() {
+    let functions = cwd_inventory(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let failures = cwd_findings(&functions);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn cwd_policy_fixtures_cover_guards_calls_and_attributes() {
+    let pass = cwd_fixture(
+        r#"
+        #[test] #[serial_test::serial]
+        fn direct() { let _guard = CwdGuard::new(); std::env::set_current_dir(".").unwrap(); }
+        fn helper() { let guard = CwdGuard::new(); std::env::set_current_dir(".").unwrap(); }
+        #[test] #[serial_test::serial]
+        fn through_helper() { helper(); }
+        fn first() { second(); }
+        fn second() { first(); let _guard = CwdGuard::new(); std::env::set_current_dir(".").unwrap(); }
+        #[test] #[serial_test::serial]
+        fn cycle() { first(); }
+        use serial_test::serial;
+        #[test] #[serial]
+        fn imported_serial() { let _guard = CwdGuard::new(); std::env::set_current_dir(".").unwrap(); }
+        // std::env::set_current_dir("ignored");
+        const NOTE: &str = "std::env::set_current_dir(ignored)";
+        "#,
+    );
+    assert!(cwd_findings(&pass).is_empty(), "{:?}", cwd_findings(&pass));
+
+    for source in [
+        "#[test] #[serial_test::serial] fn missing() { std::env::set_current_dir(\".\").unwrap(); }",
+        "#[test] #[serial_test::serial] fn after() { std::env::set_current_dir(\".\").unwrap(); let _guard = CwdGuard::new(); }",
+        "#[test] #[serial_test::serial] fn discarded() { CwdGuard::new(); std::env::set_current_dir(\".\").unwrap(); }",
+        "#[test] #[serial_test::serial] fn dropped() { let _guard = CwdGuard::new(); std::env::set_current_dir(\".\").unwrap(); drop(_guard); std::env::set_current_dir(\".\").unwrap(); }",
+        "use std::env::set_current_dir as cd; #[test] #[serial_test::serial] fn renamed() { cd(\".\").unwrap(); }",
+    ] {
+        let findings = cwd_findings(&cwd_fixture(source));
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("live CwdGuard")),
+            "expected guard finding for {source}: {findings:?}"
+        );
+    }
+
+    let non_serial = cwd_fixture(
+        r#"
+        fn run_in() { let _guard = CwdGuard::new(); std::env::set_current_dir(".").unwrap(); }
+        #[test] fn foo() { assert!({ run_in(); true }); }
+        "#,
+    );
+    let findings = cwd_findings(&non_serial);
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.contains("foo -> run_in")),
+        "{findings:?}"
+    );
+
+    let environment = cwd_fixture(
+        r#"
+        #[test] fn environment() { std::env::set_var("A", "B"); std::env::remove_var("A"); }
+        "#,
+    );
+    let findings = cwd_findings(&environment);
+    assert_eq!(
+        findings
+            .iter()
+            .filter(|finding| finding.contains("environment mutation"))
+            .count(),
+        2,
+        "{findings:?}"
+    );
+
+    let mixed_keys = cwd_fixture(
+        r#"
+        #[test] #[serial_test::serial] fn default_key() { let _guard = CwdGuard::new(); std::env::set_current_dir(".").unwrap(); }
+        #[test] #[serial_test::serial(cwd)] fn named_key() { let _guard = CwdGuard::new(); std::env::set_current_dir(".").unwrap(); }
+        "#,
+    );
+    assert!(
+        cwd_findings(&mixed_keys)
+            .iter()
+            .any(|finding| finding.contains("mixed or missing"))
+    );
+}
+
+#[test]
+fn cwd_policy_loader_includes_external_test_modules() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("src")).unwrap();
+    fs::write(temp.path().join("src/main.rs"), "#[cfg(test)] mod tests;").unwrap();
+    fs::write(
+        temp.path().join("src/tests.rs"),
+        "#[test] #[serial_test::serial] fn external() { let _guard = CwdGuard::new(); std::env::set_current_dir(\".\").unwrap(); }",
+    ).unwrap();
+    let functions = cwd_inventory(temp.path()).unwrap();
+    assert!(
+        functions.iter().any(|function| function.name == "external"),
+        "{functions:#?}"
+    );
+}
+
+#[test]
+fn cwd_guard_drop_restoration_is_the_only_test_helper_exception() {
+    let functions = cwd_inventory(Path::new(env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let drop = functions
+        .iter()
+        .find(|function| function.identity == "src/test_helpers.rs::test_helpers::CwdGuard::drop")
+        .expect("CwdGuard::drop inventory entry");
+    assert_eq!(drop.mutations.len(), 1);
+    let findings = cwd_findings(&functions);
+    assert!(findings.is_empty(), "{findings:#?}");
 }
 
 fn fixture(source: &str, path: &str, module: &[&str]) -> BTreeSet<Finding> {
