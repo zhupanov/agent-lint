@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agent-lint"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "clap",
  "comrak",
@@ -134,9 +134,9 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "clap"
-version = "4.6.3"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fb99565819980999fb7b4a1796046a5c949e6d4ff132cf5fadf5a641e20d776"
+checksum = "d91e0c145792ef73a6ad36d27c75ac09f1832222a3c209689d90f534685ee5b7"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -154,14 +154,14 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.3"
+version = "4.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32f2392eae7f16557a3d727ef3a12e57b2b2ca6f98566a5f4fb41ffe305df077"
+checksum = "d012d2b9d65aca7f18f4d9878a045bc17899bba951561ba5ec3c2ba1eed9a061"
 dependencies = [
  "heck",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -554,9 +554,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.48.2"
+version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39d785c0683d1027839f1ac6a43b6d07c63d58ecd363d8146dda4531d53465a1"
+checksum = "f05a6cff806294a7699d48761d4ae2bdebab7fa2eef05e4a0b83320f0ff46901"
 dependencies = [
  "ahash",
  "bytecount",
@@ -568,6 +568,7 @@ dependencies = [
  "idna",
  "itoa",
  "jsonschema-regex",
+ "jsonschema-value",
  "num-cmp",
  "num-traits",
  "percent-encoding",
@@ -582,11 +583,25 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-regex"
-version = "0.48.2"
+version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "917b3be16b2662538aafb55201790561e1f1ad1a0454baf42f33bd9de343778b"
+checksum = "84708dd3f6c5327478a96f37378adb27deed6a626cf84d19de780d9e8ae84b17"
 dependencies = [
  "regex-syntax",
+]
+
+[[package]]
+name = "jsonschema-value"
+version = "0.48.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd8c04ab4ce60e42c4e302d3bd9d184652bb56f212495d2eea23573bcbf72556"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "fraction",
+ "num-cmp",
+ "num-traits",
+ "serde_json",
 ]
 
 [[package]]
@@ -597,9 +612,9 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"
-version = "0.2.188"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22053b6a34f84abc97f9129e61334f40174659a1b9bd18c970b83db6a9a6348b"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "linux-raw-sys"
@@ -846,14 +861,14 @@ checksum = "2c9283685feec7d69af75fb0e858d5e7378f33fe4fc699383b2916ab9273e03c"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.2",
+ "syn 3.0.3",
 ]
 
 [[package]]
 name = "referencing"
-version = "0.48.2"
+version = "0.48.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2b21a85c07fcf1cb95ff7ab8a687fcd37fa70db59975b5a032abdaadfdf42e"
+checksum = "980e77f5cfffc592c0e7dfb6d20770a0b96a6ab94d403de7454ed9799505e4ba"
 dependencies = [
  "ahash",
  "fluent-uri",
@@ -968,7 +983,7 @@ checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 3.0.2",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -1108,9 +1123,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "3.0.2"
+version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a207d6d6a2b7fc470b80443726053f18a2481b7e1eee970597051596567987a3"
+checksum = "53e9bae58849f64dfa4f5d5ae372c8341f7305f82a3868709269343628b659a3"
 dependencies = [
  "proc-macro2",
  "quote",

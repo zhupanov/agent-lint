@@ -2,7 +2,7 @@
 name: release-agent-lint
 description: Create and publish an agent-lint release through a version pull request and a manually dispatched release workflow.
 argument-hint: "[--dry-run] [--bump major|minor|patch]"
-allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(date:*), Bash(sleep:*), Bash(head:*), Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Read
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(date:*), Bash(sleep:*), Bash(head:*), Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Bash(.claude/skills/upgrade-agent-lint/scripts/upgrade-agent-lint.sh:*), Read
 disable-model-invocation: true
 ---
 
@@ -103,7 +103,7 @@ MERGE_COMMIT=$(gh pr view --json mergeCommit --jq '.mergeCommit.oid')
 git merge-base --is-ancestor "$MERGE_COMMIT" origin/main
 ```
 
-## 4. Publish and clean up
+## 4. Publish, upgrade, and clean up
 
 Explicitly dispatch the release workflow from `main`; it creates the immutable
 version tag, GitHub Release, and artifacts. Capture the `origin/main` commit
@@ -147,20 +147,26 @@ REMOTE_MAJOR_OID=$(git rev-parse "v${MAJOR}^{commit}")
 test "$REMOTE_MAJOR_OID" = "$VERSION_OID"
 ```
 
-When the workflow succeeds, return to `main`, fast-forward from `origin/main`,
-and delete the local release branch. Report the released version, PR URL, and
-workflow URL to the operator.
+After the workflow and floating-major promotion succeed, install the published
+release locally through the working-tree helper. Publication is already
+complete at this point, so warn and continue to cleanup if the local install
+fails.
+
+```bash
+if ! "$PWD/.claude/skills/upgrade-agent-lint/scripts/upgrade-agent-lint.sh"; then
+  echo "Warning: release succeeded, but the local agent-lint upgrade failed." >&2
+fi
+```
+
+Then return to `main`, fast-forward from `origin/main`, and delete the local
+release branch. Report the released version, PR URL, workflow URL, and local
+upgrade result to the operator.
 
 ```bash
 git switch main
 git pull --ff-only origin main
 git branch -d "release/v${NEW_VERSION}"
 ```
-
-Before reporting completion, print this reminder to the operator:
-
-> Reminder: download and install the local macOS binary using the
-> [README install instructions](https://github.com/zhupanov/agent-lint#install-on-macos).
 
 ## Failed release recovery
 
