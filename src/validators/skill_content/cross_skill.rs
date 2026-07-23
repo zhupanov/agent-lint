@@ -300,16 +300,36 @@ fn token_referenced(content: &str, token: &str, reject_slash_suffix: bool) -> bo
                 .next_back()
                 .is_some_and(|prev| !is_name_boundary_char(prev));
         let end = abs + token.len();
-        let trailing_boundary_ok = end == content.len()
-            || content[end..].chars().next().is_some_and(|next| {
-                !is_name_boundary_char(next) && (!reject_slash_suffix || next != '/')
-            });
+        let trailing_boundary_ok = trailing_boundary_ok(&content[end..], reject_slash_suffix);
         if leading_boundary_ok && trailing_boundary_ok {
             return true;
         }
         start = end;
     }
     false
+}
+
+/// A trailing period is a sentence boundary only when it does not continue a
+/// filename or path segment, such as in `helper.sh.bak` or `helper.sh./child`.
+fn trailing_boundary_ok(suffix: &str, reject_slash_suffix: bool) -> bool {
+    let Some(next) = suffix.chars().next() else {
+        return true;
+    };
+    if !is_token_continuation(next, reject_slash_suffix) {
+        return true;
+    }
+    if next != '.' {
+        return false;
+    }
+    let after_period = &suffix[next.len_utf8()..];
+    !after_period
+        .chars()
+        .next()
+        .is_some_and(|after| is_token_continuation(after, reject_slash_suffix))
+}
+
+fn is_token_continuation(c: char, reject_slash_suffix: bool) -> bool {
+    is_name_boundary_char(c) || (reject_slash_suffix && c == '/')
 }
 
 fn is_name_boundary_char(c: char) -> bool {
