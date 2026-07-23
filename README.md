@@ -62,14 +62,17 @@ and caches it. Pass CLI flags via `args`:
         args: [--pedantic]
 ```
 
-### Install on macOS
+### Install or upgrade on macOS
+
+Clone this repository, authenticate the GitHub CLI, and run the release
+installer from the repository root in a terminal:
 
 ```bash
-curl -fsSL "$(curl -fsSL https://api.github.com/repos/zhupanov/agent-lint/releases/latest \
-  | grep -o 'https://[^"]*aarch64-apple-darwin.tar.gz')" -o /tmp/agent-lint.tar.gz
-tar -xzf /tmp/agent-lint.tar.gz -C /tmp
-sudo mv /tmp/agent-lint /usr/local/bin/agent-lint
+sudo .claude/skills/upgrade-agent-lint/scripts/upgrade-agent-lint.sh
 ```
+
+The command downloads and verifies the latest published release before
+installing it to `/usr/local/bin/agent-lint`. Run the same command to upgrade.
 
 ### CLI
 
