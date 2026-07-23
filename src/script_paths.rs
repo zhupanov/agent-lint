@@ -390,9 +390,19 @@ fn invocation_for(
     supports_instruction_markers: bool,
     bare_invocation: Invocation,
 ) -> Invocation {
-    let segment_start = command[..reference_start]
+    let shell_segment_start = command[..reference_start]
         .rfind([';', '|', '&', '\n'])
         .map_or(0, |index| index + 1);
+    // A command substitution starts a nested command segment. Keeping its
+    // assignment prefix (for example, `OUT=$(`) would cause the assignment
+    // cleanup below to discard the interpreter that launches this reference.
+    // Deliberately recognize the complete `$(` marker rather than every
+    // parenthesis: a parenthesis can instead belong to a shell argument.
+    let substitution_start = command[..reference_start]
+        .rfind("$(")
+        .filter(|index| !command[index + "$(".len()..reference_start].contains(')'))
+        .map_or(0, |index| index + "$(".len());
+    let segment_start = shell_segment_start.max(substitution_start);
     let segment = &command[segment_start..reference_start];
     // The trailing whitespace scalar can be multibyte, so step past it by its
     // full width rather than one byte (issue #600).
@@ -587,6 +597,22 @@ mod tests {
             (
                 "python3 -u ${CLAUDE_PLUGIN_ROOT}/scripts/interpreted.py",
                 Invocation::Interpreter,
+            ),
+            (
+                "OUT=$(python3 ${CLAUDE_PLUGIN_ROOT}/python/cli.py args)",
+                Invocation::Interpreter,
+            ),
+            (
+                "OUT=\"$(python3 ${CLAUDE_PLUGIN_ROOT}/python/cli.py args)\"",
+                Invocation::Interpreter,
+            ),
+            (
+                "OUT=$(env FOO=bar python3 ${CLAUDE_PLUGIN_ROOT}/python/cli.py args)",
+                Invocation::Interpreter,
+            ),
+            (
+                "OUT=\"$(date)\" ${CLAUDE_PLUGIN_ROOT}/scripts/direct",
+                Invocation::Direct,
             ),
             (
                 "python3 -c ${CLAUDE_PLUGIN_ROOT}/generated/code.py",

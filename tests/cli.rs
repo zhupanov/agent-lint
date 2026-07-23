@@ -603,6 +603,53 @@ fn python_hygiene_only_uses_proven_subprocess_command_edges() {
     }));
 }
 
+#[cfg(unix)]
+#[test]
+fn command_substitution_interpreter_operands_remain_g002_candidates_not_g003_targets() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir_all(tmp.path().join(".claude-plugin")).unwrap();
+    std::fs::write(
+        tmp.path().join(".claude-plugin/plugin.json"),
+        r#"{"name":"command-substitution","version":"1.0.0"}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp.path().join("python")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("skills/commands")).unwrap();
+    let cli = tmp.path().join("python/cli.py");
+    std::fs::write(&cli, "print('cli')\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::write(
+        tmp.path().join("skills/commands/SKILL.md"),
+        concat!(
+            "---\nname: commands\ndescription: Use when testing command substitution script references\n---\n",
+            "```bash\n",
+            "OUT=$(python3 \"$PWD/python/cli.py\" args)\n",
+            "OUT=\"$(python3 \"${CLAUDE_PLUGIN_ROOT}/python/cli.py\" args)\"\n",
+            "OUT=$(env FOO=bar python3 \"${CLAUDE_PLUGIN_ROOT}/python/cli.py\" args)\n",
+            "OUT=$(python3 \"${CLAUDE_PLUGIN_ROOT}/python/missing.py\" args)\n",
+            "```\n",
+        ),
+    )
+    .unwrap();
+
+    let output = run_in(
+        tmp.path(),
+        &["--format", "json", "--only", "G002,G003", "."],
+    );
+    assert_eq!(output.status.code(), Some(1), "stderr: {}", stderr(&output));
+    let diagnostics = json(&output)["diagnostics"].as_array().unwrap().clone();
+    assert_eq!(diagnostics.len(), 1, "diagnostics: {diagnostics:#?}");
+    assert_eq!(diagnostics[0]["code"], "G002");
+    assert_eq!(diagnostics[0]["subject_path"], "skills/commands/SKILL.md");
+    assert_eq!(
+        diagnostics[0]["evidence"],
+        "\"${CLAUDE_PLUGIN_ROOT}/python/missing.py"
+    );
+}
+
 #[test]
 fn s006_s007_autofix_cover_manifest_and_root_fallback_skills() {
     let tmp = tempfile::tempdir().unwrap();
