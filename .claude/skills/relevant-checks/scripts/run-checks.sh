@@ -10,18 +10,10 @@ cd "$REPO_ROOT" || exit 1
 PC_EXIT=0
 
 # ---------------------------------------------------------------------------
-# Self-lint: always validate the repo's own Claude configuration
+# CI owns the repository-wide self-lint. Keep this ordinary local helper
+# change-scoped so it does not add a second broad compilation or scan.
 # ---------------------------------------------------------------------------
-if command -v cargo >/dev/null 2>&1; then
-    echo "=== Running agent-lint (self-lint) ==="
-    cargo run --quiet -- --all . || PC_EXIT=1
-else
-    echo "WARN: cargo not available, skipping agent-lint self-lint"
-fi
-
-# ---------------------------------------------------------------------------
-# Determine changed files (union of branch diff + staged + unstaged + untracked)
-# ---------------------------------------------------------------------------
+# Determine changed files (union of branch diff + staged + unstaged + untracked).
 if git rev-parse --verify main >/dev/null 2>&1; then
     branch_diff="$(git diff --name-only main...HEAD 2>/dev/null || true)"
 elif git rev-parse --verify origin/main >/dev/null 2>&1; then
@@ -77,27 +69,38 @@ command -v pre-commit >/dev/null 2>&1 || {
 }
 
 # ---------------------------------------------------------------------------
-# Run pre-commit on changed files. Pre-commit handles file-type routing via
-# the types/files fields in .pre-commit-config.yaml — no manual gating needed.
-# ---------------------------------------------------------------------------
-echo "=== Running pre-commit on ${#files[@]} changed file(s) ==="
-pre-commit run --files "${files[@]}" || PC_EXIT=1
-
-# ---------------------------------------------------------------------------
-# Run Rust checks when .rs or Cargo.toml files are among the changes.
+# Determine whether the repository-owned Rust check is needed. Keep this
+# pattern aligned with the Rust hooks in .pre-commit-config.yaml.
 # ---------------------------------------------------------------------------
 RUST_CHANGED=false
 for f in "${files[@]}"; do
     case "$f" in
-        *.rs|Cargo.toml|Cargo.lock) RUST_CHANGED=true; break ;;
+        *.rs|Cargo.toml|*/Cargo.toml|Cargo.lock|*/Cargo.lock|rust-toolchain|rust-toolchain.toml|*/rust-toolchain|*/rust-toolchain.toml|.cargo/config|.cargo/config.toml|*/.cargo/config|*/.cargo/config.toml)
+            RUST_CHANGED=true
+            break
+            ;;
     esac
 done
 
-if [ "$RUST_CHANGED" = true ] && command -v cargo >/dev/null 2>&1; then
-    echo "=== Running cargo test ==="
-    cargo test || PC_EXIT=1
-    echo "=== Running cargo clippy ==="
-    cargo clippy -- -D warnings || PC_EXIT=1
+# ---------------------------------------------------------------------------
+# Run pre-commit on changed files. Its Rust Clippy hook is skipped here so the
+# same driver runs exactly once through the bounded make entry point below.
+# ---------------------------------------------------------------------------
+echo "=== Running pre-commit on ${#files[@]} changed file(s) ==="
+if [ "$RUST_CHANGED" = true ]; then
+    PRE_COMMIT_SKIP="${SKIP:-}"
+    case ",$PRE_COMMIT_SKIP," in
+        *,cargo-clippy,*) ;;
+        *) PRE_COMMIT_SKIP="${PRE_COMMIT_SKIP:+$PRE_COMMIT_SKIP,}cargo-clippy" ;;
+    esac
+    SKIP="$PRE_COMMIT_SKIP" pre-commit run --files "${files[@]}" || PC_EXIT=1
+else
+    pre-commit run --files "${files[@]}" || PC_EXIT=1
+fi
+
+if [ "$RUST_CHANGED" = true ]; then
+    echo "=== Running make rust-check ==="
+    make rust-check || PC_EXIT=1
 fi
 
 exit "$PC_EXIT"

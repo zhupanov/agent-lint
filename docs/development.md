@@ -19,10 +19,8 @@ make setup   # runs: pre-commit install
 
 | Target | Command | Description |
 |--------|---------|-------------|
-| `make lint` | `pre-commit run --all-files` | Run all linters |
-| `make cargo-test` | `cargo test` | Run Rust unit tests |
-| `make cargo-clippy` | `cargo clippy -- -D warnings` | Run Clippy with warnings as errors |
-| `make clippy` | `cargo clippy --all-targets -- -D warnings` | Run Clippy on all targets |
+| `make lint` | `pre-commit run --all-files` | Explicit full-repository pre-commit check |
+| `make rust-check` | `bash scripts/rust-check.sh` | Run changed-target Rust Clippy validation |
 | `make fmt` | `cargo fmt -- --check` | Check Rust formatting |
 | `make shellcheck` | `pre-commit run shellcheck --all-files` | Run ShellCheck on shell scripts |
 | `make shellcheck-skills` | `scripts/shellcheck-scripts.sh` | Run ShellCheck on skill-discovered scripts |
@@ -30,6 +28,32 @@ make setup   # runs: pre-commit install
 | `make jsonlint` | `pre-commit run jsonlint --all-files` | Validate JSON files |
 | `make actionlint` | `pre-commit run actionlint --all-files` | Lint GitHub Actions workflows |
 | `make setup` | `pre-commit install` | Install pre-commit git hooks |
+
+## Ordinary local Rust validation
+
+`make rust-check` is the only ordinary local Rust validation command. With no
+explicit paths, it deterministically combines branch, staged, unstaged, and
+untracked changes. The underlying `scripts/rust-check.sh` driver also accepts
+repository-relative paths when pre-commit supplies them.
+
+For Rust source files, it uses Cargo metadata to select only the affected
+package's default production targets or the exact changed binary, integration
+test, example, or benchmark target. Cargo manifests, the lockfile, toolchain
+files, and Cargo configuration select one conservative default-feature
+workspace Clippy run. An unmappable Rust path is an error rather than a skipped
+check.
+
+Each invocation uses `cargo clippy --locked --offline ... -- -D warnings` with
+incremental compilation and development/test debug information disabled. It
+does not run a separate compile, build, test, coverage, optimized, release,
+all-target, or all-feature command. `cargo fmt -- --check` remains a
+pre-commit formatting check; `make fmt` is available for an explicitly selected
+format-only pass.
+
+CI, not the ordinary local workflow, owns `cargo build`, `cargo test`, the
+comprehensive Clippy contract (including all-target and all-feature variants),
+coverage, and release builds. Keep those CI jobs as the complete validation
+contract; do not add them to the default pre-commit or `rust-check` routes.
 
 ## Project Structure
 
@@ -133,7 +157,8 @@ Runs on pull requests to `main` and `workflow_dispatch`:
 
 - **lint** -- pre-commit linters (shell, markdown, JSON, YAML, actionlint,
   Rust fmt); clippy is skipped here and runs in build-and-test instead
-- **build-and-test** -- `cargo build`, `cargo test`, `cargo clippy`
+- **build-and-test** -- comprehensive Rust build, test/coverage, and Clippy
+  contract
 - **musl-build** -- cross-compilation check for `x86_64-unknown-linux-musl`
 - **self-lint** -- runs agent-lint against its own repo and validates
   `--list-scripts` output
