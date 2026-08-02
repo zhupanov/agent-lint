@@ -47,10 +47,10 @@ repos:
         entry: cargo fmt -- --check
         language: system
         pass_filenames: false
-        files: '\.(rs)$|^Cargo\.(toml|lock)$|^rust-toolchain'
+        files: '\.(rs)$|(^|/)(Cargo\.(toml|lock)|rust-toolchain(\.toml)?|\.cargo/config(\.toml)?)$'
       - id: cargo-clippy
-        name: Rust clippy lint
-        entry: cargo clippy --all-targets -- -D warnings
+        name: Rust changed-target Clippy lint
+        entry: bash scripts/rust-check.sh
         language: system
-        pass_filenames: false
-        files: '\.(rs)$|^Cargo\.(toml|lock)$|^rust-toolchain'
+        pass_filenames: true
+        files: '\.(rs)$|(^|/)(Cargo\.(toml|lock)|rust-toolchain(\.toml)?|\.cargo/config(\.toml)?)$'

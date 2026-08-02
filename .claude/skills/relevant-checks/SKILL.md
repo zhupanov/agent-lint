@@ -10,13 +10,9 @@ Run validation checks on the current branch. This is a repo-specific skill — e
 
 ## How it works
 
-The script runs two phases:
-
-### Phase 1: Unconditional self-lint
-
-Regardless of which files changed, the script builds and runs `agent-lint --all` against the repository root to validate the repo's own Claude configuration (`.claude/` directory). The `--all` flag forces every lint rule to error severity, ignoring severity config overrides (file-exclusion patterns from `exclude` are still respected) — ensuring the strictest possible severity-level validation. This is a repo-wide invariant check that always executes. Requires `cargo` — if unavailable, this phase is skipped with a warning.
-
-### Phase 2: Change-scoped linting
+The script runs change-scoped linting. CI owns the repository-wide self-lint,
+so ordinary local validation does not add a full scan or a second broad Rust
+compilation.
 
 Changed files are collected from the branch diff, staged changes, unstaged changes, and untracked files. The union is passed to `pre-commit run --files`, which routes each file to the appropriate linter hooks based on file type. Deleted files are filtered out automatically.
 
@@ -29,11 +25,19 @@ The following linters are configured in `.pre-commit-config.yaml`:
 - **Markdown files (`.md`)**: markdownlint (using `.markdownlint.json` config)
 - **JSON files (`.json`)**: jq validation
 - **GitHub Actions workflows (`.yml`, `.yaml`)**: actionlint
-- **Rust files (`.rs`, `Cargo.toml`, `Cargo.lock`)**: cargo fmt (format check), cargo clippy (lint)
+- **Rust files (`.rs`, Cargo manifests/lockfiles, toolchain files, and Cargo
+  configuration)**: cargo fmt (format check) plus the changed-target Clippy
+  driver
 
-When Rust source files (`.rs`, `Cargo.toml`, `Cargo.lock`) are among the changes and `cargo` is available, the script also runs `cargo test` and `cargo clippy -- -D warnings` after pre-commit.
+When Rust inputs are among the changes, the script runs `make rust-check` once
+after formatting. It skips the duplicate pre-commit Clippy hook so the
+repository-owned driver is the only ordinary local Rust validation path. The
+driver selects the affected default production or exact explicit Cargo targets;
+it does not run broad builds, tests, coverage, all-target/all-feature, or
+release variants.
 
-If all changed files are deletions (no existing files to lint), the change-scoped phase exits early — but the self-lint phase still runs.
+If all changed files are deletions (no existing files to lint), the helper exits
+early.
 
 ## Usage
 
@@ -44,6 +48,12 @@ $PWD/.claude/skills/relevant-checks/scripts/run-checks.sh
 ```
 
 The script automatically detects which files were modified on the current branch, filters to existing files, and runs `pre-commit run --files` on them. Pre-commit handles file-type routing internally — only hooks whose file patterns match the changed files will execute.
+
+For a standalone ordinary local Rust validation pass, use:
+
+```bash
+make rust-check
+```
 
 ## Retry semantics
 
