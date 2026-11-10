@@ -3461,7 +3461,11 @@ fn markdown_placeholder_regression_xml_spans_preserve_real_errors_in_every_mode(
         init_git(tmp.path());
         let path = tmp.path().join(relative);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let clean = "---\nname: demo\ndescription: Use when checking Markdown placeholders.\n---\n\n<brief>\nClone into `<dir>/repo` and run `make check`.\n</brief>\n";
+        let clean = concat!(
+            "---\nname: demo\ndescription: Use when checking Markdown placeholders.\n---\n\n",
+            "<brief>\nClone into `<dir>/repo` and run `make check`.\n</brief>\n\n",
+            "<brief>\n\nThen run `<tool>/x <dir>/repo\n<dir>/d <user> </fake>`, ok.\n</brief>\n",
+        );
         let broken = format!("{clean}<open>\n</wrong>\n</orphan>\n<unclosed>\n");
         for mode in [None, Some("--pedantic"), Some("--all")] {
             let mut arguments = vec!["--format", "json", "--only", "X003,X004,X005"];
@@ -3489,7 +3493,7 @@ fn markdown_placeholder_regression_xml_spans_preserve_real_errors_in_every_mode(
             for (finding, (code, line)) in
                 diagnostics
                     .iter()
-                    .zip([("X003", 12), ("X004", 10), ("X005", 11)])
+                    .zip([("X003", 18), ("X004", 16), ("X005", 17)])
             {
                 assert_eq!(finding["code"], code);
                 assert_eq!(finding["subject_path"], relative);

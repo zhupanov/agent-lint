@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- X003--X005 ignore wrapped inline-code placeholders when a continuation line
+  starts with an HTML-like tag, including spans crossing a paragraph/HTML block
+  boundary and commands inside numbered lists (#670).
 - X003--X005 ignore inline-code placeholders inside XML/HTML prompt blocks,
   including multiple-backtick and multiline spans, while preserving real tag
   diagnostics and their source locations (#666).

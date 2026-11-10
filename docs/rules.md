@@ -208,7 +208,9 @@ would require a block parser.
 X003--X005 ignore matched inline-code spans inside XML/HTML prompt blocks as
 well as ordinary Markdown prose. Single and longer backtick delimiters,
 embedded shorter runs, and multiline spans share CommonMark code-span
-semantics. Tags outside those spans retain their original source locations.
+semantics. A continuation line beginning with a tag such as `<dir>` stays
+masked even when the Markdown parser splits the span across a paragraph and
+an HTML block. Tags outside those spans retain their original source locations.
 
 ## Skills Rules (S)
 
