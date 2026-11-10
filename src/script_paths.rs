@@ -307,10 +307,8 @@ fn extract_bare_references(
     while start < command.len() {
         // `is_shell_path_delimiter` matches multibyte Unicode whitespace, so
         // advance past the delimiter by its full width (issue #600).
-        let delimiter = command[start..]
-            .char_indices()
-            .find(|&(_, character)| is_shell_path_delimiter(character));
-        let end = delimiter.map_or(command.len(), |(index, _)| start + index);
+        let delimiter = next_token_delimiter(command, start);
+        let end = delimiter.map_or(command.len(), |(index, _)| index);
         let reference =
             command[start..end].trim_matches(|character| matches!(character, '\'' | '"'));
         let relative = reference.strip_prefix("./").unwrap_or(reference);
@@ -327,10 +325,64 @@ fn extract_bare_references(
             });
         }
         start = delimiter.map_or(command.len(), |(index, character)| {
-            start + index + character.len_utf8()
+            index + character.len_utf8()
         });
     }
     references
+}
+
+/// Byte index and scalar of the next shell token delimiter at or after
+/// `start`.
+///
+/// A `${…}` parameter expansion is one token unit even when its operator word
+/// holds whitespace (`${ROOT:?run it with make test}/core/scripts/lib`).
+/// Splitting such a line at spaces leaves a tail (`test}/core/scripts/lib`)
+/// that looks like a relative `scripts/` path but is really the expansion's
+/// error message plus the path (issue #673). Keeping the expansion attached
+/// leaves the token carrying its `$`, which
+/// [`ScriptReference::has_unresolved_placeholder`] already classifies as
+/// non-actionable, exactly as `${ROOT}/core/scripts/lib` is today.
+fn next_token_delimiter(command: &str, start: usize) -> Option<(usize, char)> {
+    let mut index = start;
+    while index < command.len() {
+        let character = command[index..]
+            .chars()
+            .next()
+            .expect("index stays on a character boundary");
+        if command[index..].starts_with("${")
+            && let Some(expansion_end) = parameter_expansion_end(command, index)
+        {
+            index = expansion_end;
+            continue;
+        }
+        if is_shell_path_delimiter(character) {
+            return Some((index, character));
+        }
+        index += character.len_utf8();
+    }
+    None
+}
+
+/// Byte index just past the `}` closing the `${` that begins at `start`.
+///
+/// Nested expansions (`${A:-${B}}`) are balanced. An unterminated `${` has no
+/// end, so the caller falls back to plain delimiter scanning rather than
+/// swallowing the rest of the line.
+fn parameter_expansion_end(command: &str, start: usize) -> Option<usize> {
+    let mut depth = 0_usize;
+    for (offset, character) in command[start..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(start + offset + character.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Truncate a Markdown anchor suffix (`docs/guide.md#section`) to the file it
@@ -915,6 +967,68 @@ mod tests {
         let refs = extract_bare_script_references("run\u{3000}scripts/wide.sh", 1);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].path, PathBuf::from("scripts/wide.sh"));
+    }
+
+    #[test]
+    fn parameter_expansions_with_spaces_stay_one_token() {
+        // Issue #673: the operator word of `${VAR:?message}` holds whitespace,
+        // so word splitting used to leave `test}/core/scripts/lib` looking
+        // like a relative script path. The whole token must stay together and
+        // carry its `$`, which marks it unresolvable like `${ROOT}/…`.
+        let spaced_expansions = [
+            "lib=${ROOT:?run it with make test}/core/scripts/lib",
+            "lib=\"${ROOT:?run it with make test}/scripts/lib\"",
+            "lib=${ROOT:-run it with make}/scripts/lib",
+            "lib=${ROOT:+a b}/scripts/lib",
+            "lib=${ROOT?set it first}/scripts/lib",
+            "lib=${ROOT:?run it}/scripts/x.sh",
+            "fake_dir=${TOOLS_ROOT:?run it with make test-skills}/core/scripts/release/tests/lib",
+            "lib=${A:-${B:?say it now}}/scripts/lib",
+        ];
+        for command in spaced_expansions {
+            let references = extract_bare_script_references(command, 3);
+            assert!(
+                references
+                    .iter()
+                    .all(ScriptReference::has_unresolved_placeholder),
+                "{command} yielded a resolvable reference: {references:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parameter_expansion_grouping_keeps_ordinary_tokens_separate() {
+        // Over-masking guard: the shapes that are clean today stay clean, and
+        // a real `scripts/` operand beside an expansion is still extracted.
+        for command in [
+            "lib=${ROOT:?unset}/core/scripts/lib",
+            "lib=${ROOT}/core/scripts/lib",
+            "lib=${ROOT:-/opt/x}/core/scripts/lib",
+            "lib=$(dirname \"$0\")/scripts/lib",
+        ] {
+            assert!(
+                extract_bare_script_references(command, 1)
+                    .iter()
+                    .all(ScriptReference::has_unresolved_placeholder),
+                "{command} yielded a resolvable reference"
+            );
+        }
+
+        // Text that merely contains a stray `}` is not an expansion, so its
+        // tokenization is unchanged by the grouping.
+        let stray_brace = extract_bare_script_references("echo see make test}/scripts/lib", 1);
+        assert_eq!(stray_brace.len(), 1);
+        assert_eq!(stray_brace[0].path, PathBuf::from("test}/scripts/lib"));
+
+        let references =
+            extract_bare_script_references("${ROOT:?run it with make test} scripts/check.sh", 4);
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].path, PathBuf::from("scripts/check.sh"));
+
+        // An unterminated expansion must not swallow the rest of the line.
+        let unterminated = extract_bare_script_references("echo ${ROOT scripts/check.sh", 1);
+        assert_eq!(unterminated.len(), 1);
+        assert_eq!(unterminated[0].path, PathBuf::from("scripts/check.sh"));
     }
 
     #[test]

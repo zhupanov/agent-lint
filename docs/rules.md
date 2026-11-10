@@ -327,7 +327,7 @@ values — every frontmatter field except the free-prose `description`,
 | S039 | `metadata-not-string` | Metadata map values must be strings | Always | error |
 | S040 | `tools-unknown` | `allowed-tools` or `disallowed-tools` lists an unrecognized tool name | Always | warn |
 | S043 | `frontmatter-backslash` | Windows-style backslash paths in frontmatter fields | Always | error |
-| S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix | Always | warn |
+| S044 | `mcp-tool-unqualified` | MCP tool reference without server prefix; a backticked snake_case name counts only when invocation grammar sits beside it (an invocation verb just before it, or the noun "tool" either side) | Always | warn |
 | S067 | `bash-unscoped` | `allowed-tools` lists unscoped `Bash` (prefer scoping such as `Bash(git *)`) | Always | warn |
 
 > **Tool declarations (S040/S067).** `allowed-tools` and `disallowed-tools`

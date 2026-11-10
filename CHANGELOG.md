@@ -42,6 +42,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- Discovery applies Git's ignore rules inside a Git repository, so git-ignored
+  instruction files, skills, and script assets are no longer linted. Root and
+  nested `.gitignore`, `.git/info/exclude`, and `core.excludesFile` all
+  participate; a tracked file is still linted even when a pattern matches it,
+  and a tree with no Git repository keeps its previous unfiltered behavior
+  (#674).
+- Text output names the file and line of every finding that has them, as
+  `severity[code/name]: path:line: message`, projected from the finding's
+  structured subject path and location instead of whatever each rule spelled
+  into its own message. Q002, I003, L001, S006, S010 and S073 printed no line,
+  and G002 printed no file; the JSON output is unchanged (#675).
+- G002--G004 parse `${VAR:?message}` as one shell token, so an expansion whose
+  operator word contains whitespace no longer leaves its tail
+  (`test}/core/scripts/lib`) to be probed as a relative script path. A
+  reference that starts with a parameter expansion stays unresolved, as
+  `${VAR}/...` already did (#673).
+- S044 (`mcp-tool-unqualified`) requires invocation grammar adjacent to the
+  backticked identifier instead of a context word anywhere on the same
+  physical line. A context word inside a code span, in a neighboring clause,
+  or used as a noun no longer reports a printed field name, and the result no
+  longer depends on where a paragraph wraps. Findings now carry their file and
+  line (#676).
 - X003--X005 ignore wrapped inline-code placeholders when a continuation line
   starts with an HTML-like tag, including spans crossing a paragraph/HTML block
   boundary and commands inside numbered lists (#670).

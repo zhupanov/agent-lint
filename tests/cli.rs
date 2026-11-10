@@ -241,6 +241,36 @@ fn text_has_literal_terminal_control(bytes: &[u8]) -> bool {
         .any(|byte| byte.is_ascii_control() && *byte != b'\n')
 }
 
+/// The text rendering a JSON diagnostic must produce after its
+/// `severity[code/name]: ` prefix (issue #675): the structured location as
+/// `path:line: `, or `path: ` when the finding proves no line, followed by the
+/// message with any locator the rule restated removed.
+fn expected_text_message(diagnostic: &serde_json::Value) -> String {
+    let message = terminal_sanitized_message(diagnostic["message"].as_str().unwrap());
+    let Some(path) = diagnostic["subject_path"].as_str() else {
+        return message;
+    };
+    let line = diagnostic["location"]["start"]["line"].as_u64();
+    let locator = match line {
+        Some(line) => format!("{path}:{line}: "),
+        None => format!("{path}: "),
+    };
+    let body = match message.strip_prefix(path) {
+        Some(rest) => {
+            let rest = match line {
+                Some(line) => rest.strip_prefix(&format!(":{line}")).unwrap_or(rest),
+                None => rest,
+            };
+            match rest.strip_prefix(':').unwrap_or(rest).strip_prefix(' ') {
+                Some(stripped) => stripped.to_owned(),
+                None => message.clone(),
+            }
+        }
+        None => message.clone(),
+    };
+    format!("{locator}{body}")
+}
+
 fn terminal_sanitized_message(message: &str) -> String {
     message
         .chars()
@@ -4445,6 +4475,107 @@ root-max-lines = 1
     }
 }
 
+/// Issue #675: whenever a finding has a location, the text output names it.
+/// The corpus holds the reported gaps (Q002, I003, L001, S006, S010, S073 had
+/// no line; G002 had no file) next to rules that already printed `path:line:`,
+/// and the assertion is general: every text line must equal the locator
+/// projected from that finding's own structured location.
+#[test]
+fn text_output_locates_every_finding_from_its_structured_location() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let root = tmp.path();
+
+    std::fs::write(
+        root.join("AGENTS.md"),
+        "# AGENTS.md\n\nWorking rules for agents in this repo.\n\n## Releases\n\n- Never tag by hand; never move or delete a tag. The `release` job cuts the tag after a\n  merge that changes `src/**`.\n- Never put `release::major` on an MR. It cut `v1.0.0` from `v0` once.\n- The label goes on before the merge: one added after the tag is cut does nothing.\n- Whoever cut the release runs the `/notify` skill from a checkout of this repo, with\n  its steps in `scripts/notify/` and their tests in `tests/`.\n",
+    )
+    .unwrap();
+    std::fs::write(root.join("CLAUDE.md"), "# CLAUDE.md\n\n@docs/missing.md\n").unwrap();
+
+    for (directory, name, body) in [
+        ("Bad_Name", "Bad_Name", "body\n"),
+        ("s", "other", "body\n"),
+        ("t", "t", "\nSee [the rules](../../../CLAUDE.md).\n"),
+    ] {
+        let skill = root.join(".claude/skills").join(directory);
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            format!(
+                "---\nname: {name}\ndescription: Checks one reported location gap. Use when testing locations.\n---\n{body}"
+            ),
+        )
+        .unwrap();
+    }
+
+    // A G002 source: the reference is missing, and the finding's file is the
+    // script that holds it, which the text output never used to print.
+    let tests = root.join(".claude/skills/t/tests");
+    std::fs::create_dir_all(&tests).unwrap();
+    std::fs::write(
+        tests.join("run.sh"),
+        "#!/bin/sh\nset -eu\n. \"scripts/missing/lib.sh\"\n",
+    )
+    .unwrap();
+
+    let text = run_in(root, &["."]);
+    let machine = run_in(root, &["--format", "json", "."]);
+
+    let diagnostic_pattern = Regex::new(r"^(error|warning)\[([^/]+)/([^]]+)\]: (.*)$").unwrap();
+    let text_diagnostics: Vec<_> = stderr(&text)
+        .lines()
+        .filter_map(|line| diagnostic_pattern.captures(line))
+        .map(|captures| (captures[2].to_owned(), captures[4].to_owned()))
+        .collect();
+
+    let report = json(&machine);
+    let json_diagnostics: Vec<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| {
+            (
+                diagnostic["code"].as_str().unwrap().to_owned(),
+                expected_text_message(diagnostic),
+            )
+        })
+        .collect();
+    assert_eq!(text_diagnostics, json_diagnostics);
+
+    for (diagnostic, (code, rendered)) in report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(&text_diagnostics)
+    {
+        let Some(path) = diagnostic["subject_path"].as_str() else {
+            continue;
+        };
+        let expected_prefix = match diagnostic["location"]["start"]["line"].as_u64() {
+            Some(line) => format!("{path}:{line}: "),
+            None => format!("{path}: "),
+        };
+        assert!(
+            rendered.starts_with(&expected_prefix),
+            "{code}: text output must start with {expected_prefix:?}, got {rendered:?}"
+        );
+    }
+
+    let reported_codes: std::collections::BTreeSet<_> = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|diagnostic| diagnostic["code"].as_str().unwrap())
+        .collect();
+    for code in ["Q002", "I003", "L001", "S006", "S010", "S073", "G002"] {
+        assert!(
+            reported_codes.contains(code),
+            "the corpus must still exercise {code}: {reported_codes:?}"
+        );
+    }
+}
+
 #[test]
 fn text_and_json_render_the_same_classified_diagnostics() {
     let tmp = tempfile::tempdir().unwrap();
@@ -4524,7 +4655,7 @@ fn text_and_json_render_the_same_classified_diagnostics() {
                 diagnostic["severity"].as_str().unwrap().to_owned(),
                 diagnostic["code"].as_str().unwrap().to_owned(),
                 diagnostic["name"].as_str().unwrap().to_owned(),
-                terminal_sanitized_message(diagnostic["message"].as_str().unwrap()),
+                expected_text_message(diagnostic),
             )
         })
         .collect();
