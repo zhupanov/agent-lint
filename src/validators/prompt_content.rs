@@ -440,13 +440,12 @@ fn alternative_sentence_is_operative(sentence: &str) -> bool {
     if subject_modal_prefix(core) {
         return true;
     }
-    if let Some((setup, directive)) = core.split_once(',') {
-        if SETUP_CLAUSE_OPENERS
+    if let Some((setup, directive)) = core.split_once(',')
+        && SETUP_CLAUSE_OPENERS
             .iter()
             .any(|opener| strip_leading_word(setup.trim(), opener).is_some())
-        {
-            return alternative_sentence_is_operative(directive);
-        }
+    {
+        return alternative_sentence_is_operative(directive);
     }
     let core = LEADING_ALTERNATIVE_ADVERBS
         .iter()

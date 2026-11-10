@@ -558,21 +558,20 @@ fn validate_skill_frontmatter_in_dir(
             );
         }
 
-        if check_name_match {
-            if let Some(n) = canonical_name {
-                if n != dir_name {
-                    let metadata = frontmatter::simple_top_level_key_line(fm_lines, "name")
-                        .map_or_else(DiagnosticMetadata::default, DiagnosticMetadata::at_line);
-                    diag.report_at_with(
-                        LintRule::FrontmatterNameMismatch,
-                        &skill_path,
-                        &format!(
-                            "{skill_path}: frontmatter name '{n}' does not match directory '{dir_name}'"
-                        ),
-                        metadata,
-                    );
-                }
-            }
+        if check_name_match
+            && let Some(n) = canonical_name
+            && n != dir_name
+        {
+            let metadata = frontmatter::simple_top_level_key_line(fm_lines, "name")
+                .map_or_else(DiagnosticMetadata::default, DiagnosticMetadata::at_line);
+            diag.report_at_with(
+                LintRule::FrontmatterNameMismatch,
+                &skill_path,
+                &format!(
+                    "{skill_path}: frontmatter name '{n}' does not match directory '{dir_name}'"
+                ),
+                metadata,
+            );
         }
 
         // Optional scalar fields: if present, must be non-empty.

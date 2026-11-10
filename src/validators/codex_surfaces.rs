@@ -1309,20 +1309,22 @@ fn flow_mapping_key_location(fm_lines: &[String], key: &str) -> Option<(usize, u
             match ch {
                 '#' if flow_depth == 0 => break,
                 '"' => {
-                    if expect_key && flow_depth == 1 {
-                        if let Some(column) = mapping_key_column(&chars[idx..], key) {
-                            return Some((line_idx + 2, idx + column));
-                        }
+                    if expect_key
+                        && flow_depth == 1
+                        && let Some(column) = mapping_key_column(&chars[idx..], key)
+                    {
+                        return Some((line_idx + 2, idx + column));
                     }
                     in_double = true;
                     expect_key = false;
                     idx += 1;
                 }
                 '\'' => {
-                    if expect_key && flow_depth == 1 {
-                        if let Some(column) = mapping_key_column(&chars[idx..], key) {
-                            return Some((line_idx + 2, idx + column));
-                        }
+                    if expect_key
+                        && flow_depth == 1
+                        && let Some(column) = mapping_key_column(&chars[idx..], key)
+                    {
+                        return Some((line_idx + 2, idx + column));
                     }
                     in_single = true;
                     expect_key = false;

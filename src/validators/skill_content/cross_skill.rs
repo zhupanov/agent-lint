@@ -67,10 +67,10 @@ pub(super) fn validate_nested_references(
             // Check the file once for nesting, cache result
             if !checked.contains(rel) {
                 checked.insert(rel.clone());
-                if let Ok(content) = fs::read_to_string(rel_path) {
-                    if contains_shared_md_ref(&content, base_dir) {
-                        nested.insert(rel.clone());
-                    }
+                if let Ok(content) = fs::read_to_string(rel_path)
+                    && contains_shared_md_ref(&content, base_dir)
+                {
+                    nested.insert(rel.clone());
                 }
             }
 
@@ -576,10 +576,10 @@ fn harness_references_asset(
     if script_referenced(content, &target.relative, &target.basename, unique_basename) {
         return true;
     }
-    if let Some(stripped) = target.relative.strip_prefix("scripts/") {
-        if path_token_referenced(content, stripped) {
-            return true;
-        }
+    if let Some(stripped) = target.relative.strip_prefix("scripts/")
+        && path_token_referenced(content, stripped)
+    {
+        return true;
     }
     let Some(referrer_dir) = referrer.path.parent() else {
         return false;

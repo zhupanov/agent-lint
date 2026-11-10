@@ -685,13 +685,13 @@ fn validate_hook_object(
     }
 
     // H017: timeout must be a positive integer.
-    if let Some(timeout) = hook.get("timeout") {
-        if timeout.as_u64().is_none_or(|t| t == 0) {
-            diag.report(
-                LintRule::HookTimeoutInvalid,
-                &format!("{ctx} has 'timeout' {timeout}, must be a positive integer"),
-            );
-        }
+    if let Some(timeout) = hook.get("timeout")
+        && timeout.as_u64().is_none_or(|t| t == 0)
+    {
+        diag.report(
+            LintRule::HookTimeoutInvalid,
+            &format!("{ctx} has 'timeout' {timeout}, must be a positive integer"),
+        );
     }
 
     // H018: async: true is only meaningful on command hooks. Skipped when the
@@ -714,13 +714,13 @@ fn validate_hook_object(
     }
 
     // H020: once must be a boolean.
-    if let Some(once) = hook.get("once") {
-        if !once.is_boolean() {
-            diag.report(
-                LintRule::HookOnceInvalid,
-                &format!("{ctx} has 'once' {once}, must be true or false"),
-            );
-        }
+    if let Some(once) = hook.get("once")
+        && !once.is_boolean()
+    {
+        diag.report(
+            LintRule::HookOnceInvalid,
+            &format!("{ctx} has 'once' {once}, must be true or false"),
+        );
     }
 
     // H021: `if` must be a non-empty string and is only evaluated on tool
@@ -740,16 +740,16 @@ fn validate_hook_object(
     }
 
     // H022: shell must be one of the shared VALID_SHELLS (shared with S026).
-    if let Some(shell) = hook.get("shell") {
-        if !shell.as_str().is_some_and(|s| VALID_SHELLS.contains(&s)) {
-            diag.report(
-                LintRule::HookShellInvalid,
-                &format!(
-                    "{ctx} has 'shell' {shell}, must be {}",
-                    VALID_SHELLS.join("/")
-                ),
-            );
-        }
+    if let Some(shell) = hook.get("shell")
+        && !shell.as_str().is_some_and(|s| VALID_SHELLS.contains(&s))
+    {
+        diag.report(
+            LintRule::HookShellInvalid,
+            &format!(
+                "{ctx} has 'shell' {shell}, must be {}",
+                VALID_SHELLS.join("/")
+            ),
+        );
     }
 
     // H023: report the stable classification, never repository-controlled

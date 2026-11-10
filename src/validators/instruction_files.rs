@@ -482,26 +482,27 @@ fn mask_markdown_links(text: &str) -> String {
     let mut chars: Vec<char> = text.chars().collect();
     let mut index = 0;
     while index < chars.len() {
-        if chars[index] == '!' && chars.get(index + 1) == Some(&'[') {
-            if let Some(end) = link_span_end(&chars, index + 1) {
-                chars[index..=end].fill(' ');
-                index = end + 1;
-                continue;
-            }
+        if chars[index] == '!'
+            && chars.get(index + 1) == Some(&'[')
+            && let Some(end) = link_span_end(&chars, index + 1)
+        {
+            chars[index..=end].fill(' ');
+            index = end + 1;
+            continue;
         }
-        if chars[index] == '[' {
-            if let Some(end) = link_span_end(&chars, index) {
-                chars[index..=end].fill(' ');
-                index = end + 1;
-                continue;
-            }
+        if chars[index] == '['
+            && let Some(end) = link_span_end(&chars, index)
+        {
+            chars[index..=end].fill(' ');
+            index = end + 1;
+            continue;
         }
-        if chars[index] == '<' {
-            if let Some(end) = autolink_span_end(&chars, index) {
-                chars[index..=end].fill(' ');
-                index = end + 1;
-                continue;
-            }
+        if chars[index] == '<'
+            && let Some(end) = autolink_span_end(&chars, index)
+        {
+            chars[index..=end].fill(' ');
+            index = end + 1;
+            continue;
         }
         index += 1;
     }
@@ -726,7 +727,9 @@ fn line_wholly_visible(content: &str, visible_bytes: usize, line_end: usize) -> 
 }
 
 fn parse_toml_scalar(literal: &str) -> Option<toml::Value> {
-    let value = format!("value = {literal}").parse::<toml::Value>().ok()?;
+    // Wrapped in a key/value pair and parsed as a document on purpose: a bare
+    // `literal` would also accept multi-value text under toml's value grammar.
+    let value = toml::from_str::<toml::Value>(&format!("value = {literal}")).ok()?;
     let value = value.get("value")?.clone();
     (value.is_str()
         || value.is_integer()

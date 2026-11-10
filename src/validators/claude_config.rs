@@ -775,21 +775,21 @@ fn validate_typed_settings_file(
     path: &str,
     settings: &ParsedManifest,
 ) {
-    if let Some(value) = settings.get("prUrlTemplate") {
-        if let Some(category) = pr_url_template_category(value) {
-            report_typed_setting(
-                diag,
-                LintRule::SettingsPrUrlTemplateInvalid,
-                path,
-                settings,
-                TypedSettingIssue {
-                    key: "prUrlTemplate",
-                    evidence: category.evidence(),
-                    suggestion: "replace prUrlTemplate with a documented-placeholder http(s) URL template",
-                    message: "prUrlTemplate is not a usable PR URL template",
-                },
-            );
-        }
+    if let Some(value) = settings.get("prUrlTemplate")
+        && let Some(category) = pr_url_template_category(value)
+    {
+        report_typed_setting(
+            diag,
+            LintRule::SettingsPrUrlTemplateInvalid,
+            path,
+            settings,
+            TypedSettingIssue {
+                key: "prUrlTemplate",
+                evidence: category.evidence(),
+                suggestion: "replace prUrlTemplate with a documented-placeholder http(s) URL template",
+                message: "prUrlTemplate is not a usable PR URL template",
+            },
+        );
     }
 
     if settings.get("channelsEnabled").is_some() {
