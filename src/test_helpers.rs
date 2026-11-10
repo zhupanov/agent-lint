@@ -14,6 +14,24 @@ impl Drop for CwdGuard {
     }
 }
 
+/// Test helper: initialize a real Git repository at `root`.
+///
+/// Discovery asks Git itself which paths are ignored, so a fixture that
+/// exercises ignore behavior needs a work tree Git can answer for, not a
+/// hand-made `.git` directory.
+pub fn init_git_repository(root: &std::path::Path) {
+    let output = std::process::Command::new("git")
+        .args(["init", "--quiet", "."])
+        .current_dir(root)
+        .output()
+        .expect("git runs for the fixture repository");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 /// Return every Rust source file as a repository-`src/`-relative path and content.
 pub fn source_files() -> Vec<(String, String)> {
     fn walk(dir: &std::path::Path, out: &mut Vec<(String, String)>, root: &std::path::Path) {

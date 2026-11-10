@@ -184,6 +184,17 @@ Unique Codex surfaces are
 conventional dependency/build directories (`node_modules`, `vendor`, `target`,
 `dist`, and `build`), and respects `[lint].exclude`.
 
+Inside a Git repository, discovery also skips git-ignored paths. The decision
+is Git's own, asked of `git check-ignore`, so every ignore source counts --
+`.gitignore` at the repository root and in any directory along the way,
+`.git/info/exclude`, and `core.excludesFile` -- and a tracked file is never
+ignored, however the patterns read. A git-ignored instruction file, skill, or
+script asset is not configuration the repository ships, so no rule sees it: a
+tools clone under an ignored `.tools/` directory, or a personal skill under an
+ignored `.claude/skills/` entry, no longer fails the lint. Outside a Git
+repository, or when Git cannot be run, nothing is ignored on this basis, and
+`[lint].exclude` remains the way to skip paths there.
+
 ## Rule Identifiers
 
 Rules can be referenced by **code** (e.g., `M001`) or **human-readable
@@ -287,7 +298,14 @@ causes exit code 2.
 
 ## Diagnostic Output
 
+Each line is `severity[code/name]: location: message`. The location is the
+finding's subject path followed by its line when the rule proves one, and the
+path alone when it does not; a repository-wide finding has no location. The
+same subject path and line are the `subject_path` and `location` fields of
+`--format json`.
+
 ```text
-error[M001/plugin-json-missing]: .claude-plugin/plugin.json is missing
-warning[M002/plugin-json-invalid]: plugin.json is not valid JSON
+error[M001/plugin-json-missing]: .claude-plugin/plugin.json: is missing
+error[M002/plugin-json-invalid]: .claude-plugin/plugin.json:2: is not valid JSON: EOF while parsing an object at line 2 column 0
+error[Q002/prompt-negative-only]: AGENTS.md:7: operative negative instruction lacks a positive imperative in the same instruction scope (add one within 3 source lines)
 ```

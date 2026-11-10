@@ -105,7 +105,6 @@ pub(super) fn validate_orphaned_skill_files(
         return;
     }
 
-    let noise = traversal::SkillScriptNoiseFilter::discover();
     let python_test_sources = repository_python_test_sources(exclude);
 
     for entry in traversal::shallow_directories(dir, Path::new("."), None).entries {
@@ -139,7 +138,10 @@ pub(super) fn validate_orphaned_skill_files(
         .entries
         .into_iter()
         .filter(|script| !exclude.is_excluded(&script.display))
-        .filter(|script| !noise.is_noise(&script.path, &script.display))
+        // Git-ignored assets are already absent from the walk; conventional
+        // interpreter caches have no ignore entry of their own, so they are
+        // still filtered here.
+        .filter(|script| !traversal::is_cache_artifact(&script.path))
         .map(|script| {
             let relative = traversal::display_path(&path, &script.path);
             let basename = script

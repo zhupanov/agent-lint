@@ -2426,7 +2426,7 @@ suppress = ["S014"]
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all(".git/info").unwrap();
+        crate::test_helpers::init_git_repository(tmp.path());
         std::fs::write(".gitignore", "*.tmp\n").unwrap();
         std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
         std::fs::write("skills/my-skill/scripts/noise.tmp", "tmp").unwrap();
@@ -5686,6 +5686,173 @@ suppress = ["S033"]
                 diag.errors()
             );
         }
+    }
+
+    /// Run S044 over one skill body and return `(identifier, line)` for each
+    /// finding, in report order.
+    fn s044_findings(body: &str) -> Vec<(String, usize)> {
+        std::fs::create_dir_all("skills/report").unwrap();
+        std::fs::write(
+            "skills/report/SKILL.md",
+            format!(
+                "---\nname: report\ndescription: Reports on a batch job. Use when a batch job has finished.\n---\n\n{body}\n"
+            ),
+        )
+        .unwrap();
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        diag.diagnostics()
+            .iter()
+            .filter(|diagnostic| diagnostic.rule == LintRule::McpToolUnqualified)
+            .map(|diagnostic| {
+                let identifier = diagnostic
+                    .message
+                    .split('\'')
+                    .nth(1)
+                    .expect("S044 message quotes the identifier")
+                    .to_string();
+                let line = diagnostic
+                    .location
+                    .expect("S044 locates the identifier's line")
+                    .start()
+                    .line_number();
+                (identifier, line)
+            })
+            .collect()
+    }
+
+    /// Issue #676: the gate opens only on invocation grammar adjacent to the
+    /// identifier, so a context word in a code span, in another clause, or
+    /// used as a noun no longer reports a printed field name.
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_adjacency_gate_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        let clean = [
+            ("control", "The script prints `job_id` and `owner_id`."),
+            (
+                "context word in a code span",
+                "The script prints `job_id`, `owner_id` and `run`.",
+            ),
+            (
+                "tool noun in a code span",
+                "The script prints `job_id`, `owner_id` and `tools`.",
+            ),
+            (
+                "context word used as a noun",
+                "The script prints `job_id` and `owner_id`, which the run keeps.",
+            ),
+            (
+                "context word in the next sentence, same line",
+                "The script prints `job_id` and `owner_id`. Run it again later.",
+            ),
+            (
+                "context word in the next sentence, next line",
+                "The script prints `job_id` and `owner_id`.\nRun it again later.",
+            ),
+            (
+                "noun clause across a wrap",
+                "The script prints `job_id` and\n`owner_id`, which the run keeps.",
+            ),
+            (
+                "case A found in the wild",
+                "Run `S/preflight.sh` with the job name. It prints `job` (the job's path), `job_id`, `web`,\n`tag`, `owner`, `owner_id` and `run` (the run id, `<tag>-<UTC timestamp>`), used below.",
+            ),
+            (
+                "case B found in the wild",
+                "Run `S/preflight.sh` with the target tag, or nothing for the latest. It prints `job`,\n`job_id`, `web`, `tag`, `owner`, `owner_id`, `run` (the run id), `module`, `core` (`C`) and\n`batch_dir`, a git-ignored directory under the checkout that holds the run's clones, logs and\nresults file, so a later session finds it.",
+            ),
+            (
+                "an earlier paragraph cannot supply the grammar",
+                "Call the tool.\n\n`fetch_job` is a response field.",
+            ),
+            (
+                "a later paragraph cannot supply it either",
+                "`fetch_job` is a response field.\n\nCall the tool.\n\nThen stop.",
+            ),
+            (
+                "a printed field name inside a raw HTML block",
+                "<example>\nThe script prints `job_id`, `owner_id` and `run`.\n</example>",
+            ),
+            // The noun must be beside the identifier on both sides: a word
+            // between them belongs to another clause.
+            (
+                "the tool noun one word later",
+                "Run `S/preflight.sh`. It prints `job_id`, `owner_id` and tool versions.",
+            ),
+            (
+                "the tool noun one word earlier",
+                "Every tool below prints `job_id` for its caller.",
+            ),
+            (
+                "the tool noun heading the next clause",
+                "The script prints `job_id`\ntools are configured elsewhere.",
+            ),
+        ];
+        for (label, body) in clean {
+            assert_eq!(s044_findings(body), Vec::new(), "{label}: expected clean");
+        }
+
+        let reported = [
+            ("verb before", "Call `fetch_job` to get the job."),
+            // A raw HTML block hides its code spans from the Markdown parser;
+            // the rule still sees them, and the gate still applies there.
+            (
+                "inside a raw HTML block",
+                "<example>\nCall `fetch_job` to get the job.\n</example>",
+            ),
+            ("verb and determiner", "Use the `create_issue` tool."),
+            ("noun before", "these tools: `list_files`"),
+            ("noun after", "The `sync_data` tool runs nightly."),
+            (
+                "grammar across a wrap",
+                "The agent should call\n`fetch_job` before reporting.",
+            ),
+        ];
+        for (label, body) in reported {
+            assert_eq!(
+                s044_findings(body).len(),
+                1,
+                "{label}: expected exactly one finding"
+            );
+        }
+    }
+
+    /// Issue #676 item 4 and issue #675: the finding carries the identifier's
+    /// line and its file, so the text output can locate it.
+    #[test]
+    #[serial_test::serial]
+    fn test_s044_reports_subject_path_and_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        std::env::set_current_dir(tmp.path()).unwrap();
+
+        // Four frontmatter lines, then a blank body line, so the identifier
+        // in the third paragraph below sits on file line 10.
+        let findings =
+            s044_findings("Intro paragraph.\n\nMore prose here.\n\nCall `fetch_job` now.");
+        assert_eq!(findings, vec![("fetch_job".to_string(), 10)]);
+
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        validate_skill_content(&mut diag, &crate::config::ExcludeSet::default());
+        let diagnostic = diag
+            .diagnostics()
+            .iter()
+            .find(|diagnostic| diagnostic.rule == LintRule::McpToolUnqualified)
+            .expect("S044 fires");
+        assert_eq!(
+            diagnostic.subject_path.as_deref(),
+            Some(std::path::Path::new("skills/report/SKILL.md"))
+        );
+        assert!(
+            !diagnostic.message.starts_with("skills/report/SKILL.md"),
+            "the message must not restate the subject path: {}",
+            diagnostic.message
+        );
     }
 
     // ── S048: ref-name-generic ──────────────────────────────────────

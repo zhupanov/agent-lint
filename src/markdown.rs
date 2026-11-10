@@ -495,13 +495,41 @@ impl MarkdownDocument {
             .collect()
     }
 
+    /// Every inline code span a structural scanner must see, in source order:
+    /// the parsed spans plus the spans raw HTML blocks hide from the parser.
+    ///
+    /// `inline_code` stays the document's literal AST fact; a consumer that
+    /// scans prose for authored identifiers uses this instead, so a span
+    /// inside `<example>…</example>` is not invisible to it.
+    pub(crate) fn structural_inline_code(&self) -> Vec<MarkdownInlineCode> {
+        let mut spans = self.inline_code.clone();
+        spans.extend(self.html_block_inline_code());
+        spans.sort_by_key(|span| (span.byte_range.start, span.byte_range.end));
+        spans.dedup_by(|left, right| left.byte_range == right.byte_range);
+        spans
+    }
+
+    fn html_block_inline_exclusions(&self) -> Vec<(usize, usize, usize, usize)> {
+        self.html_block_inline_code()
+            .into_iter()
+            .map(|span| {
+                (
+                    span.start_line,
+                    span.start_column,
+                    span.end_line,
+                    span.end_column,
+                )
+            })
+            .collect()
+    }
+
     /// Recover CommonMark code spans hidden by raw HTML for structural scanning
     /// only. Prefix unescaped `<` characters in a parse copy so tags remain
     /// inline HTML instead of swallowing a whole block. Keeping HTML syntax
     /// intact also keeps attribute/comment backticks out of code spans.
     /// Project the parser's positions back through the inserted bytes; other
     /// Markdown views continue to use the original document's AST facts.
-    fn html_block_inline_exclusions(&self) -> Vec<(usize, usize, usize, usize)> {
+    fn html_block_inline_code(&self) -> Vec<MarkdownInlineCode> {
         if self.html_block_ranges.is_empty() {
             return Vec::new();
         }
@@ -520,9 +548,12 @@ impl MarkdownDocument {
                 0
             };
         }
-        let original_column = |position: comrak::nodes::LineColumn| {
+        let original_offset = |position: comrak::nodes::LineColumn| {
             let offset = offset_for_line_column(&projected, position.line, position.column)?;
-            let offset = offset - insertions.partition_point(|insertion| *insertion < offset);
+            Some(offset - insertions.partition_point(|insertion| *insertion < offset))
+        };
+        let original_column = |position: comrak::nodes::LineColumn| {
+            let offset = original_offset(position)?;
             let line_start = self.content[..offset]
                 .rfind('\n')
                 .map_or(0, |index| index + 1);
@@ -538,21 +569,44 @@ impl MarkdownDocument {
             .filter_map(|node| {
                 let data = node.data.borrow();
                 let span = data.sourcepos;
-                if !matches!(data.value, NodeValue::Code(_))
-                    || !self.html_block_ranges.iter().any(|range| {
-                        // A continuation line such as `<dir>` can start an HTML
-                        // block partway through a span, so overlap is enough.
-                        span.start.line <= *range.end() && *range.start() <= span.end.line
-                    })
-                {
+                let NodeValue::Code(code) = &data.value else {
+                    return None;
+                };
+                if !self.html_block_ranges.iter().any(|range| {
+                    // A continuation line such as `<dir>` can start an HTML
+                    // block partway through a span, so overlap is enough.
+                    span.start.line <= *range.end() && *range.start() <= span.end.line
+                }) {
                     return None;
                 }
-                Some((
-                    span.start.line,
-                    original_column(span.start)?,
-                    span.end.line,
-                    original_column(span.end)?,
-                ))
+                let start = original_offset(span.start)?;
+                let last = original_offset(span.end)?;
+                let end = self.content[last..]
+                    .chars()
+                    .next()
+                    .map_or(last, |character| last + character.len_utf8());
+                if start >= end || end > self.content.len() {
+                    return None;
+                }
+                let byte_range = start..end;
+                // The literal comes from the original bytes: the parse copy
+                // carries an inserted `x` before every `<` it contains.
+                let (raw_literal, literal_byte_range) = inline_code_literal_from_span(
+                    &self.content,
+                    byte_range.clone(),
+                    code.num_backticks,
+                );
+                Some(MarkdownInlineCode {
+                    literal: commonmark_code_literal(&raw_literal),
+                    raw_literal,
+                    literal_byte_range,
+                    start_line: span.start.line,
+                    start_column: original_column(span.start)?,
+                    end_line: span.end.line,
+                    end_column: original_column(span.end)?,
+                    byte_range,
+                    num_backticks: code.num_backticks,
+                })
             })
             .collect()
     }
@@ -958,6 +1012,16 @@ fn scalar_column_for_sourcepos(content: &str, line: usize, column: usize) -> Opt
     let offset = offset_for_line_column(content, line, column)?;
     let line_start = content[..offset].rfind('\n').map_or(0, |index| index + 1);
     Some(content[line_start..offset].chars().count() + 1)
+}
+
+/// CommonMark code-span content: one leading and one trailing space are
+/// stripped together when the interior is not all spaces.
+fn commonmark_code_literal(raw_literal: &str) -> String {
+    let stripped = raw_literal
+        .strip_prefix(' ')
+        .and_then(|interior| interior.strip_suffix(' '))
+        .filter(|interior| !interior.trim().is_empty());
+    stripped.unwrap_or(raw_literal).to_string()
 }
 
 fn inline_code_literal_from_span(

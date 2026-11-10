@@ -25,6 +25,55 @@ pub(crate) fn sanitize_for_terminal(text: &str) -> Cow<'_, str> {
     Cow::Owned(sanitized)
 }
 
+/// The `path:line: ` (or `path: `) prefix the text output puts in front of a
+/// finding's message, derived from its structured location alone. A finding
+/// with no subject path is repository-wide and keeps an empty locator.
+///
+/// A repository controls its own filenames, so the path passes through the
+/// same terminal sanitization as the message: the locator is rendered text,
+/// not structured data.
+fn text_locator(diagnostic: &Diagnostic) -> String {
+    let Some(path) = diagnostic.subject_path.as_ref() else {
+        return String::new();
+    };
+    let path = crate::config::normalize_path(&path.to_string_lossy());
+    let path = sanitize_for_terminal(&path);
+    match diagnostic.location {
+        Some(location) => format!("{path}:{}: ", location.start().line_number()),
+        None => format!("{path}: "),
+    }
+}
+
+/// The message with the locator a rule restated in its own text removed, so
+/// the rendered line names the file and line exactly once.
+///
+/// Rules predating issue #675 open their message with their subject path, in
+/// `path: `, `path:line: ` or bare `path ` form. The comparison is exact
+/// against this finding's own normalized subject path, so a message that
+/// names a *different* path keeps it.
+fn strip_restated_locator(diagnostic: &Diagnostic) -> &str {
+    let Some(path) = diagnostic.subject_path.as_ref() else {
+        return &diagnostic.message;
+    };
+    let path = crate::config::normalize_path(&path.to_string_lossy());
+    let Some(rest) = diagnostic.message.strip_prefix(path.as_str()) else {
+        return &diagnostic.message;
+    };
+    let rest = match diagnostic.location {
+        Some(location) => {
+            let line = format!(":{}", location.start().line_number());
+            rest.strip_prefix(line.as_str()).unwrap_or(rest)
+        }
+        None => rest,
+    };
+    match rest.strip_prefix(':').unwrap_or(rest).strip_prefix(' ') {
+        Some(stripped) => stripped,
+        // The path is a prefix of a longer word (`AGENTS.md.bak`), not a
+        // restated locator.
+        None => &diagnostic.message,
+    }
+}
+
 /// Diagnostic severity after config resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -478,8 +527,13 @@ impl DiagnosticCollector {
     }
 
     /// Render collected diagnostics in the stable human-readable format.
-    /// Structured metadata is deliberately not appended, preserving the
-    /// existing text contract while other renderers consume `diagnostics()`.
+    ///
+    /// A finding's location comes from its structured subject path and
+    /// `location`, rendered once as `path:line: ` (or `path: ` when the rule
+    /// proves no line). Before issue #675 the text output printed only the
+    /// message, so every location a rule had not spelled into its own message
+    /// was visible in `--format json` alone.
+    ///
     /// Control characters in messages are escaped for terminal safety; stored
     /// diagnostics and JSON output keep the original strings.
     pub fn render_text(&self, writer: &mut impl Write) {
@@ -488,10 +542,11 @@ impl DiagnosticCollector {
                 Severity::Error => "error",
                 Severity::Warning => "warning",
             };
-            let message = sanitize_for_terminal(&diagnostic.message);
+            let locator = text_locator(diagnostic);
+            let message = sanitize_for_terminal(strip_restated_locator(diagnostic));
             let _ = writeln!(
                 writer,
-                "{label}[{}/{}]: {message}",
+                "{label}[{}/{}]: {locator}{message}",
                 diagnostic.rule.code(),
                 diagnostic.rule.name(),
             );
@@ -1096,8 +1151,97 @@ suppress = ["M001", "H001"]
         diag.render_text(&mut rendered);
         assert_eq!(
             String::from_utf8(rendered).unwrap(),
-            "error[M001/plugin-json-missing]: canonical message\n"
+            "error[M001/plugin-json-missing]: config.json:8: canonical message\n"
         );
+    }
+
+    /// Issue #675: the locator comes from the structured location, is printed
+    /// once, and degrades to the parts a finding actually proves.
+    #[test]
+    fn text_locator_projects_the_structured_location_exactly_once() {
+        let cases = [
+            // (message, subject path, line, expected rendered tail)
+            (
+                "plain message",
+                Some("AGENTS.md"),
+                Some(7),
+                "AGENTS.md:7: plain message",
+            ),
+            (
+                "AGENTS.md: restated path",
+                Some("AGENTS.md"),
+                Some(7),
+                "AGENTS.md:7: restated path",
+            ),
+            (
+                "AGENTS.md:7: restated locator",
+                Some("AGENTS.md"),
+                Some(7),
+                "AGENTS.md:7: restated locator",
+            ),
+            (
+                "AGENTS.md references a thing",
+                Some("AGENTS.md"),
+                Some(13),
+                "AGENTS.md:13: references a thing",
+            ),
+            (
+                "AGENTS.md: no line proved",
+                Some("AGENTS.md"),
+                None,
+                "AGENTS.md: no line proved",
+            ),
+            (
+                "repository-wide finding",
+                None,
+                None,
+                "repository-wide finding",
+            ),
+            // A different path in the message is evidence, not a locator.
+            (
+                "docs/other.md is missing",
+                Some("AGENTS.md"),
+                Some(2),
+                "AGENTS.md:2: docs/other.md is missing",
+            ),
+            // The subject path is only a prefix of a longer word here.
+            (
+                "AGENTS.md.bak: backup",
+                Some("AGENTS.md"),
+                Some(3),
+                "AGENTS.md:3: AGENTS.md.bak: backup",
+            ),
+            // A repository controls its own filenames: the locator is
+            // terminal-sanitized exactly as the message is.
+            (
+                "control in the subject path",
+                Some("de\u{1b}[31mmo/AGENTS.md"),
+                Some(4),
+                "de\\u{1b}[31mmo/AGENTS.md:4: control in the subject path",
+            ),
+        ];
+
+        for (message, subject, line, expected) in cases {
+            let mut diag = DiagnosticCollector::new();
+            let metadata = match line {
+                Some(line) => DiagnosticMetadata::at_line(line),
+                None => DiagnosticMetadata::default(),
+            };
+            match subject {
+                Some(subject) => {
+                    diag.report_at_with(LintRule::PluginJsonMissing, subject, message, metadata)
+                }
+                None => diag.report_with(LintRule::PluginJsonMissing, message, metadata),
+            }
+
+            let mut rendered = Vec::new();
+            diag.render_text(&mut rendered);
+            assert_eq!(
+                String::from_utf8(rendered).unwrap(),
+                format!("error[M001/plugin-json-missing]: {expected}\n"),
+                "message {message:?}"
+            );
+        }
     }
 
     #[test]

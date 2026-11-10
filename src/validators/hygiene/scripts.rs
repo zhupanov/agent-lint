@@ -866,9 +866,10 @@ pub fn validate_script_references_for_context(
             diag.report_at_with(
                 LintRule::ScriptRefMissing,
                 &source,
+                // The line belongs to the structured location, which the text
+                // and JSON renderers both project (issue #675).
                 &format!(
-                    "script reference missing on disk or unsafe at line {}: {} (expected {})",
-                    reference.line,
+                    "script reference missing on disk or unsafe: {} (expected {})",
                     reference.reference,
                     if expected.is_empty() {
                         "an in-repository path"
