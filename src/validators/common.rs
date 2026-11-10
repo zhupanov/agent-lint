@@ -288,7 +288,8 @@ pub(crate) fn classify_inline_code_path(token: &str) -> InlineCodePathKind {
     if token.contains("://")
         || token.starts_with("mailto:")
         || token.starts_with("//")
-        || token.contains(['$', '{', '}', '<', '>'])
+        || token.contains(['$', '{', '}', '<', '>', '…'])
+        || token.split('/').any(|segment| segment == "...")
     {
         return InlineCodePathKind::UrlVariableOrPlaceholder;
     }
@@ -978,6 +979,40 @@ mod inline_code_path_tests {
                 classify_inline_code_path(token),
                 InlineCodePathKind::NonPath,
                 "expected {token:?} to be a non-path"
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_placeholder_regression_elided_paths_are_placeholders() {
+        for token in [
+            ".../example-module/src",
+            "docs/.../guide.md",
+            "docs/...",
+            "...",
+            "tools/…@",
+            "…/guide.md",
+            "docs/…/guide.md",
+            "docs/…",
+            "docs/prefix…suffix.md",
+        ] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::UrlVariableOrPlaceholder,
+                "{token}"
+            );
+        }
+        for token in [
+            "../guide.md",
+            "docs/../guide.md",
+            "docs/...guide.md",
+            "docs/guide...md",
+            "docs/....",
+        ] {
+            assert_eq!(
+                classify_inline_code_path(token),
+                InlineCodePathKind::ConcreteRelativePath,
+                "{token}"
             );
         }
     }

@@ -205,6 +205,11 @@ may be missed. This deliberate warning-grade false-negative trade-off avoids
 error-grade false positives on indented code blocks; full list-context tracking
 would require a block parser.
 
+X003--X005 ignore matched inline-code spans inside XML/HTML prompt blocks as
+well as ordinary Markdown prose. Single and longer backtick delimiters,
+embedded shorter runs, and multiline spans share CommonMark code-span
+semantics. Tags outside those spans retain their original source locations.
+
 ## Skills Rules (S)
 
 ### Structure and Frontmatter (S002--S008)
@@ -809,6 +814,12 @@ lowercase dot tokens remain extension notation; uppercase,
 punctuation-bearing, and over-twelve-character dot-prefixed tokens are treated
 as dotfiles. URLs, variables, placeholders, tokens containing whitespace, and
 non-path words are excluded.
+
+Elided paths are placeholders: a segment exactly equal to `...`, or any segment
+containing the Unicode ellipsis `…`, excludes the token in both I003 and D005.
+Examples include `.../module/src`, `docs/.../guide.md`, and `tools/…@`.
+Parent segments (`..`) keep their unsafe-path handling; literal names such as
+`docs/report...md` remain filesystem references.
 
 Before probing a path, I003 and D005 both remove one `#fragment` and one
 `::symbol` suffix while retaining the original token as diagnostic evidence.

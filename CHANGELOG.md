@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- X003--X005 ignore inline-code placeholders inside XML/HTML prompt blocks,
+  including multiple-backtick and multiline spans, while preserving real tag
+  diagnostics and their source locations (#666).
+- I003 and D005 exclude elided inline-code paths containing an exact `...`
+  segment or a Unicode ellipsis, without weakening parent-traversal checks or
+  skipping literal filenames containing three dots (#667).
 - S030 (`orphaned-skill-files`) recognizes exact skill paths and unique
   basenames followed by a sentence period as Markdown ownership references,
   while still rejecting filename and child-path continuations such as
