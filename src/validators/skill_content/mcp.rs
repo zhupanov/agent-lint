@@ -70,10 +70,14 @@ pub(super) fn check_mcp_tool_refs(info: &SkillInfo, diag: &mut DiagnosticCollect
 
     let document = &info.document;
     let content = document.content();
-    let masked = mask_inline_code(content, document.inline_code());
+    // Raw HTML blocks (`<example>…</example>`) hide their code spans from the
+    // parser's inline facts, and skills do address tools inside them, so the
+    // structural view that recovers those spans is the candidate source.
+    let spans = document.structural_inline_code();
+    let masked = mask_inline_code(content, &spans);
     let mut reported: HashSet<String> = HashSet::new();
 
-    for span in document.inline_code() {
+    for span in &spans {
         if span.start_line < document.body_start_line() {
             continue;
         }

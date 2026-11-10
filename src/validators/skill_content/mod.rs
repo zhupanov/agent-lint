@@ -5770,6 +5770,10 @@ suppress = ["S033"]
                 "an earlier paragraph cannot supply the grammar",
                 "Call the tool.\n\n`fetch_job` is a response field.",
             ),
+            (
+                "a printed field name inside a raw HTML block",
+                "<example>\nThe script prints `job_id`, `owner_id` and `run`.\n</example>",
+            ),
         ];
         for (label, body) in clean {
             assert_eq!(s044_findings(body), Vec::new(), "{label}: expected clean");
@@ -5777,6 +5781,12 @@ suppress = ["S033"]
 
         let reported = [
             ("verb before", "Call `fetch_job` to get the job."),
+            // A raw HTML block hides its code spans from the Markdown parser;
+            // the rule still sees them, and the gate still applies there.
+            (
+                "inside a raw HTML block",
+                "<example>\nCall `fetch_job` to get the job.\n</example>",
+            ),
             ("verb and determiner", "Use the `create_issue` tool."),
             ("noun before", "these tools: `list_files`"),
             ("noun after", "The `sync_data` tool runs nightly."),
