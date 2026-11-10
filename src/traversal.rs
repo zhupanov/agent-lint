@@ -239,8 +239,8 @@ pub fn directory_byte_size(dir: &Path) -> u64 {
 
 /// The path a walk error is about, when the walker recorded one.
 ///
-/// Errors are wrapped in context layers (`WithPath`, `WithDepth`,
-/// `WithLineNumber`, `Partial`), so the path can sit below the outermost one.
+/// Errors are wrapped in context layers (`WithDepth`, `WithLineNumber`,
+/// `Partial`), so the path can sit below the outermost one.
 fn error_path(error: &ignore::Error) -> Option<PathBuf> {
     match error {
         ignore::Error::WithPath { path, .. } => Some(path.clone()),
@@ -248,7 +248,6 @@ fn error_path(error: &ignore::Error) -> Option<PathBuf> {
             error_path(err)
         }
         ignore::Error::Partial(errors) => errors.iter().find_map(error_path),
-        ignore::Error::Loop { child, .. } => Some(child.clone()),
         _ => None,
     }
 }
@@ -456,6 +455,22 @@ mod tests {
             displays.contains(&"plain/AGENTS.md"),
             "a tracked file must stay discoverable: {displays:?}"
         );
+    }
+
+    #[test]
+    fn walk_error_paths_unwrap_their_context_layers() {
+        let wrapped = ignore::Error::WithDepth {
+            depth: 2,
+            err: Box::new(ignore::Error::Partial(vec![ignore::Error::WithPath {
+                path: PathBuf::from("skills/unreadable"),
+                err: Box::new(ignore::Error::InvalidDefinition),
+            }])),
+        };
+        assert_eq!(
+            error_path(&wrapped),
+            Some(PathBuf::from("skills/unreadable"))
+        );
+        assert_eq!(error_path(&ignore::Error::InvalidDefinition), None);
     }
 
     /// A shallow walk of a subdirectory still honors the repository-root

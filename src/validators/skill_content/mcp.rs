@@ -116,14 +116,13 @@ pub(super) fn check_mcp_tool_refs(info: &SkillInfo, diag: &mut DiagnosticCollect
 fn mask_inline_code(content: &str, spans: &[crate::markdown::MarkdownInlineCode]) -> String {
     let mut masked = content.as_bytes().to_vec();
     for span in spans {
-        let range = span.byte_range.clone();
-        if range.end > masked.len() {
-            continue;
-        }
         // Byte-wise masking keeps every later span's offsets exact. A span
         // covers whole scalars, so overwriting its bytes with ASCII leaves
         // valid UTF-8; newlines survive so paragraph bounds stay readable.
-        for byte in &mut masked[range] {
+        let Some(bytes) = masked.get_mut(span.byte_range.clone()) else {
+            continue;
+        };
+        for byte in bytes {
             if *byte != b'\n' {
                 *byte = b'#';
             }

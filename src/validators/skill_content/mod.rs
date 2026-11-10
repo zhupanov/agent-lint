@@ -5771,6 +5771,10 @@ suppress = ["S033"]
                 "Call the tool.\n\n`fetch_job` is a response field.",
             ),
             (
+                "a later paragraph cannot supply it either",
+                "`fetch_job` is a response field.\n\nCall the tool.\n\nThen stop.",
+            ),
+            (
                 "a printed field name inside a raw HTML block",
                 "<example>\nThe script prints `job_id`, `owner_id` and `run`.\n</example>",
             ),
