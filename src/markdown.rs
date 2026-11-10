@@ -495,7 +495,7 @@ impl MarkdownDocument {
             .collect()
     }
 
-    /// Recover CommonMark code spans inside raw HTML for structural scanning
+    /// Recover CommonMark code spans hidden by raw HTML for structural scanning
     /// only. Prefix unescaped `<` characters in a parse copy so tags remain
     /// inline HTML instead of swallowing a whole block. Keeping HTML syntax
     /// intact also keeps attribute/comment backticks out of code spans.
@@ -540,7 +540,9 @@ impl MarkdownDocument {
                 let span = data.sourcepos;
                 if !matches!(data.value, NodeValue::Code(_))
                     || !self.html_block_ranges.iter().any(|range| {
-                        range.contains(&span.start.line) && range.contains(&span.end.line)
+                        // A continuation line such as `<dir>` can start an HTML
+                        // block partway through a span, so overlap is enough.
+                        span.start.line <= *range.end() && *range.start() <= span.end.line
                     })
                 {
                     return None;
@@ -1255,6 +1257,49 @@ mod tests {
         assert_eq!(prose[2].text, "</brief>");
         // The structural recovery does not widen ordinary Markdown facts.
         assert!(document.inline_code().is_empty());
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_recovery_preserves_source_columns() {
+        let prefix = "é↔🚀 Use <ok></ok> and ";
+        let first_line_code = "``<tool>/repo";
+        let second_line_code = "<dir>/d <user>``";
+        let suffix = " tail <live></live>";
+        for newline in ["\n", "\r\n"] {
+            let source = [
+                "<brief>".to_string(),
+                String::new(),
+                format!("{prefix}{first_line_code}"),
+                format!("{second_line_code}{suffix}"),
+                "</brief>".to_string(),
+                String::new(),
+            ]
+            .join(newline);
+            let document = MarkdownDocument::parse_body(source);
+            let prose = document.structural_prose();
+            assert_eq!(prose[0].text, "<brief>");
+            assert_eq!(prose[2].line, 3);
+            assert_eq!(
+                prose[2].text,
+                format!("{prefix}{}", " ".repeat(first_line_code.len()))
+            );
+            assert_eq!(
+                prose[2].masked_inline_code_columns,
+                [prefix.chars().count() + 1..=prefix.chars().count() + first_line_code.len()]
+            );
+            assert_eq!(prose[3].line, 4);
+            assert_eq!(
+                prose[3].text,
+                format!("{}{suffix}", " ".repeat(second_line_code.len()))
+            );
+            assert_eq!(
+                prose[3].masked_inline_code_columns,
+                [1..=second_line_code.len()]
+            );
+            assert_eq!(prose[4].text, "</brief>");
+            // Recovery remains confined to the structural view.
+            assert!(document.inline_code().is_empty());
+        }
     }
 
     #[test]

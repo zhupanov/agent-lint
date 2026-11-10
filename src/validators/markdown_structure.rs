@@ -338,6 +338,141 @@ mod tests {
         }
     }
 
+    fn assert_wrapped_placeholder_body_is_clean(body: &str) {
+        let content = format!(
+            "---\nname: demo\ndescription: Demonstrates an inline-code span that wraps. Use when reproducing the bug.\n---\n\n{body}"
+        );
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(".claude/skills/demo/SKILL.md", &content, &mut diag);
+        assert!(
+            diag.diagnostics().is_empty(),
+            "{body:?}: {:?}",
+            diag.diagnostics()
+        );
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_minimal_prompt_block() {
+        assert_wrapped_placeholder_body_is_clean("<brief>\n\nRun `x\n<dir>`, ok.\n</brief>\n");
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_without_prompt_block() {
+        assert_wrapped_placeholder_body_is_clean("Run `x\n<dir>`, ok.\n");
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_placeholders_on_both_lines() {
+        assert_wrapped_placeholder_body_is_clean(
+            "<brief>\n- a;\n\nThen run `<tool>/x <dir>/repo\n<dir>/d <user>`, ok.\n</brief>\n",
+        );
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_numbered_list_command() {
+        assert_wrapped_placeholder_body_is_clean(
+            r#"Brief each worker with this, filled in:
+
+<brief>
+You are updating one repository and getting its merge request green.
+
+1. Clone it into `<dir>/repo` and create the branch.
+2. Make the change, run the checks, and commit.
+3. Write the description to `<dir>/description.md`:
+   - what changed;
+   - each fix and why;
+   - a last line saying which tool opened it.
+
+   Then run `<tool>/open-mr.sh <dir>/repo feature/<run> <branch> 'Update to <tag>'
+   <dir>/description.md <user> <reviewers> [labels]`, with the labels the repository asks
+   for, if any. It pushes, opens the request, and prints its URL.
+4. Wait for the pipeline, and fix what fails.
+5. Report the URL and the pipeline's verdict.
+</brief>
+"#,
+        );
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_previously_clean_comparisons() {
+        for body in [
+            "Run `x <dir>`, ok.\n",
+            "Run `x\nmore <dir>`, ok.\n",
+            "Run `<dir>\nmore`, ok.\n",
+        ] {
+            assert_wrapped_placeholder_body_is_clean(body);
+            assert_wrapped_placeholder_body_is_clean(&format!("<brief>\n\n{body}</brief>\n"));
+        }
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_delimiters_and_html_boundaries() {
+        for body in [
+            "Run ``<tool> ` literal\n<dir>/d </fake>` literal`` here.\n",
+            "Run ````<tool> ` `` ```\n<dir>/d </fake>```` here.\n",
+            "Run `<tool>\n<dir>/d\nmore </fake>`, ok.\n",
+            "Run `<tool>\n<!-- <dir> -->\nmore <user>`, ok.\n",
+            "Run `x\n<dir>\\`, ok.\n",
+        ] {
+            assert_wrapped_placeholder_body_is_clean(body);
+        }
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_preserves_real_xml_diagnostics() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(
+            "f.md",
+            "<brief>\n\nRun `<tool>\n<dir> </fake>`, ok. <real>\n</wrong>\n</brief>\n</orphan>\n<unclosed>\n",
+            &mut diag,
+        );
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .map(|finding| {
+                (
+                    finding.rule,
+                    finding.location.unwrap().start().line_number(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            findings,
+            [
+                (LintRule::XmlTagMismatched, 5),
+                (LintRule::XmlTagOrphan, 7),
+                (LintRule::XmlTagUnclosed, 8),
+            ]
+        );
+    }
+
+    #[test]
+    fn wrapped_placeholder_regression_unmatched_delimiters_keep_real_tags_visible() {
+        for (content, line) in [
+            ("Run `x\n<dir>\n", 2),
+            ("Run `x\n<dir>``\n", 2),
+            ("Run \\`x\n<dir>`\n", 2),
+            ("Run `x\n\n<dir>`\n", 3),
+            ("Run `x\n```text\nliteral\n```\n<dir>`\n", 5),
+            ("- Run `x\n- <dir>`\n", 2),
+            ("Use <real note=\"`\" />\n<dir>`\n", 2),
+            ("Note <!-- ` -->\n<dir>`\n", 2),
+        ] {
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            check_markdown_structure("f.md", content, &mut diag);
+            assert_eq!(codes(&diag), ["X003"], "{content:?}");
+            assert_eq!(
+                diag.diagnostics()[0]
+                    .location
+                    .unwrap()
+                    .start()
+                    .line_number(),
+                line,
+                "{content:?}"
+            );
+        }
+    }
+
     #[test]
     fn markdown_placeholder_regression_preserves_real_xml_diagnostics() {
         let mut diag = DiagnosticCollector::new_all_enabled();
