@@ -20,13 +20,22 @@ static RE_INVOCATION_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-// The noun form on either side: "these tools: `x`", "the `x` tool". At most
-// one word may sit between the identifier and a following "tool", so that an
-// unrelated later clause cannot reach back to it.
+// The noun form on either side: "these tools: `x`", "the `x` tool". Nothing
+// but whitespace and punctuation may sit between the noun and the identifier,
+// on either side, so a later clause cannot reach back to it ("prints `job_id`,
+// `owner_id` and tool versions" names no tool of its own).
 static RE_TOOL_BEFORE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\btools?\b[\s:,]*$").unwrap());
 static RE_TOOL_AFTER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)^[\s,:;)\]]*(?:\w+\s+)?tools?\b").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)^[\s,:;)\]]*tools?\b").unwrap());
+
+// "the `x` tool" names a tool; "prints `x` tools are configured elsewhere"
+// starts a new clause with the same two words next to each other. A
+// determiner before the identifier is what separates the noun phrase from the
+// accident, so the noun-after form requires one.
+static RE_DETERMINER_BEFORE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:the|a|an|this|that|each|every|its|their|your|our)\s+$").unwrap()
+});
 
 // Built-in platform tools in snake_case form. Single-word tools (bash, read,
 // etc.) are excluded automatically by the identifier's underscore requirement.
@@ -139,7 +148,7 @@ fn has_adjacent_invocation_grammar(masked: &str, span: std::ops::Range<usize>) -
     let after = &masked[span.end..paragraph.end];
     RE_INVOCATION_BEFORE.is_match(before)
         || RE_TOOL_BEFORE.is_match(before)
-        || RE_TOOL_AFTER.is_match(after)
+        || (RE_TOOL_AFTER.is_match(after) && RE_DETERMINER_BEFORE.is_match(before))
 }
 
 /// Byte bounds of the blank-line-delimited block holding `span`.

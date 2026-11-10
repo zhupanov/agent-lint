@@ -28,11 +28,16 @@ pub(crate) fn sanitize_for_terminal(text: &str) -> Cow<'_, str> {
 /// The `path:line: ` (or `path: `) prefix the text output puts in front of a
 /// finding's message, derived from its structured location alone. A finding
 /// with no subject path is repository-wide and keeps an empty locator.
+///
+/// A repository controls its own filenames, so the path passes through the
+/// same terminal sanitization as the message: the locator is rendered text,
+/// not structured data.
 fn text_locator(diagnostic: &Diagnostic) -> String {
     let Some(path) = diagnostic.subject_path.as_ref() else {
         return String::new();
     };
     let path = crate::config::normalize_path(&path.to_string_lossy());
+    let path = sanitize_for_terminal(&path);
     match diagnostic.location {
         Some(location) => format!("{path}:{}: ", location.start().line_number()),
         None => format!("{path}: "),
@@ -1205,6 +1210,14 @@ suppress = ["M001", "H001"]
                 Some("AGENTS.md"),
                 Some(3),
                 "AGENTS.md:3: AGENTS.md.bak: backup",
+            ),
+            // A repository controls its own filenames: the locator is
+            // terminal-sanitized exactly as the message is.
+            (
+                "control in the subject path",
+                Some("de\u{1b}[31mmo/AGENTS.md"),
+                Some(4),
+                "de\\u{1b}[31mmo/AGENTS.md:4: control in the subject path",
             ),
         ];
 

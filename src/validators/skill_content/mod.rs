@@ -2426,7 +2426,7 @@ suppress = ["S014"]
         let tmp = tempfile::tempdir().unwrap();
         let _guard = crate::test_helpers::CwdGuard::new();
         std::env::set_current_dir(tmp.path()).unwrap();
-        std::fs::create_dir_all(".git/info").unwrap();
+        crate::test_helpers::init_git_repository(tmp.path());
         std::fs::write(".gitignore", "*.tmp\n").unwrap();
         std::fs::create_dir_all("skills/my-skill/scripts").unwrap();
         std::fs::write("skills/my-skill/scripts/noise.tmp", "tmp").unwrap();
@@ -5777,6 +5777,20 @@ suppress = ["S033"]
             (
                 "a printed field name inside a raw HTML block",
                 "<example>\nThe script prints `job_id`, `owner_id` and `run`.\n</example>",
+            ),
+            // The noun must be beside the identifier on both sides: a word
+            // between them belongs to another clause.
+            (
+                "the tool noun one word later",
+                "Run `S/preflight.sh`. It prints `job_id`, `owner_id` and tool versions.",
+            ),
+            (
+                "the tool noun one word earlier",
+                "Every tool below prints `job_id` for its caller.",
+            ),
+            (
+                "the tool noun heading the next clause",
+                "The script prints `job_id`\ntools are configured elsewhere.",
             ),
         ];
         for (label, body) in clean {

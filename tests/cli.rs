@@ -246,14 +246,16 @@ fn text_has_literal_terminal_control(bytes: &[u8]) -> bool {
 /// `path:line: `, or `path: ` when the finding proves no line, followed by the
 /// message with any locator the rule restated removed.
 fn expected_text_message(diagnostic: &serde_json::Value) -> String {
-    let message = terminal_sanitized_message(diagnostic["message"].as_str().unwrap());
+    let message = diagnostic["message"].as_str().unwrap();
     let Some(path) = diagnostic["subject_path"].as_str() else {
-        return message;
+        return terminal_sanitized_message(message);
     };
     let line = diagnostic["location"]["start"]["line"].as_u64();
+    // The path is repository-controlled text, so it is sanitized for the
+    // terminal exactly as the message is.
     let locator = match line {
-        Some(line) => format!("{path}:{line}: "),
-        None => format!("{path}: "),
+        Some(line) => format!("{}:{line}: ", terminal_sanitized_message(path)),
+        None => format!("{}: ", terminal_sanitized_message(path)),
     };
     let body = match message.strip_prefix(path) {
         Some(rest) => {
@@ -262,13 +264,13 @@ fn expected_text_message(diagnostic: &serde_json::Value) -> String {
                 None => rest,
             };
             match rest.strip_prefix(':').unwrap_or(rest).strip_prefix(' ') {
-                Some(stripped) => stripped.to_owned(),
-                None => message.clone(),
+                Some(stripped) => stripped,
+                None => message,
             }
         }
-        None => message.clone(),
+        None => message,
     };
-    format!("{locator}{body}")
+    format!("{locator}{}", terminal_sanitized_message(body))
 }
 
 fn terminal_sanitized_message(message: &str) -> String {
@@ -9771,6 +9773,40 @@ fn diagnostic_transports_escape_authored_control_bytes() {
             .unwrap()
             .contains('\u{1b}'),
         "JSON preserves the intentionally structured control-bearing value"
+    );
+}
+
+/// The subject path is repository-controlled text that the text output now
+/// renders as a locator, so it passes through the same escaping as a message.
+#[cfg(unix)]
+#[test]
+fn text_locators_escape_control_bytes_in_repository_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    let skill = tmp.path().join(".claude/skills/de\u{1b}[31mmo");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        "---\nname: demo\ndescription: Use when checking that a control byte in a path stays escaped\n---\nBody.\n",
+    )
+    .unwrap();
+
+    let text = run_in(tmp.path(), &["--only", "S006", "."]);
+    assert_text_diagnostic_is_terminal_safe(&text, "S006");
+    let rendered = stderr(&text);
+    assert!(
+        rendered.contains(r"\u{1b}"),
+        "the locator must show the escape: {rendered}"
+    );
+
+    let machine = run_in(tmp.path(), &["--format", "json", "--only", "S006", "."]);
+    let report = json_document(&machine);
+    assert!(
+        report["diagnostics"][0]["subject_path"]
+            .as_str()
+            .unwrap()
+            .contains('\u{1b}'),
+        "JSON keeps the authored subject path"
     );
 }
 

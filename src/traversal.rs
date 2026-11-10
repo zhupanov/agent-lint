@@ -10,22 +10,27 @@
 //! are otherwise included so supported surfaces such as `.claude/`, `.cursor/`,
 //! and `.codex/` retain their normal coverage.
 //!
-//! Inside a Git repository, Git's own ignore rules also apply: `.gitignore` at
-//! the root and in any directory along the walk, `.git/info/exclude`, and
-//! `core.excludesFile`. A git-ignored instruction file, skill, or script asset
-//! is not authored configuration of the repository being linted, so no rule
-//! sees it (issue #674). Outside a Git repository those files have no ignore
-//! status and are walked as before.
+//! Inside a Git repository, Git's own ignore decision also applies: a path Git
+//! ignores is not authored configuration of the repository being linted, so no
+//! rule sees it (issue #674). The decision is Git's, asked of `git
+//! check-ignore`, so every ignore source counts -- `.gitignore` at the root and
+//! in any directory along the way, `.git/info/exclude`, `core.excludesFile` --
+//! and a tracked file is never ignored, however the patterns read. Outside a
+//! Git repository nothing has an ignore status and every path is walked as
+//! before.
 
 use crate::config::{ExcludeSet, normalize_path};
-use ignore::{DirEntry, WalkBuilder};
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use walkdir::{DirEntry, WalkDir};
 
 /// Read-only directory facts exposed to specialized traversal policies.
 ///
-/// Keeping the walker's entry type private makes this module the sole owner of
-/// the recursive-walking implementation.
+/// Keeping the `walkdir` type private makes this module the sole owner of the
+/// recursive-walking implementation.
 #[derive(Clone, Copy)]
 pub struct DirectoryEntry<'a>(&'a DirEntry);
 
@@ -121,30 +126,18 @@ pub fn entries_with_pruning(
         return WalkReport::default();
     }
 
-    let mut walker = WalkBuilder::new(base);
-    walker
-        .follow_links(false)
-        // Hidden entries stay visible: `.claude/`, `.cursor/` and `.codex/`
-        // are supported surfaces. Git's ignore sources are the only new
-        // filter; `.ignore` and `.rgignore` are search-tool conventions that
-        // say nothing about what the repository ships.
-        .hidden(false)
-        .ignore(false)
-        .git_ignore(true)
-        .git_exclude(true)
-        .git_global(true)
-        .parents(true)
-        .require_git(true)
-        .filter_entry(move |entry| should_descend(DirectoryEntry(entry)));
+    let mut walker = WalkDir::new(base).follow_links(false).min_depth(1);
     if depth == WalkDepth::Shallow {
-        walker.max_depth(Some(1));
+        walker = walker.max_depth(1);
     }
 
     let mut report = WalkReport::default();
-    for entry in walker.build() {
+    for entry in walker
+        .into_iter()
+        .filter_entry(|entry| should_descend(DirectoryEntry(entry)))
+    {
         match entry {
-            // Depth 0 is `base` itself, which this walk never reports.
-            Ok(entry) if entry.depth() > 0 && includes(&entry, kind) => {
+            Ok(entry) if includes(&entry, kind) => {
                 let path = entry.into_path();
                 let display = display_path(root, &path);
                 if exclude.is_none_or(|set| !set.is_excluded(&display)) {
@@ -153,15 +146,140 @@ pub fn entries_with_pruning(
             }
             Ok(_) => {}
             Err(error) => report.errors.push(WalkError {
-                path: error_path(&error),
+                path: error.path().map(Path::to_path_buf),
                 message: error.to_string(),
             }),
         }
     }
+    retain_paths_git_does_not_ignore(&mut report.entries);
     report
         .entries
         .sort_by(|left, right| left.display.cmp(&right.display));
     report
+}
+
+/// Decisions already obtained for one analysis root. Overlapping walks ask
+/// about the same path repeatedly, and a path's ignore status cannot change
+/// within a run, so each one is paid for once. The root is part of the key so
+/// a process that moves between repositories (the test suite) never reuses
+/// another root's answers.
+static GIT_IGNORE_DECISIONS: Mutex<Option<(PathBuf, HashMap<String, bool>)>> = Mutex::new(None);
+
+/// Drop the entries Git ignores, asking Git itself.
+///
+/// Outside a Git work tree nothing has an ignore status, and a path outside
+/// the analysis root cannot be asked about, so both are kept.
+fn retain_paths_git_does_not_ignore(entries: &mut Vec<WalkEntry>) {
+    if entries.is_empty() {
+        return;
+    }
+    let Some(root) = git_work_tree_root() else {
+        return;
+    };
+    let candidates: Vec<Option<String>> = entries
+        .iter()
+        .map(|entry| repository_relative(&root, &entry.path))
+        .collect();
+
+    let mut guard = GIT_IGNORE_DECISIONS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if guard
+        .as_ref()
+        .is_none_or(|(cached_root, _)| *cached_root != root)
+    {
+        *guard = Some((root, HashMap::new()));
+    }
+    let (_, decisions) = guard.as_mut().expect("the cache was just initialized");
+
+    let unknown: Vec<String> = candidates
+        .iter()
+        .flatten()
+        .filter(|path| !decisions.contains_key(*path))
+        .cloned()
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    if !unknown.is_empty() {
+        let ignored = git_ignored_paths(&unknown);
+        for path in unknown {
+            let is_ignored = ignored.contains(&path);
+            decisions.insert(path, is_ignored);
+        }
+    }
+
+    let mut keep = candidates.iter().map(|candidate| match candidate {
+        Some(path) => !decisions.get(path).copied().unwrap_or(false),
+        None => true,
+    });
+    entries.retain(|_| keep.next().unwrap_or(true));
+}
+
+/// The working directory when it is inside a Git work tree, which is the
+/// analysis root every walk resolves against.
+fn git_work_tree_root() -> Option<PathBuf> {
+    let root = std::env::current_dir().ok()?;
+    // `.git` is a directory in a normal clone and a file in a linked worktree
+    // or submodule; both are work trees Git can answer for.
+    root.join(".git").exists().then_some(root)
+}
+
+/// `path` spelled relative to the analysis root, or `None` when it lies
+/// outside it and Git therefore has no opinion about it.
+fn repository_relative(root: &Path, path: &Path) -> Option<String> {
+    let relative = if path.is_absolute() {
+        path.strip_prefix(root).ok()?
+    } else {
+        path
+    };
+    let normalized = normalize_path(&relative.to_string_lossy());
+    (!normalized.is_empty() && normalized != ".").then_some(normalized)
+}
+
+/// The subset of `paths` Git ignores.
+///
+/// `git check-ignore` applies every ignore source and consults the index, so a
+/// tracked file is never ignored however the patterns read. An unavailable or
+/// failing Git yields no decision, leaving every path walked exactly as it was
+/// before ignore handling existed.
+fn git_ignored_paths(paths: &[String]) -> HashSet<String> {
+    let mut payload = Vec::new();
+    for path in paths {
+        payload.extend_from_slice(path.as_bytes());
+        payload.push(0);
+    }
+
+    let Ok(mut child) = Command::new("git")
+        .args(["check-ignore", "--stdin", "-z"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return HashSet::new();
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        return HashSet::new();
+    };
+    // Write from another thread: a large query would otherwise fill the
+    // child's output pipe while this one is still writing, and both block.
+    let writer = std::thread::spawn(move || stdin.write_all(&payload));
+    let output = child.wait_with_output();
+    let _ = writer.join();
+    let Ok(output) = output else {
+        return HashSet::new();
+    };
+    // 0 reports ignored paths, 1 reports none; anything else (128, no work
+    // tree) is not a usable answer.
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return HashSet::new();
+    }
+    output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+        .map(|record| String::from_utf8_lossy(record).into_owned())
+        .collect()
 }
 
 pub fn shallow_files(base: &Path, root: &Path, exclude: Option<&ExcludeSet>) -> WalkReport {
@@ -237,27 +355,10 @@ pub fn directory_byte_size(dir: &Path) -> u64 {
     total
 }
 
-/// The path a walk error is about, when the walker recorded one.
-///
-/// Errors are wrapped in context layers (`WithDepth`, `WithLineNumber`,
-/// `Partial`), so the path can sit below the outermost one.
-fn error_path(error: &ignore::Error) -> Option<PathBuf> {
-    match error {
-        ignore::Error::WithPath { path, .. } => Some(path.clone()),
-        ignore::Error::WithLineNumber { err, .. } | ignore::Error::WithDepth { err, .. } => {
-            error_path(err)
-        }
-        ignore::Error::Partial(errors) => errors.iter().find_map(error_path),
-        _ => None,
-    }
-}
-
 fn includes(entry: &DirEntry, kind: EntryKind) -> bool {
-    // A symlink is never followed, so its own file type decides: it is
-    // neither a regular file nor a directory for selection purposes.
     match kind {
-        EntryKind::Files => entry.file_type().is_some_and(|kind| kind.is_file()),
-        EntryKind::Directories => entry.file_type().is_some_and(|kind| kind.is_dir()),
+        EntryKind::Files => entry.file_type().is_file(),
+        EntryKind::Directories => entry.file_type().is_dir(),
         EntryKind::All => true,
     }
 }
@@ -393,108 +494,182 @@ mod tests {
         assert!(!is_cache_artifact(Path::new("skills/x/scripts/run.sh")));
     }
 
-    /// Issue #674: every Git ignore source removes a path from discovery, and
-    /// the same tree without Git keeps today's unfiltered behavior.
-    #[test]
-    fn walks_apply_every_git_ignore_source() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
+    /// Build a repository whose files are ignored through every source, and
+    /// return the paths that should survive discovery. `track` is force-added
+    /// so it is tracked *and* matched by a pattern.
+    fn ignore_corpus(root: &Path) {
         fs::create_dir_all(root.join("sub/gen")).unwrap();
         fs::create_dir_all(root.join("tools/sub")).unwrap();
         fs::create_dir_all(root.join("excl")).unwrap();
         fs::create_dir_all(root.join("plain")).unwrap();
+        fs::create_dir_all(root.join("forced")).unwrap();
         for relative in [
             "tools/sub/AGENTS.md",
             "tools/CLAUDE.md",
             "sub/gen/AGENTS.md",
             "excl/AGENTS.md",
             "plain/AGENTS.md",
+            "forced/AGENTS.md",
         ] {
             fs::write(root.join(relative), "body\n").unwrap();
         }
+    }
 
-        let unfiltered = recursive_files(root, root, None);
-        for ignored in [
-            "tools/sub/AGENTS.md",
-            "tools/CLAUDE.md",
-            "sub/gen/AGENTS.md",
-            "excl/AGENTS.md",
-        ] {
-            assert!(
-                unfiltered
-                    .entries
-                    .iter()
-                    .any(|entry| entry.display == ignored),
-                "{ignored} is walked while the tree has no Git repository"
-            );
-        }
+    const IGNORED_CORPUS_PATHS: &[&str] = &[
+        "tools/sub/AGENTS.md",
+        "tools/CLAUDE.md",
+        "sub/gen/AGENTS.md",
+        "excl/AGENTS.md",
+    ];
 
-        fs::create_dir_all(root.join(".git/info")).unwrap();
-        fs::write(root.join(".gitignore"), "tools/\n").unwrap();
+    fn run_git(root: &Path, arguments: &[&str]) {
+        let output = Command::new("git")
+            .args(arguments)
+            .current_dir(root)
+            .output()
+            .expect("git runs for the traversal fixture");
+        assert!(
+            output.status.success(),
+            "git {arguments:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Issue #674: every Git ignore source removes a path from discovery, and
+    /// a tracked file stays discoverable even when a pattern also matches it.
+    #[test]
+    #[serial_test::serial]
+    fn walks_apply_every_git_ignore_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Resolve symlinks (`/var` -> `/private/var` on macOS) so the walked
+        // paths and the working directory share one spelling.
+        let root = tmp.path().canonicalize().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        ignore_corpus(&root);
+        crate::test_helpers::init_git_repository(&root);
+        fs::write(root.join(".gitignore"), "tools/\nforced/\n").unwrap();
         fs::write(root.join("sub/.gitignore"), "gen/\n").unwrap();
         fs::write(root.join(".git/info/exclude"), "excl/\n").unwrap();
+        run_git(&root, &["add", "--force", "forced/AGENTS.md"]);
+        std::env::set_current_dir(&root).unwrap();
 
-        let filtered = recursive_files(root, root, None);
-        let displays: Vec<_> = filtered
+        let report = recursive_files(Path::new("."), Path::new("."), None);
+        let displays: Vec<_> = report
             .entries
             .iter()
             .map(|entry| entry.display.as_str())
             .collect();
-        for ignored in [
-            "tools/sub/AGENTS.md",
-            "tools/CLAUDE.md",
-            "sub/gen/AGENTS.md",
-            "excl/AGENTS.md",
-        ] {
+        for ignored in IGNORED_CORPUS_PATHS {
             assert!(
-                !displays.contains(&ignored),
+                !displays.contains(ignored),
                 "{ignored} is git-ignored but still walked: {displays:?}"
             );
         }
         assert!(
             displays.contains(&"plain/AGENTS.md"),
-            "a tracked file must stay discoverable: {displays:?}"
+            "an ordinary file must stay discoverable: {displays:?}"
+        );
+        assert!(
+            displays.contains(&"forced/AGENTS.md"),
+            "a tracked file is never ignored, whatever the patterns say: {displays:?}"
         );
     }
 
+    /// The same tree with no Git repository keeps the unfiltered behavior.
     #[test]
-    fn walk_error_paths_unwrap_their_context_layers() {
-        let wrapped = ignore::Error::WithDepth {
-            depth: 2,
-            err: Box::new(ignore::Error::Partial(vec![ignore::Error::WithPath {
-                path: PathBuf::from("skills/unreadable"),
-                err: Box::new(ignore::Error::InvalidDefinition),
-            }])),
-        };
-        assert_eq!(
-            error_path(&wrapped),
-            Some(PathBuf::from("skills/unreadable"))
-        );
-        assert_eq!(error_path(&ignore::Error::InvalidDefinition), None);
-    }
-
-    /// A shallow walk of a subdirectory still honors the repository-root
-    /// `.gitignore` above it, which is where skill discovery starts.
-    #[test]
-    fn shallow_walks_of_subdirectories_honor_parent_ignore_files() {
+    #[serial_test::serial]
+    fn walks_without_a_git_repository_filter_nothing() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        fs::create_dir_all(root.join(".git/info")).unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
+        ignore_corpus(&root);
+        fs::write(root.join(".gitignore"), "tools/\n").unwrap();
+        fs::write(root.join("sub/.gitignore"), "gen/\n").unwrap();
+        std::env::set_current_dir(&root).unwrap();
+
+        let report = recursive_files(Path::new("."), Path::new("."), None);
+        let displays: Vec<_> = report
+            .entries
+            .iter()
+            .map(|entry| entry.display.as_str())
+            .collect();
+        for walked in IGNORED_CORPUS_PATHS {
+            if *walked == "excl/AGENTS.md" {
+                continue; // that source needs a `.git` directory to exist
+            }
+            assert!(
+                displays.contains(walked),
+                "{walked} has no ignore status without Git: {displays:?}"
+            );
+        }
+    }
+
+    /// A walk rooted below an ignored directory is filtered too: Git's answer
+    /// accounts for ancestors, which is how skill and agent discovery starts
+    /// inside `.claude/`.
+    #[test]
+    #[serial_test::serial]
+    fn walks_rooted_inside_an_ignored_directory_are_filtered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let _guard = crate::test_helpers::CwdGuard::new();
         fs::create_dir_all(root.join(".claude/skills/local")).unwrap();
         fs::create_dir_all(root.join(".claude/skills/shipped")).unwrap();
-        fs::write(root.join(".gitignore"), ".claude/skills/local/\n").unwrap();
         fs::write(root.join(".claude/skills/local/SKILL.md"), "body\n").unwrap();
         fs::write(root.join(".claude/skills/shipped/SKILL.md"), "body\n").unwrap();
+        crate::test_helpers::init_git_repository(&root);
+        std::env::set_current_dir(&root).unwrap();
 
-        let report = shallow_directories(&root.join(".claude/skills"), root, None);
+        fs::write(root.join(".gitignore"), ".claude/skills/local/\n").unwrap();
+        let report = shallow_directories(Path::new(".claude/skills"), Path::new("."), None);
         assert_eq!(
             report
                 .entries
                 .iter()
                 .map(|entry| &entry.display)
                 .collect::<Vec<_>>(),
-            [".claude/skills/shipped"]
+            [".claude/skills/shipped"],
+            "a directly named ignored skill is dropped"
         );
+
+        // The whole surface is ignored one level above the walk root.
+        let nested = tempfile::tempdir().unwrap();
+        let nested_root = nested.path().canonicalize().unwrap();
+        fs::create_dir_all(nested_root.join(".claude/skills/shipped")).unwrap();
+        fs::write(
+            nested_root.join(".claude/skills/shipped/SKILL.md"),
+            "body\n",
+        )
+        .unwrap();
+        crate::test_helpers::init_git_repository(&nested_root);
+        fs::write(nested_root.join(".gitignore"), ".claude/\n").unwrap();
+        std::env::set_current_dir(&nested_root).unwrap();
+
+        let report = shallow_directories(Path::new(".claude/skills"), Path::new("."), None);
+        assert!(
+            report.entries.is_empty(),
+            "an ignored ancestor hides the whole walk: {:?}",
+            report.entries
+        );
+    }
+
+    #[test]
+    fn repository_relative_paths_stay_inside_the_analysis_root() {
+        let root = Path::new("/repo");
+        assert_eq!(
+            repository_relative(root, Path::new("/repo/skills/a/SKILL.md")),
+            Some("skills/a/SKILL.md".to_string())
+        );
+        assert_eq!(
+            repository_relative(root, Path::new("./skills/a/SKILL.md")),
+            Some("skills/a/SKILL.md".to_string())
+        );
+        // Outside the analysis root, Git has no opinion to ask for.
+        assert_eq!(
+            repository_relative(root, Path::new("/elsewhere/a.md")),
+            None
+        );
+        assert_eq!(repository_relative(root, Path::new("/repo")), None);
     }
 
     #[test]

@@ -42,11 +42,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Discovery applies Git's ignore rules inside a Git repository, so git-ignored
-  instruction files, skills, and script assets are no longer linted. Root and
-  nested `.gitignore`, `.git/info/exclude`, and `core.excludesFile` all
-  participate; a tracked file is still linted even when a pattern matches it,
-  and a tree with no Git repository keeps its previous unfiltered behavior
+- Discovery skips git-ignored paths inside a Git repository, so git-ignored
+  instruction files, skills, and script assets are no longer linted. The
+  decision is Git's own, asked of `git check-ignore`: root and nested
+  `.gitignore`, `.git/info/exclude`, and `core.excludesFile` all participate,
+  a path below an ignored directory is ignored with it, and a tracked file is
+  never ignored however the patterns read. A tree with no Git repository, or a
+  run where Git cannot be executed, keeps the previous unfiltered behavior
   (#674).
 - Text output names the file and line of every finding that has them, as
   `severity[code/name]: path:line: message`, projected from the finding's
