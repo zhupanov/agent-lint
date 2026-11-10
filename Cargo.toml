@@ -20,7 +20,7 @@ jsonschema = { version = "0.61", default-features = false }
 noyalib = "0.0.15"
 strum = "0.28"
 strum_macros = "0.28"
-comrak = { version = "0.41", default-features = false }
+comrak = { version = "0.55", default-features = false }
 
 [dev-dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }
