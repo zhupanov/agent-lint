@@ -239,9 +239,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.18.0"
+version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
+checksum = "7b32c6266c2b14b0db7aa3409d3ee3f0ddda3b1d0279c4ba24fbec18af81d90e"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -282,12 +282,12 @@ dependencies = [
 
 [[package]]
 name = "fraction"
-version = "0.15.4"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
+checksum = "e246562084dde8ebbcc943b261c406ce4f68e5032ec28029a251a47d6a295500"
 dependencies = [
- "lazy_static",
  "num",
+ "num-bigint",
 ]
 
 [[package]]
@@ -512,9 +512,9 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
-version = "0.48.5"
+version = "0.61.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f05a6cff806294a7699d48761d4ae2bdebab7fa2eef05e4a0b83320f0ff46901"
+checksum = "e404978f72e1a21b53c96114b8a56e4cee7f17bd0a09b9c130875ed02a696f43"
 dependencies = [
  "ahash",
  "bytecount",
@@ -523,7 +523,6 @@ dependencies = [
  "fancy-regex",
  "fraction",
  "getrandom 0.3.4",
- "idna",
  "itoa",
  "jsonschema-regex",
  "jsonschema-value",
@@ -541,32 +540,29 @@ dependencies = [
 
 [[package]]
 name = "jsonschema-regex"
-version = "0.48.5"
+version = "0.61.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84708dd3f6c5327478a96f37378adb27deed6a626cf84d19de780d9e8ae84b17"
+checksum = "84cdf272371326ec8db8ce2608a52635d8edeeaf0189604e2ad627327b79e6db"
 dependencies = [
  "regex-syntax",
 ]
 
 [[package]]
 name = "jsonschema-value"
-version = "0.48.5"
+version = "0.61.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd8c04ab4ce60e42c4e302d3bd9d184652bb56f212495d2eea23573bcbf72556"
+checksum = "e5e4a7f3b3c19c9cd2aa37937e1704229a0bcb1b446308a148574d56ace0c6ba"
 dependencies = [
  "ahash",
  "bytecount",
  "fraction",
+ "getrandom 0.3.4",
+ "memchr",
  "num-cmp",
  "num-traits",
  "serde_json",
+ "zmij",
 ]
-
-[[package]]
-name = "lazy_static"
-version = "1.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 
 [[package]]
 name = "libc"
@@ -824,9 +820,9 @@ dependencies = [
 
 [[package]]
 name = "referencing"
-version = "0.48.5"
+version = "0.61.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "980e77f5cfffc592c0e7dfb6d20770a0b96a6ab94d403de7454ed9799505e4ba"
+checksum = "eba9bfd41f0d7d8fbf9c7ed23b788a3f97e9f5d9419be812ff7e08b8dc6b14ec"
 dependencies = [
  "ahash",
  "fluent-uri",

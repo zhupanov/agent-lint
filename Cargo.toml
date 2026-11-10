@@ -16,7 +16,7 @@ walkdir = "2"
 toml = "1"
 toml_edit = "0.25"
 globset = "0.4"
-jsonschema = { version = "0.48", default-features = false }
+jsonschema = { version = "0.61", default-features = false }
 noyalib = "0.0.15"
 strum = "0.28"
 strum_macros = "0.28"
