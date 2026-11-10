@@ -10,7 +10,7 @@ use crate::sensitive::{
 use crate::validators::codex_constants::*;
 use toml::Value;
 use toml::value::Table;
-use toml_edit::{ImDocument, Item, TableLike};
+use toml_edit::{Document, Item, TableLike};
 
 const CONFIG_PATH: &str = ".codex/config.toml";
 pub(crate) const CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES: usize = 32_768;
@@ -45,7 +45,8 @@ pub(crate) fn project_document_settings(exclude: &ExcludeSet) -> Option<ProjectD
         Err(_) => return None,
     };
     let content = String::from_utf8(bytes).ok()?;
-    let value: Value = content.parse().ok()?;
+    // Document parse, not `str::parse::<Value>`: see `validate_codex_config`.
+    let value: Value = toml::from_str(&content).ok()?;
     let Some(root) = value.as_table() else {
         return Some(ProjectDocumentSettings {
             max_bytes: CODEX_DEFAULT_PROJECT_DOC_MAX_BYTES,
@@ -77,16 +78,16 @@ pub(crate) fn project_document_settings(exclude: &ExcludeSet) -> Option<ProjectD
 
 struct SourceMap<'a> {
     content: &'a str,
-    // `ImDocument` is toml_edit's source-preserving document. `DocumentMut`
-    // deliberately drops spans in 0.22, so it cannot satisfy diagnostics.
-    document: ImDocument<&'a str>,
+    // `Document` is toml_edit's source-preserving document. `DocumentMut`
+    // deliberately drops spans, so it cannot satisfy diagnostics.
+    document: Document<&'a str>,
 }
 
 impl<'a> SourceMap<'a> {
     fn new(content: &'a str) -> Result<Self, toml_edit::TomlError> {
         Ok(Self {
             content,
-            document: ImDocument::parse(content)?,
+            document: Document::parse(content)?,
         })
     }
 
@@ -259,7 +260,9 @@ pub fn validate_config(diag: &mut DiagnosticCollector, exclude: &ExcludeSet) {
             return;
         }
     };
-    let value: Value = match content.parse() {
+    // `toml::from_str` parses a whole document. `str::parse::<Value>` does not:
+    // since toml 1.0 its `FromStr` reads a single TOML value expression.
+    let value: Value = match toml::from_str(&content) {
         Ok(value) => value,
         Err(error) => {
             let metadata = error
@@ -1189,7 +1192,7 @@ const ENV_NAME_FIELDS: &[&str] = &["env_vars", "bearer_token_env_var", "env_http
 /// intentionally parses the original TOML again so locations and ordering come
 /// from source, rather than from a semantic table that may reorder keys.
 fn validate_mcp_secret_literals(diag: &mut DiagnosticCollector, content: &str) {
-    let Ok(document) = ImDocument::parse(content) else {
+    let Ok(document) = Document::parse(content) else {
         return; // `toml::Value` already owns the parse diagnostic.
     };
     let Some(servers) = document

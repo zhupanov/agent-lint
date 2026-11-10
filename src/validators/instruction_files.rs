@@ -726,7 +726,9 @@ fn line_wholly_visible(content: &str, visible_bytes: usize, line_end: usize) -> 
 }
 
 fn parse_toml_scalar(literal: &str) -> Option<toml::Value> {
-    let value = format!("value = {literal}").parse::<toml::Value>().ok()?;
+    // Wrapped in a key/value pair and parsed as a document on purpose: a bare
+    // `literal` would also accept multi-value text under toml's value grammar.
+    let value = toml::from_str::<toml::Value>(&format!("value = {literal}")).ok()?;
     let value = value.get("value")?.clone();
     (value.is_str()
         || value.is_integer()
