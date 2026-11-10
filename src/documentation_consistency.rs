@@ -7,6 +7,13 @@ const CARGO_MANIFEST: &str = include_str!("../Cargo.toml");
 const PACKAGE_MANIFEST: &str = include_str!("../package.json");
 const README: &str = include_str!("../README.md");
 const RULES_DOCUMENTATION: &str = include_str!("../docs/rules.md");
+const BUMP_SCRIPT: &str = include_str!("../.claude/skills/bump-version/scripts/apply-bump.sh");
+/// Documents whose pinned release examples must track the package version.
+///
+/// `apply-bump.sh` rewrites exactly this set during a release; its own
+/// `RELEASE_EXAMPLE_DOCS` array is held to this list by
+/// `release_example_documents_match_bump_script`, so the checked set and the
+/// rewritten set cannot drift apart.
 const RELEASE_EXAMPLE_DOCUMENTS: &[(&str, &str)] = &[
     ("README.md", README),
     (
@@ -29,6 +36,39 @@ fn release_example_files() -> Result<Vec<(String, String)>, String> {
         .collect();
     files.sort_by(|left, right| left.0.cmp(&right.0));
     Ok(files)
+}
+
+/// Parse the `RELEASE_EXAMPLE_DOCS` bash array out of `apply-bump.sh`.
+///
+/// The array is the release script's own copy of [`RELEASE_EXAMPLE_DOCUMENTS`];
+/// reading it back lets the test suite fail on drift instead of letting a release
+/// ship stale version pins in a document the script never rewrites.
+fn bump_script_release_example_documents(script: &str) -> Result<Vec<String>, String> {
+    let mut lines = script
+        .lines()
+        .skip_while(|line| line.trim() != "RELEASE_EXAMPLE_DOCS=(")
+        .skip(1)
+        .peekable();
+    if lines.peek().is_none() {
+        return Err("apply-bump.sh is missing the RELEASE_EXAMPLE_DOCS array".to_owned());
+    }
+
+    let mut documents = Vec::new();
+    for line in lines {
+        let entry = line.trim();
+        if entry == ")" {
+            return Ok(documents);
+        }
+        let path = entry
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .ok_or_else(|| {
+                format!("unparsable RELEASE_EXAMPLE_DOCS entry in apply-bump.sh: {entry}")
+            })?;
+        documents.push(path.to_owned());
+    }
+
+    Err("apply-bump.sh RELEASE_EXAMPLE_DOCS array is unterminated".to_owned())
 }
 
 fn matching_manifest_version(cargo: &str, package: &str) -> Result<String, String> {
@@ -660,6 +700,38 @@ fn release_examples_match_package_version_policy() {
     let files = release_example_files().expect("release example files must be readable");
     validate_release_examples(&version, &files)
         .expect("release examples must match the package version and floating major");
+}
+
+#[test]
+fn release_example_documents_match_bump_script() {
+    let scripted = bump_script_release_example_documents(BUMP_SCRIPT)
+        .expect("apply-bump.sh must expose a parsable RELEASE_EXAMPLE_DOCS array");
+    let checked: Vec<String> = RELEASE_EXAMPLE_DOCUMENTS
+        .iter()
+        .map(|(path, _)| (*path).to_owned())
+        .collect();
+    assert_eq!(
+        scripted, checked,
+        "apply-bump.sh rewrites a different set of release-example documents than this test checks"
+    );
+}
+
+#[test]
+fn malformed_bump_script_document_lists_are_rejected() {
+    let cases = [
+        ("missing array", "#!/usr/bin/env bash\nset -euo pipefail\n"),
+        (
+            "unterminated array",
+            "RELEASE_EXAMPLE_DOCS=(\n  \"README.md\"\n",
+        ),
+        ("unquoted entry", "RELEASE_EXAMPLE_DOCS=(\n  README.md\n)\n"),
+    ];
+    for (name, script) in cases {
+        assert!(
+            bump_script_release_example_documents(script).is_err(),
+            "malformed script {name} must be rejected"
+        );
+    }
 }
 
 #[test]

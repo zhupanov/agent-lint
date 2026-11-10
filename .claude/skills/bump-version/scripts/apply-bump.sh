@@ -1,15 +1,22 @@
 #!/usr/bin/env bash
-# apply-bump.sh — Apply a computed semver bump to package.json, Cargo.toml, and README.md.
+# apply-bump.sh — Apply a computed semver bump to package.json, Cargo.toml, Cargo.lock,
+# and every release-example document.
 #
 # Contract:
 #   - FIRST: verify working tree is clean (fails on any staged or unstaged changes).
 #   - Validate package.json with jq.
-#   - Back up package.json, Cargo.toml, and README.md (to git directory to avoid triggering dirty-tree guard on retry).
+#   - Back up package.json, Cargo.toml, Cargo.lock, and each release-example document
+#     (to the git directory to avoid triggering the dirty-tree guard on retry).
 #   - Rewrite .version field in package.json atomically via jq + mv.
 #   - Rewrite version field in Cargo.toml [package] section atomically via awk + mv.
-#   - Replace all occurrences of old version (X.Y.Z) with new version in README.md.
+#   - Rewrite ONLY this package's version line in Cargo.lock atomically via awk + mv,
+#     then prove manifest/lockfile agreement with `cargo metadata --locked`. The whole
+#     dependency graph is deliberately left untouched: a version bump is not a
+#     dependency upgrade.
+#   - Replace all occurrences of old version (X.Y.Z) with new version in each
+#     release-example document.
 #   - git add + commit with message "Bump version to <new-version>".
-#   - Roll back all four files from backup if git commit fails.
+#   - Roll back every touched file from backup if any step fails.
 #
 # Usage:
 #   apply-bump.sh --new-version <x.y.z>
@@ -22,6 +29,18 @@
 # Exit codes: 0 on success, 1 on invalid args / validation / dirty worktree / commit failure.
 
 set -euo pipefail
+
+# Release-example documents whose pinned versions must track the package version.
+#
+# MUST stay in sync with RELEASE_EXAMPLE_DOCUMENTS in src/documentation_consistency.rs.
+# The Rust test `release_example_documents_match_bump_script` parses this very array
+# and fails the build if the two lists ever drift, so a document added there without
+# being added here (or vice versa) cannot reach main.
+RELEASE_EXAMPLE_DOCS=(
+  "README.md"
+  "docs/github-action.md"
+  "docs/development.md"
+)
 
 # fail MESSAGE — emit APPLIED=false / ERROR=MESSAGE on stdout and exit 1.
 fail() {
@@ -60,8 +79,43 @@ BACKUP="$GIT_DIR/package.json.bump-backup"
 CARGO_BACKUP="$GIT_DIR/Cargo.toml.bump-backup"
 CARGO_LOCK="$PWD/Cargo.lock"
 CARGO_LOCK_BACKUP="$GIT_DIR/Cargo.lock.bump-backup"
-README_FILE="$PWD/README.md"
-README_BACKUP="$GIT_DIR/README.md.bump-backup"
+
+# Release-example documents that exist in this tree, with their backups (parallel arrays).
+DOC_FILES=()
+DOC_BACKUPS=()
+# Release-example documents whose rewrite actually changed the file.
+DOC_MODIFIED=()
+
+# restore_manifests — move every existing manifest backup back over its file.
+# Restoring a file the run never modified is a harmless no-op, so this is safe on
+# every failure path regardless of how far the run got.
+restore_manifests() {
+  if [[ -f "$BACKUP" ]]; then
+    mv "$BACKUP" "$VERSION_FILE"
+  fi
+  if [[ -f "$CARGO_BACKUP" ]]; then
+    mv "$CARGO_BACKUP" "$CARGO_TOML"
+  fi
+  if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
+    mv "$CARGO_LOCK_BACKUP" "$CARGO_LOCK"
+  fi
+}
+
+# restore_docs — move every existing release-example backup back over its document.
+restore_docs() {
+  local index
+  for ((index = 0; index < ${#DOC_FILES[@]}; index++)); do
+    if [[ -f "${DOC_BACKUPS[index]}" ]]; then
+      mv "${DOC_BACKUPS[index]}" "${DOC_FILES[index]}"
+    fi
+  done
+}
+
+# rollback_all — restore every backup taken by this run.
+rollback_all() {
+  restore_manifests
+  restore_docs
+}
 
 # Step 1 (FIRST): Verify clean working tree.
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
@@ -80,14 +134,22 @@ if [[ -f "$CARGO_TOML" ]]; then
     cp "$CARGO_LOCK" "$CARGO_LOCK_BACKUP"
   fi
 fi
-if [[ -f "$README_FILE" ]]; then
-  cp "$README_FILE" "$README_BACKUP"
-fi
+for doc in "${RELEASE_EXAMPLE_DOCS[@]}"; do
+  doc_file="$PWD/$doc"
+  # Absent documents are skipped entirely: nothing to back up, rewrite, or stage.
+  if [[ -f "$doc_file" ]]; then
+    doc_backup="$GIT_DIR/${doc//\//__}.bump-backup"
+    cp "$doc_file" "$doc_backup"
+    DOC_FILES+=("$doc_file")
+    DOC_BACKUPS+=("$doc_backup")
+  fi
+done
 
 # Step 4a: Atomic rewrite of package.json via jq + mv.
 TMP_JSON="$VERSION_FILE.tmp.$$"
 if ! jq --arg v "$NEW_VERSION" '.version = $v' "$VERSION_FILE" > "$TMP_JSON"; then
-  rm -f "$TMP_JSON" "$BACKUP" "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
+  rm -f "$TMP_JSON"
+  rollback_all
   fail "jq rewrite failed"
 fi
 mv "$TMP_JSON" "$VERSION_FILE"
@@ -95,7 +157,7 @@ mv "$TMP_JSON" "$VERSION_FILE"
 # Step 4b: Atomic rewrite of Cargo.toml [package] version via awk + mv.
 if [[ -f "$CARGO_TOML" ]]; then
   TMP_CARGO="$CARGO_TOML.tmp.$$"
-  awk -v new_ver="$NEW_VERSION" '
+  if ! awk -v new_ver="$NEW_VERSION" '
     /^\[package\]/ { in_package=1 }
     /^\[/ && !/^\[package\]/ { in_package=0 }
     in_package && /^version *= *"/ {
@@ -104,61 +166,101 @@ if [[ -f "$CARGO_TOML" ]]; then
     }
     { print }
     END { if (!substituted) exit 1 }
-  ' "$CARGO_TOML" > "$TMP_CARGO"
-  AWK_EXIT=$?
-  if [[ $AWK_EXIT -ne 0 ]] || [[ ! -s "$TMP_CARGO" ]]; then
+  ' "$CARGO_TOML" > "$TMP_CARGO" || [[ ! -s "$TMP_CARGO" ]]; then
     rm -f "$TMP_CARGO"
-    # Restore package.json from backup since we already rewrote it.
-    mv "$BACKUP" "$VERSION_FILE"
-    rm -f "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
+    rollback_all
     fail "Cargo.toml awk rewrite failed: [package] version field not found or empty output"
   fi
   # Verify the new version appears in the rewritten file.
   if ! grep -q "version = \"$NEW_VERSION\"" "$TMP_CARGO"; then
     rm -f "$TMP_CARGO"
-    mv "$BACKUP" "$VERSION_FILE"
-    rm -f "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
+    rollback_all
     fail "Cargo.toml rewrite verification failed: version $NEW_VERSION not found in output"
   fi
   mv "$TMP_CARGO" "$CARGO_TOML"
 
-  # Step 4c: Regenerate Cargo.lock to reflect the new version.
-  if ! command -v cargo >/dev/null 2>&1; then
-    mv "$BACKUP" "$VERSION_FILE"
-    mv "$CARGO_BACKUP" "$CARGO_TOML"
-    if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
-      mv "$CARGO_LOCK_BACKUP" "$CARGO_LOCK"
+  # Step 4c: Sync this package's own entry in Cargo.lock to the new version.
+  #
+  # `cargo generate-lockfile` must NOT be used here: it re-resolves the entire
+  # dependency graph, so a version-only release commit would silently also ship
+  # every semver-compatible upstream upgrade published since the lockfile was last
+  # written. Rewrite the single local version line instead and let
+  # `cargo metadata --locked` prove the lockfile still matches the manifest.
+  if [[ -f "$CARGO_LOCK" ]]; then
+    if ! command -v cargo >/dev/null 2>&1; then
+      rollback_all
+      fail "cargo not found in PATH; cannot verify Cargo.lock after the version bump"
     fi
-    fail "cargo not found in PATH; cannot regenerate Cargo.lock"
-  fi
-  if ! cargo generate-lockfile --quiet; then
-    mv "$BACKUP" "$VERSION_FILE"
-    mv "$CARGO_BACKUP" "$CARGO_TOML"
-    if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
-      mv "$CARGO_LOCK_BACKUP" "$CARGO_LOCK"
+
+    PACKAGE_NAME=$(awk '
+      /^\[package\]/ { in_package=1; next }
+      /^\[/ { in_package=0 }
+      in_package && /^name *= *"/ {
+        line = $0
+        sub(/^name *= *"/, "", line)
+        sub(/".*$/, "", line)
+        print line
+        exit
+      }
+    ' "$CARGO_TOML")
+    if [[ -z "$PACKAGE_NAME" ]]; then
+      rollback_all
+      fail "Cargo.toml [package] name not found; cannot locate the package entry in Cargo.lock"
     fi
-    fail "cargo generate-lockfile failed after Cargo.toml rewrite"
+
+    TMP_LOCK="$CARGO_LOCK.tmp.$$"
+    if ! awk -v pkg="$PACKAGE_NAME" -v new_ver="$NEW_VERSION" '
+      /^\[\[package\]\]/ { in_target=0 }
+      /^name *= *"/ {
+        line = $0
+        sub(/^name *= *"/, "", line)
+        sub(/".*$/, "", line)
+        if (line == pkg) { in_target=1 }
+      }
+      in_target && /^version *= *"/ {
+        sub(/"[^"]*"/, "\"" new_ver "\"")
+        in_target=0
+        substituted=1
+      }
+      { print }
+      END { if (!substituted) exit 1 }
+    ' "$CARGO_LOCK" > "$TMP_LOCK" || [[ ! -s "$TMP_LOCK" ]]; then
+      rm -f "$TMP_LOCK"
+      rollback_all
+      fail "Cargo.lock awk rewrite failed: no version line for package $PACKAGE_NAME"
+    fi
+    mv "$TMP_LOCK" "$CARGO_LOCK"
+
+    if ! cargo metadata --locked --format-version 1 >/dev/null 2>&1; then
+      rollback_all
+      fail "cargo metadata --locked failed after the Cargo.lock version sync; lockfile and manifest disagree"
+    fi
   fi
 fi
 
-# Step 4d: Update explicit version numbers in README.md.
-README_MODIFIED=false
-if [[ -f "$README_FILE" ]]; then
-  OLD_VERSION=$(jq -r '.version' "$BACKUP")
-  if [[ -n "$OLD_VERSION" && "$OLD_VERSION" != "$NEW_VERSION" ]]; then
-    OLD_VERSION_ESCAPED="${OLD_VERSION//./\\.}"
-    TMP_README="$README_FILE.tmp.$$"
-    sed "s/$OLD_VERSION_ESCAPED/$NEW_VERSION/g" "$README_FILE" > "$TMP_README"
-    mv "$TMP_README" "$README_FILE"
-    README_MODIFIED=true
-  fi
+# Step 4d: Update explicit version numbers in every release-example document.
+OLD_VERSION=$(jq -r '.version' "$BACKUP")
+if [[ -n "$OLD_VERSION" && "$OLD_VERSION" != "null" && "$OLD_VERSION" != "$NEW_VERSION" ]]; then
+  OLD_VERSION_ESCAPED="${OLD_VERSION//./\\.}"
+  for ((i = 0; i < ${#DOC_FILES[@]}; i++)); do
+    doc_file="${DOC_FILES[i]}"
+    tmp_doc="$doc_file.tmp.$$"
+    sed "s/$OLD_VERSION_ESCAPED/$NEW_VERSION/g" "$doc_file" > "$tmp_doc"
+    if cmp -s "$tmp_doc" "$doc_file"; then
+      # The rewrite was a no-op: leave the file (and the index) untouched.
+      rm -f "$tmp_doc"
+    else
+      mv "$tmp_doc" "$doc_file"
+      DOC_MODIFIED+=("$doc_file")
+    fi
+  done
 fi
 
 # Step 5: Stage and commit.
 git add "$VERSION_FILE"
-if [[ "$README_MODIFIED" == true ]]; then
-  git add "$README_FILE"
-fi
+for ((i = 0; i < ${#DOC_MODIFIED[@]}; i++)); do
+  git add "${DOC_MODIFIED[i]}"
+done
 if [[ -f "$CARGO_TOML" ]]; then
   git add "$CARGO_TOML"
   if [[ -f "$CARGO_LOCK" ]]; then
@@ -168,7 +270,10 @@ fi
 COMMIT_MSG="Bump version to $NEW_VERSION"
 if git commit -m "$COMMIT_MSG" --quiet; then
   # Success — remove backups, emit result.
-  rm -f "$BACKUP" "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP" "$README_BACKUP"
+  rm -f "$BACKUP" "$CARGO_BACKUP" "$CARGO_LOCK_BACKUP"
+  for ((i = 0; i < ${#DOC_BACKUPS[@]}; i++)); do
+    rm -f "${DOC_BACKUPS[i]}"
+  done
   COMMIT_SHA=$(git rev-parse HEAD)
   echo "APPLIED=true"
   echo "COMMIT_SHA=$COMMIT_SHA"
@@ -176,20 +281,17 @@ if git commit -m "$COMMIT_MSG" --quiet; then
 fi
 
 # Step 6: Rollback on commit failure.
-mv "$BACKUP" "$VERSION_FILE"
-if [[ -f "$CARGO_BACKUP" ]]; then
-  mv "$CARGO_BACKUP" "$CARGO_TOML"
+rollback_all
+git reset HEAD "$VERSION_FILE" >/dev/null 2>&1 || true
+if [[ -f "$CARGO_TOML" ]]; then
   git reset HEAD "$CARGO_TOML" >/dev/null 2>&1 || true
 fi
-if [[ -f "$CARGO_LOCK_BACKUP" ]]; then
-  mv "$CARGO_LOCK_BACKUP" "$CARGO_LOCK"
+if [[ -f "$CARGO_LOCK" ]]; then
   git reset HEAD "$CARGO_LOCK" >/dev/null 2>&1 || true
 fi
-if [[ -f "$README_BACKUP" ]]; then
-  mv "$README_BACKUP" "$README_FILE"
-  git reset HEAD "$README_FILE" >/dev/null 2>&1 || true
-fi
-git reset HEAD "$VERSION_FILE" >/dev/null 2>&1 || true
+for ((i = 0; i < ${#DOC_FILES[@]}; i++)); do
+  git reset HEAD "${DOC_FILES[i]}" >/dev/null 2>&1 || true
+done
 echo "APPLIED=false"
-echo "ERROR=git commit failed; rolled back $VERSION_FILE, $CARGO_TOML, $CARGO_LOCK, and $README_FILE from backup"
+echo "ERROR=git commit failed; rolled back $VERSION_FILE, $CARGO_TOML, $CARGO_LOCK, and every release-example document from backup"
 exit 1

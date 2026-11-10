@@ -1,12 +1,12 @@
 ---
 name: bump-version
-description: Classify and apply a semantic version bump based on the current branch diff. Updates package.json, Cargo.toml, and README.md, and commits exactly one version-only commit.
+description: Classify and apply a semantic version bump based on the current branch diff. Updates package.json, Cargo.toml, Cargo.lock, and every release-example document, and commits exactly one version-only commit.
 allowed-tools: Bash(.claude/skills/bump-version/scripts/classify-bump.sh:*), Bash(.claude/skills/bump-version/scripts/apply-bump.sh:*), Read
 ---
 
 # Bump Version
 
-Classify and apply a semantic version bump for this PR. Produces exactly ONE commit: a version-only edit of `package.json`, `Cargo.toml`, and `README.md`.
+Classify and apply a semantic version bump for this PR. Produces exactly ONE commit: a version-only edit of `package.json`, `Cargo.toml`, `Cargo.lock`, and the release-example documents.
 
 ## Classification rules
 
@@ -61,13 +61,13 @@ If you escalate, append a paragraph to the reasoning log file explaining why.
 3. You (main agent) parse the output, read the reasoning log, review the diff, and apply the **escalation-only** caveat review. If you escalate, update `NEW_VERSION` accordingly and append reasoning to the log.
 4. You invoke `apply-bump.sh --new-version <NEW_VERSION>`, which:
    - First verifies the working tree is clean (fails on any staged or unstaged changes)
-   - Backs up `package.json`, `Cargo.toml`, and `Cargo.lock` in the Git directory so retries leave the dirty-tree guard inactive
+   - Backs up `package.json`, `Cargo.toml`, `Cargo.lock`, and every release-example document in the Git directory so retries leave the dirty-tree guard inactive
    - Rewrites `package.json` `.version` field via `jq` (atomic via tmp + mv)
    - Rewrites `Cargo.toml` `[package]` version via `awk` (atomic via tmp + mv)
-   - Regenerates `Cargo.lock` via `cargo generate-lockfile` to reflect the new version
-   - Replaces all occurrences of the old version (X.Y.Z) with the new version in `README.md` (so pinned version examples stay current)
-   - `git add` (package.json, Cargo.toml, Cargo.lock, README.md) + `git commit -m "Bump version to <NEW_VERSION>"`
-   - Rolls back all four files from backup on commit failure
+   - Rewrites only this package's own `version` line in `Cargo.lock` via `awk` (atomic via tmp + mv), then confirms the lockfile still matches the manifest with `cargo metadata --locked`. The dependency graph is never re-resolved, so a release commit cannot smuggle in unreviewed transitive upgrades
+   - Replaces all occurrences of the old version (X.Y.Z) with the new version in every release-example document listed in `RELEASE_EXAMPLE_DOCS` (`README.md`, `docs/github-action.md`, `docs/development.md`), so pinned version examples stay current. Absent documents are skipped, and only documents the rewrite actually changed are staged
+   - `git add` (package.json, Cargo.toml, Cargo.lock, changed release-example documents) + `git commit -m "Bump version to <NEW_VERSION>"`
+   - Rolls back every touched file from backup on any failure
 5. If `BUMP_TYPE=NONE`, skip the apply step and report "already bumped".
 
 ## Usage
@@ -95,4 +95,12 @@ The reasoning log at `${IMPLEMENT_TMPDIR:-$(mktemp -d)}/bump-version-reasoning.m
 ## Exit codes
 
 - `classify-bump.sh` — 0 on success (including `BUMP_TYPE=NONE`), non-zero on parse/validation failure
-- `apply-bump.sh` — 0 on successful commit, non-zero on dirty worktree or commit failure (rollback performed)
+- `apply-bump.sh` — 0 on successful commit, non-zero on dirty worktree, lockfile verification failure, or commit failure (rollback performed)
+
+## Release-example documents
+
+`RELEASE_EXAMPLE_DOCS` in `apply-bump.sh` must stay in sync with
+`RELEASE_EXAMPLE_DOCUMENTS` in `src/documentation_consistency.rs`: the test
+`release_example_documents_match_bump_script` parses the script's array and fails the
+build on drift, so a document whose version pins are checked is always a document the
+bump rewrites.
