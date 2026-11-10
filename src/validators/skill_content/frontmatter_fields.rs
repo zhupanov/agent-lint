@@ -47,29 +47,29 @@ pub(super) fn check_frontmatter_fields(
 /// (any casing) or the accepted quoted strings `"true"`/`"false"`.
 fn check_bool_fields(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticCollector) {
     for field_name in ["user-invocable", "disable-model-invocation"] {
-        if let Some(value) = map.get(field_name) {
-            if frontmatter::canonical_bool_value(value).is_none() {
-                diag.report(
-                    LintRule::BoolFieldInvalid,
-                    &format!(
-                        "{}: '{}' must be true or false, got '{}'",
-                        info.path, field_name, value
-                    ),
-                );
-            }
+        if let Some(value) = map.get(field_name)
+            && frontmatter::canonical_bool_value(value).is_none()
+        {
+            diag.report(
+                LintRule::BoolFieldInvalid,
+                &format!(
+                    "{}: '{}' must be true or false, got '{}'",
+                    info.path, field_name, value
+                ),
+            );
         }
     }
 }
 
 /// S024: `context` must be the string `fork`.
 fn check_context_field(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticCollector) {
-    if let Some(value) = map.get("context") {
-        if value.as_str() != Some("fork") {
-            diag.report(
-                LintRule::ContextFieldInvalid,
-                &format!("{}: 'context' must be 'fork', got '{}'", info.path, value),
-            );
-        }
+    if let Some(value) = map.get("context")
+        && value.as_str() != Some("fork")
+    {
+        diag.report(
+            LintRule::ContextFieldInvalid,
+            &format!("{}: 'context' must be 'fork', got '{}'", info.path, value),
+        );
     }
 }
 
@@ -130,16 +130,16 @@ fn check_unreachable(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticColle
 
 /// S063: `model` must be a recognized alias or `claude-…` id.
 fn check_model_field(info: &SkillInfo, map: &Mapping, diag: &mut DiagnosticCollector) {
-    if let Some(value) = map.get("model") {
-        if !value.as_str().is_some_and(is_valid_model_value) {
-            diag.report(
+    if let Some(value) = map.get("model")
+        && !value.as_str().is_some_and(is_valid_model_value)
+    {
+        diag.report(
                 LintRule::ModelInvalid,
                 &format!(
                     "{}: 'model' must be a recognized alias (sonnet/opus/haiku/inherit/…) or claude-… ID, got '{}'",
                     info.path, value
                 ),
             );
-        }
     }
 }
 

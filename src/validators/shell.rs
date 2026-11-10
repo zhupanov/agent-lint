@@ -930,17 +930,17 @@ pub(crate) fn analyze_awk(command_line: &str, program: &str) -> AwkAnalysis {
     let mut analysis = AwkAnalysis::default();
     let regex_vars = awk_regex_variables(program);
 
-    if !command_line.is_empty() {
-        if let Some(command) = parse_awk_command(command_line) {
-            if let Some(separator) = &command.field_separator {
-                if !separator.is_ascii() {
-                    analysis.option_evidence.push(separator.clone());
-                }
-            }
-            for (name, value) in &command.assignments {
-                if (name == "FS" || regex_vars.contains(name)) && !value.is_ascii() {
-                    analysis.option_evidence.push(value.clone());
-                }
+    if !command_line.is_empty()
+        && let Some(command) = parse_awk_command(command_line)
+    {
+        if let Some(separator) = &command.field_separator
+            && !separator.is_ascii()
+        {
+            analysis.option_evidence.push(separator.clone());
+        }
+        for (name, value) in &command.assignments {
+            if (name == "FS" || regex_vars.contains(name)) && !value.is_ascii() {
+                analysis.option_evidence.push(value.clone());
             }
         }
     }
@@ -1366,15 +1366,14 @@ fn assignment_like_counts(tokens: &[AwkToken]) -> HashMap<String, usize> {
             AwkTok::Ident(name) if name == "for" => {
                 // `for (var in array)` assigns the loop variable on every
                 // iteration (review finding 4).
-                if punct(tokens.get(index + 1), "(") {
-                    if let (Some(AwkTok::Ident(target)), Some(AwkTok::Ident(keyword))) = (
+                if punct(tokens.get(index + 1), "(")
+                    && let (Some(AwkTok::Ident(target)), Some(AwkTok::Ident(keyword))) = (
                         tokens.get(index + 2).map(|t| &t.tok),
                         tokens.get(index + 3).map(|t| &t.tok),
-                    ) {
-                        if keyword == "in" {
-                            *counts.entry(target.clone()).or_insert(0) += 1;
-                        }
-                    }
+                    )
+                    && keyword == "in"
+                {
+                    *counts.entry(target.clone()).or_insert(0) += 1;
                 }
             }
             AwkTok::Ident(name) if name == "getline" => {
@@ -1385,12 +1384,11 @@ fn assignment_like_counts(tokens: &[AwkToken]) -> HashMap<String, usize> {
             }
             AwkTok::Ident(name) if matches!(name.as_str(), "sub" | "gsub") => {
                 // The optional third argument is modified in place.
-                if punct(tokens.get(index + 1), "(") {
-                    if let Some(target) = call_argument(tokens, index + 1, 2) {
-                        if let AwkTok::Ident(target) = &tokens[target].tok {
-                            *counts.entry(target.clone()).or_insert(0) += 1;
-                        }
-                    }
+                if punct(tokens.get(index + 1), "(")
+                    && let Some(target) = call_argument(tokens, index + 1, 2)
+                    && let AwkTok::Ident(target) = &tokens[target].tok
+                {
+                    *counts.entry(target.clone()).or_insert(0) += 1;
                 }
             }
             AwkTok::Ident(name) => {
@@ -1411,10 +1409,10 @@ fn assignment_like_counts(tokens: &[AwkToken]) -> HashMap<String, usize> {
             }
             AwkTok::Punct(op) if matches!(op.as_str(), "+" | "-") => {
                 // Prefix increment/decrement: `++name` / `--name`.
-                if punct(tokens.get(index + 1), op) {
-                    if let Some(AwkTok::Ident(target)) = tokens.get(index + 2).map(|t| &t.tok) {
-                        *counts.entry(target.clone()).or_insert(0) += 1;
-                    }
+                if punct(tokens.get(index + 1), op)
+                    && let Some(AwkTok::Ident(target)) = tokens.get(index + 2).map(|t| &t.tok)
+                {
+                    *counts.entry(target.clone()).or_insert(0) += 1;
                 }
             }
             _ => {}
@@ -1439,10 +1437,10 @@ fn collect_regex_operands_with_offset(tokens: &[AwkToken], visit: &mut impl FnMu
                 }
             }
             AwkTok::Ident(name) if name == "FS" => {
-                if let (Some(eq), Some(rhs)) = (tokens.get(index + 1), tokens.get(index + 2)) {
-                    if matches!(&eq.tok, AwkTok::Punct(op) if op == "=") {
-                        visit(rhs.offset, &rhs.tok);
-                    }
+                if let (Some(eq), Some(rhs)) = (tokens.get(index + 1), tokens.get(index + 2))
+                    && matches!(&eq.tok, AwkTok::Punct(op) if op == "=")
+                {
+                    visit(rhs.offset, &rhs.tok);
                 }
             }
             AwkTok::Ident(name) => {
@@ -1452,15 +1450,13 @@ fn collect_regex_operands_with_offset(tokens: &[AwkToken], visit: &mut impl FnMu
                     "split" | "patsplit" => Some(2),
                     _ => None,
                 };
-                if let Some(arg_index) = arg {
-                    if let Some(next) = tokens.get(index + 1) {
-                        if matches!(&next.tok, AwkTok::Punct(op) if op == "(") {
-                            if let Some(operand) = call_argument(tokens, index + 1, arg_index) {
-                                let token = &tokens[operand];
-                                visit(token.offset, &token.tok);
-                            }
-                        }
-                    }
+                if let Some(arg_index) = arg
+                    && let Some(next) = tokens.get(index + 1)
+                    && matches!(&next.tok, AwkTok::Punct(op) if op == "(")
+                    && let Some(operand) = call_argument(tokens, index + 1, arg_index)
+                {
+                    let token = &tokens[operand];
+                    visit(token.offset, &token.tok);
                 }
             }
             _ => {}

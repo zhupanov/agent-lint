@@ -275,14 +275,13 @@ fn find_markdown_secret(
 
     for pattern in SIGNATURE_PATTERNS.iter() {
         for found in pattern.regex.find_iter(content) {
-            if let Some(reject_if_next) = pattern.reject_if_next {
-                if content[found.end()..]
+            if let Some(reject_if_next) = pattern.reject_if_next
+                && content[found.end()..]
                     .chars()
                     .next()
                     .is_some_and(reject_if_next)
-                {
-                    continue;
-                }
+            {
+                continue;
             }
             if matches!(policy, MarkdownSecretPolicy::Skill)
                 && pattern

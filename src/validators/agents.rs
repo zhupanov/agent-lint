@@ -1232,22 +1232,22 @@ fn check_agent_field_values(
     }
 
     // A025: background must be a boolean (CC-AG-016).
-    if let Some(value) = frontmatter.value("background") {
-        if value.as_bool().is_none() {
-            let actual_type = yaml_type(value);
-            let detail = if actual_type == "string" {
-                "string; use unquoted true or false — YAML 1.2 does not read yes/no as booleans"
-            } else {
-                actual_type
-            };
-            diag.report(
-                LintRule::AgentBackgroundInvalid,
-                &format!(
-                    "{agent_path}: background must be a boolean (got {})",
-                    detail
-                ),
-            );
-        }
+    if let Some(value) = frontmatter.value("background")
+        && value.as_bool().is_none()
+    {
+        let actual_type = yaml_type(value);
+        let detail = if actual_type == "string" {
+            "string; use unquoted true or false — YAML 1.2 does not read yes/no as booleans"
+        } else {
+            actual_type
+        };
+        diag.report(
+            LintRule::AgentBackgroundInvalid,
+            &format!(
+                "{agent_path}: background must be a boolean (got {})",
+                detail
+            ),
+        );
     }
 
     // A026: maxTurns must be a positive integer (CC-AG-017). Use the same

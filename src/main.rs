@@ -507,15 +507,15 @@ fn resolve_repo_root(target: &Path) -> Result<ResolvedRoot, String> {
         .args(["rev-parse", "--show-toplevel"])
         .output();
 
-    if let Ok(output) = output {
-        if output.status.success() {
-            let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
-            if !root.as_os_str().is_empty() {
-                return Ok(ResolvedRoot {
-                    path: root,
-                    used_fallback: false,
-                });
-            }
+    if let Ok(output) = output
+        && output.status.success()
+    {
+        let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        if !root.as_os_str().is_empty() {
+            return Ok(ResolvedRoot {
+                path: root,
+                used_fallback: false,
+            });
         }
     }
 

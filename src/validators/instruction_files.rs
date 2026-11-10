@@ -482,26 +482,27 @@ fn mask_markdown_links(text: &str) -> String {
     let mut chars: Vec<char> = text.chars().collect();
     let mut index = 0;
     while index < chars.len() {
-        if chars[index] == '!' && chars.get(index + 1) == Some(&'[') {
-            if let Some(end) = link_span_end(&chars, index + 1) {
-                chars[index..=end].fill(' ');
-                index = end + 1;
-                continue;
-            }
+        if chars[index] == '!'
+            && chars.get(index + 1) == Some(&'[')
+            && let Some(end) = link_span_end(&chars, index + 1)
+        {
+            chars[index..=end].fill(' ');
+            index = end + 1;
+            continue;
         }
-        if chars[index] == '[' {
-            if let Some(end) = link_span_end(&chars, index) {
-                chars[index..=end].fill(' ');
-                index = end + 1;
-                continue;
-            }
+        if chars[index] == '['
+            && let Some(end) = link_span_end(&chars, index)
+        {
+            chars[index..=end].fill(' ');
+            index = end + 1;
+            continue;
         }
-        if chars[index] == '<' {
-            if let Some(end) = autolink_span_end(&chars, index) {
-                chars[index..=end].fill(' ');
-                index = end + 1;
-                continue;
-            }
+        if chars[index] == '<'
+            && let Some(end) = autolink_span_end(&chars, index)
+        {
+            chars[index..=end].fill(' ');
+            index = end + 1;
+            continue;
         }
         index += 1;
     }

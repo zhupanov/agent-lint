@@ -1199,15 +1199,15 @@ fn command_basename(token: &str) -> &str {
 }
 
 fn strip_command_position_prefix(token: &str) -> &str {
-    if let Some((name, rest)) = token.split_once("=$(") {
-        if is_shell_identifier(name) {
-            return rest;
-        }
+    if let Some((name, rest)) = token.split_once("=$(")
+        && is_shell_identifier(name)
+    {
+        return rest;
     }
-    if let Some((name, rest)) = token.split_once("=`") {
-        if is_shell_identifier(name) {
-            return rest;
-        }
+    if let Some((name, rest)) = token.split_once("=`")
+        && is_shell_identifier(name)
+    {
+        return rest;
     }
     if let Some(rest) = token.strip_prefix("$(") {
         return rest;
@@ -1685,10 +1685,10 @@ impl InstructionImportGraph {
                 continue;
             };
             for directive in &node.directives {
-                if let Some(target) = &directive.target {
-                    if self.nodes.contains_key(target) {
-                        pending.push_back(target.clone());
-                    }
+                if let Some(target) = &directive.target
+                    && self.nodes.contains_key(target)
+                {
+                    pending.push_back(target.clone());
                 }
             }
         }
@@ -2612,18 +2612,18 @@ fn validate_script_contracts(
 
             if let Some(active) = &heredoc {
                 if closes_heredoc(&line, &active.delimiter) {
-                    if let Some(accum) = awk_heredoc.take() {
-                        if scope.portability {
-                            emit_awk(
-                                &path,
-                                accum.command_line_number,
-                                accum.body_base_line,
-                                &accum.command_line,
-                                &accum.body,
-                                diag,
-                                &lines,
-                            );
-                        }
+                    if let Some(accum) = awk_heredoc.take()
+                        && scope.portability
+                    {
+                        emit_awk(
+                            &path,
+                            accum.command_line_number,
+                            accum.body_base_line,
+                            &accum.command_line,
+                            &accum.body,
+                            diag,
+                            &lines,
+                        );
                     }
                     heredoc = None;
                     continue;

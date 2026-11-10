@@ -2,7 +2,7 @@
 name = "agent-lint"
 version = "4.0.6"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.89.0"
 license = "MIT"
 description = "Configuration linter for Claude Code"
 
@@ -17,10 +17,10 @@ toml = "1"
 toml_edit = "0.25"
 globset = "0.4"
 jsonschema = { version = "0.61", default-features = false }
-noyalib = "0.0.15"
+noyalib = "0.0.60"
 strum = "0.28"
 strum_macros = "0.28"
-comrak = { version = "0.55", default-features = false }
+comrak = { version = "0.59", default-features = false }
 
 [dev-dependencies]
 proc-macro2 = { version = "1", features = ["span-locations"] }

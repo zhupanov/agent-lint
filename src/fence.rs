@@ -284,16 +284,15 @@ impl CodeFenceTracker {
 
         if let Some(fc) = self.fence_char {
             // Currently inside a fence — check for closing
-            if let Some((ch, count)) = fence_start(trimmed) {
-                if ch == fc
-                    && count >= self.fence_len
-                    && is_only_whitespace_after(trimmed, ch, count)
-                {
-                    // Closing fence
-                    self.fence_char = None;
-                    self.fence_len = 0;
-                    return LineClass::Delimiter;
-                }
+            if let Some((ch, count)) = fence_start(trimmed)
+                && ch == fc
+                && count >= self.fence_len
+                && is_only_whitespace_after(trimmed, ch, count)
+            {
+                // Closing fence
+                self.fence_char = None;
+                self.fence_len = 0;
+                return LineClass::Delimiter;
             }
             LineClass::Inside
         } else {

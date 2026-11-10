@@ -265,14 +265,14 @@ fn fix_frontmatter_name_mismatch(
             continue;
         }
         let new_line = format!("name: {dir_name}");
-        if let Some(new_content) = replace_in_frontmatter(&content, raw_name_line, &new_line) {
-            if fs::write(&skill_md, new_content).is_ok() {
-                log_fix(
-                    LintRule::FrontmatterNameMismatch,
-                    &format!("{skill_path}: renamed '{name}' to '{dir_name}'"),
-                );
-                fixed = true;
-            }
+        if let Some(new_content) = replace_in_frontmatter(&content, raw_name_line, &new_line)
+            && fs::write(&skill_md, new_content).is_ok()
+        {
+            log_fix(
+                LintRule::FrontmatterNameMismatch,
+                &format!("{skill_path}: renamed '{name}' to '{dir_name}'"),
+            );
+            fixed = true;
         }
     }
     fixed
@@ -334,15 +334,15 @@ fn fix_frontmatter_field_empty(mode: LintMode, exclude: &ExcludeSet, config: &Li
                 continue;
             }
 
-            if let Some(new_content) = remove_frontmatter_line(&content, &prefix) {
-                if fs::write(&skill_path, &new_content).is_ok() {
-                    log_fix(
-                        LintRule::FrontmatterFieldEmpty,
-                        &format!("{skill_md}: removed empty '{field}'"),
-                    );
-                    fixed = true;
-                    break; // One fix per file, re-validate
-                }
+            if let Some(new_content) = remove_frontmatter_line(&content, &prefix)
+                && fs::write(&skill_path, &new_content).is_ok()
+            {
+                log_fix(
+                    LintRule::FrontmatterFieldEmpty,
+                    &format!("{skill_md}: removed empty '{field}'"),
+                );
+                fixed = true;
+                break; // One fix per file, re-validate
             }
         }
     }
@@ -417,14 +417,14 @@ fn fix_desc_has_xml(mode: LintMode, exclude: &ExcludeSet, config: &LintConfig) -
         }
 
         let new_line = format!("description: {new_value}");
-        if let Some(new_content) = replace_in_frontmatter(&content, raw_line, &new_line) {
-            if fs::write(skill_path, new_content).is_ok() {
-                log_fix(
-                    LintRule::DescHasXml,
-                    &format!("{display}: stripped XML tags from description"),
-                );
-                fixed = true;
-            }
+        if let Some(new_content) = replace_in_frontmatter(&content, raw_line, &new_line)
+            && fs::write(skill_path, new_content).is_ok()
+        {
+            log_fix(
+                LintRule::DescHasXml,
+                &format!("{display}: stripped XML tags from description"),
+            );
+            fixed = true;
         }
     }
     fixed

@@ -383,31 +383,30 @@ fn validate_local_links(path: &str, content: &str, violations: &mut Vec<Violatio
         let source = Path::new(path);
         match resolve_repo_path(source, target, ResolutionBase::SourceRelative) {
             PathProbe::File(normalized) => {
-                if let Some(fragment) = fragment {
-                    if normalized
+                if let Some(fragment) = fragment
+                    && normalized
                         .extension()
                         .is_some_and(|extension| extension == "md")
+                {
+                    let target_content = fs::read_to_string(&normalized).unwrap_or_default();
+                    let target_document = MarkdownDocument::parse(target_content);
+                    let expected = github_slug(fragment);
+                    if !target_document
+                        .headings()
+                        .iter()
+                        .any(|heading| github_slug(&heading.text) == expected)
                     {
-                        let target_content = fs::read_to_string(&normalized).unwrap_or_default();
-                        let target_document = MarkdownDocument::parse(target_content);
-                        let expected = github_slug(fragment);
-                        if !target_document
-                            .headings()
-                            .iter()
-                            .any(|heading| github_slug(&heading.text) == expected)
-                        {
-                            violations.push(Violation::new(
-                                path,
+                        violations.push(Violation::new(
+                            path,
+                            link.line,
+                            "local-link",
+                            authored,
+                            format!(
+                                "{path}:{}: fragment #{fragment} is missing from {}",
                                 link.line,
-                                "local-link",
-                                authored,
-                                format!(
-                                    "{path}:{}: fragment #{fragment} is missing from {}",
-                                    link.line,
-                                    normalized.display()
-                                ),
-                            ));
-                        }
+                                normalized.display()
+                            ),
+                        ));
                     }
                 }
             }

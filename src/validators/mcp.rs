@@ -929,10 +929,10 @@ fn report_structure(
     suggestion: Option<&str>,
 ) {
     let mut metadata = DiagnosticMetadata::default();
-    if let Some((source, range)) = location {
-        if let Some(span) = SourceSpan::from_byte_range(source, range) {
-            metadata = metadata.with_location(span);
-        }
+    if let Some((source, range)) = location
+        && let Some(span) = SourceSpan::from_byte_range(source, range)
+    {
+        metadata = metadata.with_location(span);
     }
     if let Some(evidence) = evidence {
         metadata = metadata.with_evidence(evidence);
@@ -1596,7 +1596,7 @@ fn decode_base64_std(input: &str) -> Option<Vec<u8>> {
         .bytes()
         .filter(|byte| !byte.is_ascii_whitespace())
         .collect();
-    if filtered.is_empty() || filtered.len() % 4 != 0 {
+    if filtered.is_empty() || !filtered.len().is_multiple_of(4) {
         return None;
     }
     let mut output = Vec::with_capacity(filtered.len() / 4 * 3);

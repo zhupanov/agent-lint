@@ -260,10 +260,10 @@ fn validate_project_rules(
                 &format!("{path}: Cursor project rules must use the .mdc extension"),
                 DiagnosticMetadata::default().with_suggestion(format!("rename to {renamed_path}")),
             );
-        } else if let Ok(content) = fs::read_to_string(&entry.path) {
-            if extension == Some("mdc") {
-                validate_rule_file(diag, &path, &content, prompt_pass);
-            }
+        } else if let Ok(content) = fs::read_to_string(&entry.path)
+            && extension == Some("mdc")
+        {
+            validate_rule_file(diag, &path, &content, prompt_pass);
         }
     }
 }
@@ -374,8 +374,8 @@ fn report_rule_yaml_error(
     yaml_line: Option<usize>,
     yaml_column: Option<usize>,
 ) {
-    // Position-less failures such as duplicate keys anchor at the opening
-    // delimiter, keeping every CU003 located.
+    // A parser failure that reports no position at all still anchors at the
+    // opening delimiter, keeping every CU003 located.
     let mut metadata =
         DiagnosticMetadata::default().with_location(match (yaml_line, yaml_column) {
             (Some(line), Some(column)) => SourceSpan::point(line.saturating_add(1), column),
@@ -1874,13 +1874,13 @@ mod tests {
         assert_eq!(missing[0].location.unwrap().start().line_number(), 1);
         assert!(missing[0].suggestion.is_some());
 
-        // Position-less parser failures (duplicate keys) anchor at the
-        // opening delimiter instead of shipping without a location.
+        // Duplicate keys carry the offending key's own position, so CU003
+        // anchors on the repeated key rather than the opening delimiter.
         let duplicate =
             rule_cu_diagnostics("---\ndescription: One\ndescription: Two\n---\nBody.\n");
         assert_eq!(duplicate.len(), 1, "{duplicate:?}");
         assert_eq!(duplicate[0].rule, LintRule::CursorRuleFrontmatterInvalid);
-        assert_eq!(duplicate[0].location.unwrap().start().line_number(), 1);
+        assert_eq!(duplicate[0].location.unwrap().start().line_number(), 3);
     }
 
     #[test]

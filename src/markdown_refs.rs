@@ -376,13 +376,13 @@ fn split_clauses(line: &str) -> Vec<(Range<usize>, String)> {
             }
             continue;
         }
-        if bytes[index] == b'[' {
-            if let Some(close) = line[index..].find("](") {
-                let after = index + close + 2;
-                if let Some(end) = find_link_destination_end(&line[after..]) {
-                    index = after + end + 1;
-                    continue;
-                }
+        if bytes[index] == b'['
+            && let Some(close) = line[index..].find("](")
+        {
+            let after = index + close + 2;
+            if let Some(end) = find_link_destination_end(&line[after..]) {
+                index = after + end + 1;
+                continue;
             }
         }
         let rest = &line[index..];

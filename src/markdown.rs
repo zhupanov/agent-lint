@@ -680,11 +680,12 @@ fn link_destination_exclusions(
                 }
                 cursor += 1;
             }
-        } else if chars[index] == '<' && in_link_range(index) {
-            if let Some(end) = ((index + 1)..chars.len()).find(|&cursor| chars[cursor] == '>') {
-                add_character_ranges(&mut exclusions, &positions, index + 1, end);
-                index = end;
-            }
+        } else if chars[index] == '<'
+            && in_link_range(index)
+            && let Some(end) = ((index + 1)..chars.len()).find(|&cursor| chars[cursor] == '>')
+        {
+            add_character_ranges(&mut exclusions, &positions, index + 1, end);
+            index = end;
         }
         index += 1;
     }

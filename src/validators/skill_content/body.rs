@@ -699,27 +699,27 @@ fn check_magic_numbers(info: &SkillInfo, diag: &mut DiagnosticCollector) {
                         }
 
                         // Parse the number and check against allowlist
-                        if let Ok(value) = num_match.as_str().parse::<u64>() {
-                            if !WELL_KNOWN_VALUES.contains(&value) {
-                                // Check for same-line trailing comment
-                                let rest = trimmed[after_pos..].trim_start();
-                                let has_trailing_comment = rest.starts_with('#')
-                                    || rest.starts_with("//")
-                                    || rest.starts_with("--");
+                        if let Ok(value) = num_match.as_str().parse::<u64>()
+                            && !WELL_KNOWN_VALUES.contains(&value)
+                        {
+                            // Check for same-line trailing comment
+                            let rest = trimmed[after_pos..].trim_start();
+                            let has_trailing_comment = rest.starts_with('#')
+                                || rest.starts_with("//")
+                                || rest.starts_with("--");
 
-                                if !has_trailing_comment && !prev_is_comment {
-                                    // Extract the matched assignment for the diagnostic
-                                    let assign_match = caps.get(0).unwrap().as_str();
-                                    diag.report(
-                                        LintRule::MagicNumberUndoc,
-                                        &format!(
-                                            "{}: undocumented magic number in code block: `{}`; \
+                            if !has_trailing_comment && !prev_is_comment {
+                                // Extract the matched assignment for the diagnostic
+                                let assign_match = caps.get(0).unwrap().as_str();
+                                diag.report(
+                                    LintRule::MagicNumberUndoc,
+                                    &format!(
+                                        "{}: undocumented magic number in code block: `{}`; \
                                              add a comment explaining why this value was chosen",
-                                            info.path, assign_match
-                                        ),
-                                    );
-                                    return; // Report once per file
-                                }
+                                        info.path, assign_match
+                                    ),
+                                );
+                                return; // Report once per file
                             }
                         }
                     }
