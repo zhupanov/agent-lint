@@ -112,6 +112,9 @@ pub struct MarkdownDocument {
     /// Source lines owned by parsed Markdown code blocks. Unlike the streaming
     /// fence tracker, this includes fences nested under list indentation.
     code_block_lines: std::collections::HashSet<usize>,
+    /// Raw HTML blocks need inline-code recovery for the XML structure view:
+    /// Comrak otherwise leaves their prompt text opaque.
+    html_block_ranges: Vec<RangeInclusive<usize>>,
     /// Candidate lines for unfinished-work marker scanning (D003/G006/G007).
     /// Same exclusions as `body_prose`, except HTML comments stay visible and
     /// Markdown link/image spans are masked so label/destination prose cannot
@@ -178,6 +181,7 @@ impl MarkdownDocument {
         let mut inline_code = Vec::new();
         let mut excluded_lines = std::collections::HashSet::new();
         let mut code_block_lines = std::collections::HashSet::new();
+        let mut html_block_ranges = Vec::new();
         let mut inline_exclusions = Vec::new();
         let mut link_exclusions = Vec::new();
         let mut link_ranges = Vec::new();
@@ -265,6 +269,9 @@ impl MarkdownDocument {
                     let lines = data.sourcepos.start.line..=data.sourcepos.end.line;
                     excluded_lines.extend(lines.clone());
                     code_block_lines.extend(lines);
+                }
+                NodeValue::HtmlBlock(_) => {
+                    html_block_ranges.push(data.sourcepos.start.line..=data.sourcepos.end.line);
                 }
                 NodeValue::Code(code) => {
                     let Some((start_column, end_column)) =
@@ -369,6 +376,7 @@ impl MarkdownDocument {
             body_prose,
             body_control_prose,
             code_block_lines,
+            html_block_ranges,
             unfinished_work_lines,
         }
     }
@@ -442,7 +450,7 @@ impl MarkdownDocument {
     /// ordinary quoted prose is retained because it can be part of a tag's
     /// attribute syntax.
     pub(crate) fn structural_prose(&self) -> Vec<MarkdownProseLine> {
-        let inline_exclusions: Vec<_> = self
+        let mut inline_exclusions: Vec<_> = self
             .inline_code
             .iter()
             .map(|code| {
@@ -454,6 +462,9 @@ impl MarkdownDocument {
                 )
             })
             .collect();
+        inline_exclusions.extend(self.html_block_inline_exclusions());
+        inline_exclusions.sort_unstable();
+        inline_exclusions.dedup();
         let mut tracker = CodeFenceTracker::new();
         let mut in_html_comment = false;
         self.content
@@ -480,6 +491,66 @@ impl MarkdownDocument {
                         &inline_exclusions,
                     ),
                 })
+            })
+            .collect()
+    }
+
+    /// Recover CommonMark code spans inside raw HTML for structural scanning
+    /// only. Prefix unescaped `<` characters in a parse copy so tags remain
+    /// inline HTML instead of swallowing a whole block. Keeping HTML syntax
+    /// intact also keeps attribute/comment backticks out of code spans.
+    /// Project the parser's positions back through the inserted bytes; other
+    /// Markdown views continue to use the original document's AST facts.
+    fn html_block_inline_exclusions(&self) -> Vec<(usize, usize, usize, usize)> {
+        if self.html_block_ranges.is_empty() {
+            return Vec::new();
+        }
+        let mut projected = String::with_capacity(self.content.len());
+        let mut insertions = Vec::new();
+        let mut backslashes = 0;
+        for character in self.content.chars() {
+            if character == '<' && backslashes % 2 == 0 {
+                insertions.push(projected.len());
+                projected.push('x');
+            }
+            projected.push(character);
+            backslashes = if character == '\\' {
+                backslashes + 1
+            } else {
+                0
+            };
+        }
+        let original_column = |position: comrak::nodes::LineColumn| {
+            let offset = offset_for_line_column(&projected, position.line, position.column)?;
+            let offset = offset - insertions.partition_point(|insertion| *insertion < offset);
+            let line_start = self.content[..offset]
+                .rfind('\n')
+                .map_or(0, |index| index + 1);
+            Some(self.content[line_start..offset].chars().count() + 1)
+        };
+        let arena = Arena::new();
+        let mut options = Options::default();
+        if !self.body_is_content {
+            options.extension.front_matter_delimiter = Some("---".to_string());
+        }
+        let root = parse_document(&arena, &projected, &options);
+        root.descendants()
+            .filter_map(|node| {
+                let data = node.data.borrow();
+                let span = data.sourcepos;
+                if !matches!(data.value, NodeValue::Code(_))
+                    || !self.html_block_ranges.iter().any(|range| {
+                        range.contains(&span.start.line) && range.contains(&span.end.line)
+                    })
+                {
+                    return None;
+                }
+                Some((
+                    span.start.line,
+                    original_column(span.start)?,
+                    span.end.line,
+                    original_column(span.end)?,
+                ))
             })
             .collect()
     }
@@ -1162,6 +1233,28 @@ mod tests {
                 " ".repeat(6)
             )
         );
+    }
+
+    #[test]
+    fn markdown_placeholder_regression_html_recovery_preserves_source_columns() {
+        let prefix = "é↔🚀 Use <ok></ok> and ";
+        let literal = "``<dir>/repo``";
+        let source = format!("<brief>\r\n{prefix}{literal} tail\r\n</brief>\r\n");
+        let document = MarkdownDocument::parse_body(source);
+        let prose = document.structural_prose();
+        assert_eq!(prose[0].text, "<brief>");
+        assert_eq!(prose[1].line, 2);
+        assert_eq!(
+            prose[1].text,
+            format!("{prefix}{} tail", " ".repeat(literal.len()))
+        );
+        assert_eq!(
+            prose[1].masked_inline_code_columns,
+            [prefix.chars().count() + 1..=prefix.chars().count() + literal.len()]
+        );
+        assert_eq!(prose[2].text, "</brief>");
+        // The structural recovery does not widen ordinary Markdown facts.
+        assert!(document.inline_code().is_empty());
     }
 
     #[test]

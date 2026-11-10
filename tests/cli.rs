@@ -3451,6 +3451,59 @@ fn cli_commonmark_structure_boundaries_preserve_real_xml_diagnostics() {
 }
 
 #[test]
+fn markdown_placeholder_regression_xml_spans_preserve_real_errors_in_every_mode() {
+    for relative in [
+        "CLAUDE.md",
+        ".claude/skills/demo/SKILL.md",
+        ".claude/agents/demo.md",
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git(tmp.path());
+        let path = tmp.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let clean = "---\nname: demo\ndescription: Use when checking Markdown placeholders.\n---\n\n<brief>\nClone into `<dir>/repo` and run `make check`.\n</brief>\n";
+        let broken = format!("{clean}<open>\n</wrong>\n</orphan>\n<unclosed>\n");
+        for mode in [None, Some("--pedantic"), Some("--all")] {
+            let mut arguments = vec!["--format", "json", "--only", "X003,X004,X005"];
+            arguments.extend(mode);
+            arguments.push(".");
+            std::fs::write(&path, clean).unwrap();
+            let output = run_in(tmp.path(), &arguments);
+            assert!(
+                output.status.success(),
+                "{relative} {mode:?}: {}",
+                stderr(&output)
+            );
+            assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+
+            std::fs::write(&path, &broken).unwrap();
+            let output = run_in(tmp.path(), &arguments);
+            assert_eq!(output.status.code(), Some(i32::from(mode.is_some())));
+            let report = json(&output);
+            let diagnostics = report["diagnostics"].as_array().unwrap();
+            assert_eq!(
+                diagnostics.len(),
+                3,
+                "{relative} {mode:?}: {diagnostics:#?}"
+            );
+            for (finding, (code, line)) in
+                diagnostics
+                    .iter()
+                    .zip([("X003", 12), ("X004", 10), ("X005", 11)])
+            {
+                assert_eq!(finding["code"], code);
+                assert_eq!(finding["subject_path"], relative);
+                assert_eq!(finding["location"]["start"]["line"], line);
+                assert_eq!(
+                    finding["severity"],
+                    if mode.is_some() { "error" } else { "warning" }
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn cli_l005_resolves_commonmark_escaped_destinations_with_authored_evidence() {
     let tmp = tempfile::tempdir().unwrap();
     init_git(tmp.path());
@@ -7685,6 +7738,60 @@ fn inline_path_rules_share_clean_normalized_and_fence_aware_behavior() {
     );
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+}
+
+#[test]
+fn markdown_placeholder_regression_elisions_share_i003_d005_behavior() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git(tmp.path());
+    std::fs::create_dir(tmp.path().join("src")).unwrap();
+    std::fs::create_dir(tmp.path().join("docs")).unwrap();
+    std::fs::write(tmp.path().join("present.md"), "present\n").unwrap();
+    let path = tmp.path().join("AGENTS.md");
+    let clean = "# Agents\n\nRun `make check` before you finish. Code lives in `src/`.\nImport packages as `.../example-module/src` and pin includes as `tools/…@`.\nSee `docs/.../guide.md`, `docs/...`, `docs/…/guide.md`, `docs/prefix…suffix.md`, and `docs\\...\\guide.md`.\n";
+    let real_paths = [
+        "docs/missing.md",
+        "docs/../present.md",
+        "docs/report...md",
+        "docs/...literal.md",
+        "docs/....",
+    ];
+    let broken = format!(
+        "{clean}See {}.\n",
+        real_paths.map(|path| format!("`{path}`")).join(", ")
+    );
+    for mode in [None, Some("--pedantic"), Some("--all")] {
+        let mut arguments = vec!["--format", "json", "--only", "I003,D005"];
+        arguments.extend(mode);
+        arguments.push(".");
+        std::fs::write(&path, clean).unwrap();
+        let output = run_in(tmp.path(), &arguments);
+        assert!(output.status.success(), "{mode:?}: {}", stderr(&output));
+        assert_eq!(json(&output)["diagnostics"], serde_json::json!([]));
+
+        std::fs::write(&path, &broken).unwrap();
+        let output = run_in(tmp.path(), &arguments);
+        assert_eq!(output.status.code(), Some(i32::from(mode.is_some())));
+        let report = json(&output);
+        let diagnostics = report["diagnostics"].as_array().unwrap();
+        assert_eq!(diagnostics.len(), 2 * real_paths.len(), "{diagnostics:#?}");
+        for code in ["I003", "D005"] {
+            let findings: Vec<_> = diagnostics
+                .iter()
+                .filter(|finding| finding["code"] == code)
+                .collect();
+            assert_eq!(findings.len(), real_paths.len());
+            for (finding, expected_path) in findings.iter().zip(real_paths) {
+                assert_eq!(finding["evidence"], expected_path);
+                assert_eq!(finding["subject_path"], "AGENTS.md");
+                assert_eq!(finding["location"]["start"]["line"], 6);
+                assert_eq!(
+                    finding["severity"],
+                    if mode.is_some() { "error" } else { "warning" }
+                );
+            }
+        }
+    }
 }
 
 #[test]

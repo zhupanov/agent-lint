@@ -315,6 +315,87 @@ mod tests {
     }
 
     #[test]
+    fn markdown_placeholder_regression_inline_code_inside_html_blocks() {
+        for body in [
+            "<brief>\nClone into `<dir>/repo` and run `make check`.\n</brief>\n",
+            "<brief>\nUse ``<dir>/repo ` <branch>`` and ```<run> `` <branch>```.\n</brief>\n",
+            "<brief>\nUse ````<dir>/repo\n<run> ` `` ``` </orphan>````.\n</brief>\n",
+            "<div>\nUse `<dir>/repo` and `</orphan>` here.\n</div>\n",
+            "<brief>\n<!-- An unmatched ` in a comment. -->\nUse `<dir>/repo`.\n</brief>\n",
+            "<brief note=\"`\">\n<real></real>\n</brief>\n",
+            "<brief>\n\\<escaped> Use `<dir>/repo` and `<!--` here.\n</brief>\n",
+            "<brief>\n```text\n<example>\n```\nUse `<dir>/repo`.\n</brief>\n",
+            "<brief>\nUse `<dir>/repo`.\n</brief>\n\n<div>\nUse ``<run>``.\n</div>\n",
+        ] {
+            let content = format!("---\nname: demo\n---\n{body}");
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            check_markdown_structure("f.md", &content, &mut diag);
+            assert!(
+                codes(&diag).is_empty(),
+                "{body:?}: {:?}",
+                diag.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn markdown_placeholder_regression_preserves_real_xml_diagnostics() {
+        let mut diag = DiagnosticCollector::new_all_enabled();
+        check_markdown_structure(
+            "f.md",
+            "<brief>\nUse `<dir>/repo` and `</fake>`.\n</brief>\n<real>\n</wrong>\n</orphan>\n<unclosed>\n",
+            &mut diag,
+        );
+        let findings: Vec<_> = diag
+            .diagnostics()
+            .iter()
+            .map(|finding| {
+                (
+                    finding.rule,
+                    finding.location.unwrap().start().line_number(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            findings,
+            [
+                (LintRule::XmlTagMismatched, 5),
+                (LintRule::XmlTagOrphan, 6),
+                (LintRule::XmlTagUnclosed, 7),
+            ]
+        );
+    }
+
+    #[test]
+    fn markdown_placeholder_regression_non_code_backticks_keep_real_tags_visible() {
+        for content in [
+            "<brief note=\"`\">\n<real>\n</brief>\n<other note=\"`\"></other>\n",
+            "<brief>\nUse `<real>\n</brief>\n",
+            "<brief>\nUse \\`<real>\\`.\n</brief>\n",
+        ] {
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            check_markdown_structure("f.md", content, &mut diag);
+            assert_eq!(codes(&diag), ["X004", "X003"], "{content:?}");
+            assert_eq!(
+                diag.diagnostics()[0]
+                    .location
+                    .unwrap()
+                    .start()
+                    .line_number(),
+                3
+            );
+            assert_eq!(
+                diag.diagnostics()[1]
+                    .location
+                    .unwrap()
+                    .start()
+                    .line_number(),
+                1
+            );
+        }
+    }
+
+    #[test]
     fn commonmark_boundaries_preserve_real_multiline_tags() {
         let mut diag = DiagnosticCollector::new_all_enabled();
         check_markdown_structure(
