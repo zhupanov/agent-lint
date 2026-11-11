@@ -2,7 +2,7 @@
 name = "agent-lint"
 version = "4.0.6"
 edition = "2024"
-rust-version = "1.89.0"
+rust-version = "1.93.1"
 license = "MIT"
 description = "Configuration linter for Claude Code"
 
@@ -26,4 +26,4 @@ comrak = { version = "0.59", default-features = false }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "3", features = ["full", "visit"] }
 tempfile = "3"
-serial_test = "3"
+serial_test = "4"

@@ -4,7 +4,7 @@
 
 - [Rust](https://rustup.rs/) (toolchain pinned in `rust-toolchain.toml`,
   auto-installed by `rustup`). The minimum supported Rust version is
-  **1.89.0** (`rust-version` in `Cargo.toml`); the pinned toolchain is
+  **1.93.1** (`rust-version` in `Cargo.toml`); the pinned toolchain is
   newer, so CI always builds above the MSRV.
 - [pre-commit](https://pre-commit.com/) for local linters
 - `jq` (used by the JSON lint hook)
