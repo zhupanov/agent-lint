@@ -237,4 +237,33 @@ else
   echo "cargo not found; skipping the real-cargo case." >&2
 fi
 
+# Case 6: a mutating step that fails outside an explicit guard still rolls back and
+# still prints a verdict. `git add` is made to fail the way it does in production --
+# by losing the race for .git/index.lock -- which `set -e` alone would turn into a
+# silent non-zero exit with a half-rewritten tree and stranded backups.
+trapped=$(create_fixture "err-trap" "stub" "all")
+trap_stub="$TEST_ROOT/stub-trap"
+create_stub_cargo "$trap_stub" 0 "$TEST_ROOT/stub-trap.log"
+# git status still succeeds with the lock present, so Step 1 passes and the run
+# reaches Step 5 with every file already rewritten.
+touch "$trapped/.git/index.lock"
+set +e
+output=$(run_apply "$trapped" "1.2.4" "$trap_stub")
+status=$?
+set -e
+assert_equals "$status" "1" "apply-bump.sh exit code when git add fails"
+assert_contains "$output" "APPLIED=false"
+assert_contains "$output" "unexpected failure"
+assert_contains "$output" "git add"
+assert_not_contains "$output" "APPLIED=true"
+rm -f "$trapped/.git/index.lock"
+assert_equals "$(git -C "$trapped" status --porcelain)" "" "working tree after ERR-trap rollback"
+assert_contains "$(cat "$trapped/package.json")" '"version":"1.2.3"'
+assert_contains "$(cat "$trapped/Cargo.toml")" 'version = "1.2.3"'
+assert_contains "$(cat "$trapped/docs/github-action.md")" '1.2.3'
+leftover=$(find "$trapped/.git" -name '*.bump-backup' | wc -l | tr -d ' ')
+assert_equals "$leftover" "0" "backup files left after ERR-trap rollback"
+stray=$(find "$trapped" -name '*.tmp.*' | wc -l | tr -d ' ')
+assert_equals "$stray" "0" "temp files stranded after ERR-trap rollback"
+
 echo "Version bump apply-script tests passed."

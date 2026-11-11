@@ -16,7 +16,10 @@
 #   - Replace all occurrences of old version (X.Y.Z) with new version in each
 #     release-example document.
 #   - git add + commit with message "Bump version to <new-version>".
-#   - Roll back every touched file from backup if any step fails.
+#   - Roll back every touched file from backup if any step fails. An ERR trap
+#     covers steps that run unguarded under `set -e` (for example `git add`
+#     losing a race for .git/index.lock), so a caller parsing stdout always
+#     receives APPLIED=false / ERROR= rather than a silent non-zero exit.
 #
 # Usage:
 #   apply-bump.sh --new-version <x.y.z>
@@ -28,7 +31,7 @@
 #
 # Exit codes: 0 on success, 1 on invalid args / validation / dirty worktree / commit failure.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 # Release-example documents whose pinned versions must track the package version.
 #
@@ -41,6 +44,18 @@ RELEASE_EXAMPLE_DOCS=(
   "docs/github-action.md"
   "docs/development.md"
 )
+
+# Temp files created during mutation. Registered as they are created so a
+# failure between creation and `mv` cannot strand one inside the repository.
+TEMP_FILES=()
+
+# cleanup_temps — remove any temp file this run created and did not move.
+cleanup_temps() {
+  local tmp
+  for tmp in ${TEMP_FILES[@]+"${TEMP_FILES[@]}"}; do
+    rm -f "$tmp"
+  done
+}
 
 # fail MESSAGE — emit APPLIED=false / ERROR=MESSAGE on stdout and exit 1.
 fail() {
@@ -113,8 +128,26 @@ restore_docs() {
 
 # rollback_all — restore every backup taken by this run.
 rollback_all() {
+  # Disarm first: a restore that itself fails must not re-enter this handler.
+  trap - ERR
   restore_manifests
   restore_docs
+  cleanup_temps
+}
+
+# unexpected_failure — ERR trap, armed once backups exist. Any mutating step that
+# fails outside an explicit guard lands here, so the tree is restored and the
+# caller still gets a parseable verdict instead of a bare non-zero exit.
+# Invoked indirectly by `trap unexpected_failure ERR`, which shellcheck cannot
+# see: SC2329 (newer builds) and SC2317 (0.10.x) both call it unreachable.
+# shellcheck disable=SC2329,SC2317
+unexpected_failure() {
+  local status=$?
+  local failed_command=$BASH_COMMAND
+  rollback_all
+  echo "APPLIED=false"
+  echo "ERROR=unexpected failure (exit $status) while running: ${failed_command//$'\n'/ }; rolled back every touched file from backup"
+  exit 1
 }
 
 # Step 1 (FIRST): Verify clean working tree.
@@ -145,8 +178,13 @@ for doc in "${RELEASE_EXAMPLE_DOCS[@]}"; do
   fi
 done
 
+# Backups now exist, so recovery is possible: arm the ERR trap for every
+# mutating step below that is not already wrapped in an explicit guard.
+trap unexpected_failure ERR
+
 # Step 4a: Atomic rewrite of package.json via jq + mv.
 TMP_JSON="$VERSION_FILE.tmp.$$"
+TEMP_FILES+=("$TMP_JSON")
 if ! jq --arg v "$NEW_VERSION" '.version = $v' "$VERSION_FILE" > "$TMP_JSON"; then
   rm -f "$TMP_JSON"
   rollback_all
@@ -157,6 +195,7 @@ mv "$TMP_JSON" "$VERSION_FILE"
 # Step 4b: Atomic rewrite of Cargo.toml [package] version via awk + mv.
 if [[ -f "$CARGO_TOML" ]]; then
   TMP_CARGO="$CARGO_TOML.tmp.$$"
+  TEMP_FILES+=("$TMP_CARGO")
   if ! awk -v new_ver="$NEW_VERSION" '
     /^\[package\]/ { in_package=1 }
     /^\[/ && !/^\[package\]/ { in_package=0 }
@@ -209,6 +248,7 @@ if [[ -f "$CARGO_TOML" ]]; then
     fi
 
     TMP_LOCK="$CARGO_LOCK.tmp.$$"
+    TEMP_FILES+=("$TMP_LOCK")
     if ! awk -v pkg="$PACKAGE_NAME" -v new_ver="$NEW_VERSION" '
       /^\[\[package\]\]/ { in_target=0 }
       /^name *= *"/ {
@@ -231,9 +271,13 @@ if [[ -f "$CARGO_TOML" ]]; then
     fi
     mv "$TMP_LOCK" "$CARGO_LOCK"
 
-    if ! cargo metadata --locked --format-version 1 >/dev/null 2>&1; then
+    # 2>&1 >/dev/null keeps stderr only. This check fails for causes it cannot
+    # tell apart (a cold registry cache with no network, a toolchain older than
+    # rust-version, a malformed [patch]/[replace]), so report what cargo said
+    # rather than asserting the lockfile and manifest disagree.
+    if ! CARGO_METADATA_ERR=$(cargo metadata --locked --format-version 1 2>&1 >/dev/null); then
       rollback_all
-      fail "cargo metadata --locked failed after the Cargo.lock version sync; lockfile and manifest disagree"
+      fail "cargo metadata --locked failed after the Cargo.lock version sync; cargo reported: ${CARGO_METADATA_ERR//$'\n'/ }"
     fi
   fi
 fi
@@ -245,6 +289,7 @@ if [[ -n "$OLD_VERSION" && "$OLD_VERSION" != "null" && "$OLD_VERSION" != "$NEW_V
   for ((i = 0; i < ${#DOC_FILES[@]}; i++)); do
     doc_file="${DOC_FILES[i]}"
     tmp_doc="$doc_file.tmp.$$"
+    TEMP_FILES+=("$tmp_doc")
     sed "s/$OLD_VERSION_ESCAPED/$NEW_VERSION/g" "$doc_file" > "$tmp_doc"
     if cmp -s "$tmp_doc" "$doc_file"; then
       # The rewrite was a no-op: leave the file (and the index) untouched.
