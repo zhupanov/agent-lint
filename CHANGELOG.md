@@ -42,6 +42,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- X001 no longer leaks the parser's YAML-relative `at line N, column M` beside
+  the diagnostic's own file-relative line. noyalib 0.0.60 added duplicate-key
+  and key-collision errors whose `Display` ends with a colon-less trailing
+  location that `strip_parser_location_prefix` did not match; that strip now
+  lives in the shared helper instead of only in the Cursor validator, so X001
+  and CU003 render the same single-authority message (#681).
+- `apply-bump.sh` now rewrites version pins in every release-example document
+  (`README.md`, `docs/github-action.md`, `docs/development.md`) rather than
+  `README.md` alone, so a release no longer lands with stale pins that fail
+  `release_examples_match_package_version_policy`. The script's
+  `RELEASE_EXAMPLE_DOCS` array is held to `RELEASE_EXAMPLE_DOCUMENTS` in
+  `src/documentation_consistency.rs` by the new
+  `release_example_documents_match_bump_script` test, so the checked set and the
+  rewritten set cannot drift apart again (#679).
+- `apply-bump.sh` no longer runs `cargo generate-lockfile`, which re-resolved the
+  whole dependency graph and let a version-only release commit silently ship
+  unreviewed transitive upgrades (239 `Cargo.lock` lines on v4.0.6). It now
+  rewrites only this package's own `version` line in `Cargo.lock` and proves
+  manifest/lockfile agreement with `cargo metadata --locked`, so the bump commit
+  touches exactly one lockfile line (#680).
 - Discovery skips git-ignored paths inside a Git repository, so git-ignored
   instruction files, skills, and script assets are no longer linted. The
   decision is Git's own, asked of `git check-ignore`: root and nested

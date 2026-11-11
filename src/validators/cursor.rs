@@ -349,14 +349,10 @@ fn quote_globs_suggestion(globs_line: &str) -> Option<String> {
 /// Reduce a YAML parser failure to its constraint: parser-relative coordinates
 /// are stripped (the diagnostic carries a structured file location instead)
 /// and messages that embed a possible secret collapse to a stable constraint.
-/// The wrapper-form strip is owned by `frontmatter::strip_parser_location_prefix`;
-/// only the colon-less trailing form of anchor/alias errors is Cursor-local.
+/// Every coordinate form, including the colon-less trailing one, is stripped by
+/// the shared `frontmatter::strip_parser_location_prefix`.
 fn cursor_rule_yaml_constraint(raw_message: &str) -> String {
-    static TRAILING_LOCATION: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\s+at line \d+, column \d+$").expect("cursor yaml trailing-location regex")
-    });
     let unwrapped = frontmatter::strip_parser_location_prefix(raw_message);
-    let unwrapped = TRAILING_LOCATION.replace(&unwrapped, "");
     yaml_parse_constraint(unwrapped.trim())
 }
 
@@ -1760,6 +1756,39 @@ mod tests {
         ];
         for (content, expected, label) in cases {
             assert_eq!(rule_cu_codes(content), expected, "{label}");
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn rule_yaml_errors_never_leak_parser_coordinates() {
+        // CU003 is pinned here because it shares the coordinate strip with X001:
+        // a change to `frontmatter::strip_parser_location_prefix` must not alter
+        // the message CU003 already renders.
+        let cases = [
+            (
+                "---\ndescription: first\ndescription: second\n---\nBody.\n",
+                ".cursor/rules/case.mdc: frontmatter is not valid YAML: description: duplicate \
+                 key \"description\"",
+                3,
+            ),
+            (
+                "---\n1: a\n\"1\": b\n---\nBody.\n",
+                ".cursor/rules/case.mdc: frontmatter is not valid YAML: 1: distinct mapping keys \
+                 collide after string conversion: 1 (e.g. `1` and `\"1\"`, or `true` and \
+                 `\"true\"`)",
+                3,
+            ),
+        ];
+        for (content, expected_message, expected_line) in cases {
+            let diagnostics = rule_cu_diagnostics(content);
+            let diagnostic = diagnostics
+                .iter()
+                .find(|item| item.rule == LintRule::CursorRuleFrontmatterInvalid)
+                .unwrap_or_else(|| panic!("expected CU003 for {content:?}: {diagnostics:?}"));
+            assert_eq!(diagnostic.message, expected_message);
+            let location = diagnostic.location.expect("CU003 carries a location");
+            assert_eq!(location.start().line_number(), expected_line);
         }
     }
 

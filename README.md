@@ -4,7 +4,7 @@
 - Validates `.claude/`, `.claude-plugin/`, `.cursor/`, `.cursorrules`,
   `.codex/`, `.codex-plugin/`, `AGENTS.md`, `.agents/skills/`, and MCP
   configuration.
-- Implemented in Rust (minimum supported Rust version 1.89), and fully
+- Implemented in Rust (minimum supported Rust version 1.93), and fully
   configurable.
 
 ## Features

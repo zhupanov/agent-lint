@@ -324,8 +324,13 @@ pub fn parse_yaml_strict(fm_lines: &[String]) -> Result<crate::yaml::Value, Yaml
 
 /// Strip parser location (and the redundant `YAML parse error` wrapper) so X001
 /// keeps a single file-relative line authority in the rendered diagnostic.
-/// Shared with the Cursor rule validator, which additionally strips the
-/// colon-less trailing `at line N, column M` form of anchor/alias errors.
+///
+/// The parser spells its coordinates three ways, and all three are removed
+/// here so every caller gets the same single-authority message:
+/// the leading `YAML parse error at line N, column M:` wrapper, an embedded
+/// ` at line N, column M:`, and the colon-less trailing ` at line N, column M`
+/// that the duplicate-key, key-collision, and anchor/alias errors end with.
+/// The Cursor rule validator shares this one implementation.
 pub fn strip_parser_location_prefix(message: &str) -> String {
     static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(
@@ -333,17 +338,22 @@ pub fn strip_parser_location_prefix(message: &str) -> String {
         )
         .expect("location strip regex")
     });
+    static EMBEDDED: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r" at line \d+, column \d+:").expect("embedded location strip")
+    });
+    static TRAILING: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\s+at line \d+, column \d+$").expect("trailing location strip")
+    });
+
     let stripped = RE.replace(message, "");
-    if stripped.as_ref() == message {
+    let stripped = if stripped.as_ref() == message {
         // Fall back: remove an embedded ` at line N, column M:` if the prefix
         // shape differs from the common parse-error forms.
-        static EMBEDDED: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-            regex::Regex::new(r" at line \d+, column \d+:").expect("embedded location strip")
-        });
-        EMBEDDED.replace(message, ":").into_owned()
+        EMBEDDED.replace(message, ":")
     } else {
-        stripped.into_owned()
-    }
+        stripped
+    };
+    TRAILING.replace(&stripped, "").into_owned()
 }
 
 /// One-based file line of an unindented simple top-level mapping key
@@ -764,6 +774,67 @@ mod tests {
             err.message
         );
         assert!(err.column.is_some());
+    }
+
+    #[test]
+    fn test_parse_yaml_strict_strips_trailing_parser_coordinates() {
+        // The parser spells duplicate-key, key-collision, and anchor failures with a
+        // colon-less trailing `at line N, column M`. Leaking it would print a
+        // YAML-relative line beside the diagnostic's own file-relative one.
+        let cases = [
+            (
+                "---\nname: foo\ndescription: first\ndescription: second\n---\n",
+                4,
+                "duplicate key",
+            ),
+            (
+                "---\n1: a\n\"1\": b\n---\n",
+                3,
+                "collide after string conversion",
+            ),
+            ("---\nglobs: *missing\n---\n", 2, "unknown anchor"),
+        ];
+        for (content, expected_line, expected_fragment) in cases {
+            let fm = extract_frontmatter(content).expect("fixture has frontmatter");
+            let err = parse_yaml_strict(&fm).expect_err("fixture must not parse");
+            assert!(
+                err.message.contains(expected_fragment),
+                "expected {expected_fragment:?} in: {}",
+                err.message
+            );
+            assert!(
+                !err.message.contains("at line"),
+                "parser coordinates must not remain in the message: {}",
+                err.message
+            );
+            assert_eq!(
+                err.file_line, expected_line,
+                "file-relative line for {expected_fragment:?}: {}",
+                err.message
+            );
+        }
+    }
+
+    #[test]
+    fn strip_parser_location_prefix_handles_every_coordinate_form() {
+        let cases = [
+            (
+                "YAML parse error at line 2, column 1: mapping values are not allowed",
+                "mapping values are not allowed",
+            ),
+            (
+                "invalid type at line 2, column 3: expected string",
+                "invalid type: expected string",
+            ),
+            (
+                "description: duplicate key \"description\" at line 3, column 1",
+                "description: duplicate key \"description\"",
+            ),
+            ("no coordinates here", "no coordinates here"),
+        ];
+        for (raw, expected) in cases {
+            assert_eq!(strip_parser_location_prefix(raw), expected, "raw: {raw}");
+        }
     }
 
     #[test]

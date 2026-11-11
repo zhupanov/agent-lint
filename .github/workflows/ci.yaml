@@ -65,6 +65,8 @@ jobs:
         run: cargo test --test conformance
       - name: Test version-bump classifier
         run: scripts/test-classify-bump.sh
+      - name: Test version-bump apply script
+        run: scripts/test-apply-bump.sh
       - name: Clippy
         run: cargo clippy -- -D warnings
 
