@@ -64,7 +64,7 @@ If you escalate, append a paragraph to the reasoning log file explaining why.
    - Backs up `package.json`, `Cargo.toml`, `Cargo.lock`, and every release-example document in the Git directory so retries leave the dirty-tree guard inactive
    - Rewrites `package.json` `.version` field via `jq` (atomic via tmp + mv)
    - Rewrites `Cargo.toml` `[package]` version via `awk` (atomic via tmp + mv)
-   - Rewrites only this package's own `version` line in `Cargo.lock` via `awk` (atomic via tmp + mv), then confirms the lockfile still matches the manifest with `cargo metadata --locked`. The dependency graph is never re-resolved, so a release commit cannot smuggle in unreviewed transitive upgrades
+   - Syncs `Cargo.lock` by rewriting only this package's own `version` line via `awk` (atomic via tmp + mv), then confirms the lockfile still matches the manifest with `cargo metadata --locked`. A full `cargo generate-lockfile` re-resolves the whole dependency graph and sweeps unreviewed transitive upgrades into the release commit; this one-line edit is used instead, so the bump stays version-only
    - Replaces all occurrences of the old version (X.Y.Z) with the new version in every release-example document listed in `RELEASE_EXAMPLE_DOCS` (`README.md`, `docs/github-action.md`, `docs/development.md`), so pinned version examples stay current. Absent documents are skipped, and only documents the rewrite actually changed are staged
    - `git add` (package.json, Cargo.toml, Cargo.lock, changed release-example documents) + `git commit -m "Bump version to <NEW_VERSION>"`
    - Rolls back every touched file from backup on any failure
