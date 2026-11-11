@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- X001 no longer leaks the parser's YAML-relative `at line N, column M` beside
+  the diagnostic's own file-relative line. noyalib 0.0.60 added duplicate-key
+  and key-collision errors whose `Display` ends with a colon-less trailing
+  location that `strip_parser_location_prefix` did not match; that strip now
+  lives in the shared helper instead of only in the Cursor validator, so X001
+  and CU003 render the same single-authority message (#681).
 - `apply-bump.sh` now rewrites version pins in every release-example document
   (`README.md`, `docs/github-action.md`, `docs/development.md`) rather than
   `README.md` alone, so a release no longer lands with stale pins that fail

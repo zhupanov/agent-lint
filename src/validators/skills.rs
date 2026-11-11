@@ -895,6 +895,56 @@ mod tests {
         assert_eq!(diag.error_count(), 0);
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn x001_message_keeps_one_file_relative_line_authority() {
+        // The diagnostic prints its own file-relative line, so the parser's
+        // YAML-relative `at line N, column M` must never survive in the message.
+        let cases = [
+            (
+                "---\nname: dup\ndescription: first\ndescription: second\n---\n\n# Dup\n\nBody.\n",
+                4,
+                "duplicate key",
+            ),
+            (
+                "---\nname: coll\ndescription: demo\n1: a\n\"1\": b\n---\n\n# Coll\n\nBody.\n",
+                5,
+                "collide after string conversion",
+            ),
+        ];
+        for (content, expected_line, fragment) in cases {
+            let tmp = tempfile::tempdir().unwrap();
+            let _guard = crate::test_helpers::CwdGuard::new();
+            std::env::set_current_dir(tmp.path()).unwrap();
+            std::fs::create_dir_all("skills/case").unwrap();
+            std::fs::write("skills/case/SKILL.md", content).unwrap();
+
+            let mut diag = DiagnosticCollector::new_all_enabled();
+            validate_skill_frontmatter(&mut diag, &crate::config::ExcludeSet::default());
+            let diagnostic = diag
+                .diagnostics()
+                .iter()
+                .find(|item| item.rule == LintRule::FrontmatterYamlInvalid)
+                .unwrap_or_else(|| panic!("expected X001 for {fragment}"))
+                .clone();
+            assert!(
+                diagnostic.message.contains(fragment),
+                "expected {fragment:?} in: {}",
+                diagnostic.message
+            );
+            assert!(
+                !diagnostic.message.contains("at line"),
+                "parser coordinates must not reach the X001 message: {}",
+                diagnostic.message
+            );
+            assert!(
+                diagnostic.message.contains(&format!(":{expected_line}:")),
+                "X001 must report the file-relative line {expected_line}: {}",
+                diagnostic.message
+            );
+        }
+    }
+
     // V6: validate_skill_frontmatter (public skills)
     #[test]
     #[serial_test::serial]
